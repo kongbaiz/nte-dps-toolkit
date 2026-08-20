@@ -1,15 +1,17 @@
 //! Frontend-neutral projection for the Console skills page.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    engine::model::{
-        AbyssHalf, CharacterInfo, CombatState, SkillBreakdownRow, summarize_skill_breakdown,
-    },
+    engine::model::{AbyssHalf, CharacterInfo, CombatState, SkillBreakdownRow},
     storage::i18n::Language,
 };
 
 use super::timeline::{character_color, character_name, finite_non_negative};
+
+pub const MAX_PROJECTED_SKILL_CHARACTERS: usize = 64;
+pub const MAX_PROJECTED_SKILL_ROWS: usize = 4_096;
+pub const MAX_PROJECTED_UNMAPPED_EFFECTS: usize = 512;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SkillsScope {
@@ -83,12 +85,11 @@ pub fn project_skills(
     characters: &HashMap<u32, CharacterInfo>,
     options: SkillsProjectionOptions,
 ) -> SkillsProjection {
-    let hits = match options.scope {
-        SkillsScope::Whole => &state.hits,
-        SkillsScope::First => &state.abyss.half(AbyssHalf::First).hits,
-        SkillsScope::Second => &state.abyss.half(AbyssHalf::Second).hits,
+    let breakdown = match options.scope {
+        SkillsScope::Whole => state.skill_breakdown(None),
+        SkillsScope::First => state.abyss.half(AbyssHalf::First).skill_breakdown(),
+        SkillsScope::Second => state.abyss.half(AbyssHalf::Second).skill_breakdown(),
     };
-    let breakdown = summarize_skill_breakdown(hits, None);
     let mut summaries = HashMap::<u32, (String, f64, usize)>::new();
     for row in &breakdown.rows {
         let entry = summaries
@@ -105,7 +106,12 @@ pub fn project_skills(
         .map(
             |(id, (fallback_name, damage, entries))| SkillsCharacterProjection {
                 id,
-                name: character_name(id, &fallback_name, characters, options.language),
+                name: bounded_projection_text(&character_name(
+                    id,
+                    &fallback_name,
+                    characters,
+                    options.language,
+                )),
                 color: character_color(id, characters),
                 damage,
                 entries,
@@ -119,12 +125,32 @@ pub fn project_skills(
             .then_with(|| left.name.cmp(&right.name))
             .then_with(|| left.id.cmp(&right.id))
     });
+    let mut overflow_character_ids = HashSet::new();
+    if projected_characters.len() > MAX_PROJECTED_SKILL_CHARACTERS {
+        let overflow = projected_characters.split_off(MAX_PROJECTED_SKILL_CHARACTERS - 1);
+        overflow_character_ids.extend(overflow.iter().map(|row| row.id));
+        projected_characters.push(SkillsCharacterProjection {
+            id: u32::MAX,
+            name: "Aggregated Overflow".to_owned(),
+            color: "#8b8b8b".to_owned(),
+            damage: overflow.iter().map(|row| row.damage).sum(),
+            entries: overflow.iter().map(|row| row.entries).sum(),
+        });
+    }
 
-    let rows = breakdown
+    let rows: Vec<_> = breakdown
         .rows
         .iter()
-        .map(|row| project_row(row, characters, options.language))
+        .map(|row| {
+            project_row(
+                row,
+                characters,
+                options.language,
+                overflow_character_ids.contains(&row.char_id),
+            )
+        })
         .collect();
+    debug_assert!(rows.len() <= MAX_PROJECTED_SKILL_ROWS);
     let unknown = breakdown.unknown;
     SkillsProjection {
         total_damage: finite_non_negative(breakdown.total_damage),
@@ -142,6 +168,7 @@ pub fn project_skills(
             unmapped_gameplay_effects: unknown
                 .unmapped_gameplay_effects
                 .into_iter()
+                .take(MAX_PROJECTED_UNMAPPED_EFFECTS)
                 .map(|effect| SkillsUnknownEffectProjection {
                     index: effect.index,
                     hits: effect.hits,
@@ -156,20 +183,45 @@ fn project_row(
     row: &SkillBreakdownRow,
     characters: &HashMap<u32, CharacterInfo>,
     language: Language,
+    aggregate_character: bool,
 ) -> SkillsRowProjection {
+    let (character_id, character_name) = if aggregate_character {
+        (u32::MAX, "Aggregated Overflow".to_owned())
+    } else {
+        (
+            row.char_id,
+            bounded_projection_text(&character_name(
+                row.char_id,
+                &row.char_name,
+                characters,
+                language,
+            )),
+        )
+    };
     SkillsRowProjection {
         id: stable_row_id(row),
-        character_id: row.char_id,
-        character_name: character_name(row.char_id, &row.char_name, characters, language),
-        name: row.name.clone(),
-        category: row.category.clone(),
-        ability_name: row.ability_name.clone(),
-        damage_name: row.damage_name.clone(),
+        character_id,
+        character_name,
+        name: bounded_projection_text(&row.name),
+        category: bounded_projection_text(&row.category),
+        ability_name: row.ability_name.as_deref().map(bounded_projection_text),
+        damage_name: row.damage_name.as_deref().map(bounded_projection_text),
         gameplay_effect_index: row.gameplay_effect_index,
-        gameplay_effect_name: row.gameplay_effect_name.clone(),
+        gameplay_effect_name: row
+            .gameplay_effect_name
+            .as_deref()
+            .map(bounded_projection_text),
         follow_up: row.is_follow_up,
         hits: row.hits,
         damage: finite_non_negative(row.damage),
+    }
+}
+
+fn bounded_projection_text(value: &str) -> String {
+    if value.len() <= crate::engine::model::MAX_INDEXED_SKILL_TEXT_BYTES {
+        value.to_owned()
+    } else {
+        "Aggregated Overflow".to_owned()
     }
 }
 
@@ -231,7 +283,7 @@ pub fn skill_label_translation_key(label: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::model::{Hit, HitCharacterSource, HitDirection};
+    use crate::engine::model::{Hit, HitCharacterSource, HitDirection, summarize_skill_breakdown};
 
     fn hit(damage: f64) -> Hit {
         Hit {
@@ -321,5 +373,83 @@ mod tests {
             Some("Blossom Damage")
         );
         assert_eq!(skill_label_translation_key("自定义招式"), None);
+    }
+
+    #[test]
+    fn adversarial_distinct_skills_are_source_bounded_with_lossless_totals() {
+        const HIT_COUNT: usize = 5_000;
+        let mut state = CombatState::default();
+        for index in 0..HIT_COUNT {
+            let mut value = hit(1.0);
+            value.timestamp = index as f64;
+            value.char_id = index as u32;
+            value.char_name = format!("Character {index}");
+            value.char_known = false;
+            value.damage_name = Some(format!("Skill {index}"));
+            value.ability_name = None;
+            value.gameplay_effect_index = Some(index as u32);
+            value.gameplay_effect_name = None;
+            state.push_hit(value);
+        }
+
+        let projection = project_skills(
+            &state,
+            &HashMap::new(),
+            SkillsProjectionOptions {
+                scope: SkillsScope::Whole,
+                language: Language::English,
+            },
+        );
+
+        assert_eq!(projection.total_hits, HIT_COUNT as u64);
+        assert_eq!(projection.total_damage, HIT_COUNT as f64);
+        assert!(projection.characters.len() <= MAX_PROJECTED_SKILL_CHARACTERS);
+        assert!(projection.rows.len() <= MAX_PROJECTED_SKILL_ROWS);
+        assert!(
+            projection.diagnostics.unmapped_gameplay_effects.len()
+                <= MAX_PROJECTED_UNMAPPED_EFFECTS
+        );
+        assert_eq!(
+            projection.rows.iter().map(|row| row.hits).sum::<u64>(),
+            HIT_COUNT as u64
+        );
+        assert_eq!(
+            projection.rows.iter().map(|row| row.damage).sum::<f64>(),
+            HIT_COUNT as f64
+        );
+        assert_eq!(
+            projection
+                .diagnostics
+                .unmapped_gameplay_effects
+                .iter()
+                .map(|row| row.hits)
+                .sum::<u64>(),
+            HIT_COUNT as u64
+        );
+        assert!(projection.characters.iter().any(|row| row.id == u32::MAX));
+        assert!(
+            projection
+                .rows
+                .iter()
+                .any(|row| row.character_id == u32::MAX)
+        );
+        assert!(
+            projection
+                .diagnostics
+                .unmapped_gameplay_effects
+                .iter()
+                .any(|row| row.index == u32::MAX)
+        );
+        let character_ids = projection
+            .characters
+            .iter()
+            .map(|row| row.id)
+            .collect::<HashSet<_>>();
+        assert!(
+            projection
+                .rows
+                .iter()
+                .all(|row| character_ids.contains(&row.character_id))
+        );
     }
 }

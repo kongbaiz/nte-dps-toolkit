@@ -1,7 +1,10 @@
 use serde::Serialize;
 
 use nte_dps_tool::{
-    core::hud::{HudCharacterSnapshot, HudDataState, HudSnapshot, HudSummarySnapshot},
+    core::{
+        CoreError,
+        hud::{HudCharacterSnapshot, HudDataState, HudSnapshot, HudSummarySnapshot},
+    },
     engine::model::{CharacterInfo, DamageAttributionSummary},
     storage::{
         config::{AccentColor, ThemePreset, UiConfig, UiDensity},
@@ -11,11 +14,56 @@ use nte_dps_tool::{
 };
 
 use crate::{
-    contract::CaptureSnapshot,
+    contract::{CaptureSnapshot, dps_time::DpsTimeRuntimeSnapshot},
     state::{AppState, HistoryRoundIndex, MainDpsReadout},
 };
 
-pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 4;
+pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 6;
+pub(crate) const MAIN_DPS_MAX_TEXT_BYTES: usize = 256;
+pub(crate) const MAIN_DPS_MAX_PROJECTED_TEXT_BYTES: usize = 128 * 1024;
+
+#[derive(Default)]
+struct MainDpsTextBudget {
+    projected_bytes: usize,
+    truncated: bool,
+}
+
+impl MainDpsTextBudget {
+    fn text(&mut self, value: String, fallback: &str) -> String {
+        let value = if value.len() <= MAIN_DPS_MAX_TEXT_BYTES {
+            value
+        } else {
+            self.truncated = true;
+            fallback.to_owned()
+        };
+        if self
+            .projected_bytes
+            .checked_add(value.len())
+            .is_some_and(|next| next <= MAIN_DPS_MAX_PROJECTED_TEXT_BYTES)
+        {
+            self.projected_bytes += value.len();
+            return value;
+        }
+        self.truncated = true;
+        if self
+            .projected_bytes
+            .checked_add(fallback.len())
+            .is_some_and(|next| next <= MAIN_DPS_MAX_PROJECTED_TEXT_BYTES)
+        {
+            self.projected_bytes += fallback.len();
+            fallback.to_owned()
+        } else {
+            String::new()
+        }
+    }
+
+    fn optional(&mut self, value: Option<String>) -> Option<String> {
+        value.and_then(|value| {
+            let bounded = self.text(value, "");
+            (!bounded.is_empty()).then_some(bounded)
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +100,7 @@ pub(crate) struct MainDpsSnapshot {
     pub history_generation: String,
     pub adapter_version: &'static str,
     pub capture: CaptureSnapshot,
+    pub dps_time: DpsTimeRuntimeSnapshot,
     pub processing_paused: bool,
     pub paused_pending_events: String,
     pub paused_debug_packets: String,
@@ -67,21 +116,28 @@ pub(crate) struct MainDpsSnapshot {
     pub game_detection_status: GameDetectionStatus,
     pub has_live_session_data: bool,
     pub onboarding: MainDpsOnboardingSnapshot,
+    pub text_truncated: bool,
 }
 
 impl MainDpsSnapshot {
-    pub(crate) fn from_state(state: &AppState) -> Self {
+    pub(crate) fn from_state(state: &AppState) -> Result<Self, CoreError> {
         let generation = state.next_sequence();
-        let revisions = state.main_dps_stream_revision();
+        let revisions = state.main_dps_stream_revision()?;
         let config = state.ui_config_snapshot();
         let capture_status = state.live_capture_status();
-        let replay_running = state.replay_running();
+        let replay_running = state.replay_running()?;
         let processing_paused = state.main_processing_paused();
-        let (paused_pending_events, paused_debug_packets) = state.main_paused_event_counts();
+        let (paused_pending_events, paused_debug_packets) = state.main_paused_event_counts()?;
         let always_on_top = state.window_always_on_top(crate::state::DesktopWindowKind::MainDps);
         let rounds = state.main_round_index();
         let selected_round_id = state.main_selected_round_id();
-        let round_snapshots = round_snapshots(rounds.as_ref(), selected_round_id.as_deref());
+        let mut text_budget = MainDpsTextBudget::default();
+        let round_snapshots = round_snapshots(
+            rounds.as_ref(),
+            selected_round_id.as_deref(),
+            &mut text_budget,
+        );
+        let selected_round_id = text_budget.optional(selected_round_id);
         let MainDpsReadout {
             hud,
             has_hits,
@@ -89,7 +145,7 @@ impl MainDpsSnapshot {
             damage_attribution,
             separate_reaction_damage,
             character_durations,
-        } = state.main_dps_readout(selected_round_id.as_deref());
+        } = state.main_dps_readout()?;
         let resources = state.live_capture_resources();
         let data_empty = matches!(hud.data_state, HudDataState::Empty);
         let abyss_detected = hud.status.abyss_detected;
@@ -100,14 +156,14 @@ impl MainDpsSnapshot {
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         );
         let live_round_selected = selected_round_id.is_none();
-        let has_live_session_data = state.session_has_data();
+        let has_live_session_data = state.session_has_data()?;
         let can_import_replay = !capture_active && !replay_running;
         let game_detection_status = resolve_game_detection_status(data_empty, || {
             nte_dps_tool::platform::network::game_process_is_running()
         });
         let game_detected = game_detection_status == GameDetectionStatus::Running;
 
-        Self {
+        Ok(Self {
             contract_version: MAIN_DPS_CONTRACT_VERSION,
             generation: generation.to_string(),
             capture_generation: revisions.capture.to_string(),
@@ -115,6 +171,10 @@ impl MainDpsSnapshot {
             history_generation: revisions.history.to_string(),
             adapter_version: env!("CARGO_PKG_VERSION"),
             capture: capture_status.into(),
+            dps_time: DpsTimeRuntimeSnapshot::new(
+                config.dps_time_mode,
+                state.main_presented_combat_clock_health()?,
+            ),
             processing_paused,
             paused_pending_events: paused_pending_events.to_string(),
             paused_debug_packets: paused_debug_packets.to_string(),
@@ -131,6 +191,7 @@ impl MainDpsSnapshot {
                 damage_attribution,
                 separate_reaction_damage,
                 &character_durations,
+                &mut text_budget,
             ),
             actions: MainDpsActionsSnapshot {
                 can_start_capture: !capture_active && !replay_running,
@@ -161,16 +222,22 @@ impl MainDpsSnapshot {
             game_detected,
             game_detection_status,
             has_live_session_data,
-            onboarding: MainDpsOnboardingSnapshot {
-                done: config.onboarding_done,
-                step: state.onboarding_step(),
-                capture_device_count: state.capture_device_count(),
-                game_detected,
-                game_detection_status,
-                passthrough_hotkey_label: state.passthrough_hotkey().label(),
-                passthrough_hotkey_ready: state.passthrough_hotkey_ready(),
+            onboarding: {
+                let (capture_device_count, capture_devices_available) =
+                    state.capture_device_catalog_status();
+                MainDpsOnboardingSnapshot {
+                    done: config.onboarding_done,
+                    step: state.onboarding_step(),
+                    capture_device_count,
+                    capture_devices_available,
+                    game_detected,
+                    game_detection_status,
+                    passthrough_hotkey_label: state.passthrough_hotkey().label(),
+                    passthrough_hotkey_ready: state.passthrough_hotkey_ready(),
+                }
             },
-        }
+            text_truncated: text_budget.truncated,
+        })
     }
 }
 
@@ -227,6 +294,7 @@ impl MainDpsReadoutSnapshot {
         damage_attribution: DamageAttributionSummary,
         separate_reaction_damage: bool,
         character_durations: &std::collections::HashMap<u32, f64>,
+        text_budget: &mut MainDpsTextBudget,
     ) -> Self {
         let summary = hud.summary.unwrap_or(HudSummarySnapshot {
             team_dps: 0.0,
@@ -255,6 +323,7 @@ impl MainDpsReadoutSnapshot {
                         characters,
                         language,
                         character_durations,
+                        text_budget,
                     )
                 })
                 .collect(),
@@ -309,6 +378,7 @@ impl MainDpsCharacterSnapshot {
         characters: &std::collections::HashMap<u32, CharacterInfo>,
         language: Language,
         character_durations: &std::collections::HashMap<u32, f64>,
+        text_budget: &mut MainDpsTextBudget,
     ) -> Self {
         let info = characters.get(&row.character_id);
         let duration_seconds = character_durations
@@ -317,15 +387,18 @@ impl MainDpsCharacterSnapshot {
             .unwrap_or_default();
         Self {
             character_id: row.character_id,
-            name: localized_character_name(info, language, &row.name),
+            name: text_budget.text(
+                localized_character_name(row.character_id, info, language, &row.name),
+                &format!("Character {}", row.character_id),
+            ),
             hits: row.hits,
             damage: row.damage,
             dps: row.dps,
             damage_share_percent: row.damage_share_percent,
             damage_taken: row.damage_taken,
             duration_seconds,
-            color: info.and_then(|value| value.color.clone()),
-            attribute: info.and_then(|value| value.attribute.clone()),
+            color: text_budget.optional(info.and_then(|value| value.color.clone())),
+            attribute: text_budget.optional(info.and_then(|value| value.attribute.clone())),
         }
     }
 }
@@ -342,6 +415,7 @@ pub(crate) struct MainDpsDamageAttributionSnapshot {
 }
 
 fn localized_character_name(
+    _character_id: u32,
     info: Option<&CharacterInfo>,
     language: Language,
     fallback: &str,
@@ -388,6 +462,7 @@ pub(crate) struct MainDpsOnboardingSnapshot {
     pub done: bool,
     pub step: usize,
     pub capture_device_count: usize,
+    pub capture_devices_available: bool,
     pub game_detected: bool,
     pub game_detection_status: GameDetectionStatus,
     pub passthrough_hotkey_label: &'static str,
@@ -417,6 +492,7 @@ pub(crate) struct MainDpsResetResult {
 fn round_snapshots(
     records: &[HistoryRoundIndex],
     selected_round_id: Option<&str>,
+    text_budget: &mut MainDpsTextBudget,
 ) -> Vec<MainDpsRoundSnapshot> {
     let mut visible = records
         .iter()
@@ -439,9 +515,9 @@ fn round_snapshots(
         .into_iter()
         .rev()
         .map(|record| MainDpsRoundSnapshot {
-            id: Some(record.id.clone()),
+            id: Some(text_budget.text(record.id.clone(), "")),
             live: false,
-            display_time: Some(record.display_time.clone()),
+            display_time: text_budget.optional(Some(record.display_time.clone())),
             abyss_floor: record.abyss_floor,
         })
         .chain(std::iter::once(MainDpsRoundSnapshot {
@@ -503,6 +579,10 @@ fn density_id(value: UiDensity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        channels::stream_runtime::serialize_stream_events,
+        contract::stream::MAX_STREAM_DELIVERY_BYTES,
+    };
 
     #[test]
     fn game_detection_distinguishes_normal_negative_from_probe_failure() {
@@ -526,7 +606,8 @@ mod tests {
 
     #[test]
     fn empty_snapshot_is_bounded_and_uses_string_generations() {
-        let snapshot = MainDpsSnapshot::from_state(&AppState::default());
+        let snapshot = MainDpsSnapshot::from_state(&AppState::default())
+            .expect("healthy live-capture main DPS snapshot");
         let value = serde_json::to_value(snapshot).expect("snapshot serializes");
 
         assert_eq!(value["contractVersion"], MAIN_DPS_CONTRACT_VERSION);
@@ -544,7 +625,7 @@ mod tests {
         let newest = test_round("newest", true);
         let older = test_round("older", true);
 
-        let rounds = round_snapshots(&[newest, older], None);
+        let rounds = round_snapshots(&[newest, older], None, &mut MainDpsTextBudget::default());
         assert_eq!(rounds.len(), 3);
         assert_eq!(rounds[0].id.as_deref(), Some("older"));
         assert_eq!(rounds[1].id.as_deref(), Some("newest"));
@@ -558,7 +639,7 @@ mod tests {
             .map(|index| test_round(&format!("record-{index}"), true))
             .collect::<Vec<_>>();
 
-        let rounds = round_snapshots(&records, None);
+        let rounds = round_snapshots(&records, None, &mut MainDpsTextBudget::default());
 
         assert_eq!(rounds.len(), MAX_HISTORY_RECORDS + 1);
         assert_eq!(rounds.iter().filter(|row| row.live).count(), 1);
@@ -582,7 +663,7 @@ mod tests {
             .map(|index| test_round(&format!("record-{index}"), index != MAX_HISTORY_RECORDS / 2))
             .collect::<Vec<_>>();
 
-        let rounds = round_snapshots(&records, None);
+        let rounds = round_snapshots(&records, None, &mut MainDpsTextBudget::default());
         let history_rows = rounds.iter().filter(|row| !row.live).collect::<Vec<_>>();
 
         assert_eq!(history_rows.len(), MAX_HISTORY_RECORDS);
@@ -602,7 +683,11 @@ mod tests {
             .collect::<Vec<_>>();
         let selected_id = format!("record-{MAX_HISTORY_RECORDS}");
 
-        let rounds = round_snapshots(&records, Some(&selected_id));
+        let rounds = round_snapshots(
+            &records,
+            Some(&selected_id),
+            &mut MainDpsTextBudget::default(),
+        );
 
         assert_eq!(rounds.len(), MAX_HISTORY_RECORDS + 1);
         assert!(
@@ -650,16 +735,137 @@ mod tests {
         };
 
         assert_eq!(
-            localized_character_name(Some(&info), Language::SimplifiedChinese, "fallback"),
+            localized_character_name(1, Some(&info), Language::SimplifiedChinese, "fallback"),
             "娜娜莉"
         );
         assert_eq!(
-            localized_character_name(Some(&info), Language::English, "fallback"),
+            localized_character_name(1, Some(&info), Language::English, "fallback"),
             "Nanally"
         );
         assert_eq!(
-            localized_character_name(Some(&info), Language::Japanese, "fallback"),
+            localized_character_name(1, Some(&info), Language::Japanese, "fallback"),
             "Nanally"
+        );
+
+        let within_budget = CharacterInfo {
+            name_zh: "界".repeat(43),
+            name_en: "x".repeat(129),
+            color: None,
+            avatar: None,
+            attribute: None,
+        };
+        let mut budget = MainDpsTextBudget::default();
+        assert_eq!(
+            budget.text(
+                localized_character_name(
+                    7,
+                    Some(&within_budget),
+                    Language::SimplifiedChinese,
+                    "fallback",
+                ),
+                "fallback",
+            ),
+            "界".repeat(43)
+        );
+        assert!(!budget.truncated);
+    }
+
+    #[test]
+    fn character_name_budget_accepts_exact_utf8_limit_and_rejects_one_byte_over() {
+        let exact_limit = format!("{}x", "界".repeat(85));
+        assert_eq!(exact_limit.len(), MAIN_DPS_MAX_TEXT_BYTES);
+        let mut budget = MainDpsTextBudget::default();
+        assert_eq!(budget.text(exact_limit.clone(), "fallback"), exact_limit);
+        assert!(!budget.truncated);
+
+        let one_byte_over = format!("{}xy", "界".repeat(85));
+        assert_eq!(one_byte_over.len(), MAIN_DPS_MAX_TEXT_BYTES + 1);
+        let mut budget = MainDpsTextBudget::default();
+        assert_eq!(budget.text(one_byte_over, "fallback"), "fallback");
+        assert!(budget.truncated);
+    }
+
+    #[test]
+    fn resource_character_fields_are_bounded_with_explicit_omission() {
+        let oversized = "界".repeat(MAIN_DPS_MAX_TEXT_BYTES);
+        let info = CharacterInfo {
+            name_zh: oversized.clone(),
+            name_en: oversized.clone(),
+            color: Some(oversized.clone()),
+            avatar: None,
+            attribute: Some(oversized),
+        };
+        let characters = std::collections::HashMap::from([(7, info)]);
+        let row = HudCharacterSnapshot {
+            character_id: 7,
+            name: "fallback".to_owned(),
+            preview_label_suffix: None,
+            hits: "1".to_owned(),
+            damage: 1.0,
+            dps: 1.0,
+            damage_share_percent: 100.0,
+            damage_taken: 0.0,
+            color: None,
+        };
+        let mut budget = MainDpsTextBudget::default();
+
+        let projected = MainDpsCharacterSnapshot::from_hud(
+            row,
+            &characters,
+            Language::SimplifiedChinese,
+            &std::collections::HashMap::new(),
+            &mut budget,
+        );
+
+        assert_eq!(projected.name, "Character 7");
+        assert!(projected.color.is_none());
+        assert!(projected.attribute.is_none());
+        assert!(budget.truncated);
+    }
+
+    #[test]
+    fn maximum_escape_heavy_main_snapshot_stays_below_stream_budget() {
+        let escape_heavy = "\u{0001}".repeat(MAIN_DPS_MAX_TEXT_BYTES);
+        let mut snapshot =
+            MainDpsSnapshot::from_state(&AppState::default()).expect("healthy main DPS snapshot");
+        snapshot.rounds = (0..MAX_HISTORY_RECORDS)
+            .map(|index| MainDpsRoundSnapshot {
+                id: Some(format!(
+                    "{index:03}{}",
+                    "\u{0001}".repeat(MAIN_DPS_MAX_TEXT_BYTES - 3)
+                )),
+                live: false,
+                display_time: Some(escape_heavy.clone()),
+                abyss_floor: None,
+            })
+            .chain(std::iter::once(MainDpsRoundSnapshot {
+                id: None,
+                live: true,
+                display_time: None,
+                abyss_floor: None,
+            }))
+            .collect();
+        snapshot.readout.characters = (0..4)
+            .map(|character_id| MainDpsCharacterSnapshot {
+                character_id,
+                name: escape_heavy.clone(),
+                hits: "18446744073709551615".to_owned(),
+                damage: 1.0,
+                dps: 1.0,
+                damage_share_percent: 25.0,
+                damage_taken: 0.0,
+                duration_seconds: 1.0,
+                color: Some(escape_heavy.clone()),
+                attribute: Some(escape_heavy.clone()),
+            })
+            .collect();
+
+        let delivery = serialize_stream_events(vec![MainDpsEvent::Snapshot(snapshot)])
+            .expect("bounded main snapshot must serialize");
+        assert!(
+            delivery.len() < MAX_STREAM_DELIVERY_BYTES,
+            "MAIN_DPS_MAX_STREAM_BYTES={} limit={MAX_STREAM_DELIVERY_BYTES}",
+            delivery.len()
         );
     }
 }

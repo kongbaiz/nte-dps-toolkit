@@ -1,5 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
   emptyCurtainError,
   parseEmptyCurtainEvent,
@@ -14,10 +12,11 @@ import {
   type EquipmentAction,
   type ItemUid,
 } from "@/lib/tauri/empty-curtain-contract";
+import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  parseSubscriptionReceipt,
-  TechnicalContractError,
-} from "@/lib/tauri/technical-contract";
+  subscribeStream,
+  tauriStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   getSnapshot: "get_empty_curtain_snapshot",
@@ -66,14 +65,7 @@ export interface EmptyCurtainClient {
   importLoadout(): Promise<EmptyCurtainFileResult>;
 }
 
-const tauriTransport: EmptyCurtainTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: EmptyCurtainTransport = tauriStreamTransport;
 
 export function createEmptyCurtainClient(
   transport: EmptyCurtainTransport = tauriTransport,
@@ -96,32 +88,16 @@ export function createEmptyCurtainClient(
       command(COMMANDS.getSnapshot, undefined, parseEmptyCurtainSnapshot),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onEvent = transport.createChannel((message) => {
-        if (closed) return;
-        try {
-          onSnapshot(parseEmptyCurtainEvent(message));
-        } catch (error) {
-          onError(emptyCurtainError(error));
-        }
+      return subscribeStream({
+        transport,
+        streamKind: "emptyCurtain",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribe,
+        unsubscribeCommand: COMMANDS.unsubscribe,
+        parseEvent: parseEmptyCurtainEvent,
+        onEvent: onSnapshot,
+        onError: (error) => onError(emptyCurtainError(error)),
       });
-      const receipt = transport
-        .invoke(COMMANDS.subscribe, { subscriptionId, onEvent })
-        .then(parseSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) onError(emptyCurtainError(error));
-          return undefined;
-        });
-      return async () => {
-        if (closed) return;
-        closed = true;
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribe, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
     },
     positions: (item, character) =>
       command(

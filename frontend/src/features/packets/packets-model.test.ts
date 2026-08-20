@@ -25,6 +25,8 @@ function packet(sequence: string, parsedHits = 0): PacketSnapshot {
     parsedHits,
     note: "accepted",
     decodedText: "GameplayEffect Shinku",
+    omittedTextBytes: "0",
+    omittedDeclaredIdCount: "0",
   };
 }
 
@@ -33,10 +35,11 @@ function snapshot(
   packets: PacketSnapshot[],
 ): PacketsSnapshot {
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     generation,
     sessionGeneration: "1",
     packetGeneration: packets.at(-1)?.sequence ?? "0",
+    firstDisplaySequence: packets.at(0)?.sequence ?? "1",
     capturePhase: "running",
     eventCount: 0,
     observedPacketCount: generation,
@@ -44,6 +47,9 @@ function snapshot(
     retainedPacketCount: packets.length,
     queuedEventCount: 0,
     displayLimit: 3,
+    truncatedPacketCount: 0,
+    omittedTextBytes: "0",
+    omittedDeclaredIdCount: "0",
     packets,
   };
 }
@@ -67,6 +73,25 @@ describe("Packets view model", () => {
         snapshot: incoming,
       }).packets.map((item) => item.sequence),
     ).toEqual(["2", "3", "4"]);
+  });
+
+  it("uses the Rust first-display sequence and fails instead of slicing invalid windows", () => {
+    const current = snapshot("2", [packet("1"), packet("2")]);
+    const incoming = snapshot("4", [packet("3"), packet("4")]);
+    expect(incoming.firstDisplaySequence).toBe("3");
+    expect(
+      mergePacketsEvent(current, {
+        mode: "append",
+        snapshot: incoming,
+      }).packets.map((item) => item.sequence),
+    ).toEqual(["3", "4"]);
+
+    expect(() =>
+      mergePacketsEvent(current, {
+        mode: "append",
+        snapshot: { ...incoming, firstDisplaySequence: "1" },
+      }),
+    ).toThrow(/server window/);
   });
 
   it("ignores stale batches and replaces a changed session", () => {

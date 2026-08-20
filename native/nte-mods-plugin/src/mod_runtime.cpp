@@ -3,6 +3,7 @@
 #include "host_api.hpp"
 #include "ipc_transport.hpp"
 #include "memory_access.hpp"
+#include "mod_runtime_schema.generated.hpp"
 #include "obfuscated_string.hpp"
 #include "plugin_runtime.hpp"
 
@@ -35,9 +36,6 @@ namespace nte::mods::runtime
 		constexpr uint8_t NULL_REGISTER = 0xFF;
 		constexpr uint64_t MAX_MEMORY_OFFSET = 0x4000;
 		constexpr DWORD MAX_SCRIPT_BYTES = 16 * 1024;
-		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
-		constexpr size_t GAME_INSTANCE_LOCAL_PLAYERS_OFFSET = 0x38;
-		constexpr size_t LOCAL_PLAYER_CONTROLLER_OFFSET = 0x30;
 
 		struct TextView
 		{
@@ -239,6 +237,8 @@ namespace nte::mods::runtime
 			bool player_state_resolved;
 			bool player_character_resolved;
 			bool combat_clock_sample_resolved;
+			uint64_t generation;
+			uint32_t host_thread_id;
 		};
 
 		struct ProgramExecution
@@ -287,6 +287,21 @@ namespace nte::mods::runtime
 		constinit uint32_t mod_log_history_count = 0;
 		constinit uint32_t mod_log_history_next = 0;
 		constinit uint64_t next_mod_log_sequence = 1;
+
+		// Caller holds program_lock. A hook integrity failure means the previous
+		// program set can no longer be projected as healthy or transactional.
+		void DisableProgramsFailClosedLocked()
+		{
+			enabled_capabilities = 0;
+			program_count = 0;
+			source_fingerprint = 0;
+			enabled_mod_set = {};
+			ZeroMemory(programs.data(), sizeof(programs));
+			quarantined_programs.fill(false);
+			ZeroMemory(mod_event_history.data(), sizeof(mod_event_history));
+			mod_event_history_count = 0;
+			mod_event_history_next = 0;
+		}
 
 		static_assert(sizeof(Instruction) == 16);
 		static_assert(sizeof(PointerArray) == 16);
@@ -576,30 +591,12 @@ namespace nte::mods::runtime
 
 		uint32_t CapabilityFromName(TextView name)
 		{
-			if (Equals(name, "viewport.tick"))
-				return CAPABILITY_VIEWPORT_TICK;
-			if (Equals(name, "memory.read"))
-				return CAPABILITY_MEMORY_READ;
-			if (Equals(name, "ipc"))
-				return CAPABILITY_IPC;
-			if (Equals(name, "sdk.read"))
-				return CAPABILITY_SDK_READ;
-			if (Equals(name, "equipment"))
-				return CAPABILITY_EQUIPMENT;
-			if (Equals(name, "combat-clock"))
-				return CAPABILITY_COMBAT_CLOCK;
-			if (Equals(name, "log"))
-				return CAPABILITY_LOG;
-			if (Equals(name, "game.session"))
-				return CAPABILITY_GAME_SESSION;
-			if (Equals(name, "memory.write"))
-				return CAPABILITY_MEMORY_WRITE;
-			if (Equals(name, "unreal.reflection"))
-				return CAPABILITY_UNREAL_REFLECTION;
-			if (Equals(name, "process.event"))
-				return CAPABILITY_PROCESS_EVENT;
-			if (Equals(name, "character.effects"))
-				return CAPABILITY_CHARACTER_EFFECTS;
+			for (const schema::CapabilityEntry& capability :
+				schema::CAPABILITIES)
+			{
+				if (Equals(name, capability.name))
+					return capability.mask;
+			}
 			return 0;
 		}
 
@@ -609,81 +606,16 @@ namespace nte::mods::runtime
 			uint16_t& operation,
 			uint32_t& capability)
 		{
-			capability = CAPABILITY_IPC;
-			if (Equals(name, "equipment.equip_module"))
+			for (const schema::ServiceEntry& candidate : schema::SERVICES)
 			{
-				service = IpcKernelService::EquipModule;
-				operation = NTE_MODS_IPC_EQUIP_MODULE;
-			}
-			else if (Equals(name, "equipment.equip_core"))
-			{
-				service = IpcKernelService::EquipCore;
-				operation = NTE_MODS_IPC_EQUIP_CORE;
-			}
-			else if (Equals(name, "equipment.unequip_module"))
-			{
-				service = IpcKernelService::UnequipModule;
-				operation = NTE_MODS_IPC_UNEQUIP_MODULE;
-			}
-			else if (Equals(name, "equipment.unequip_core"))
-			{
-				service = IpcKernelService::UnequipCore;
-				operation = NTE_MODS_IPC_UNEQUIP_CORE;
-			}
-			else if (Equals(name, "equipment.unequip_all"))
-			{
-				service = IpcKernelService::UnequipAll;
-				operation = NTE_MODS_IPC_UNEQUIP_ALL;
-			}
-			else if (Equals(name, "equipment.equip_one_key"))
-			{
-				service = IpcKernelService::EquipOneKey;
-				operation = NTE_MODS_IPC_EQUIP_ONE_KEY;
-			}
-			else if (Equals(name, "equipment.move_module_to_character"))
-			{
-				service = IpcKernelService::MoveModuleToCharacter;
-				operation = NTE_MODS_IPC_MOVE_MODULE_TO_CHARACTER;
-			}
-			else if (Equals(name, "equipment.move_core_to_character"))
-			{
-				service = IpcKernelService::MoveCoreToCharacter;
-				operation = NTE_MODS_IPC_MOVE_CORE_TO_CHARACTER;
-			}
-			else if (Equals(name, "equipment.set_item_discarded"))
-			{
-				service = IpcKernelService::SetItemDiscarded;
-				operation = NTE_MODS_IPC_SET_ITEM_DISCARDED;
-			}
-			else if (Equals(name, "equipment.set_item_locked"))
-			{
-				service = IpcKernelService::SetItemLocked;
-				operation = NTE_MODS_IPC_SET_ITEM_LOCKED;
-			}
-			else if (Equals(name, "combat_clock.query_transitions"))
-			{
-				service = IpcKernelService::QueryCombatClockTransitions;
-				operation = NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS;
-				capability |= CAPABILITY_COMBAT_CLOCK;
+				if (!Equals(name, candidate.name))
+					continue;
+				service = candidate.service;
+				operation = candidate.operation;
+				capability = candidate.capability;
 				return true;
 			}
-			else if (Equals(name, "ipc.query_mod_events"))
-			{
-				service = IpcKernelService::QueryModEvents;
-				operation = NTE_MODS_IPC_QUERY_MOD_EVENTS;
-				return true;
-			}
-			else if (Equals(name, "character.query_effects"))
-			{
-				service = IpcKernelService::QueryCharacterEffects;
-				operation = NTE_MODS_IPC_QUERY_CHARACTER_EFFECTS;
-				capability |= CAPABILITY_CHARACTER_EFFECTS;
-				return true;
-			}
-			else
-				return false;
-			capability |= CAPABILITY_EQUIPMENT;
-			return true;
+			return false;
 		}
 
 		bool ParseCall(
@@ -3243,10 +3175,9 @@ namespace nte::mods::runtime
 			if (!memory::ReadValue(
 					base, static_cast<size_t>(offset), array) ||
 				array.data == nullptr || array.count < 1 ||
-				array.capacity < array.count ||
-				!memory::IsReadableRange(array.data, sizeof(*array.data)))
+				array.capacity < array.count)
 				return nullptr;
-			return array.data[0];
+			return memory::ReadPointer<void>(array.data, 0);
 		}
 
 		uint64_t ReadPointerArrayCount(const void* base, uint64_t offset)
@@ -3263,15 +3194,10 @@ namespace nte::mods::runtime
 
 		void ResolveGameSession(TickExecution& execution)
 		{
-			if (execution.session_resolved)
-				return;
+			// The plugin owner supplies one already-confirmed host-thread snapshot.
+			// Never walk the viewport chain again while programs execute: doing so
+			// could combine objects from different UE world generations.
 			execution.session_resolved = true;
-			execution.game_instance = memory::ReadPointer<void>(
-				execution.viewport, VIEWPORT_GAME_INSTANCE_OFFSET);
-			execution.local_player = ReadPointerArrayFirst(
-				execution.game_instance, GAME_INSTANCE_LOCAL_PLAYERS_OFFSET);
-			execution.player_controller = memory::ReadPointer<void>(
-				execution.local_player, LOCAL_PLAYER_CONTROLLER_OFFSET);
 		}
 
 		uint64_t ResolveGameValue(
@@ -4311,6 +4237,25 @@ namespace nte::mods::runtime
 			return true;
 		#endif
 		}
+
+		void SamplePartyEffectsGuarded(TickExecution& execution)
+		{
+		#if defined(_MSC_VER)
+			__try
+			{
+				SamplePartyEffects(reinterpret_cast<void*>(ResolveGameValue(
+					execution, GameValue::PlayerState)));
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				// The game owns this UObject graph. Drop a faulting sample and
+				// preserve the last fully published snapshot.
+			}
+		#else
+			SamplePartyEffects(reinterpret_cast<void*>(ResolveGameValue(
+				execution, GameValue::PlayerState)));
+		#endif
+		}
 	} // namespace
 
 	ReloadResult ReloadEnabledPrograms(const wchar_t* workspace)
@@ -4443,7 +4388,15 @@ namespace nte::mods::runtime
 		}
 
 		AcquireSRWLockExclusive(&program_lock);
-		ResetProcessEventWatches();
+		if (!ResetProcessEventWatches())
+		{
+			DisableProgramsFailClosedLocked();
+			ReleaseSRWLockExclusive(&program_lock);
+			return RecordReloadError(
+				fingerprint,
+				"runtime",
+				"ProcessEvent teardown failed; runtime disabled.");
+		}
 		programs = candidate_programs;
 		enabled_mod_set = candidate_enabled_mod_set;
 		program_count = candidate_count;
@@ -4478,26 +4431,38 @@ namespace nte::mods::runtime
 		return result;
 	}
 
-	void ExecuteViewportTickPrograms(void* viewport)
+	void ExecuteViewportTickPrograms(const ViewportTickContext& context)
 	{
 		AcquireSRWLockShared(&program_lock);
 		TickExecution execution{};
-		execution.viewport = viewport;
+		execution.viewport = context.viewport;
+		execution.game_instance = context.game_instance;
+		execution.local_player = context.local_player;
+		execution.player_controller = context.player_controller;
+		execution.session_resolved = true;
+		execution.generation = context.generation;
+		execution.host_thread_id = context.host_thread_id;
 		for (size_t index = 0; index < program_count; ++index)
 		{
 			if (!quarantined_programs[index] &&
 				!ExecuteProgramGuarded(
 					programs[index],
 					static_cast<uint32_t>(index),
-					viewport,
+					context.viewport,
 					execution))
 				quarantined_programs[index] = true;
 		}
 		if ((enabled_capabilities & CAPABILITY_CHARACTER_EFFECTS) != 0)
-			SamplePartyEffects(reinterpret_cast<void*>(ResolveGameValue(
-				execution, GameValue::PlayerState)));
-		PumpLiveIpc(&execution.ipc_context);
+			SamplePartyEffectsGuarded(execution);
+		const PluginContext ipc_context = execution.ipc_context;
+		const bool ipc_enabled = (enabled_capabilities & CAPABILITY_IPC) != 0;
 		ReleaseSRWLockShared(&program_lock);
+
+		// Lock order is ipc_transport_lock -> program_lock. Do not retain the
+		// hot program lock while an expired OVERLAPPED operation is cancelled
+		// and synchronously drained by the transport owner.
+		if (ipc_enabled)
+			PumpLiveIpc(&ipc_context);
 	}
 
 	NteModsStatus DispatchIpcRequestPrograms(
@@ -4505,6 +4470,7 @@ namespace nte::mods::runtime
 		const NteModsIpcRequest& request,
 		NteModsIpcResponse& response)
 	{
+		AcquireSRWLockShared(&program_lock);
 		for (size_t program_index = 0;
 			program_index < program_count;
 			++program_index)
@@ -4517,14 +4483,17 @@ namespace nte::mods::runtime
 				const IpcRoute& route = program.ipc_routes[route_index];
 				if (route.operation == request.operation)
 				{
-					return InvokeIpcKernelService(
-						route.service,
-						context,
-						request,
-						response);
+					const NteModsStatus result = InvokeIpcKernelService(
+							route.service,
+							context,
+							request,
+							response);
+					ReleaseSRWLockShared(&program_lock);
+					return result;
 				}
 			}
 		}
+		ReleaseSRWLockShared(&program_lock);
 		return NTE_MODS_STATUS_MOD_DISABLED;
 	}
 
@@ -4568,10 +4537,19 @@ namespace nte::mods::runtime
 		return copy_count;
 	}
 
-	void Reset()
+	bool Reset()
 	{
 		AcquireSRWLockExclusive(&program_lock);
-		ResetProcessEventWatches();
+		if (!ResetProcessEventWatches())
+		{
+			DisableProgramsFailClosedLocked();
+			ReleaseSRWLockExclusive(&program_lock);
+			RecordModLog(
+				"runtime",
+				NTE_MOD_LOG_ERROR,
+				"ProcessEvent teardown failed; runtime disabled.");
+			return false;
+		}
 		enabled_capabilities = 0;
 		program_count = 0;
 		source_fingerprint = 0;
@@ -4590,5 +4568,6 @@ namespace nte::mods::runtime
 		mod_log_history_count = 0;
 		mod_log_history_next = 0;
 		ReleaseSRWLockExclusive(&mod_log_lock);
+		return true;
 	}
 } // namespace nte::mods::runtime

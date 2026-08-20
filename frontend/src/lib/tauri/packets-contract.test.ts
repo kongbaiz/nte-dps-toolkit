@@ -11,6 +11,7 @@ export const PACKETS_FIXTURE = {
   generation: "9007199254740993",
   sessionGeneration: "2",
   packetGeneration: "8",
+  firstDisplaySequence: "1",
   capturePhase: "running",
   eventCount: 3,
   observedPacketCount: "9",
@@ -18,6 +19,9 @@ export const PACKETS_FIXTURE = {
   retainedPacketCount: 8,
   queuedEventCount: 2,
   displayLimit: 500,
+  truncatedPacketCount: 0,
+  omittedTextBytes: "0",
+  omittedDeclaredIdCount: "0",
   packets: [
     {
       sequence: "8",
@@ -30,6 +34,8 @@ export const PACKETS_FIXTURE = {
       parsedHits: 1,
       note: "accepted",
       decodedText: "GameplayEffect Shinku",
+      omittedTextBytes: "0",
+      omittedDeclaredIdCount: "0",
     },
   ],
 };
@@ -59,5 +65,37 @@ describe("Packets contract", () => {
     expect(() =>
       parsePacketsSnapshot({ ...PACKETS_FIXTURE, observedPacketCount: 9 }),
     ).toThrow(/decimal string/);
+    expect(() =>
+      parsePacketsSnapshot({ ...PACKETS_FIXTURE, firstDisplaySequence: "9" }),
+    ).toThrow(/precedes firstDisplaySequence/);
+  });
+
+  it("validates UTF-8 byte limits and explicit truncation metadata", () => {
+    const packet = PACKETS_FIXTURE.packets[0];
+    expect(() =>
+      parsePacketsSnapshot({
+        ...PACKETS_FIXTURE,
+        packets: [{ ...packet, source: "界".repeat(171) }],
+      }),
+    ).toThrow(/UTF-8 bytes/);
+    expect(() =>
+      parsePacketsSnapshot({
+        ...PACKETS_FIXTURE,
+        truncatedPacketCount: 1,
+      }),
+    ).toThrow(/omission metadata/);
+
+    expect(
+      parsePacketsSnapshot({
+        ...PACKETS_FIXTURE,
+        truncatedPacketCount: 1,
+        omittedTextBytes: "3",
+        packets: [{ ...packet, source: "", omittedTextBytes: "3" }],
+      }),
+    ).toMatchObject({
+      truncatedPacketCount: 1,
+      omittedTextBytes: "3",
+      packets: [{ source: "", omittedTextBytes: "3" }],
+    });
   });
 });

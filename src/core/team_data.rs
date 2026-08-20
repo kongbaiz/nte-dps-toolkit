@@ -3,8 +3,8 @@
 //! and projection stay here so desktop and CLI boundaries share one contract.
 
 use crate::engine::model::{
-    CharacterStats, CombatState, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps,
-    TeamDpsExport, TeamDpsMember,
+    CharacterStats, CombatState, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBER_NAME_BYTES,
+    TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember,
 };
 
 pub const MAX_TEAM_DPS_EXPORT_BYTES: usize = 1024 * 1024;
@@ -74,11 +74,12 @@ fn validate_team(team: &TeamDps) -> Result<(), &'static str> {
     if team.members.len() > TEAM_DPS_MAX_MEMBERS {
         return Err("team data contains too many members");
     }
-    if team
-        .members
-        .iter()
-        .any(|member| member.id == 0 || !member.dps.is_finite() || member.dps < 0.0)
-    {
+    if team.members.iter().any(|member| {
+        member.id == 0
+            || !member.dps.is_finite()
+            || member.dps < 0.0
+            || member.name.len() > TEAM_DPS_MAX_MEMBER_NAME_BYTES
+    }) {
         return Err("team member data is invalid");
     }
     Ok(())
@@ -128,10 +129,21 @@ fn snapshot_team_from_stats<'a>(
             .map(|stats| TeamDpsMember {
                 id: stats.char_id,
                 dps: stats.damage / shared_duration,
-                name: stats.name.clone(),
+                name: bounded_member_name(&stats.name),
             })
             .collect(),
     })
+}
+
+fn bounded_member_name(name: &str) -> String {
+    if name.len() <= TEAM_DPS_MAX_MEMBER_NAME_BYTES {
+        return name.to_owned();
+    }
+    let mut end = TEAM_DPS_MAX_MEMBER_NAME_BYTES;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name[..end].to_owned()
 }
 
 #[cfg(test)]
@@ -152,5 +164,19 @@ mod tests {
         assert!(parse_team_data(r#"{"version":2,"single":{"dps":100}}"#).is_err());
         assert!(parse_team_data(r#"{"version":1}"#).is_err());
         assert!(parse_team_data(r#"{"version":1,"single":{"dps":-1}}"#).is_err());
+        let oversized_name = "界".repeat(TEAM_DPS_MAX_MEMBER_NAME_BYTES);
+        let oversized = format!(
+            r#"{{"version":1,"single":{{"dps":100,"members":[{{"id":1,"dps":100,"name":"{oversized_name}"}}]}}}}"#
+        );
+        assert!(parse_team_data(&oversized).is_err());
+    }
+
+    #[test]
+    fn generated_member_names_are_utf8_safe_and_bounded() {
+        let name = format!("{}suffix", "界".repeat(TEAM_DPS_MAX_MEMBER_NAME_BYTES));
+        let bounded = bounded_member_name(&name);
+
+        assert!(bounded.len() <= TEAM_DPS_MAX_MEMBER_NAME_BYTES);
+        assert!(bounded.is_char_boundary(bounded.len()));
     }
 }

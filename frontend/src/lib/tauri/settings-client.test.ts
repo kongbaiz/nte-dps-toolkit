@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
 
 import { createSettingsClient } from "./settings-client";
+import type { SettingsSnapshot } from "./settings-contract";
 
-function settingsFixture() {
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
+
+function settingsFixture(): SettingsSnapshot {
   return {
-    contractVersion: 4,
+    contractVersion: 6,
     generation: "0",
     adapterVersion: "0.3.6",
     interface: {
@@ -36,6 +42,7 @@ function settingsFixture() {
     },
     capture: {
       bpfFilter: "udp",
+      devicesAvailable: true,
       devices: [],
       manualCaptureDevice: null,
       serverDamageCalibration: false,
@@ -45,6 +52,14 @@ function settingsFixture() {
       autoRoundIdleSecondsMin: 5,
       autoRoundIdleSecondsMax: 600,
       dpsTimeMode: "time-stop-adjusted",
+      dpsTimeRuntime: {
+        configuredMode: "time-stop-adjusted",
+        effectiveMode: "real-time",
+        combatClockHealth: "unknown",
+        degraded: true,
+        warningMessageKey:
+          "Time-stop adjustment has not been verified for this session.",
+      },
       passthroughHotkey: "home",
     },
     hotkeys: {
@@ -56,7 +71,7 @@ function settingsFixture() {
       ],
     },
     captureFiles: { count: 0, totalBytes: "0", formattedSize: "0 B" },
-    teamData: { upperImported: false, lowerImported: false },
+    teamData: { available: true, upperImported: false, lowerImported: false },
     alwaysOnTop: true,
     hudWidthMin: 280,
     hudWidthMax: 3840,
@@ -230,12 +245,29 @@ describe("settings client", () => {
       arguments_?: Record<string, unknown>;
     }> = [];
     const snapshots: ReturnType<typeof settingsFixture>[] = [];
+    const settledEvent = {
+      event: "snapshot",
+      payload: {
+        ...settingsFixture(),
+        updates: {
+          ...settingsFixture().updates,
+          status: "up-to-date",
+          messageKey: "NTE DPS Tool is up to date",
+        },
+      },
+    };
     const client = createSettingsClient(
       {
         invoke: async (command, arguments_) => {
           calls.push({ command, arguments_ });
           if (command === "subscribe_settings") {
-            return { subscriptionId: "settings-test", streamIntervalMs: 200 };
+            return {
+              subscriptionId: "settings-test",
+              streamKind: "settings",
+              streamIntervalMs: 200,
+              streamProtocolVersion: 1,
+              streamGeneration: "1",
+            };
           }
           return undefined;
         },
@@ -254,17 +286,8 @@ describe("settings client", () => {
         throw new Error(error.code);
       },
     );
-    onMessage({
-      event: "snapshot",
-      payload: {
-        ...settingsFixture(),
-        updates: {
-          ...settingsFixture().updates,
-          status: "up-to-date",
-          messageKey: "NTE DPS Tool is up to date",
-        },
-      },
-    });
+    onMessage(encodeDelivery([settledEvent]));
+    await vi.waitFor(() => expect(snapshots).toHaveLength(1));
     await unsubscribe();
 
     expect(snapshots[0]?.updates.status).toBe("up-to-date");

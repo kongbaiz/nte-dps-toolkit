@@ -1,5 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
   parseSettingsSnapshot,
   parseSettingsEvent,
@@ -18,11 +16,14 @@ import {
   type UpdateSettingsInput,
 } from "@/lib/tauri/settings-contract";
 import {
-  parseSubscriptionReceipt,
   parseTechnicalCommandError,
   TechnicalContractError,
   type HudModuleId,
 } from "@/lib/tauri/technical-contract";
+import {
+  subscribeStream,
+  tauriStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   applyHudPreset: "apply_settings_hud_preset",
@@ -107,14 +108,7 @@ export interface SettingsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: SettingsTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: SettingsTransport = tauriStreamTransport;
 
 export function createSettingsClient(
   transport: SettingsTransport = tauriTransport,
@@ -208,34 +202,16 @@ export function createSettingsClient(
     openHudEditor: () => snapshotCommand(COMMANDS.openHudEditor),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onMessage = (message: unknown) => {
-        if (closed) return;
-        try {
-          onSnapshot(parseSettingsEvent(message).payload);
-        } catch (error) {
-          onError(parseTechnicalCommandError(error));
-        }
-      };
-      const onEvent = transport.createChannel(onMessage);
-      const receipt = transport
-        .invoke(COMMANDS.subscribe, { subscriptionId, onEvent })
-        .then(parseSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) onError(parseTechnicalCommandError(error));
-          return undefined;
-        });
-
-      return async () => {
-        if (closed) return;
-        closed = true;
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribe, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
+      return subscribeStream({
+        transport,
+        streamKind: "settings",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribe,
+        unsubscribeCommand: COMMANDS.unsubscribe,
+        parseEvent: (value) => parseSettingsEvent(value).payload,
+        onEvent: onSnapshot,
+        onError: (error) => onError(parseTechnicalCommandError(error)),
+      });
     },
   };
 }

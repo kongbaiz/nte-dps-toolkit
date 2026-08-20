@@ -421,7 +421,15 @@ pub fn set_mod_studio_document_enabled(
 
 #[cfg(feature = "desktop")]
 pub fn poll_mod_studio_runtime() -> Result<ModStudioRuntimeSnapshot, ModStudioError> {
-    use crate::platform::mods_plugin::{query_mod_events, query_mod_logs};
+    Ok(ModStudioRuntimeSnapshot {
+        logs: poll_mod_studio_runtime_logs()?,
+        events: poll_mod_studio_runtime_events()?,
+    })
+}
+
+#[cfg(feature = "desktop")]
+pub fn poll_mod_studio_runtime_logs() -> Result<Vec<ModStudioRuntimeLog>, ModStudioError> {
+    use crate::platform::mods_plugin::query_mod_logs;
 
     let mut logs = query_mod_logs()
         .map_err(|detail| ModStudioError::new(ModStudioErrorCode::FileSystem, detail))?
@@ -432,6 +440,13 @@ pub fn poll_mod_studio_runtime() -> Result<ModStudioRuntimeSnapshot, ModStudioEr
     if logs.len() > MAX_MOD_STUDIO_RUNTIME_LOGS {
         logs.drain(..logs.len() - MAX_MOD_STUDIO_RUNTIME_LOGS);
     }
+    Ok(logs)
+}
+
+#[cfg(feature = "desktop")]
+pub fn poll_mod_studio_runtime_events() -> Result<Vec<ModStudioRuntimeEvent>, ModStudioError> {
+    use crate::platform::mods_plugin::query_mod_events;
+
     let mut events = query_mod_events()
         .map_err(|detail| ModStudioError::new(ModStudioErrorCode::FileSystem, detail))?
         .into_iter()
@@ -441,7 +456,7 @@ pub fn poll_mod_studio_runtime() -> Result<ModStudioRuntimeSnapshot, ModStudioEr
     if events.len() > MAX_MOD_STUDIO_RUNTIME_EVENTS {
         events.drain(..events.len() - MAX_MOD_STUDIO_RUNTIME_EVENTS);
     }
-    Ok(ModStudioRuntimeSnapshot { logs, events })
+    Ok(events)
 }
 
 #[cfg(feature = "desktop")]
@@ -510,6 +525,10 @@ fn map_storage_error(error: ModScriptError) -> ModStudioError {
         ModScriptError::InvalidModSet
         | ModScriptError::DuplicateModId(_)
         | ModScriptError::TooManyEnabledMods
+        | ModScriptError::TooManyScripts
+        | ModScriptError::TooManyWorkspaceEntries
+        | ModScriptError::WorkspaceTooLarge
+        | ModScriptError::ModSetTooLarge
         | ModScriptError::SourceTooLarge
         | ModScriptError::SourceContainsNul
         | ModScriptError::SourceNotUtf8(_)
@@ -564,6 +583,10 @@ fn map_save_error(error: ModScriptError) -> ModStudioError {
         ModScriptError::InvalidModSet
         | ModScriptError::DuplicateModId(_)
         | ModScriptError::TooManyEnabledMods
+        | ModScriptError::TooManyScripts
+        | ModScriptError::TooManyWorkspaceEntries
+        | ModScriptError::WorkspaceTooLarge
+        | ModScriptError::ModSetTooLarge
         | ModScriptError::SourceNotUtf8(_)
         | ModScriptError::ModSourceMissing(_) => {
             ModStudioError::new(ModStudioErrorCode::InvalidWorkspace, detail)
@@ -588,6 +611,10 @@ fn map_enabled_set_error(error: ModScriptError) -> ModStudioError {
         }
         ModScriptError::InvalidModSet
         | ModScriptError::DuplicateModId(_)
+        | ModScriptError::TooManyScripts
+        | ModScriptError::TooManyWorkspaceEntries
+        | ModScriptError::WorkspaceTooLarge
+        | ModScriptError::ModSetTooLarge
         | ModScriptError::SourceTooLarge
         | ModScriptError::SourceContainsNul
         | ModScriptError::SourceNotUtf8(_)

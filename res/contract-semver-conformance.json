@@ -1,0 +1,23 @@
+[
+  { "value": "0.0.0", "valid": true },
+  { "value": "1.2.3", "valid": true },
+  { "value": "1.2.3-alpha", "valid": true },
+  { "value": "1.2.3-alpha.1", "valid": true },
+  { "value": "1.2.3-0.3.7", "valid": true },
+  { "value": "1.2.3+build.1", "valid": true },
+  { "value": "1.2.3-alpha.1+build.20260820", "valid": true },
+  { "value": "18446744073709551615.0.0", "valid": true },
+  { "value": "1.2", "valid": false },
+  { "value": "01.2.3", "valid": false },
+  { "value": "1.02.3", "valid": false },
+  { "value": "1.2.03", "valid": false },
+  { "value": "1.2.3-01", "valid": false },
+  { "value": "1.2.3-alpha..1", "valid": false },
+  { "value": "1.2.3+", "valid": false },
+  { "value": "1.2.3+build_1", "valid": false },
+  { "value": "18446744073709551616.0.0", "valid": false },
+  {
+    "value": "1.0.0+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  }
+]

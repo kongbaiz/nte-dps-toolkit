@@ -1,3 +1,4 @@
+import { shouldAcceptDecimalVersion } from "@/lib/decimal-string";
 import { t, tf } from "@/lib/i18n";
 
 export { characterAccent } from "@/lib/character-color";
@@ -34,12 +35,7 @@ export function isGenerationNewer(
   candidate: string,
   current: string | null,
 ): boolean {
-  if (current === null) return true;
-  try {
-    return BigInt(candidate) > BigInt(current);
-  } catch {
-    return candidate !== current;
-  }
+  return shouldAcceptDecimalVersion(current, candidate);
 }
 
 export type MainCaptureStatusTone = "idle" | "active" | "transition" | "error";

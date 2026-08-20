@@ -3,39 +3,49 @@
 //! validated session item IDs and polls completed responses.
 
 use std::io;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
 #[cfg(feature = "desktop")]
 use std::collections::BTreeMap;
-#[cfg(feature = "desktop")]
 use std::fmt;
 #[cfg(feature = "desktop")]
 use std::fs;
 #[cfg(feature = "desktop")]
-use std::io::Write;
+use std::io::{Read, Write};
 #[cfg(feature = "desktop")]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(feature = "desktop")]
 use std::path::{Path, PathBuf};
-#[cfg(feature = "desktop")]
 use std::ptr;
 #[cfg(feature = "desktop")]
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_BAD_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_INCOMPLETE,
+    ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED,
+    ERROR_SEM_TIMEOUT, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_OVERLAPPED, FILE_READ_DATA, FILE_WRITE_DATA, OPEN_EXISTING, ReadFile,
+    SYNCHRONIZE, WriteFile,
+};
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
-use windows_sys::Win32::System::Pipes::CallNamedPipeW;
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResultEx, OVERLAPPED};
+use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY,
     RegCloseKey, RegCreateKeyW, RegGetValueW, RegSetValueExW,
 };
+use windows_sys::Win32::System::Threading::CreateEventW;
 #[cfg(feature = "desktop")]
-use windows_sys::Win32::System::Threading::{OpenEventW, SYNCHRONIZATION_SYNCHRONIZE};
+use windows_sys::Win32::System::Threading::OpenEventW;
 
 use crate::engine::model::HtItemNetId;
 #[cfg(feature = "desktop")]
@@ -44,9 +54,11 @@ use crate::storage::mod_scripts::{
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\nte-mods-plugin-v7";
+
 #[cfg(feature = "desktop")]
 const RUNTIME_PRESENCE_NAME: &str = r"Local\nte-mods-plugin-v1-present";
 const IPC_MAGIC: u32 = 0x5145_544e;
+const IPC_DELIVERY_ACK_MAGIC: u32 = 0x4145_544e;
 const IPC_VERSION: u16 = 7;
 const IPC_EQUIP_MODULE: u16 = 1;
 const IPC_EQUIP_CORE: u16 = 2;
@@ -63,11 +75,14 @@ const IPC_QUERY_MOD_EVENTS: u16 = 12;
 #[cfg(any(feature = "desktop", test))]
 const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
+const IPC_CANCEL_DRAIN_TIMEOUT_MS: u32 = 250;
+const IPC_TRANSACTION_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 const MAX_PLACEMENTS: usize = 64;
 const REQUEST_HEADER_SIZE: usize = 56;
 const PLACEMENT_SIZE: usize = 16;
 const REQUEST_SIZE: usize = REQUEST_HEADER_SIZE + MAX_PLACEMENTS * PLACEMENT_SIZE;
 const RESPONSE_HEADER_SIZE: usize = 24;
+const DELIVERY_ACK_SIZE: usize = 16;
 const COMBAT_CLOCK_TRANSITION_SIZE: usize = 32;
 const COMBAT_CLOCK_HISTORY_SIZE: usize = 64;
 const MOD_EVENT_SIZE: usize = 112;
@@ -91,6 +106,8 @@ const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
 static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static IPC_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
+static IPC_CLIENT_QUARANTINED: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "desktop")]
 static MOD_LOG_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(feature = "desktop")]
@@ -128,6 +145,14 @@ const MOD_WORKSPACE_REGISTRY_VALUE: &str = "Workspace";
 #[cfg(feature = "desktop")]
 const MAX_LEGACY_MOD_FILE_BYTES: usize = 16 * 1024;
 #[cfg(feature = "desktop")]
+const MAX_PLUGIN_BINARY_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(feature = "desktop")]
+const MAX_PLUGIN_MARKER_BYTES: usize = 4 * 1024;
+#[cfg(feature = "desktop")]
+const MAX_LEGACY_MOD_FILES: usize = 64;
+#[cfg(feature = "desktop")]
+const MAX_LEGACY_MOD_TOTAL_BYTES: usize = 512 * 1024;
+#[cfg(feature = "desktop")]
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
 #[cfg(feature = "desktop")]
 const MOD_DIRECTORY_NAME: &str = "nte-mods";
@@ -141,136 +166,6 @@ const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
 #[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("sdk.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-state.last_target = 0
-state.last_config_id = 0
-state.last_level = 0
-state.last_hp = 0
-state.last_max_hp = 0
-state.last_flags = 0
-
-def on_viewport_tick(event):
-    character = game.player_character
-    target = None
-    if character != None:
-        target = sdk.attack_target(character)
-
-    if target == None:
-        if state.last_target != 0:
-            ipc.emit("post.enemy.cleared", state.last_target)
-        state.last_target = 0
-        state.last_config_id = 0
-        state.last_level = 0
-        state.last_hp = 0
-        state.last_max_hp = 0
-        state.last_flags = 0
-
-    if target != None:
-        config_id = sdk.character_config_id(target)
-        level = sdk.character_level(target)
-        hp = sdk.character_hp_milli(target)
-        max_hp = sdk.character_hp_max_milli(target, False)
-        alive = sdk.character_is_alive(target)
-        dead = sdk.character_is_dead(target)
-        dead_flag = dead << 1
-        state_flags = alive | dead_flag
-        if target != state.last_target:
-            ipc.emit("pre.enemy.identity", target, config_id, level)
-            ipc.emit("post.enemy.vitals", target, hp, max_hp)
-            ipc.emit("post.enemy.state", target, state_flags, level)
-        else:
-            if config_id != state.last_config_id:
-                ipc.emit("pre.enemy.identity", target, config_id, level)
-            if hp != state.last_hp:
-                ipc.emit("post.enemy.vitals", target, hp, max_hp)
-            elif max_hp != state.last_max_hp:
-                ipc.emit("post.enemy.vitals", target, hp, max_hp)
-            if level != state.last_level:
-                ipc.emit("post.enemy.state", target, state_flags, level)
-            elif state_flags != state.last_flags:
-                ipc.emit("post.enemy.state", target, state_flags, level)
-        state.last_target = target
-        state.last_config_id = config_id
-        state.last_level = level
-        state.last_hp = hp
-        state.last_max_hp = max_hp
-        state.last_flags = state_flags
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V2: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("sdk.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-state.next_sample_at = 0
-state.last_target = 0
-state.last_hp = 0
-state.last_max_hp = 0
-
-def on_viewport_tick(event):
-    now = time.now_ms()
-    sample_due = now >= state.next_sample_at
-
-    if sample_due == True:
-        # Target SDK calls execute at 10 Hz instead of on every rendered frame.
-        state.next_sample_at = now + 100
-        character = game.player_character
-        target = None
-        if character != None:
-            target = sdk.attack_target(character)
-
-    if sample_due == True:
-        if target == None:
-            if state.last_target != 0:
-                ipc.emit("post.enemy.cleared", state.last_target)
-            state.last_target = 0
-            state.last_hp = 0
-            state.last_max_hp = 0
-
-    if sample_due == True:
-        if target != None:
-            hp = sdk.character_hp_milli(target)
-            if target != state.last_target:
-                config_id = sdk.character_config_id(target)
-                level = sdk.character_level(target)
-                max_hp = sdk.character_hp_max_milli(target, False)
-                ipc.emit("pre.enemy.identity", target, config_id, level)
-                ipc.emit("post.enemy.vitals", target, hp, max_hp)
-                state.last_max_hp = max_hp
-            else:
-                if hp != state.last_hp:
-                    max_hp = sdk.character_hp_max_milli(target, False)
-                    ipc.emit("post.enemy.vitals", target, hp, max_hp)
-                    state.last_max_hp = max_hp
-            state.last_target = target
-            state.last_hp = hp
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V3: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("sdk.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-route_ipc(13, "enemy.query_identity")
-
-def on_viewport_tick(event):
-    # The desktop requests one identity snapshot after this capture's first hit.
-    # This handler only publishes the current controller as the IPC context.
-    player_controller = game.player_controller
-    if player_controller != None:
-        ipc.bind(None, player_controller)
-"#;
 #[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V1: &[u8] =
     b"nte_mod 1\nmod equipment\non viewport_tick equipment.prepare\non viewport_tick ipc.pump\n";
@@ -542,724 +437,6 @@ def on_viewport_tick(event):
         state.last_state_flags = state_flags
 "#;
 #[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("memory.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-state.next_sample_at = 0
-state.next_identity_at = 0
-state.last_target = 0
-state.last_hp = 0
-state.last_max_hp = 0
-
-def on_viewport_tick(event):
-    now = time.now_ms()
-    if now >= state.next_sample_at:
-        state.next_sample_at = now + 50
-        player_state = memory.read_ptr(game.player_controller, 0x2d0)
-        target = memory.read_ptr(player_state, 0x2880)
-        if target == None:
-            if state.last_target != 0:
-                ipc.emit("post.enemy.cleared", state.last_target)
-            state.last_target = 0
-            state.last_hp = 0
-            state.last_max_hp = 0
-        if target != None:
-            ability_system = memory.read_ptr(target, 0x8a0)
-            hp = memory.read_f32_milli(ability_system, 0x1a08)
-            max_hp = memory.read_f32_milli(ability_system, 0x1a0c)
-            if max_hp > 0:
-                if hp <= max_hp:
-                    object_index = memory.read_u32(target, 0x0c)
-                    target_key = target ^ object_index
-                    config_hash = cache.get(target_key)
-                    if config_hash == 0:
-                        config_hash = memory.read_fname_hash(target, 0x1d38)
-                        if config_hash != 0:
-                            config_hash = cache.remember(target_key, config_hash)
-                    target_changed = target_key != state.last_target
-                    if config_hash != 0:
-                        if target_changed == True:
-                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
-                        elif now >= state.next_identity_at:
-                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
-                    if target_changed == True:
-                        ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
-                    else:
-                        if hp != state.last_hp:
-                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
-                        elif max_hp != state.last_max_hp:
-                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
-                    if now >= state.next_identity_at:
-                        state.next_identity_at = now + 250
-                    state.last_target = target_key
-                    state.last_hp = hp
-                    state.last_max_hp = max_hp
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_sample_at = 0;
-std::uint64_t next_identity_at = 0;
-std::uint64_t last_target = 0;
-std::uint64_t last_hp = 0;
-std::uint64_t last_max_hp = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    if (now >= next_sample_at)
-    {
-        next_sample_at = now + 50;
-        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-        const auto target = nte::memory::read_ptr(player_state, 0x2880);
-        if (target == nullptr)
-        {
-            if (last_target != 0)
-            {
-                nte::ipc::emit("post.enemy.cleared", last_target);
-            }
-            last_target = 0;
-            last_hp = 0;
-            last_max_hp = 0;
-        }
-        if (target != nullptr)
-        {
-            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
-            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
-            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
-            if (max_hp > 0)
-            {
-                if (hp <= max_hp)
-                {
-                    const auto object_index = nte::memory::read_u32(target, 0x0c);
-                    const auto target_key = target ^ object_index;
-                    auto config_hash = nte::cache::get(target_key);
-                    if (config_hash == 0)
-                    {
-                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                        if (config_hash != 0)
-                        {
-                            config_hash = nte::cache::remember(target_key, config_hash);
-                        }
-                    }
-                    const auto target_changed = target_key != last_target;
-                    if (config_hash != 0)
-                    {
-                        if (target_changed == true)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                        else if (now >= next_identity_at)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                    }
-                    if (target_changed == true)
-                    {
-                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                    }
-                    else
-                    {
-                        if (hp != last_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                        else if (max_hp != last_max_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                    }
-                    if (now >= next_identity_at)
-                    {
-                        next_identity_at = now + 250;
-                    }
-                    last_target = target_key;
-                    last_hp = hp;
-                    last_max_hp = max_hp;
-                }
-            }
-        }
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("ipc");
-NTE_REQUIRES("log");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_sample_at = 0;
-std::uint64_t next_identity_at = 0;
-std::uint64_t next_diagnostic_at = 0;
-std::uint64_t last_target = 0;
-std::uint64_t last_hp = 0;
-std::uint64_t last_max_hp = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    if (now >= next_sample_at)
-    {
-        next_sample_at = now + 50;
-        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-        const auto target = nte::memory::read_ptr(player_state, 0x2880);
-        if (target == nullptr)
-        {
-            if (last_target != 0)
-            {
-                nte::ipc::emit("post.enemy.cleared", last_target);
-                nte::log::info("enemy target cleared");
-            }
-            last_target = 0;
-            last_hp = 0;
-            last_max_hp = 0;
-        }
-        if (target != nullptr)
-        {
-            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
-            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
-            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
-            if (max_hp > 0)
-            {
-                if (hp <= max_hp)
-                {
-                    const auto object_index = nte::memory::read_u32(target, 0x0c);
-                    const auto target_key = target ^ object_index;
-                    auto config_hash = nte::cache::get(target_key);
-                    if (config_hash == 0)
-                    {
-                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                        if (config_hash != 0)
-                        {
-                            config_hash = nte::cache::remember(target_key, config_hash);
-                        }
-                    }
-                    if (config_hash == 0)
-                    {
-                        if (now >= next_diagnostic_at)
-                        {
-                            nte::log::info("enemy identity hash missing");
-                            next_diagnostic_at = now + 500;
-                        }
-                    }
-                    const auto target_changed = target_key != last_target;
-                    if (config_hash != 0)
-                    {
-                        if (target_changed == true)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                        else if (now >= next_identity_at)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                    }
-                    if (target_changed == true)
-                    {
-                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                    }
-                    else
-                    {
-                        if (hp != last_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                        else if (max_hp != last_max_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                    }
-                    if (now >= next_identity_at)
-                    {
-                        next_identity_at = now + 250;
-                    }
-                    last_target = target_key;
-                    last_hp = hp;
-                    last_max_hp = max_hp;
-                }
-                else if (now >= next_diagnostic_at)
-                {
-                    nte::log::info("enemy vitals invalid");
-                    next_diagnostic_at = now + 500;
-                }
-            }
-            else if (now >= next_diagnostic_at)
-            {
-                nte::log::info("enemy vitals invalid");
-                next_diagnostic_at = now + 500;
-            }
-        }
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("unreal.reflection");
-NTE_REQUIRES("process.event");
-NTE_REQUIRES("ipc");
-NTE_REQUIRES("log");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_sample_at = 0;
-std::uint64_t next_identity_at = 0;
-std::uint64_t next_diagnostic_at = 0;
-std::uint64_t watched_character = 0;
-std::uint64_t watched_function = 0;
-std::uint64_t last_target = 0;
-std::uint64_t last_hp = 0;
-std::uint64_t last_max_hp = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    if (nte::game::player_character != watched_character)
-    {
-        if (watched_character != 0)
-        {
-            if (watched_function != 0)
-            {
-                nte::unreal::unwatch(watched_character, watched_function);
-            }
-        }
-        watched_character = nte::game::player_character;
-        watched_function = 0;
-    }
-    if (watched_character != 0)
-    {
-        if (watched_function == 0)
-        {
-            watched_function = nte::unreal::find_function(watched_character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
-            if (watched_function == 0)
-            {
-                if (now >= next_diagnostic_at)
-                {
-                    nte::log::info("enemy damage function missing");
-                    next_diagnostic_at = now + 500;
-                }
-            }
-        }
-        if (watched_function != 0)
-        {
-            nte::unreal::watch(watched_character, watched_function);
-        }
-    }
-    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
-    {
-        const auto event_ready = nte::event::next();
-        if (event_ready == true)
-        {
-            const auto damaged = nte::event::read_u64(0x110);
-            if (damaged != nullptr)
-            {
-                auto target_key = nte::memory::read_u32(damaged, 0x0c);
-                target_key = damaged ^ target_key;
-                const auto object_name_hash = nte::memory::read_fname_hash(damaged, 0x18);
-                target_key = target_key ^ object_name_hash;
-                auto config_hash = nte::cache::get(target_key);
-                if (config_hash == 0)
-                {
-                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
-                    if (config_hash != 0)
-                    {
-                        config_hash = nte::cache::remember(target_key, config_hash);
-                    }
-                }
-                if (config_hash != 0)
-                {
-                    nte::ipc::emit("post.enemy.hit_target", target_key, config_hash, 0);
-                }
-            }
-        }
-    }
-    if (now >= next_sample_at)
-    {
-        next_sample_at = now + 50;
-        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-        const auto target = nte::memory::read_ptr(player_state, 0x2880);
-        if (target == nullptr)
-        {
-            if (last_target != 0)
-            {
-                nte::ipc::emit("post.enemy.cleared", last_target);
-                nte::log::info("enemy target cleared");
-            }
-            last_target = 0;
-            last_hp = 0;
-            last_max_hp = 0;
-        }
-        if (target != nullptr)
-        {
-            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
-            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
-            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
-            if (max_hp > 0)
-            {
-                if (hp <= max_hp)
-                {
-                    auto target_key = nte::memory::read_u32(target, 0x0c);
-                    target_key = target ^ target_key;
-                    const auto object_name_hash = nte::memory::read_fname_hash(target, 0x18);
-                    target_key = target_key ^ object_name_hash;
-                    auto config_hash = nte::cache::get(target_key);
-                    if (config_hash == 0)
-                    {
-                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                        if (config_hash != 0)
-                        {
-                            config_hash = nte::cache::remember(target_key, config_hash);
-                        }
-                    }
-                    if (config_hash == 0)
-                    {
-                        if (now >= next_diagnostic_at)
-                        {
-                            nte::log::info("enemy identity hash missing");
-                            next_diagnostic_at = now + 500;
-                        }
-                    }
-                    if (config_hash != 0)
-                    {
-                        if (target_key != last_target)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                        else if (now >= next_identity_at)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                    }
-                    if (target_key != last_target)
-                    {
-                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                    }
-                    else
-                    {
-                        if (hp != last_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                        else if (max_hp != last_max_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                    }
-                    if (now >= next_identity_at)
-                    {
-                        next_identity_at = now + 250;
-                    }
-                    last_target = target_key;
-                    last_hp = hp;
-                    last_max_hp = max_hp;
-                }
-                else if (now >= next_diagnostic_at)
-                {
-                    nte::log::info("enemy vitals invalid");
-                    next_diagnostic_at = now + 500;
-                }
-            }
-            else if (now >= next_diagnostic_at)
-            {
-                nte::log::info("enemy vitals invalid");
-                next_diagnostic_at = now + 500;
-            }
-        }
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_identity_at = 0;
-std::uint64_t last_target = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-    const auto target = nte::memory::read_ptr(player_state, 0x2880);
-    if (target == nullptr)
-    {
-        if (last_target != 0)
-        {
-            nte::ipc::emit("post.enemy.cleared", last_target);
-        }
-        last_target = 0;
-    }
-    if (target != nullptr)
-    {
-        const auto object_index = nte::memory::read_u32(target, 0x0c);
-        const auto shifted_index = object_index << 32;
-        const auto target_instance = target ^ shifted_index;
-        if (target_instance != last_target)
-        {
-            next_identity_at = 0;
-        }
-        if (now >= next_identity_at)
-        {
-            auto config_hash = nte::cache::get(target_instance);
-            if (config_hash == 0)
-            {
-                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                if (config_hash != 0)
-                {
-                    config_hash = nte::cache::remember(target_instance, config_hash);
-                }
-            }
-            if (config_hash != 0)
-            {
-                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
-            }
-            next_identity_at = now + 50;
-        }
-        last_target = target_instance;
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("unreal.reflection");
-NTE_REQUIRES("process.event");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_identity_at = 0;
-std::uint64_t watched_character = 0;
-std::uint64_t damage_function = 0;
-std::uint64_t last_target = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    const auto character = nte::game::player_character;
-    if (character != nullptr)
-    {
-        if (damage_function == 0)
-        {
-            damage_function = nte::unreal::find_function(character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
-        }
-        if (damage_function != 0)
-        {
-            if (character != watched_character)
-            {
-                nte::unreal::watch(character, damage_function);
-                watched_character = character;
-            }
-        }
-    }
-    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
-    {
-        const auto event_ready = nte::event::next();
-        if (event_ready == true)
-        {
-            const auto damaged = nte::event::read_u64(0x110);
-            if (damaged != nullptr)
-            {
-                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
-                const auto shifted_index = object_index << 32;
-                const auto target_instance = damaged ^ shifted_index;
-                auto config_hash = nte::cache::get(target_instance);
-                if (config_hash == 0)
-                {
-                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
-                    if (config_hash != 0)
-                    {
-                        config_hash = nte::cache::remember(target_instance, config_hash);
-                    }
-                }
-                if (config_hash != 0)
-                {
-                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
-                }
-            }
-        }
-    }
-    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-    const auto target = nte::memory::read_ptr(player_state, 0x2880);
-    if (target == nullptr)
-    {
-        if (last_target != 0)
-        {
-            nte::ipc::emit("post.enemy.cleared", last_target);
-        }
-        last_target = 0;
-    }
-    if (target != nullptr)
-    {
-        const auto object_index = nte::memory::read_u32(target, 0x0c);
-        const auto shifted_index = object_index << 32;
-        const auto target_instance = target ^ shifted_index;
-        if (target_instance != last_target)
-        {
-            next_identity_at = 0;
-        }
-        if (now >= next_identity_at)
-        {
-            auto config_hash = nte::cache::get(target_instance);
-            if (config_hash == 0)
-            {
-                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                if (config_hash != 0)
-                {
-                    config_hash = nte::cache::remember(target_instance, config_hash);
-                }
-            }
-            if (config_hash != 0)
-            {
-                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
-            }
-            next_identity_at = now + 50;
-        }
-        last_target = target_instance;
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("unreal.reflection");
-NTE_REQUIRES("process.event");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_identity_at = 0;
-std::uint64_t watched_ability_system = 0;
-std::uint64_t damage_function = 0;
-std::uint64_t last_target = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    const auto character = nte::game::player_character;
-    if (character != nullptr)
-    {
-        const auto ability_system = nte::memory::read_ptr(character, 0x8A0);
-        if (ability_system != nullptr)
-        {
-            if (damage_function == 0)
-            {
-                damage_function = nte::unreal::find_function(ability_system, "HTAbilitySystemComponent", "NetMulticast_OnSendHandleDamageInfos");
-            }
-            if (damage_function != 0)
-            {
-                if (ability_system != watched_ability_system)
-                {
-                    nte::unreal::watch_array_u64(ability_system, damage_function, 0x160, 0x110);
-                    watched_ability_system = ability_system;
-                }
-            }
-        }
-    }
-    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
-    {
-        const auto event_ready = nte::event::next();
-        if (event_ready == true)
-        {
-            const auto damaged = nte::event::captured_u64();
-            if (damaged != nullptr)
-            {
-                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
-                const auto shifted_index = object_index << 32;
-                const auto target_instance = damaged ^ shifted_index;
-                auto config_hash = nte::cache::get(target_instance);
-                if (config_hash == 0)
-                {
-                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
-                    if (config_hash != 0)
-                    {
-                        config_hash = nte::cache::remember(target_instance, config_hash);
-                    }
-                }
-                if (config_hash != 0)
-                {
-                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
-                }
-            }
-        }
-    }
-    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-    const auto target = nte::memory::read_ptr(player_state, 0x2880);
-    if (target == nullptr)
-    {
-        if (last_target != 0)
-        {
-            nte::ipc::emit("post.enemy.cleared", last_target);
-        }
-        last_target = 0;
-    }
-    if (target != nullptr)
-    {
-        const auto object_index = nte::memory::read_u32(target, 0x0c);
-        const auto shifted_index = object_index << 32;
-        const auto target_instance = target ^ shifted_index;
-        if (target_instance != last_target)
-        {
-            next_identity_at = 0;
-        }
-        if (now >= next_identity_at)
-        {
-            auto config_hash = nte::cache::get(target_instance);
-            if (config_hash == 0)
-            {
-                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                if (config_hash != 0)
-                {
-                    config_hash = nte::cache::remember(target_instance, config_hash);
-                }
-            }
-            if (config_hash != 0)
-            {
-                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
-            }
-            next_identity_at = now + 50;
-        }
-        last_target = target_instance;
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
 const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[
     b"nte_mod_set 1\nload equipment\nload combat-clock\n",
     b"nte_mod_set 1\nload combat-clock\nload enemy-telemetry\nload equipment\n",
@@ -1284,21 +461,6 @@ const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
     LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES,
 ];
-#[cfg(feature = "desktop")]
-#[allow(dead_code)]
-const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
-    LEGACY_ENEMY_TELEMETRY_MOD_V1,
-    LEGACY_ENEMY_TELEMETRY_MOD_V2,
-    LEGACY_ENEMY_TELEMETRY_MOD_V3,
-    LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC,
-    LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP,
-    LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS,
-    LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT,
-    LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET,
-    LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT,
-    LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY,
-];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModsPluginPlacement {
     pub equipment: HtItemNetId,
@@ -1597,8 +759,25 @@ pub(crate) fn call_plugin(request: &ModsPluginRequest) -> Result<u32, String> {
     decode_response(&response, request.request_id)
 }
 
-pub(crate) fn query_combat_clock_transitions() -> Result<Vec<CombatClockTransitionSnapshot>, String>
-{
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CombatClockQueryError {
+    ProviderUnavailable,
+    ModDisabled,
+    InvalidResponse,
+}
+
+impl std::fmt::Display for CombatClockQueryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ProviderUnavailable => "combat clock provider is unavailable",
+            Self::ModDisabled => "combat clock mod is disabled",
+            Self::InvalidResponse => "combat clock provider returned an invalid response",
+        })
+    }
+}
+
+pub(crate) fn query_combat_clock_transitions()
+-> Result<Vec<CombatClockTransitionSnapshot>, CombatClockQueryError> {
     let request_id = COMBAT_CLOCK_QUERY_SEQUENCE
         .fetch_add(1, Ordering::Relaxed)
         .max(1);
@@ -1607,7 +786,8 @@ pub(crate) fn query_combat_clock_transitions() -> Result<Vec<CombatClockTransiti
     request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
     request[6..8].copy_from_slice(&IPC_QUERY_COMBAT_CLOCK_TRANSITIONS.to_le_bytes());
     request[8..16].copy_from_slice(&request_id.to_le_bytes());
-    let response = call_plugin_request(&request)?;
+    let response =
+        call_plugin_request(&request).map_err(|_| CombatClockQueryError::ProviderUnavailable)?;
     decode_combat_clock_transitions(&response, request_id)
 }
 
@@ -1639,53 +819,511 @@ pub(crate) fn query_mod_logs() -> Result<Vec<ModLogSnapshot>, String> {
 }
 
 #[cfg(feature = "desktop")]
-pub fn probe_runtime_presence() -> Result<bool, String> {
-    let mut event_name = RUNTIME_PRESENCE_NAME.encode_utf16().collect::<Vec<_>>();
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModsPluginRuntimePresence {
+    Absent,
+    Initializing,
+    Ready,
+}
+
+#[cfg(feature = "desktop")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModsPluginRuntimeProbeErrorCode {
+    RuntimeEventAccessDenied,
+    RuntimeEventOpenFailed,
+    IpcClientUnavailable,
+    IpcPipeAccessDenied,
+    IpcPipeOpenFailed,
+    PollWorkerFailed,
+    RuntimeSubscriptionFailed,
+}
+
+#[cfg(feature = "desktop")]
+impl ModsPluginRuntimeProbeErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimeEventAccessDenied => "RUNTIME_EVENT_ACCESS_DENIED",
+            Self::RuntimeEventOpenFailed => "RUNTIME_EVENT_OPEN_FAILED",
+            Self::IpcClientUnavailable => "IPC_CLIENT_UNAVAILABLE",
+            Self::IpcPipeAccessDenied => "IPC_PIPE_ACCESS_DENIED",
+            Self::IpcPipeOpenFailed => "IPC_PIPE_OPEN_FAILED",
+            Self::PollWorkerFailed => "POLL_WORKER_FAILED",
+            Self::RuntimeSubscriptionFailed => "RUNTIME_SUBSCRIPTION_FAILED",
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModsPluginRuntimeProbeError {
+    pub code: ModsPluginRuntimeProbeErrorCode,
+    pub os_error_code: Option<u32>,
+}
+
+#[cfg(feature = "desktop")]
+impl ModsPluginRuntimeProbeError {
+    const fn new(code: ModsPluginRuntimeProbeErrorCode, os_error_code: Option<u32>) -> Self {
+        Self {
+            code,
+            os_error_code,
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+pub fn probe_runtime_presence() -> Result<ModsPluginRuntimePresence, ModsPluginRuntimeProbeError> {
+    probe_runtime_presence_named(RUNTIME_PRESENCE_NAME)
+}
+
+#[cfg(feature = "desktop")]
+fn probe_runtime_presence_named(
+    runtime_presence_name: &str,
+) -> Result<ModsPluginRuntimePresence, ModsPluginRuntimeProbeError> {
+    let mut event_name = runtime_presence_name.encode_utf16().collect::<Vec<_>>();
     event_name.push(0);
 
+    // The presence event is only a lightweight initialization marker. The pipe
+    // connection below is the actual readiness boundary; no token, process, or
+    // security-descriptor inspection is part of runtime detection.
     // SAFETY: event_name is NUL-terminated and remains alive for the call.
-    let handle = unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, 0, event_name.as_ptr()) };
+    let handle = unsafe { OpenEventW(SYNCHRONIZE, 0, event_name.as_ptr()) };
     if handle.is_null() {
         let error = io::Error::last_os_error();
         return match error.raw_os_error() {
-            Some(code) if code as u32 == ERROR_FILE_NOT_FOUND => Ok(false),
-            _ => Err(error.to_string()),
+            Some(code) if code as u32 == ERROR_FILE_NOT_FOUND => {
+                Ok(ModsPluginRuntimePresence::Absent)
+            }
+            Some(code) if code as u32 == ERROR_ACCESS_DENIED => {
+                Err(ModsPluginRuntimeProbeError::new(
+                    ModsPluginRuntimeProbeErrorCode::RuntimeEventAccessDenied,
+                    Some(code as u32),
+                ))
+            }
+            code => Err(ModsPluginRuntimeProbeError::new(
+                ModsPluginRuntimeProbeErrorCode::RuntimeEventOpenFailed,
+                code.map(|value| value as u32),
+            )),
         };
     }
+    let _event = OwnedHandle(handle);
 
-    // SAFETY: OpenEventW returned an owned, valid event handle.
-    if unsafe { CloseHandle(handle) } == 0 {
-        return Err(io::Error::last_os_error().to_string());
+    // The transaction lock is deliberately non-blocking. Presence probing is a
+    // fallback read model and must not queue behind a live plugin operation.
+    // A healthy competing request is a transient observation, not a system
+    // probe failure; a quarantined/poisoned client remains fail-closed.
+    let _transaction = match acquire_ipc_transaction() {
+        Ok(transaction) => transaction,
+        Err(IpcTransactionAcquireError::Busy) => {
+            return Ok(ModsPluginRuntimePresence::Initializing);
+        }
+        Err(IpcTransactionAcquireError::Unavailable) => {
+            return Err(ModsPluginRuntimeProbeError::new(
+                ModsPluginRuntimeProbeErrorCode::IpcClientUnavailable,
+                None,
+            ));
+        }
+    };
+
+    // A successful local pipe connection distinguishes a published marker from
+    // an IPC-ready runtime. The bounded request/response path validates protocol
+    // magic, version, size, request ID, and delivery acknowledgement.
+    // Merely connecting performs no plugin request and therefore has no domain
+    // or revision effect.
+    let deadline = Instant::now() + Duration::from_millis(u64::from(IPC_TIMEOUT_MS));
+    match open_runtime_pipe(deadline) {
+        Ok(_pipe) => Ok(ModsPluginRuntimePresence::Ready),
+        Err(PipeOpenError::NotReady) => Ok(ModsPluginRuntimePresence::Initializing),
+        Err(PipeOpenError::AccessDenied(code)) => Err(ModsPluginRuntimeProbeError::new(
+            ModsPluginRuntimeProbeErrorCode::IpcPipeAccessDenied,
+            Some(code),
+        )),
+        Err(PipeOpenError::Failed(code)) => Err(ModsPluginRuntimeProbeError::new(
+            ModsPluginRuntimeProbeErrorCode::IpcPipeOpenFailed,
+            code,
+        )),
     }
-    Ok(true)
 }
 
-fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
-    let mut response = [0_u8; RESPONSE_SIZE];
-    let mut bytes_read = 0;
+struct OwnedHandle(HANDLE);
+
+impl OwnedHandle {
+    fn raw(&self) -> HANDLE {
+        self.0
+    }
+}
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if self.0.is_null() || self.0 == INVALID_HANDLE_VALUE {
+            return;
+        }
+        // SAFETY: every constructor transfers one checked, owned Win32 handle
+        // into this non-cloneable wrapper and never closes it elsewhere.
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IpcTransactionAcquireError {
+    Busy,
+    Unavailable,
+}
+
+impl fmt::Display for IpcTransactionAcquireError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Busy => "Mod IPC transaction is busy",
+            Self::Unavailable => "Mod IPC client is unavailable",
+        })
+    }
+}
+
+fn acquire_ipc_transaction()
+-> Result<std::sync::MutexGuard<'static, ()>, IpcTransactionAcquireError> {
+    if IPC_CLIENT_QUARANTINED.load(Ordering::Acquire) {
+        return Err(IpcTransactionAcquireError::Unavailable);
+    }
+    match IPC_TRANSACTION_LOCK.try_lock() {
+        Ok(guard) => {
+            if IPC_CLIENT_QUARANTINED.load(Ordering::Acquire) {
+                Err(IpcTransactionAcquireError::Unavailable)
+            } else {
+                Ok(guard)
+            }
+        }
+        Err(TryLockError::WouldBlock) => Err(IpcTransactionAcquireError::Busy),
+        Err(TryLockError::Poisoned(_)) => Err(IpcTransactionAcquireError::Unavailable),
+    }
+}
+
+fn acquire_ipc_transaction_until(
+    deadline: Instant,
+) -> Result<std::sync::MutexGuard<'static, ()>, IpcTransactionAcquireError> {
+    loop {
+        match acquire_ipc_transaction() {
+            Ok(transaction) => return Ok(transaction),
+            Err(IpcTransactionAcquireError::Unavailable) => {
+                return Err(IpcTransactionAcquireError::Unavailable);
+            }
+            Err(IpcTransactionAcquireError::Busy) => {
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    return Err(IpcTransactionAcquireError::Busy);
+                };
+                thread::sleep(remaining.min(IPC_TRANSACTION_RETRY_INTERVAL));
+            }
+        }
+    }
+}
+
+fn remaining_timeout_ms(deadline: Instant) -> Option<u32> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        return None;
+    }
+    let millis = remaining.as_millis().max(1).min(u128::from(u32::MAX));
+    Some(millis as u32)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PipeOpenError {
+    NotReady,
+    AccessDenied(u32),
+    Failed(Option<u32>),
+}
+
+impl fmt::Display for PipeOpenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotReady => formatter.write_str("Mod IPC pipe is not ready"),
+            Self::AccessDenied(code) => write!(formatter, "Mod IPC pipe access denied ({code})"),
+            Self::Failed(Some(code)) => write!(formatter, "Mod IPC pipe open failed ({code})"),
+            Self::Failed(None) => formatter.write_str("Mod IPC pipe open failed"),
+        }
+    }
+}
+
+fn classify_pipe_open_error(error: io::Error) -> PipeOpenError {
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(
+            ERROR_FILE_NOT_FOUND
+            | ERROR_BAD_PIPE
+            | ERROR_PIPE_BUSY
+            | ERROR_PIPE_NOT_CONNECTED
+            | ERROR_SEM_TIMEOUT,
+        ) => PipeOpenError::NotReady,
+        Some(ERROR_ACCESS_DENIED) => PipeOpenError::AccessDenied(ERROR_ACCESS_DENIED),
+        code => PipeOpenError::Failed(code),
+    }
+}
+
+fn open_runtime_pipe(deadline: Instant) -> Result<OwnedHandle, PipeOpenError> {
+    let timeout = remaining_timeout_ms(deadline).ok_or(PipeOpenError::NotReady)?;
     let mut pipe_name = PIPE_NAME.encode_utf16().collect::<Vec<_>>();
     pipe_name.push(0);
 
-    // SAFETY: both buffers live for the duration of the synchronous call, their
-    // exact lengths are passed to Win32, and the pipe name is NUL-terminated.
-    let succeeded = unsafe {
-        CallNamedPipeW(
+    // SAFETY: pipe_name is NUL-terminated and remains alive for the bounded wait.
+    if unsafe { WaitNamedPipeW(pipe_name.as_ptr(), timeout) } == 0 {
+        return Err(classify_pipe_open_error(io::Error::last_os_error()));
+    }
+
+    // SAFETY: pipe_name is NUL-terminated. FILE_FLAG_OVERLAPPED is mandatory so
+    // every protocol phase can be timed out and cancelled independently.
+    let pipe = unsafe {
+        CreateFileW(
             pipe_name.as_ptr(),
-            request.as_ptr().cast(),
-            REQUEST_SIZE as u32,
-            response.as_mut_ptr().cast(),
-            RESPONSE_SIZE as u32,
-            &mut bytes_read,
-            IPC_TIMEOUT_MS,
+            FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE,
+            0,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED,
+            ptr::null_mut(),
         )
     };
-    if succeeded == 0 {
-        return Err(io::Error::last_os_error().to_string());
+    if pipe == INVALID_HANDLE_VALUE {
+        return Err(classify_pipe_open_error(io::Error::last_os_error()));
     }
-    if bytes_read != RESPONSE_SIZE as u32 {
-        return Err(format!(
-            "Mod loader returned {bytes_read} bytes; expected {RESPONSE_SIZE}"
-        ));
+    Ok(OwnedHandle(pipe))
+}
+
+struct OverlappedPipeOperation {
+    _event: OwnedHandle,
+    overlapped: Box<OVERLAPPED>,
+    buffer: Box<[u8]>,
+}
+
+impl OverlappedPipeOperation {
+    fn with_buffer(buffer: Box<[u8]>) -> Result<Self, String> {
+        // SAFETY: this creates one unnamed manual-reset event owned by the
+        // operation. No untrusted security attributes or name are supplied.
+        let event = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
+        if event.is_null() {
+            return Err(io::Error::last_os_error().to_string());
+        }
+        let event = OwnedHandle(event);
+        let mut overlapped = Box::<OVERLAPPED>::default();
+        overlapped.hEvent = event.raw();
+        Ok(Self {
+            _event: event,
+            overlapped,
+            buffer,
+        })
+    }
+
+    fn quarantine(self) {
+        // A cancellation that did not reach a terminal state may still access
+        // OVERLAPPED, its event, and the transfer buffer. Retain exactly one
+        // process-lifetime allocation and fail all future calls closed rather
+        // than returning while the kernel may reference freed memory.
+        IPC_CLIENT_QUARANTINED.store(true, Ordering::Release);
+        std::mem::forget(self);
+    }
+}
+
+fn overlapped_status_is_terminal(error: &io::Error) -> bool {
+    let code = error.raw_os_error().map(|value| value as u32);
+    code == Some(ERROR_OPERATION_ABORTED)
+        || !matches!(
+            code,
+            Some(ERROR_IO_PENDING) | Some(ERROR_IO_INCOMPLETE) | Some(WAIT_TIMEOUT)
+        )
+}
+
+enum OverlappedWaitError {
+    Terminal(String),
+    TimedOut,
+    Undrained,
+}
+
+impl OverlappedWaitError {
+    fn requires_quarantine(&self) -> bool {
+        matches!(self, Self::Undrained)
+    }
+
+    fn into_message(self) -> String {
+        match self {
+            Self::Terminal(message) => message,
+            Self::TimedOut => "Mod IPC operation timed out".to_owned(),
+            Self::Undrained => "Mod IPC cancellation did not reach a terminal state".to_owned(),
+        }
+    }
+}
+
+fn await_overlapped(
+    pipe: HANDLE,
+    operation: &mut OverlappedPipeOperation,
+    deadline: Instant,
+) -> Result<u32, OverlappedWaitError> {
+    if let Some(timeout) = remaining_timeout_ms(deadline) {
+        let mut transferred = 0_u32;
+        // SAFETY: pipe, OVERLAPPED, event, and transfer buffer remain alive for
+        // this wait. The operation is serialized by IPC_TRANSACTION_LOCK.
+        if unsafe {
+            GetOverlappedResultEx(
+                pipe,
+                operation.overlapped.as_ref(),
+                &mut transferred,
+                timeout,
+                0,
+            )
+        } != 0
+        {
+            return Ok(transferred);
+        }
+        let error = io::Error::last_os_error();
+        if overlapped_status_is_terminal(&error) {
+            return Err(OverlappedWaitError::Terminal(error.to_string()));
+        }
+    }
+
+    // SAFETY: the OVERLAPPED belongs to this exact pipe operation and both stay
+    // alive through the bounded terminal-drain attempt.
+    unsafe {
+        CancelIoEx(pipe, operation.overlapped.as_ref());
+    }
+    let mut transferred = 0_u32;
+    // SAFETY: same lifetime proof as above; the additional deadline bounds the
+    // cancellation drain independently of a malicious peer.
+    if unsafe {
+        GetOverlappedResultEx(
+            pipe,
+            operation.overlapped.as_ref(),
+            &mut transferred,
+            IPC_CANCEL_DRAIN_TIMEOUT_MS,
+            0,
+        )
+    } != 0
+    {
+        return Err(OverlappedWaitError::TimedOut);
+    }
+    let drain_error = io::Error::last_os_error();
+    if overlapped_status_is_terminal(&drain_error) {
+        return Err(OverlappedWaitError::TimedOut);
+    }
+
+    Err(OverlappedWaitError::Undrained)
+}
+
+fn overlapped_write_exact(pipe: HANDLE, bytes: &[u8], deadline: Instant) -> Result<(), String> {
+    let mut operation = OverlappedPipeOperation::with_buffer(bytes.to_vec().into_boxed_slice())?;
+    // SAFETY: pipe is opened for overlapped writes and the boxed buffer plus
+    // OVERLAPPED remain stable until completion or quarantine.
+    let started = unsafe {
+        WriteFile(
+            pipe,
+            operation.buffer.as_ptr(),
+            operation.buffer.len() as u32,
+            ptr::null_mut(),
+            operation.overlapped.as_mut(),
+        )
+    };
+    if started == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error().map(|code| code as u32) != Some(ERROR_IO_PENDING) {
+            return Err(error.to_string());
+        }
+    }
+    // Even when WriteFile returns TRUE on an overlapped handle, only the
+    // OVERLAPPED completion result is authoritative for the byte count.
+    let transferred = match await_overlapped(pipe, &mut operation, deadline) {
+        Ok(transferred) => transferred,
+        Err(error) => {
+            if error.requires_quarantine() {
+                operation.quarantine();
+            }
+            return Err(error.into_message());
+        }
+    };
+    if transferred != bytes.len() as u32 {
+        return Err("Mod IPC request was only partially written".to_owned());
+    }
+    Ok(())
+}
+
+fn overlapped_read_exact(
+    pipe: HANDLE,
+    byte_len: usize,
+    deadline: Instant,
+) -> Result<Box<[u8]>, String> {
+    let mut operation =
+        OverlappedPipeOperation::with_buffer(vec![0_u8; byte_len].into_boxed_slice())?;
+    // SAFETY: pipe is opened for overlapped reads and the boxed buffer plus
+    // OVERLAPPED remain stable until completion or quarantine.
+    let started = unsafe {
+        ReadFile(
+            pipe,
+            operation.buffer.as_mut_ptr(),
+            operation.buffer.len() as u32,
+            ptr::null_mut(),
+            operation.overlapped.as_mut(),
+        )
+    };
+    if started == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error().map(|code| code as u32) != Some(ERROR_IO_PENDING) {
+            return Err(error.to_string());
+        }
+    }
+    // ReadFile's synchronous return does not make lpNumberOfBytesRead reliable
+    // for an overlapped handle; consume the same bounded completion path.
+    let transferred = match await_overlapped(pipe, &mut operation, deadline) {
+        Ok(transferred) => transferred,
+        Err(error) => {
+            if error.requires_quarantine() {
+                operation.quarantine();
+            }
+            return Err(error.into_message());
+        }
+    };
+    if transferred != byte_len as u32 {
+        return Err("Mod IPC response was only partially read".to_owned());
+    }
+    Ok(operation.buffer)
+}
+
+fn encode_delivery_ack(request_id: u64) -> [u8; DELIVERY_ACK_SIZE] {
+    let mut ack = [0_u8; DELIVERY_ACK_SIZE];
+    ack[0..4].copy_from_slice(&IPC_DELIVERY_ACK_MAGIC.to_le_bytes());
+    ack[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+    ack[8..16].copy_from_slice(&request_id.to_le_bytes());
+    ack
+}
+
+fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
+    let deadline = Instant::now() + Duration::from_millis(u64::from(IPC_TIMEOUT_MS));
+    // All pipe callers share one bounded transaction lane. Runtime monitors run
+    // on owned worker threads, so waiting here does not hold AppState locks or
+    // block the UI. Treating ordinary contention as provider loss made the Mod
+    // Studio connection and combat-clock health oscillate under capture load.
+    let _transaction =
+        acquire_ipc_transaction_until(deadline).map_err(|error| error.to_string())?;
+    let pipe = open_runtime_pipe(deadline).map_err(|error| error.to_string())?;
+
+    overlapped_write_exact(pipe.raw(), request, deadline)?;
+    let response_bytes = overlapped_read_exact(pipe.raw(), RESPONSE_SIZE, deadline)?;
+    let mut response = [0_u8; RESPONSE_SIZE];
+    response.copy_from_slice(&response_bytes);
+
+    let request_id = u64::from_le_bytes([
+        request[8],
+        request[9],
+        request[10],
+        request[11],
+        request[12],
+        request[13],
+        request[14],
+        request[15],
+    ]);
+    let ack = encode_delivery_ack(request_id);
+    // The ACK is best-effort for compatibility with already-deployed v7 servers
+    // that disconnect immediately after the response. A new server also treats
+    // the client's close after a complete read as delivery, so an ACK failure
+    // must not turn a known response into an ambiguous retryable operation. It
+    // still uses bounded overlapped I/O; when the shared deadline is exhausted,
+    // close-read remains the server's terminal delivery signal.
+    if remaining_timeout_ms(deadline).is_some() {
+        let _ = overlapped_write_exact(pipe.raw(), &ack, deadline);
     }
     Ok(response)
 }
@@ -1860,13 +1498,14 @@ fn decode_response_header(
 fn decode_combat_clock_transitions(
     bytes: &[u8; RESPONSE_SIZE],
     request_id: u64,
-) -> Result<Vec<CombatClockTransitionSnapshot>, String> {
-    let (status, transition_count) = decode_response_header(bytes, request_id)?;
+) -> Result<Vec<CombatClockTransitionSnapshot>, CombatClockQueryError> {
+    let (status, transition_count) = decode_response_header(bytes, request_id)
+        .map_err(|_| CombatClockQueryError::InvalidResponse)?;
     if status == PLUGIN_STATUS_MOD_DISABLED {
-        return Err("combat clock mod is disabled".to_owned());
+        return Err(CombatClockQueryError::ModDisabled);
     }
     if status != PLUGIN_STATUS_DRY_RUN_OK || transition_count as usize > COMBAT_CLOCK_HISTORY_SIZE {
-        return Err("Mod loader returned invalid combat clock history".to_owned());
+        return Err(CombatClockQueryError::InvalidResponse);
     }
 
     let mut transitions = Vec::with_capacity(transition_count as usize);
@@ -1898,7 +1537,7 @@ fn decode_combat_clock_transitions(
             || pause_type_mask & !0x1c != 0
             || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
         {
-            return Err("Mod loader returned invalid combat clock history".to_owned());
+            return Err(CombatClockQueryError::InvalidResponse);
         }
         transitions.push(CombatClockTransitionSnapshot {
             sequence: u64::from_le_bytes(
@@ -2469,7 +2108,8 @@ fn plugin_directory_is_managed(directory: &Path) -> Result<bool, ModsPluginDeplo
             Ok(false)
         };
     }
-    let plugin = fs::read(&plugin_path).map_err(file_system_error)?;
+    let plugin = read_deployment_file_bounded(&plugin_path, MAX_PLUGIN_BINARY_BYTES)
+        .map_err(file_system_error)?;
     if marker_path.exists() {
         let marker = read_marker(&marker_path)?;
         if plugin_marker(&plugin) != marker {
@@ -2517,7 +2157,11 @@ fn inspect_plugin_directories(
         if !plugin_directory_is_managed(directory)? {
             continue;
         }
-        let plugin = fs::read(directory.join(PLUGIN_FILE_NAME)).map_err(file_system_error)?;
+        let plugin = read_deployment_file_bounded(
+            &directory.join(PLUGIN_FILE_NAME),
+            MAX_PLUGIN_BINARY_BYTES,
+        )
+        .map_err(file_system_error)?;
         status.installed += 1;
         if current_plugin.is_some_and(|current| current == plugin) {
             status.current += 1;
@@ -2531,6 +2175,11 @@ fn install_plugin_to_directories(
     directories: &[PathBuf],
     plugin: &[u8],
 ) -> Result<(), ModsPluginDeploymentError> {
+    if plugin.len() > MAX_PLUGIN_BINARY_BYTES {
+        return Err(ModsPluginDeploymentError::FileSystem(
+            "Mod loader binary exceeds its byte budget".to_owned(),
+        ));
+    }
     if !plugin_binary_is_managed(plugin) {
         return Err(ModsPluginDeploymentError::FileSystem(
             "Mod loader binary signature is missing".to_owned(),
@@ -2558,6 +2207,11 @@ fn replace_managed_plugin_directories(
     directories: &[PathBuf],
     plugin: &[u8],
 ) -> Result<(), ModsPluginDeploymentError> {
+    if plugin.len() > MAX_PLUGIN_BINARY_BYTES {
+        return Err(ModsPluginDeploymentError::FileSystem(
+            "Mod loader binary exceeds its byte budget".to_owned(),
+        ));
+    }
     if !plugin_binary_is_managed(plugin) {
         return Err(ModsPluginDeploymentError::FileSystem(
             "Mod loader binary signature is missing".to_owned(),
@@ -2569,7 +2223,7 @@ fn replace_managed_plugin_directories(
             return Err(ModsPluginDeploymentError::InstalledPluginChanged);
         }
         let plugin_path = directory.join(PLUGIN_FILE_NAME);
-        let existing = fs::read(&plugin_path)
+        let existing = read_deployment_file_bounded(&plugin_path, MAX_PLUGIN_BINARY_BYTES)
             .map_err(|_| ModsPluginDeploymentError::InstalledPluginChanged)?;
         backups.push((plugin_path, existing));
     }
@@ -2681,6 +2335,8 @@ fn migrate_legacy_mod_workspace(
 ) -> Result<(), ModsPluginDeploymentError> {
     let mut enabled_set = None;
     let mut scripts = BTreeMap::<String, Vec<u8>>::new();
+    let mut examined_entries = 0_usize;
+    let mut total_source_bytes = 0_usize;
     for game_directory in game_directories {
         let enabled_path = game_directory.join(MOD_SET_FILE_NAME);
         if enabled_path.is_file() {
@@ -2715,6 +2371,12 @@ fn migrate_legacy_mod_workspace(
             Err(error) => return Err(file_system_error(error)),
         };
         for entry in entries {
+            examined_entries = examined_entries.saturating_add(1);
+            if examined_entries > MAX_LEGACY_MOD_FILES {
+                return Err(ModsPluginDeploymentError::FileSystem(
+                    "legacy Mod workspace contains too many entries".to_owned(),
+                ));
+            }
             let entry = entry.map_err(file_system_error)?;
             let file_type = entry.file_type().map_err(file_system_error)?;
             let path = entry.path();
@@ -2744,6 +2406,12 @@ fn migrate_legacy_mod_workspace(
                     ))
                 })?;
             let mut bytes = read_legacy_mod_file(&path)?;
+            total_source_bytes = total_source_bytes.saturating_add(bytes.len());
+            if total_source_bytes > MAX_LEGACY_MOD_TOTAL_BYTES {
+                return Err(ModsPluginDeploymentError::FileSystem(
+                    "legacy Mod workspace exceeds its total byte budget".to_owned(),
+                ));
+            }
             if file_name.eq_ignore_ascii_case(EQUIPMENT_MOD_FILE_NAME)
                 && LEGACY_EQUIPMENT_MOD_PROGRAMS
                     .iter()
@@ -2792,12 +2460,46 @@ fn migrate_legacy_mod_workspace(
 
 #[cfg(feature = "desktop")]
 fn read_legacy_mod_file(path: &Path) -> Result<Vec<u8>, ModsPluginDeploymentError> {
-    let bytes = fs::read(path).map_err(file_system_error)?;
-    if bytes.len() > MAX_LEGACY_MOD_FILE_BYTES {
-        return Err(ModsPluginDeploymentError::FileSystem(format!(
-            "{} exceeds 16 KiB",
-            path.display()
-        )));
+    read_deployment_file_bounded(path, MAX_LEGACY_MOD_FILE_BYTES).map_err(file_system_error)
+}
+
+#[cfg(feature = "desktop")]
+fn read_deployment_file_bounded(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
+    let path_metadata = fs::metadata(path)?;
+    if !path_metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "deployment path is not a regular file",
+        ));
+    }
+    if path_metadata.len() > max_bytes as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deployment file exceeds {max_bytes} byte limit"),
+        ));
+    }
+    let file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "deployment path is not a regular file",
+        ));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deployment file exceeds {max_bytes} byte limit"),
+        ));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(max_bytes));
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deployment file exceeds {max_bytes} byte limit"),
+        ));
     }
     Ok(bytes)
 }
@@ -2808,7 +2510,15 @@ fn remove_legacy_game_mod_files(directory: &Path) -> io::Result<()> {
     let mut mod_files = Vec::new();
     match fs::read_dir(&mod_directory) {
         Ok(entries) => {
+            let mut examined_entries = 0_usize;
             for entry in entries {
+                examined_entries = examined_entries.saturating_add(1);
+                if examined_entries > MAX_LEGACY_MOD_FILES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "legacy Mod directory contains too many entries",
+                    ));
+                }
                 let entry = entry?;
                 let file_type = entry.file_type()?;
                 let path = entry.path();
@@ -2893,7 +2603,7 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
             }
             created.push(path);
         } else {
-            let existing = match fs::read(&path) {
+            let existing = match read_deployment_file_bounded(&path, MAX_LEGACY_MOD_FILE_BYTES) {
                 Ok(existing) => existing,
                 Err(error) => {
                     rollback_default_mod_files(&created, &migrated);
@@ -2915,8 +2625,11 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
 
 #[cfg(feature = "desktop")]
 fn read_marker(path: &Path) -> Result<PluginMarker, ModsPluginDeploymentError> {
-    let text = fs::read_to_string(path).map_err(file_system_error)?;
-    parse_plugin_marker(&text).ok_or(ModsPluginDeploymentError::InstalledPluginChanged)
+    let bytes =
+        read_deployment_file_bounded(path, MAX_PLUGIN_MARKER_BYTES).map_err(file_system_error)?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| ModsPluginDeploymentError::InstalledPluginChanged)?;
+    parse_plugin_marker(text).ok_or(ModsPluginDeploymentError::InstalledPluginChanged)
 }
 
 #[cfg(feature = "desktop")]
@@ -2927,6 +2640,48 @@ fn file_system_error(error: io::Error) -> ModsPluginDeploymentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn runtime_presence_treats_expected_pipe_absence_as_initializing() {
+        for code in [ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_SEM_TIMEOUT] {
+            assert_eq!(
+                classify_pipe_open_error(io::Error::from_raw_os_error(code as i32)),
+                PipeOpenError::NotReady
+            );
+        }
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn absent_runtime_is_reported_before_ipc_lane_contention() {
+        let _transaction = IPC_TRANSACTION_LOCK
+            .lock()
+            .expect("lock the IPC lane for the contention fixture");
+        let event_name = format!(
+            r"Local\nte-mods-plugin-absent-fixture-{}",
+            std::process::id()
+        );
+
+        assert_eq!(
+            probe_runtime_presence_named(&event_name),
+            Ok(ModsPluginRuntimePresence::Absent)
+        );
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn runtime_presence_preserves_pipe_access_denied_code() {
+        let error = classify_pipe_open_error(io::Error::from_raw_os_error(5));
+        assert_eq!(error, PipeOpenError::AccessDenied(5));
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn runtime_presence_keeps_unexpected_pipe_failures_fail_closed() {
+        let error = classify_pipe_open_error(io::Error::from_raw_os_error(87));
+        assert_eq!(error, PipeOpenError::Failed(Some(87)));
+    }
 
     const NATIVE_IPC_HEADER: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -3024,6 +2779,10 @@ mod tests {
     #[test]
     fn rust_wire_constants_match_the_native_ipc_header() {
         assert_eq!(native_define("NTE_MODS_IPC_MAGIC"), IPC_MAGIC as u64);
+        assert_eq!(
+            native_define("NTE_MODS_IPC_DELIVERY_ACK_MAGIC"),
+            IPC_DELIVERY_ACK_MAGIC as u64
+        );
         assert_eq!(native_define("NTE_MODS_IPC_VERSION"), IPC_VERSION as u64);
         assert!(NATIVE_IPC_HEADER.contains(
             "#define NTE_MODS_RUNTIME_PRESENCE_NAME L\"Local\\\\nte-mods-plugin-v1-present\""
@@ -3039,6 +2798,10 @@ mod tests {
         assert_eq!(
             native_define("NTE_MODS_IPC_RESPONSE_SIZE"),
             RESPONSE_SIZE as u64
+        );
+        assert_eq!(
+            native_define("NTE_MODS_IPC_DELIVERY_ACK_SIZE"),
+            DELIVERY_ACK_SIZE as u64
         );
         assert_eq!(
             native_define("NTE_COMBAT_CLOCK_HISTORY_SIZE"),
@@ -3299,6 +3062,61 @@ mod tests {
     }
 
     #[test]
+    fn delivery_ack_uses_the_stable_little_endian_wire_layout() {
+        let bytes = encode_delivery_ack(0x0102_0304_0506_0708);
+        assert_eq!(bytes.len(), DELIVERY_ACK_SIZE);
+        assert_eq!(&bytes[0..4], &IPC_DELIVERY_ACK_MAGIC.to_le_bytes());
+        assert_eq!(&bytes[4..6], &IPC_VERSION.to_le_bytes());
+        assert_eq!(&bytes[6..8], &[0, 0]);
+        assert_eq!(&bytes[8..16], &0x0102_0304_0506_0708_u64.to_le_bytes());
+    }
+
+    #[test]
+    fn overlapped_wait_distinguishes_pending_from_terminal_results() {
+        assert!(!overlapped_status_is_terminal(
+            &io::Error::from_raw_os_error(WAIT_TIMEOUT as i32)
+        ));
+        assert!(!overlapped_status_is_terminal(
+            &io::Error::from_raw_os_error(ERROR_IO_INCOMPLETE as i32)
+        ));
+        assert!(overlapped_status_is_terminal(
+            &io::Error::from_raw_os_error(ERROR_OPERATION_ABORTED as i32)
+        ));
+    }
+
+    #[test]
+    fn ipc_deadline_never_becomes_an_unbounded_wait() {
+        assert!(remaining_timeout_ms(Instant::now() - Duration::from_millis(1)).is_none());
+        let timeout = remaining_timeout_ms(Instant::now() + Duration::from_secs(1));
+        assert!(timeout.is_some_and(|value| value > 0 && value <= 1_000));
+    }
+
+    #[test]
+    fn ipc_request_waits_for_the_active_bounded_transaction() {
+        let active = IPC_TRANSACTION_LOCK
+            .lock()
+            .expect("lock the active IPC transaction fixture");
+        let (result_sender, result_receiver) = std::sync::mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_millis(250);
+            let acquired = acquire_ipc_transaction_until(deadline).is_ok();
+            result_sender
+                .send(acquired)
+                .expect("publish bounded acquisition result");
+        });
+
+        thread::sleep(Duration::from_millis(20));
+        assert!(result_receiver.try_recv().is_err());
+        drop(active);
+        assert!(
+            result_receiver
+                .recv_timeout(Duration::from_millis(200))
+                .expect("waiter completes after the active transaction")
+        );
+        waiter.join().expect("join transaction waiter");
+    }
+
+    #[test]
     fn response_accepts_the_new_boolean_validation_status() {
         let mut bytes = [0_u8; RESPONSE_SIZE];
         bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
@@ -3328,7 +3146,7 @@ mod tests {
 
         assert_eq!(
             decode_combat_clock_transitions(&bytes, 19),
-            Err("combat clock mod is disabled".to_owned())
+            Err(CombatClockQueryError::ModDisabled)
         );
     }
 
@@ -3593,6 +3411,36 @@ mod tests {
             std::str::from_utf8(PLUGIN_BINARY_SIGNATURE).unwrap()
         )
         .into_bytes()
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn deployment_file_reader_and_legacy_batch_are_bounded() {
+        let directory = deployment_test_directory("bounded-inputs");
+        let file = directory.join("bounded.bin");
+        fs::write(&file, b"12345").unwrap();
+        assert_eq!(read_deployment_file_bounded(&file, 5).unwrap(), b"12345");
+        assert_eq!(
+            read_deployment_file_bounded(&file, 4).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            read_deployment_file_bounded(&directory, 5)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let mod_directory = directory.join(MOD_DIRECTORY_NAME);
+        fs::create_dir_all(&mod_directory).unwrap();
+        for index in 0..=MAX_LEGACY_MOD_FILES {
+            fs::write(mod_directory.join(format!("mod-{index}.nte")), b"x").unwrap();
+        }
+        assert_eq!(
+            remove_legacy_game_mod_files(&directory).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

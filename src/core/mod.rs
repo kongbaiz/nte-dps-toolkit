@@ -49,6 +49,9 @@ pub enum CoreErrorCode {
     CaptureAlreadyRunning,
     /// No capture is active for this controller.
     CaptureNotRunning,
+    /// The live-capture runtime detected poisoned authoritative or lifecycle
+    /// state and permanently stopped the current service instance.
+    CaptureStateUnavailable,
 }
 
 /// `detail` carries the underlying technical message. Today those messages

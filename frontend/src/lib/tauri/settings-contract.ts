@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   HUD_MODULE_IDS,
   parseHudConfigSnapshot,
@@ -7,8 +8,13 @@ import {
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 import { compareDecimalStrings } from "@/lib/decimal-string";
+import {
+  parseDpsTimeRuntime,
+  type DpsTimeModeId,
+  type DpsTimeRuntime,
+} from "@/lib/tauri/dps-time-contract";
 
-export const SETTINGS_CONTRACT_VERSION = 4;
+export const SETTINGS_CONTRACT_VERSION = 6;
 export const HUD_SETTING_OPTION_IDS = [
   "title",
   "team_dps",
@@ -24,6 +30,24 @@ export const HUD_PRESET_IDS = ["minimal", "standard", "detailed"] as const;
 export const GLOBAL_HOTKEY_ACTION_IDS = ["capture", "reset", "hud"] as const;
 export const LAYOUT_PROFILE_IDS = ["combat", "review", "research"] as const;
 
+const {
+  array,
+  boolean,
+  decimalString,
+  enumValue,
+  finiteNumber,
+  integer,
+  nonNegativeInteger,
+  nullableEnumValue,
+  nullableString,
+  positiveInteger,
+  record,
+  string,
+  stringArray,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
+
 export type HudSettingOptionId = (typeof HUD_SETTING_OPTION_IDS)[number];
 export type HudPresetId = (typeof HUD_PRESET_IDS)[number];
 export type GlobalHotkeyActionId = (typeof GLOBAL_HOTKEY_ACTION_IDS)[number];
@@ -33,7 +57,7 @@ export type SettingsLanguage = "en" | "ja" | "zh-CN";
 export type ThemePresetId = "zinc" | "tactical" | "high-contrast";
 export type AccentId = "zinc" | "blue" | "violet" | "orange" | "green";
 export type DensityId = "compact" | "cozy" | "comfortable";
-export type DpsTimeModeId = "time-stop-adjusted" | "real-time";
+export type { DpsTimeModeId } from "@/lib/tauri/dps-time-contract";
 export type PassthroughHotkeyId = "home" | "insert" | "f8" | "f9";
 export type UpdateComponentId = "app" | "mods-plugin";
 export type FunctionKey =
@@ -98,6 +122,7 @@ export interface CaptureDevice {
 export interface CaptureSettings {
   bpfFilter: string;
   devices: CaptureDevice[];
+  devicesAvailable: boolean;
   manualCaptureDevice: string | null;
   serverDamageCalibration: boolean;
   separateReactionDamage: boolean;
@@ -106,6 +131,7 @@ export interface CaptureSettings {
   autoRoundIdleSecondsMin: number;
   autoRoundIdleSecondsMax: number;
   dpsTimeMode: DpsTimeModeId;
+  dpsTimeRuntime: DpsTimeRuntime;
   passthroughHotkey: PassthroughHotkeyId;
 }
 
@@ -133,6 +159,7 @@ export interface CaptureFiles {
 }
 
 export interface TeamDataSettings {
+  available: boolean;
   upperImported: boolean;
   lowerImported: boolean;
 }
@@ -172,7 +199,10 @@ export interface UpdateSettingsInput {
 }
 export type CaptureSettingsInput = Omit<
   CaptureSettings,
-  "devices" | "autoRoundIdleSecondsMin" | "autoRoundIdleSecondsMax"
+  | "devices"
+  | "autoRoundIdleSecondsMin"
+  | "autoRoundIdleSecondsMax"
+  | "dpsTimeRuntime"
 >;
 
 export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
@@ -273,6 +303,10 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     updates: parseUpdateSettings(updates),
     capture: {
       bpfFilter: string(capture.bpfFilter, "settings.capture.bpfFilter"),
+      devicesAvailable: boolean(
+        capture.devicesAvailable,
+        "settings.capture.devicesAvailable",
+      ),
       devices: array(capture.devices, "settings.capture.devices").map(
         (device, index) => {
           const parsed = record(device, `settings.capture.devices[${index}]`);
@@ -309,6 +343,10 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
         ["time-stop-adjusted", "real-time"] as const,
         "settings.capture.dpsTimeMode",
       ),
+      dpsTimeRuntime: parseDpsTimeRuntime(
+        capture.dpsTimeRuntime,
+        "settings.capture.dpsTimeRuntime",
+      ),
       passthroughHotkey: enumValue(
         capture.passthroughHotkey,
         ["home", "insert", "f8", "f9"] as const,
@@ -334,6 +372,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       ),
     },
     teamData: {
+      available: boolean(teamData.available, "settings.teamData.available"),
       upperImported: boolean(
         teamData.upperImported,
         "settings.teamData.upperImported",
@@ -478,14 +517,6 @@ function parsePreparedUpdate(value: unknown, field: string): PreparedUpdate {
   };
 }
 
-function nullableEnumValue<const T extends readonly string[]>(
-  value: unknown,
-  options: T,
-  field: string,
-): T[number] | null {
-  return value === null ? null : enumValue(value, options, field);
-}
-
 export function compareSettingsGeneration(left: string, right: string): number {
   return compareDecimalStrings(left, right);
 }
@@ -578,96 +609,4 @@ export function formatHotkeyBinding(
 
 export function isHudModuleId(value: string): value is HudModuleId {
   return HUD_MODULE_IDS.includes(value as HudModuleId);
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value;
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    throw new TechnicalContractError(`${field} must be a string`);
-  }
-  return value;
-}
-
-function nullableString(value: unknown, field: string): string | null {
-  return value === null ? null : string(value, field);
-}
-
-function stringArray(value: unknown, field: string): string[] {
-  return array(value, field).map((item, index) =>
-    string(item, `${field}[${index}]`),
-  );
-}
-
-function decimalString(value: unknown, field: string): string {
-  const parsed = string(value, field);
-  if (!/^(0|[1-9]\d*)$/.test(parsed)) {
-    throw new TechnicalContractError(`${field} must be an unsigned decimal`);
-  }
-  return parsed;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0) {
-    throw new TechnicalContractError(`${field} must not be negative`);
-  }
-  return parsed;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed <= 0) {
-    throw new TechnicalContractError(`${field} must be greater than zero`);
-  }
-  return parsed;
-}
-
-function finiteNumber(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new TechnicalContractError(`${field} must be finite`);
-  }
-  return value;
-}
-
-function boolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  }
-  return value;
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  values: T,
-  field: string,
-): T[number] {
-  const parsed = string(value, field);
-  if (!values.includes(parsed)) {
-    throw new TechnicalContractError(`${field} has an unsupported value`);
-  }
-  return parsed as T[number];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

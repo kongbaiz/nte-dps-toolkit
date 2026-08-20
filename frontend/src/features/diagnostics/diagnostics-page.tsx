@@ -41,12 +41,12 @@ import type {
   DiagnosticsQualitySnapshot,
   DiagnosticsSnapshot,
 } from "@/lib/tauri/diagnostics-contract";
+import { formatByteCount } from "@/lib/update-presentation";
 import { cn } from "@/lib/utils";
 
 import {
   buildRedactedDiagnosticsReport,
   diagnosticsContentKind,
-  formatByteCount,
   formatDecimalString,
 } from "./diagnostics-model";
 import { useDiagnostics, type DiagnosticsAction } from "./use-diagnostics";
@@ -506,6 +506,11 @@ function QualitySection({ quality }: { quality: DiagnosticsQualitySnapshot }) {
       formatDecimalString(quality.abyssEventCount),
       formatDecimalString(quality.serverDamageCorrections),
     ],
+    [
+      "Unassigned server HP deltas / damage",
+      formatDecimalString(quality.unattributedServerDamageEvents),
+      quality.unattributedServerDamage,
+    ],
   ] as const;
   return (
     <section aria-labelledby="diagnostics-quality" className="pb-8">
@@ -536,6 +541,13 @@ function QualitySection({ quality }: { quality: DiagnosticsQualitySnapshot }) {
           </div>
         ))}
       </dl>
+      {quality.unattributedServerDamageEvents !== "0" ? (
+        <p className="px-4 pt-3 text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+          {t(
+            "Server HP loss without one matching hit remains explicitly unassigned and is not added to team or character totals.",
+          )}
+        </p>
+      ) : null}
     </section>
   );
 }

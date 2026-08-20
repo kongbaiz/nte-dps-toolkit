@@ -1,6 +1,6 @@
 //! Versioned, bounded read models for stdio battle record, axis and timeline queries.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::Serialize;
 
@@ -17,7 +17,9 @@ use crate::{
 
 use super::dto::{BattleQualityDto, BattleSummaryDto};
 
-pub const BATTLE_READ_CONTRACT_VERSION: u32 = 1;
+/// Version 2 adds bounded timeline omission/compaction metadata. All battle
+/// read DTOs share one version so a CLI consumer can reject mixed semantics.
+pub const BATTLE_READ_CONTRACT_VERSION: u32 = 2;
 pub const BATTLE_TIMELINE_BUCKET_LIMIT: usize = 10_000;
 pub const BATTLE_TIMELINE_ROLE_LIMIT: usize = 100_000;
 
@@ -214,31 +216,19 @@ pub fn battle_axis(
         });
     }
 
-    let last_requested = cursor
-        .saturating_add(limit.saturating_sub(1) as u64)
-        .min(total_hits);
-    let mut first_half = half_hit_counts(&state.abyss.first_half.hits);
-    let mut second_half = half_hit_counts(&state.abyss.second_half.hits);
     let started_at = state.started_at.unwrap_or(0.0);
-    let mut rows = Vec::with_capacity(limit.min(state.hits.len()));
-    for (index, hit) in state.hits.iter().enumerate() {
-        let sequence = context
-            .axis_base_sequence
-            .saturating_add(index as u64)
-            .saturating_add(1);
-        let half = take_hit_half(hit, &mut first_half, &mut second_half);
-        if sequence < cursor {
-            continue;
-        }
-        if sequence > last_requested {
-            break;
-        }
+    let offset =
+        usize::try_from(cursor.saturating_sub(first_available)).unwrap_or(state.hits.len());
+    let page_limit = limit.min(state.hits.len().saturating_sub(offset));
+    let mut rows = Vec::with_capacity(page_limit);
+    for (page_index, (hit, half)) in state.global_hit_axis_page(offset, page_limit).enumerate() {
+        let sequence = cursor.saturating_add(page_index as u64);
         rows.push(axis_hit(hit, context.id, sequence, started_at, half));
     }
-    let next_cursor = rows
-        .last()
-        .and_then(|row| row.sequence.parse::<u64>().ok())
-        .and_then(|last| (last < total_hits).then(|| last.saturating_add(1).to_string()));
+    let next_cursor = (!rows.is_empty())
+        .then(|| cursor.saturating_add(rows.len() as u64))
+        .filter(|next| *next <= total_hits)
+        .map(|next| next.to_string());
 
     Ok(BattleAxisDto {
         contract_version: BATTLE_READ_CONTRACT_VERSION,
@@ -309,63 +299,6 @@ fn axis_hit(
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-struct AxisHitKey {
-    timestamp: u64,
-    character_id: u32,
-    byte_offset: usize,
-    bit_shift: u8,
-    damage: u64,
-    target_hp_after: u64,
-}
-
-impl From<&Hit> for AxisHitKey {
-    fn from(hit: &Hit) -> Self {
-        Self {
-            timestamp: hit.timestamp.to_bits(),
-            character_id: hit.char_id,
-            byte_offset: hit.byte_offset,
-            bit_shift: hit.bit_shift,
-            damage: hit.damage.to_bits(),
-            target_hp_after: hit.target_hp_after.to_bits(),
-        }
-    }
-}
-
-fn half_hit_counts(hits: &std::collections::VecDeque<Hit>) -> HashMap<AxisHitKey, usize> {
-    let mut counts = HashMap::new();
-    for hit in hits {
-        *counts.entry(AxisHitKey::from(hit)).or_insert(0) += 1;
-    }
-    counts
-}
-
-fn take_hit_half(
-    hit: &Hit,
-    first: &mut HashMap<AxisHitKey, usize>,
-    second: &mut HashMap<AxisHitKey, usize>,
-) -> Option<AbyssHalf> {
-    let key = AxisHitKey::from(hit);
-    if take_count(first, key) {
-        Some(AbyssHalf::First)
-    } else if take_count(second, key) {
-        Some(AbyssHalf::Second)
-    } else {
-        None
-    }
-}
-
-fn take_count(counts: &mut HashMap<AxisHitKey, usize>, key: AxisHitKey) -> bool {
-    let Some(count) = counts.get_mut(&key) else {
-        return false;
-    };
-    *count -= 1;
-    if *count == 0 {
-        counts.remove(&key);
-    }
-    true
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct BattleTimelineDto {
     pub contract_version: u32,
@@ -375,6 +308,7 @@ pub struct BattleTimelineDto {
     pub complete: bool,
     pub scope: &'static str,
     pub bucket_seconds: f64,
+    pub effective_bucket_seconds: f64,
     pub bucket_seconds_min: f64,
     pub bucket_seconds_max: f64,
     pub bucket_seconds_step: f64,
@@ -384,6 +318,7 @@ pub struct BattleTimelineDto {
     pub peak_dps: f64,
     pub time_stop_duration_seconds: f64,
     pub time_stop_intervals: Vec<BattleTimelineIntervalDto>,
+    pub compacted_time_stop_intervals: u64,
     pub markers: Vec<BattleTimelineMarkerDto>,
     pub characters: Vec<BattleTimelineCharacterDto>,
     pub buckets: Vec<BattleTimelineBucketDto>,
@@ -444,12 +379,12 @@ pub fn battle_timeline(
 ) -> Result<BattleTimelineDto, BattleReadError> {
     let span = timeline_span(state, scope);
     if let Some((start, end)) = span {
-        let bucket_count =
-            ((end - start).max(0.0) / f64::from(bucket_seconds)).floor() as usize + 1;
-        let role_upper_bound = bucket_count.saturating_mul(timeline_character_count(state, scope));
-        if bucket_count > BATTLE_TIMELINE_BUCKET_LIMIT
-            || role_upper_bound > BATTLE_TIMELINE_ROLE_LIMIT
-        {
+        let bucket_count = saturating_timeline_bucket_count(start, end, bucket_seconds);
+        if bucket_count > BATTLE_TIMELINE_BUCKET_LIMIT {
+            return Err(BattleReadError::TimelineTooLarge);
+        }
+        let max_characters = (BATTLE_TIMELINE_ROLE_LIMIT / bucket_count.max(1)).min(256);
+        if timeline_character_count_exceeds(state, scope, max_characters) {
             return Err(BattleReadError::TimelineTooLarge);
         }
     }
@@ -459,6 +394,9 @@ pub fn battle_timeline(
         TimelineProjectionOptions {
             scope,
             bucket_seconds,
+            max_buckets: BATTLE_TIMELINE_BUCKET_LIMIT,
+            max_roles_per_bucket: 256,
+            max_characters: 256,
             subtract_time_stop,
             language: Language::English,
         },
@@ -482,6 +420,7 @@ pub fn battle_timeline(
         complete: context.axis_base_sequence == 0,
         scope: timeline_scope_code(scope),
         bucket_seconds: projection.bucket_seconds,
+        effective_bucket_seconds: projection.effective_bucket_seconds,
         bucket_seconds_min: projection.bucket_seconds_min,
         bucket_seconds_max: projection.bucket_seconds_max,
         bucket_seconds_step: projection.bucket_seconds_step,
@@ -498,6 +437,7 @@ pub fn battle_timeline(
                 end_offset_seconds: interval.end,
             })
             .collect(),
+        compacted_time_stop_intervals: projection.compacted_time_stop_intervals,
         markers: projection
             .markers
             .into_iter()
@@ -554,37 +494,52 @@ pub fn battle_timeline(
 
 fn timeline_span(state: &CombatState, scope: TimelineScope) -> Option<(f64, f64)> {
     match scope {
-        TimelineScope::Whole => hit_span(state.hits.iter()),
-        TimelineScope::First => hit_span(state.abyss.first_half.hits.iter()),
-        TimelineScope::Second => hit_span(state.abyss.second_half.hits.iter()),
+        TimelineScope::Whole => state.started_at.zip(state.ended_at),
+        TimelineScope::First => state
+            .abyss
+            .first_half
+            .started_at
+            .zip(state.abyss.first_half.ended_at),
+        TimelineScope::Second => state
+            .abyss
+            .second_half
+            .started_at
+            .zip(state.abyss.second_half.ended_at),
     }
 }
 
-fn timeline_character_count(state: &CombatState, scope: TimelineScope) -> usize {
-    let hits = match scope {
-        TimelineScope::Whole => &state.hits,
-        TimelineScope::First => &state.abyss.first_half.hits,
-        TimelineScope::Second => &state.abyss.second_half.hits,
+fn timeline_character_count_exceeds(
+    state: &CombatState,
+    scope: TimelineScope,
+    limit: usize,
+) -> bool {
+    let count = match scope {
+        TimelineScope::Whole => state.bounded_timeline_character_count(),
+        TimelineScope::First => state.abyss.first_half.bounded_timeline_character_count(),
+        TimelineScope::Second => state.abyss.second_half.bounded_timeline_character_count(),
     };
-    hits.iter()
-        .filter(|hit| !hit.direction.is_incoming() && hit.timestamp.is_finite())
-        .map(|hit| hit.char_id)
-        .collect::<HashSet<_>>()
-        .len()
+    count.exceeds(limit)
 }
 
-fn hit_span<'a>(hits: impl Iterator<Item = &'a Hit>) -> Option<(f64, f64)> {
-    let mut range: Option<(f64, f64)> = None;
-    for timestamp in hits
-        .filter(|hit| !hit.direction.is_incoming() && hit.timestamp.is_finite())
-        .map(|hit| hit.timestamp)
+fn saturating_timeline_bucket_count(start: f64, end: f64, bucket_seconds: f32) -> usize {
+    let bucket_seconds = f64::from(bucket_seconds);
+    if !start.is_finite()
+        || !end.is_finite()
+        || !bucket_seconds.is_finite()
+        || bucket_seconds <= 0.0
     {
-        range = Some(match range {
-            Some((start, end)) => (start.min(timestamp), end.max(timestamp)),
-            None => (timestamp, timestamp),
-        });
+        return usize::MAX;
     }
-    range
+    let span = end - start;
+    if !span.is_finite() {
+        return usize::MAX;
+    }
+    let ratio = span.max(0.0) / bucket_seconds;
+    if !ratio.is_finite() || ratio >= usize::MAX as f64 {
+        usize::MAX
+    } else {
+        (ratio.floor() as usize).saturating_add(1)
+    }
 }
 
 pub const fn timeline_scope_code(scope: TimelineScope) -> &'static str {
@@ -687,10 +642,152 @@ mod tests {
     }
 
     #[test]
+    fn battle_axis_sidecar_preserves_duplicate_half_membership_and_restart_reset() {
+        use crate::engine::model::AbyssEvent;
+
+        let mut state = CombatState::default();
+        let mut duplicate = test_hit(1.0, 100.0);
+        duplicate.char_known = false;
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: None,
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(duplicate.clone());
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 2.0,
+            cycle: None,
+            floor: Some(1),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        state.push_hit(duplicate);
+
+        let before_restart = battle_axis(&state, context(0), None, 10).expect("axis page");
+        assert_eq!(
+            before_restart
+                .rows
+                .iter()
+                .map(|row| row.abyss_half)
+                .collect::<Vec<_>>(),
+            [Some("upper"), Some("lower")]
+        );
+
+        state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 3.0 });
+        let after_restart = battle_axis(&state, context(0), None, 10).expect("axis page");
+        assert_eq!(
+            after_restart
+                .rows
+                .iter()
+                .map(|row| row.abyss_half)
+                .collect::<Vec<_>>(),
+            [Some("upper"), None]
+        );
+    }
+
+    #[test]
+    fn battle_axis_sidecar_tracks_late_abyss_backfill() {
+        use crate::engine::model::AbyssEvent;
+
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(1.0, 100.0));
+        state.push_hit(test_hit(2.0, 200.0));
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.5,
+            cycle: None,
+            floor: Some(1),
+            half: AbyssHalf::Second,
+            allow_late_backfill: true,
+        });
+
+        let axis = battle_axis(&state, context(0), None, 10).expect("axis page");
+        assert_eq!(
+            axis.rows
+                .iter()
+                .map(|row| row.abyss_half)
+                .collect::<Vec<_>>(),
+            [Some("lower"), Some("lower")]
+        );
+    }
+
+    #[test]
+    fn battle_axis_sidecar_is_rebuilt_with_history_halves() {
+        let mut restored = CombatState::default();
+        restored.abyss.first_half.push_hit(test_hit(2.0, 200.0));
+        restored.abyss.second_half.push_hit(test_hit(1.0, 100.0));
+        restored.rebuild_global_from_abyss();
+
+        let axis = battle_axis(&restored, context(0), None, 10).expect("history axis page");
+        assert_eq!(
+            axis.rows
+                .iter()
+                .map(|row| (row.timestamp_unix, row.abyss_half))
+                .collect::<Vec<_>>(),
+            [(1.0, Some("lower")), (2.0, Some("upper"))]
+        );
+    }
+
+    #[test]
+    fn battle_axis_deep_page_and_timeline_role_preflight_do_not_visit_hit_prefix() {
+        const RETAINED_HITS: usize = 500_002;
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 1.0);
+        hit.char_name.clear();
+        hit.damage_name = None;
+        hit.attack_type = None;
+        state.install_large_axis_fixture(hit, RETAINED_HITS);
+
+        crate::engine::model::reset_global_hit_axis_page_visits();
+        let page = battle_axis(&state, context(0), Some(500_001), 2).expect("deep page");
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(page.rows[0].sequence, "500001");
+        assert_eq!(page.rows[1].sequence, "500002");
+        assert_eq!(crate::engine::model::global_hit_axis_page_visits(), 2);
+
+        let role_count = state.bounded_timeline_character_count();
+        assert_eq!(
+            role_count.retained, 1,
+            "the incremental role index is independent of retained hit count"
+        );
+        assert!(!role_count.overflowed);
+        assert!(!timeline_character_count_exceeds(
+            &state,
+            TimelineScope::Whole,
+            1
+        ));
+        assert!(timeline_character_count_exceeds(
+            &state,
+            TimelineScope::Whole,
+            0
+        ));
+    }
+
+    #[test]
     fn battle_read_timeline_rejects_a_response_that_exceeds_the_bucket_budget() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(0.0, 100.0));
         state.push_hit(test_hit(3_000.0, 200.0));
+
+        assert!(matches!(
+            battle_timeline(
+                &state,
+                &HashMap::new(),
+                context(0),
+                TimelineScope::Whole,
+                0.2,
+                true,
+            ),
+            Err(BattleReadError::TimelineTooLarge)
+        ));
+    }
+
+    #[test]
+    fn battle_read_timeline_rejects_extreme_finite_span_without_count_overflow() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(-f64::MAX, 100.0));
+        state.push_hit(test_hit(f64::MAX, 200.0));
 
         assert!(matches!(
             battle_timeline(

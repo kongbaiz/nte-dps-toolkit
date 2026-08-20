@@ -1,11 +1,33 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const PACKETS_CONTRACT_VERSION = 1;
+export const PACKETS_CONTRACT_VERSION = 2;
 export const PACKETS_MAX_DISPLAY = 500;
+export const PACKETS_MAX_SOURCE_BYTES = 512;
+export const PACKETS_MAX_DESTINATION_BYTES = 512;
+export const PACKETS_MAX_DIRECTION_BYTES = 64;
+export const PACKETS_MAX_NOTE_BYTES = 16_384;
+export const PACKETS_MAX_DECODED_TEXT_BYTES = 2_000_000;
+export const PACKETS_MAX_DECLARED_IDS = 256;
+
+const {
+  array: list,
+  boundedUtf8String,
+  decimalString32: decimal,
+  enumValue,
+  integer,
+  nonNegativeInteger,
+  nonNegativeNumber,
+  positiveInteger,
+  record: object,
+  unsigned32,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type PacketsCommandError = TechnicalCommandError;
 export type PacketsCapturePhase =
@@ -22,6 +44,8 @@ export interface PacketSnapshot {
   parsedHits: number;
   note: string;
   decodedText: string;
+  omittedTextBytes: string;
+  omittedDeclaredIdCount: string;
 }
 
 export interface PacketsSnapshot {
@@ -29,6 +53,7 @@ export interface PacketsSnapshot {
   generation: string;
   sessionGeneration: string;
   packetGeneration: string;
+  firstDisplaySequence: string;
   capturePhase: PacketsCapturePhase;
   eventCount: number;
   observedPacketCount: string;
@@ -36,6 +61,9 @@ export interface PacketsSnapshot {
   retainedPacketCount: number;
   queuedEventCount: number;
   displayLimit: number;
+  truncatedPacketCount: number;
+  omittedTextBytes: string;
+  omittedDeclaredIdCount: string;
   packets: PacketSnapshot[];
 }
 
@@ -66,6 +94,64 @@ export function parsePacketsSnapshot(value: unknown): PacketsSnapshot {
   if (packets.length > displayLimit) {
     throw new TechnicalContractError("packets.packets exceeds display limit");
   }
+  const parsedPackets = packets.map(parsePacket);
+  const firstDisplaySequence = decimal(
+    item.firstDisplaySequence,
+    "packets.firstDisplaySequence",
+  );
+  if (
+    parsedPackets.some(
+      (packet) => BigInt(packet.sequence) < BigInt(firstDisplaySequence),
+    )
+  ) {
+    throw new TechnicalContractError(
+      "packets packet sequence precedes firstDisplaySequence",
+    );
+  }
+  const truncatedPacketCount = nonNegativeInteger(
+    item.truncatedPacketCount,
+    "packets.truncatedPacketCount",
+  );
+  if (truncatedPacketCount > parsedPackets.length) {
+    throw new TechnicalContractError(
+      "packets.truncatedPacketCount exceeds packet rows",
+    );
+  }
+  const observedTruncatedPacketCount = parsedPackets.filter(
+    (packet) =>
+      packet.omittedTextBytes !== "0" || packet.omittedDeclaredIdCount !== "0",
+  ).length;
+  if (truncatedPacketCount !== observedTruncatedPacketCount) {
+    throw new TechnicalContractError(
+      "packets.truncatedPacketCount does not match packet omission metadata",
+    );
+  }
+  const omittedTextBytes = decimal(
+    item.omittedTextBytes,
+    "packets.omittedTextBytes",
+  );
+  const omittedDeclaredIdCount = decimal(
+    item.omittedDeclaredIdCount,
+    "packets.omittedDeclaredIdCount",
+  );
+  const rowOmittedTextBytes = parsedPackets.reduce(
+    (total, packet) => total + BigInt(packet.omittedTextBytes),
+    0n,
+  );
+  const rowOmittedDeclaredIds = parsedPackets.reduce(
+    (total, packet) => total + BigInt(packet.omittedDeclaredIdCount),
+    0n,
+  );
+  if (rowOmittedTextBytes !== BigInt(omittedTextBytes)) {
+    throw new TechnicalContractError(
+      "packets.omittedTextBytes does not match packet rows",
+    );
+  }
+  if (rowOmittedDeclaredIds !== BigInt(omittedDeclaredIdCount)) {
+    throw new TechnicalContractError(
+      "packets.omittedDeclaredIdCount does not match packet rows",
+    );
+  }
   return {
     contractVersion,
     generation: decimal(item.generation, "packets.generation"),
@@ -77,6 +163,7 @@ export function parsePacketsSnapshot(value: unknown): PacketsSnapshot {
       item.packetGeneration,
       "packets.packetGeneration",
     ),
+    firstDisplaySequence,
     capturePhase: enumValue(
       item.capturePhase,
       ["idle", "starting", "running", "stopping", "stopped", "failed"] as const,
@@ -97,7 +184,10 @@ export function parsePacketsSnapshot(value: unknown): PacketsSnapshot {
       "packets.queuedEventCount",
     ),
     displayLimit,
-    packets: packets.map(parsePacket),
+    truncatedPacketCount,
+    omittedTextBytes,
+    omittedDeclaredIdCount,
+    packets: parsedPackets,
   };
 }
 
@@ -122,7 +212,7 @@ function parsePacket(value: unknown, index: number): PacketSnapshot {
     item.declaredIds,
     `packets.packets[${index}].declaredIds`,
   );
-  if (declaredIds.length > 256) {
+  if (declaredIds.length > PACKETS_MAX_DECLARED_IDS) {
     throw new TechnicalContractError(
       `packets.packets[${index}].declaredIds exceeds bounds`,
     );
@@ -133,16 +223,23 @@ function parsePacket(value: unknown, index: number): PacketSnapshot {
       item.timestamp,
       `packets.packets[${index}].timestamp`,
     ),
-    source: boundedText(item.source, `packets.packets[${index}].source`, 512),
-    destination: boundedText(
+    source: boundedUtf8String(
+      item.source,
+      `packets.packets[${index}].source`,
+      PACKETS_MAX_SOURCE_BYTES,
+      { allowEmpty: true },
+    ),
+    destination: boundedUtf8String(
       item.destination,
       `packets.packets[${index}].destination`,
-      512,
+      PACKETS_MAX_DESTINATION_BYTES,
+      { allowEmpty: true },
     ),
-    direction: boundedText(
+    direction: boundedUtf8String(
       item.direction,
       `packets.packets[${index}].direction`,
-      64,
+      PACKETS_MAX_DIRECTION_BYTES,
+      { allowEmpty: true },
     ),
     payloadLen: nonNegativeInteger(
       item.payloadLen,
@@ -155,90 +252,25 @@ function parsePacket(value: unknown, index: number): PacketSnapshot {
       item.parsedHits,
       `packets.packets[${index}].parsedHits`,
     ),
-    note: boundedText(item.note, `packets.packets[${index}].note`, 16_384),
-    decodedText: boundedText(
+    note: boundedUtf8String(
+      item.note,
+      `packets.packets[${index}].note`,
+      PACKETS_MAX_NOTE_BYTES,
+      { allowEmpty: true },
+    ),
+    decodedText: boundedUtf8String(
       item.decodedText,
       `packets.packets[${index}].decodedText`,
-      2_000_000,
+      PACKETS_MAX_DECODED_TEXT_BYTES,
+      { allowEmpty: true },
+    ),
+    omittedTextBytes: decimal(
+      item.omittedTextBytes,
+      `packets.packets[${index}].omittedTextBytes`,
+    ),
+    omittedDeclaredIdCount: decimal(
+      item.omittedDeclaredIdCount,
+      `packets.packets[${index}].omittedDeclaredIdCount`,
     ),
   };
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function boundedText(value: unknown, field: string, maxLength: number): string {
-  if (typeof value !== "string" || value.length > maxLength) {
-    throw new TechnicalContractError(`${field} must be bounded text`);
-  }
-  return value;
-}
-
-function decimal(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length > 32 || !/^\d+$/.test(value)) {
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  }
-  return value;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0) {
-    throw new TechnicalContractError(`${field} must be non-negative`);
-  }
-  return parsed;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed <= 0) {
-    throw new TechnicalContractError(`${field} must be positive`);
-  }
-  return parsed;
-}
-
-function unsigned32(value: unknown, field: string): number {
-  const parsed = nonNegativeInteger(value, field);
-  if (parsed > 0xffff_ffff) {
-    throw new TechnicalContractError(`${field} must fit u32`);
-  }
-  return parsed;
-}
-
-function nonNegativeNumber(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new TechnicalContractError(
-      `${field} must be finite and non-negative`,
-    );
-  }
-  return value;
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  allowed: T,
-  field: string,
-): T[number] {
-  if (typeof value !== "string" || !allowed.includes(value)) {
-    throw new TechnicalContractError(`${field} is invalid`);
-  }
-  return value as T[number];
 }

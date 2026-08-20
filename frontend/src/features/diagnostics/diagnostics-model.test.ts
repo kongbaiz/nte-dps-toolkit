@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { DiagnosticsSnapshot } from "@/lib/tauri/diagnostics-contract";
+import { formatByteCount } from "@/lib/update-presentation";
 
 import {
   buildRedactedDiagnosticsReport,
   diagnosticsContentKind,
   diagnosticsSnapshotIsAtLeast,
-  formatByteCount,
   formatDecimalString,
 } from "./diagnostics-model";
 

@@ -1,7 +1,4 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
-  parseSubscriptionReceipt,
   parseTechnicalCommandError,
   parseTechnicalEvent,
   parseTechnicalSnapshot,
@@ -10,6 +7,10 @@ import {
   type TechnicalCommandError,
   type TechnicalSnapshot,
 } from "@/lib/tauri/technical-contract";
+import {
+  subscribeStream,
+  tauriStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   getSnapshot: "get_technical_snapshot",
@@ -56,14 +57,7 @@ export interface TechnicalClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: TechnicalTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: TechnicalTransport = tauriStreamTransport;
 
 export function createTechnicalClient(
   transport: TechnicalTransport = tauriTransport,
@@ -105,42 +99,16 @@ export function createTechnicalClient(
     stopCapture: () => snapshotCommand(COMMANDS.stopCapture),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onMessage = (message: unknown) => {
-        if (closed) {
-          return;
-        }
-
-        try {
-          onSnapshot(parseTechnicalEvent(message).payload);
-        } catch (error) {
-          onError(parseTechnicalCommandError(error));
-        }
-      };
-      const onEvent = transport.createChannel(onMessage);
-      const receipt = transport
-        .invoke(COMMANDS.subscribe, { subscriptionId, onEvent })
-        .then(parseSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) {
-            onError(parseTechnicalCommandError(error));
-          }
-          return undefined;
-        });
-
-      return async () => {
-        if (closed) {
-          return;
-        }
-        closed = true;
-
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribe, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
+      return subscribeStream({
+        transport,
+        streamKind: "technical",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribe,
+        unsubscribeCommand: COMMANDS.unsubscribe,
+        parseEvent: (value) => parseTechnicalEvent(value).payload,
+        onEvent: onSnapshot,
+        onError: (error) => onError(parseTechnicalCommandError(error)),
+      });
     },
   };
 }

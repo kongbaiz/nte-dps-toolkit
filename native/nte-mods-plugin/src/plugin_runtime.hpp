@@ -20,8 +20,35 @@ namespace nte::mods
 		uint64_t captured_u64;
 	};
 
-	void StartPluginRuntime(HMODULE module);
-	void StopPluginRuntime();
+	enum class PluginStartResult : uint8_t
+	{
+		Started,
+		AlreadyRunning,
+		NotGameHost,
+		InProgress,
+		Failed,
+	};
+
+	enum class PluginStopResult : uint8_t
+	{
+		UnloadSafe,
+		Resident,
+		InProgress,
+		TeardownIncomplete,
+	};
+
+	PluginStartResult StartPluginRuntime(HMODULE module);
+	void RecordPluginModule(HMODULE module) noexcept;
+	// Proxy deployments call this from DllMain only to create one finite worker.
+	// Windows serializes DLL initialization, so the worker body cannot execute
+	// until the current loader-lock callback has returned.
+	bool ScheduleRecordedPluginRuntimeInitialization() noexcept;
+	PluginStartResult InitializeRecordedPluginRuntime();
+	PluginStopResult StopPluginRuntime();
+	constexpr bool PluginStopAllowsUnload(PluginStopResult result) noexcept
+	{
+		return result == PluginStopResult::UnloadSafe;
+	}
 	bool WatchProcessEvent(
 		uint32_t program_index,
 		void* object,
@@ -45,5 +72,5 @@ namespace nte::mods
 	bool PopProcessEvent(
 		uint32_t program_index,
 		ProcessEventRecord& event);
-	void ResetProcessEventWatches();
+	bool ResetProcessEventWatches();
 } // namespace nte::mods

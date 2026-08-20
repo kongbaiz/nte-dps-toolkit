@@ -29,6 +29,7 @@ import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
 
 import {
   localizedModMarketText,
+  modMarketLocalStatus,
   modMarketSearchText,
 } from "./mod-market-model";
 import { useModMarket, type ModMarketInstallState } from "./use-mod-market";
@@ -159,9 +160,11 @@ function MarketItem({
   onInstall: () => void;
   onEnable: () => void;
 }) {
-  const installed = item.installed || installState.status === "installed";
-  const enabled = item.enabled || installState.status === "installed";
-  const active = installed && item.current && enabled;
+  const local = modMarketLocalStatus(item);
+  const installed = local.installed || installState.status === "installed";
+  const enabled = local.enabled || installState.status === "installed";
+  const active = installed && local.current && enabled;
+  const unreadable = local.unreadable;
   const working =
     installState.status === "installing" || installState.status === "enabling";
   const localized = localizedModMarketText(item, language);
@@ -203,28 +206,43 @@ function MarketItem({
       <Button
         className="mt-4 w-full"
         variant={active ? "outline" : "default"}
-        disabled={active || working || (installed && !item.current)}
+        disabled={
+          unreadable !== null ||
+          active ||
+          working ||
+          (installed && !local.current)
+        }
         onClick={installed ? onEnable : onInstall}
       >
-        {active ? (
+        {unreadable !== null ? (
+          <TriangleAlert aria-hidden="true" />
+        ) : active ? (
           <Check aria-hidden="true" />
         ) : (
           <Download aria-hidden="true" />
         )}
         {t(
-          active
-            ? "Installed and enabled"
-            : installed && !item.current
-              ? "Already in workspace"
-              : installState.status === "installing"
-                ? "Downloading and verifying..."
-                : installState.status === "enabling"
-                  ? "Enabling required Mod..."
-                  : installed
-                    ? "Enable required Mod"
-                    : "Download and enable",
+          unreadable !== null
+            ? "Local Mod state unavailable"
+            : active
+              ? "Installed and enabled"
+              : installed && !local.current
+                ? "Already in workspace"
+                : installState.status === "installing"
+                  ? "Downloading and verifying..."
+                  : installState.status === "enabling"
+                    ? "Enabling required Mod..."
+                    : installed
+                      ? "Enable required Mod"
+                      : "Download and enable",
         )}
       </Button>
+      {unreadable !== null ? (
+        <p className="mt-2 text-xs text-destructive" role="alert">
+          {t(unreadable.messageKey)}{" "}
+          <span className="font-mono">({unreadable.code})</span>
+        </p>
+      ) : null}
       {installError !== null ? (
         <p className="mt-2 text-xs text-destructive" role="alert">
           {installError}

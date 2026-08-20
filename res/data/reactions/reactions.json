@@ -1005,7 +1005,7 @@
               "GEConditionArray": [
                 {
                   "ObjectName": "BlueprintGeneratedClass'Buff_Radio072_Passive1_C'",
-                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/PassiveEffect/Buff_Radio072_Passive1.1"
+                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/PassiveEffect/Buff_Radio072_Passive1.0"
                 }
               ]
             }

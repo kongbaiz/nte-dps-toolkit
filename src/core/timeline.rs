@@ -17,6 +17,9 @@ use crate::{
 };
 
 pub const TIMELINE_BUCKET_SECONDS_STEP: f32 = 0.1;
+/// UTF-8 byte budget for a projected character label. Replay/import names are
+/// untrusted and must not be able to exceed the bounded Timeline delivery.
+pub const MAX_TIMELINE_CHARACTER_NAME_BYTES: usize = 128;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TimelineScope {
@@ -30,21 +33,34 @@ pub enum TimelineScope {
 pub struct TimelineProjectionOptions {
     pub scope: TimelineScope,
     pub bucket_seconds: f32,
+    /// Hard source-side output budget. Long spans are coarsened before bucket
+    /// allocation; authoritative hits remain complete.
+    pub max_buckets: usize,
+    /// Per-bucket role row cap enforced during aggregation.
+    pub max_roles_per_bucket: usize,
+    /// Cross-bucket character identity cap enforced during aggregation.
+    pub max_characters: usize,
     pub subtract_time_stop: bool,
     pub language: Language,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TimelineProjection {
+    /// Sanitized user preference used by controls/persistence.
     pub bucket_seconds: f64,
+    /// Actual source aggregation width after enforcing `max_buckets`.
+    pub effective_bucket_seconds: f64,
     pub bucket_seconds_min: f64,
     pub bucket_seconds_max: f64,
     pub bucket_seconds_step: f64,
     pub duration: f64,
     pub total_damage: f64,
+    pub omitted_role_damage: f64,
+    pub omitted_role_hits: u64,
     pub peak_dps: f64,
     pub time_stop_duration: f64,
     pub time_stop_intervals: Vec<TimelineIntervalProjection>,
+    pub compacted_time_stop_intervals: u64,
     pub markers: Vec<TimelineMarkerProjection>,
     pub characters: Vec<TimelineCharacterProjection>,
     pub buckets: Vec<TimelineBucketProjection>,
@@ -110,17 +126,27 @@ pub fn project_timeline(
 ) -> TimelineProjection {
     let bucket_seconds = sanitize_timeline_bucket_seconds(options.bucket_seconds);
     let mut series = match options.scope {
-        TimelineScope::Whole => {
-            state.timeline(f64::from(bucket_seconds), options.subtract_time_stop)
-        }
-        TimelineScope::First => state
-            .abyss
-            .half(AbyssHalf::First)
-            .timeline(f64::from(bucket_seconds), options.subtract_time_stop),
-        TimelineScope::Second => state
-            .abyss
-            .half(AbyssHalf::Second)
-            .timeline(f64::from(bucket_seconds), options.subtract_time_stop),
+        TimelineScope::Whole => state.timeline_bounded(
+            f64::from(bucket_seconds),
+            options.subtract_time_stop,
+            options.max_buckets,
+            options.max_roles_per_bucket,
+            options.max_characters,
+        ),
+        TimelineScope::First => state.abyss.half(AbyssHalf::First).timeline_bounded(
+            f64::from(bucket_seconds),
+            options.subtract_time_stop,
+            options.max_buckets,
+            options.max_roles_per_bucket,
+            options.max_characters,
+        ),
+        TimelineScope::Second => state.abyss.half(AbyssHalf::Second).timeline_bounded(
+            f64::from(bucket_seconds),
+            options.subtract_time_stop,
+            options.max_buckets,
+            options.max_roles_per_bucket,
+            options.max_characters,
+        ),
     };
     if let (TimelineScope::First | TimelineScope::Second, Some(start), Some(end)) =
         (options.scope, series.start_timestamp, series.end_timestamp)
@@ -198,14 +224,18 @@ pub fn project_timeline(
 
     TimelineProjection {
         bucket_seconds: f64::from(bucket_seconds),
+        effective_bucket_seconds: series.bucket_seconds,
         bucket_seconds_min: f64::from(TIMELINE_BUCKET_SECONDS_MIN),
         bucket_seconds_max: f64::from(TIMELINE_BUCKET_SECONDS_MAX),
         bucket_seconds_step: f64::from(TIMELINE_BUCKET_SECONDS_STEP),
         duration,
         total_damage: finite_non_negative(series.total_damage),
+        omitted_role_damage: finite_non_negative(series.omitted_role_damage),
+        omitted_role_hits: series.omitted_role_hits,
         peak_dps,
         time_stop_duration,
         time_stop_intervals,
+        compacted_time_stop_intervals: series.compacted_time_stop_intervals,
         markers: series
             .markers
             .iter()
@@ -254,9 +284,11 @@ pub(super) fn character_name(
         Language::SimplifiedChinese => character.name_zh.as_str(),
         Language::English | Language::Japanese => character.name_en.as_str(),
     });
-    localized
+    let selected = localized
         .filter(|name| !name.is_empty())
         .or_else(|| (!fallback.is_empty()).then_some(fallback))
+        .filter(|name| name.len() <= MAX_TIMELINE_CHARACTER_NAME_BYTES);
+    selected
         .map(str::to_owned)
         .unwrap_or_else(|| format!("#{id}"))
 }
@@ -359,6 +391,9 @@ mod tests {
             TimelineProjectionOptions {
                 scope: TimelineScope::Whole,
                 bucket_seconds: 1.0,
+                max_buckets: 20_000,
+                max_roles_per_bucket: 256,
+                max_characters: 256,
                 subtract_time_stop: false,
                 language: Language::SimplifiedChinese,
             },
@@ -384,6 +419,9 @@ mod tests {
             TimelineProjectionOptions {
                 scope: TimelineScope::Whole,
                 bucket_seconds: f32::NAN,
+                max_buckets: 20_000,
+                max_roles_per_bucket: 256,
+                max_characters: 256,
                 subtract_time_stop: true,
                 language: Language::English,
             },
@@ -392,6 +430,55 @@ mod tests {
         assert_eq!(projection.bucket_seconds, 1.0);
         assert_eq!(projection.duration, 0.0);
         assert!(projection.buckets.is_empty());
+    }
+
+    #[test]
+    fn projection_bounds_character_names_by_utf8_bytes_without_splitting() {
+        let exact = format!("{}ab", "界".repeat(42));
+        assert_eq!(exact.len(), MAX_TIMELINE_CHARACTER_NAME_BYTES);
+        assert_eq!(
+            character_name(7, &exact, &HashMap::new(), Language::English),
+            exact
+        );
+
+        let oversized = "界".repeat(43);
+        assert_eq!(oversized.len(), MAX_TIMELINE_CHARACTER_NAME_BYTES + 1);
+        assert_eq!(
+            character_name(7, &oversized, &HashMap::new(), Language::English),
+            "#7"
+        );
+    }
+
+    #[test]
+    fn projection_normalizes_zero_source_budgets_and_reports_effective_width() {
+        let mut state = CombatState::default();
+        state.push_hit(hit(0.0, 1, "First", 25.0));
+        state.push_hit(hit(1_000.0, 2, "Second", 75.0));
+
+        let projection = project_timeline(
+            &state,
+            &HashMap::new(),
+            TimelineProjectionOptions {
+                scope: TimelineScope::Whole,
+                bucket_seconds: 0.1,
+                max_buckets: 0,
+                max_roles_per_bucket: 0,
+                max_characters: 0,
+                subtract_time_stop: false,
+                language: Language::English,
+            },
+        );
+
+        assert_eq!(
+            projection.bucket_seconds,
+            f64::from(sanitize_timeline_bucket_seconds(0.1))
+        );
+        assert!(projection.effective_bucket_seconds > projection.bucket_seconds);
+        assert_eq!(projection.buckets.len(), 1);
+        assert!(projection.buckets[0].roles.len() <= 1);
+        assert!(projection.characters.len() <= 1);
+        assert_eq!(projection.total_damage, 100.0);
+        assert_eq!(projection.buckets[0].hits, 2);
     }
 
     #[test]

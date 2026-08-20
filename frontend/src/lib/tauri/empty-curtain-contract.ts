@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
@@ -7,6 +8,31 @@ import {
 export const EMPTY_CURTAIN_CONTRACT_VERSION = 2;
 export const EMPTY_CURTAIN_MAX_CHARACTERS = 64;
 export const EMPTY_CURTAIN_MAX_ITEMS = 4096;
+export const EMPTY_CURTAIN_MAX_DETAILS_PER_ITEM = 16;
+export const EMPTY_CURTAIN_MAX_TEXT_BYTES = 256;
+export const EMPTY_CURTAIN_MAX_ICON_BYTES = 1024;
+export const EMPTY_CURTAIN_MAX_TOTAL_DETAILS = 20_000;
+export const EMPTY_CURTAIN_MAX_PROJECTED_TEXT_BYTES = 1024 * 1024;
+
+const UTF8_ENCODER = new TextEncoder();
+
+const {
+  array: list,
+  boolean: flag,
+  boundedUtf8String,
+  boundedUtf8StringAllowEmpty,
+  decimalString: decimal,
+  enumValue,
+  finiteNumber: finite,
+  integer,
+  nullableEnumValue: optionalEnum,
+  nullableBoundedUtf8StringAllowEmpty: optionalBoundedUtf8Text,
+  nullableUnsigned32: optionalUint,
+  record: object,
+  unsigned32: uint,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type EmptyCurtainCommandError = TechnicalCommandError;
 export type EquipmentKind = "module" | "core" | null;
@@ -106,23 +132,65 @@ export function parseEmptyCurtainSnapshot(
   if (items.length > EMPTY_CURTAIN_MAX_ITEMS) {
     throw new TechnicalContractError("items exceeds display bounds");
   }
+  const parsedCharacters = characters.map((value, index) => {
+    const row = object(value, `characters[${index}]`);
+    return {
+      uid: uid(row.uid, `characters[${index}].uid`),
+      characterId: uint(row.characterId, `characters[${index}].characterId`),
+      name: boundedUtf8String(
+        row.name,
+        `characters[${index}].name`,
+        EMPTY_CURTAIN_MAX_TEXT_BYTES,
+      ),
+    };
+  });
+  const parsedItems = items.map(parseItem);
+  const detailRows = parsedItems.reduce(
+    (total, item) => total + item.stats.length + item.setEffects.length,
+    0,
+  );
+  if (detailRows > EMPTY_CURTAIN_MAX_TOTAL_DETAILS) {
+    throw new TechnicalContractError("items exceeds aggregate detail bounds");
+  }
+  const projectedTextBytes =
+    parsedCharacters.reduce(
+      (total, character) => total + utf8Bytes(character.name),
+      0,
+    ) + parsedItems.reduce((total, item) => total + itemTextBytes(item), 0);
+  if (projectedTextBytes > EMPTY_CURTAIN_MAX_PROJECTED_TEXT_BYTES) {
+    throw new TechnicalContractError("items exceeds aggregate text bounds");
+  }
   return {
     contractVersion,
     generation: decimal(data.generation, "generation"),
     observedAtUnixMs: decimal(data.observedAtUnixMs, "observedAtUnixMs"),
     hasData: flag(data.hasData, "hasData"),
     complete: flag(data.complete, "complete"),
-    characters: characters.map((value, index) => {
-      const row = object(value, `characters[${index}]`);
-      return {
-        uid: uid(row.uid, `characters[${index}].uid`),
-        characterId: uint(row.characterId, `characters[${index}].characterId`),
-        name: text(row.name, `characters[${index}].name`),
-      };
-    }),
-    items: items.map(parseItem),
+    characters: parsedCharacters,
+    items: parsedItems,
     operation: parseOperation(data.operation),
   };
+}
+
+function utf8Bytes(value: string): number {
+  return UTF8_ENCODER.encode(value).byteLength;
+}
+
+function itemTextBytes(item: EmptyCurtainItem): number {
+  let total =
+    utf8Bytes(item.itemId) +
+    utf8Bytes(item.filterId) +
+    (item.quality === null ? 0 : utf8Bytes(item.quality)) +
+    utf8Bytes(item.name) +
+    (item.icon === null ? 0 : utf8Bytes(item.icon)) +
+    (item.setName === null ? 0 : utf8Bytes(item.setName));
+  for (const stat of item.stats) {
+    total += utf8Bytes(stat.property) + utf8Bytes(stat.label);
+  }
+  for (const effect of item.setEffects) {
+    total += utf8Bytes(effect.text);
+  }
+  return total;
 }
 
 export function parseEmptyCurtainEvent(value: unknown): EmptyCurtainSnapshot {
@@ -168,21 +236,40 @@ function parseItem(value: unknown, index: number): EmptyCurtainItem {
   const row = object(value, field);
   const stats = list(row.stats, `${field}.stats`);
   const effects = list(row.setEffects, `${field}.setEffects`);
-  if (stats.length > 16 || effects.length > 16) {
+  if (
+    stats.length > EMPTY_CURTAIN_MAX_DETAILS_PER_ITEM ||
+    effects.length > EMPTY_CURTAIN_MAX_DETAILS_PER_ITEM
+  ) {
     throw new TechnicalContractError(`${field} exceeds detail bounds`);
   }
   return {
     uid: uid(row.uid, `${field}.uid`),
-    itemId: text(row.itemId, `${field}.itemId`),
-    filterId: text(row.filterId, `${field}.filterId`),
+    itemId: boundedUtf8String(
+      row.itemId,
+      `${field}.itemId`,
+      EMPTY_CURTAIN_MAX_TEXT_BYTES,
+    ),
+    filterId: boundedUtf8String(
+      row.filterId,
+      `${field}.filterId`,
+      EMPTY_CURTAIN_MAX_TEXT_BYTES,
+    ),
     kind: optionalEnum(row.kind, ["module", "core"] as const, `${field}.kind`),
     quality: optionalEnum(
       row.quality,
       ["blue", "purple", "orange"] as const,
       `${field}.quality`,
     ),
-    name: text(row.name, `${field}.name`),
-    icon: optionalText(row.icon, `${field}.icon`),
+    name: boundedUtf8String(
+      row.name,
+      `${field}.name`,
+      EMPTY_CURTAIN_MAX_TEXT_BYTES,
+    ),
+    icon: optionalBoundedUtf8Text(
+      row.icon,
+      `${field}.icon`,
+      EMPTY_CURTAIN_MAX_ICON_BYTES,
+    ),
     level: uint(row.level, `${field}.level`),
     maxLevel: optionalUint(row.maxLevel, `${field}.maxLevel`),
     locked: flag(row.locked, `${field}.locked`),
@@ -202,8 +289,16 @@ function parseItem(value: unknown, index: number): EmptyCurtainItem {
     stats: stats.map((value, statIndex) => {
       const stat = object(value, `${field}.stats[${statIndex}]`);
       return {
-        property: text(stat.property, `${field}.stats[${statIndex}].property`),
-        label: text(stat.label, `${field}.stats[${statIndex}].label`),
+        property: boundedUtf8StringAllowEmpty(
+          stat.property,
+          `${field}.stats[${statIndex}].property`,
+          EMPTY_CURTAIN_MAX_TEXT_BYTES,
+        ),
+        label: boundedUtf8StringAllowEmpty(
+          stat.label,
+          `${field}.stats[${statIndex}].label`,
+          EMPTY_CURTAIN_MAX_TEXT_BYTES,
+        ),
         value: finite(stat.value, `${field}.stats[${statIndex}].value`),
         percent: flag(stat.percent, `${field}.stats[${statIndex}].percent`),
         main: flag(stat.main, `${field}.stats[${statIndex}].main`),
@@ -214,12 +309,20 @@ function parseItem(value: unknown, index: number): EmptyCurtainItem {
         unlocked: flag(stat.unlocked, `${field}.stats[${statIndex}].unlocked`),
       };
     }),
-    setName: optionalText(row.setName, `${field}.setName`),
+    setName: optionalBoundedUtf8Text(
+      row.setName,
+      `${field}.setName`,
+      EMPTY_CURTAIN_MAX_TEXT_BYTES,
+    ),
     setEffects: effects.map((value, effectIndex) => {
       const effect = object(value, `${field}.setEffects[${effectIndex}]`);
       return {
         count: uint(effect.count, `${field}.setEffects[${effectIndex}].count`),
-        text: text(effect.text, `${field}.setEffects[${effectIndex}].text`),
+        text: boundedUtf8StringAllowEmpty(
+          effect.text,
+          `${field}.setEffects[${effectIndex}].text`,
+          EMPTY_CURTAIN_MAX_TEXT_BYTES,
+        ),
       };
     }),
   };
@@ -231,15 +334,28 @@ function parseOperation(value: unknown): EmptyCurtainOperation {
     row.messageArguments,
     "operation.messageArguments",
   );
+  if (messageArguments.length > EMPTY_CURTAIN_MAX_DETAILS_PER_ITEM) {
+    throw new TechnicalContractError(
+      "operation.messageArguments exceeds bounds",
+    );
+  }
   return {
     status: enumValue(
       row.status,
       ["idle", "pending", "success", "error"] as const,
       "operation.status",
     ),
-    messageKey: text(row.messageKey, "operation.messageKey"),
+    messageKey: boundedUtf8String(
+      row.messageKey,
+      "operation.messageKey",
+      EMPTY_CURTAIN_MAX_TEXT_BYTES,
+    ),
     messageArguments: messageArguments.map((value, index) =>
-      text(value, `operation.messageArguments[${index}]`),
+      boundedUtf8StringAllowEmpty(
+        value,
+        `operation.messageArguments[${index}]`,
+        EMPTY_CURTAIN_MAX_TEXT_BYTES,
+      ),
     ),
   };
 }
@@ -258,85 +374,4 @@ function placement(value: unknown, field: string): EmptyCurtainPlacement {
     row: integer(row.row, `${field}.row`),
     column: integer(row.column, `${field}.column`),
   };
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an array`);
-  return value;
-}
-
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string")
-    throw new TechnicalContractError(`${field} must be a string`);
-  return value;
-}
-
-function optionalText(value: unknown, field: string): string | null {
-  return value === null ? null : text(value, field);
-}
-
-function finite(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new TechnicalContractError(`${field} must be finite`);
-  }
-  return value;
-}
-
-function integer(value: unknown, field: string): number {
-  const parsed = finite(value, field);
-  if (!Number.isSafeInteger(parsed))
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  return parsed;
-}
-
-function uint(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0 || parsed > 0xffffffff)
-    throw new TechnicalContractError(
-      `${field} must be an unsigned 32-bit integer`,
-    );
-  return parsed;
-}
-
-function optionalUint(value: unknown, field: string): number | null {
-  return value === null ? null : uint(value, field);
-}
-
-function flag(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean")
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  return value;
-}
-
-function decimal(value: unknown, field: string): string {
-  const parsed = text(value, field);
-  if (!/^(0|[1-9]\d*)$/.test(parsed))
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  return parsed;
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  values: T,
-  field: string,
-): T[number] {
-  if (typeof value !== "string" || !values.includes(value))
-    throw new TechnicalContractError(`${field} has an unsupported value`);
-  return value as T[number];
-}
-
-function optionalEnum<const T extends readonly string[]>(
-  value: unknown,
-  values: T,
-  field: string,
-): T[number] | null {
-  return value === null ? null : enumValue(value, values, field);
 }

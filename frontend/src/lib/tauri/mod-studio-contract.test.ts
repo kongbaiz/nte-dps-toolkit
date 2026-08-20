@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import semverConformance from "@res/contract-semver-conformance.json";
+
 import {
   ModStudioContractError,
   compareModStudioSequence,
@@ -17,7 +19,46 @@ import {
   parseModStudioWorkspace,
 } from "./mod-studio-contract";
 
+function marketCatalogFixture() {
+  return {
+    contractVersion: 11,
+    publishedAt: "2026-08-03T00:00:00Z",
+    privacyMode: "anonymous-read-only",
+    mods: [
+      {
+        id: "combat-clock",
+        bindings: ["feature.dps-time-stop"],
+        localizations: {
+          en: { name: "Combat Clock", summary: "Tracks game pauses." },
+          "zh-CN": { name: "时停扣除", summary: "追踪游戏时停。" },
+          ja: { name: "時間停止控除", summary: "停止を追跡します。" },
+        },
+        version: "1.0.0",
+        author: "NTE",
+        capabilities: ["combat-clock", "ipc"],
+        packageSize: 1024,
+        localState: { status: "notInstalled" },
+      },
+    ],
+  };
+}
+
 describe("Mod Studio contract", () => {
+  it("matches the shared canonical SemVer conformance vectors", () => {
+    for (const vector of semverConformance) {
+      const catalog = marketCatalogFixture();
+      catalog.mods[0].version = vector.value;
+      if (vector.valid) {
+        expect(parseModMarketCatalog(catalog).mods[0].version).toBe(
+          vector.value,
+        );
+      } else {
+        expect(() => parseModMarketCatalog(catalog)).toThrow(
+          ModStudioContractError,
+        );
+      }
+    }
+  });
   it("parses the persisted loading method preference", () => {
     expect(
       parseModStudioLoadingMethodPreference({
@@ -42,7 +83,7 @@ describe("Mod Studio contract", () => {
   it("parses a bounded workspace index without source bodies", () => {
     expect(
       parseModStudioWorkspace({
-        contractVersion: 10,
+        contractVersion: 13,
         generation: "7",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -55,7 +96,7 @@ describe("Mod Studio contract", () => {
         ],
       }),
     ).toEqual({
-      contractVersion: 10,
+      contractVersion: 13,
       generation: "7",
       workspaceLabel: "plugins/nte-mods",
       documents: [
@@ -80,7 +121,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 10,
+        contractVersion: 13,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -95,7 +136,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 10,
+        contractVersion: 13,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -119,13 +160,13 @@ describe("Mod Studio contract", () => {
   it("parses a requested document body", () => {
     expect(
       parseModStudioDocument({
-        contractVersion: 10,
+        contractVersion: 13,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
       }),
     ).toEqual({
-      contractVersion: 10,
+      contractVersion: 13,
       id: "combat-clock",
       enabled: true,
       source: "NTE_SCRIPT(5);",
@@ -135,7 +176,7 @@ describe("Mod Studio contract", () => {
   it("parses privacy-bounded Mod Market catalog items", () => {
     expect(
       parseModMarketCatalog({
-        contractVersion: 10,
+        contractVersion: 11,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "anonymous-read-only",
         mods: [
@@ -151,9 +192,7 @@ describe("Mod Studio contract", () => {
             author: "NTE",
             capabilities: ["combat-clock", "ipc"],
             packageSize: 1024,
-            installed: false,
-            enabled: false,
-            current: false,
+            localState: { status: "notInstalled" },
           },
           {
             id: "equipment",
@@ -167,9 +206,11 @@ describe("Mod Studio contract", () => {
             author: "NTE",
             capabilities: ["equipment", "ipc"],
             packageSize: 2048,
-            installed: true,
-            enabled: true,
-            current: true,
+            localState: {
+              status: "installed",
+              enabled: true,
+              current: true,
+            },
           },
         ],
       }),
@@ -185,13 +226,17 @@ describe("Mod Studio contract", () => {
         {
           id: "equipment",
           bindings: ["feature.empty-curtain-equipment"],
-          enabled: true,
+          localState: {
+            status: "installed",
+            enabled: true,
+            current: true,
+          },
         },
       ],
     });
     expect(() =>
       parseModMarketCatalog({
-        contractVersion: 10,
+        contractVersion: 11,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "tracks-device",
         mods: [],
@@ -199,9 +244,124 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
   });
 
+  it("preserves unreadable local Mod state without accepting private detail", () => {
+    const parsed = parseModMarketCatalog({
+      contractVersion: 11,
+      publishedAt: "2026-08-03T00:00:00Z",
+      privacyMode: "anonymous-read-only",
+      mods: [
+        {
+          id: "equipment",
+          bindings: ["feature.empty-curtain-equipment"],
+          localizations: {
+            en: { name: "Equipment", summary: "Manages equipment." },
+            "zh-CN": { name: "空幕装备", summary: "管理空幕装备。" },
+            ja: { name: "空幕装備", summary: "装備を管理します。" },
+          },
+          version: "1.0.0",
+          author: "NTE",
+          capabilities: ["equipment", "ipc"],
+          packageSize: 2048,
+          localState: {
+            status: "unreadable",
+            code: "mod_workspace_invalid",
+            messageKey: "The Mod workspace data is invalid.",
+          },
+        },
+      ],
+    });
+
+    expect(parsed.mods[0]?.localState).toEqual({
+      status: "unreadable",
+      code: "mod_workspace_invalid",
+      messageKey: "The Mod workspace data is invalid.",
+    });
+    expect(JSON.stringify(parsed)).not.toContain("detail");
+  });
+
+  it("rejects incomplete or legacy Mod Market local state", () => {
+    const item = {
+      id: "equipment",
+      bindings: ["feature.empty-curtain-equipment"],
+      localizations: {
+        en: { name: "Equipment", summary: "Manages equipment." },
+        "zh-CN": { name: "空幕装备", summary: "管理空幕装备。" },
+        ja: { name: "空幕装備", summary: "装備を管理します。" },
+      },
+      version: "1.0.0",
+      author: "NTE",
+      capabilities: ["equipment", "ipc"],
+      packageSize: 2048,
+    };
+    const catalog = (localState: unknown) => ({
+      contractVersion: 11,
+      publishedAt: "2026-08-03T00:00:00Z",
+      privacyMode: "anonymous-read-only",
+      mods: [{ ...item, localState }],
+    });
+
+    expect(() =>
+      parseModMarketCatalog(catalog({ status: "installed", enabled: true })),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModMarketCatalog(
+        catalog({ status: "unreadable", code: "mod_workspace_invalid" }),
+      ),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModMarketCatalog(
+        catalog({ status: "notInstalled", enabled: false }),
+      ),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModMarketCatalog(
+        catalog({
+          status: "installed",
+          enabled: false,
+          current: true,
+          code: "mod_workspace_invalid",
+        }),
+      ),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModMarketCatalog(
+        catalog({
+          status: "unreadable",
+          code: "mod_workspace_invalid",
+          messageKey: "The Mod workspace data is invalid.",
+          current: false,
+        }),
+      ),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModMarketCatalog(
+        catalog({
+          status: "unreadable",
+          code: "mod_workspace_future_error",
+          messageKey: "The Mod workspace data is invalid.",
+        }),
+      ),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModMarketCatalog(
+        catalog({
+          status: "unreadable",
+          code: "mod_workspace_invalid",
+          messageKey: "Failed to read the Mod workspace.",
+        }),
+      ),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModMarketCatalog({
+        ...catalog(undefined),
+        mods: [{ ...item, installed: true, enabled: false, current: false }],
+      }),
+    ).toThrow(ModStudioContractError);
+  });
+
   it("parses bounded deployment state and a validated manual path selection", () => {
     const deployment = {
-      contractVersion: 10,
+      contractVersion: 13,
       installations: 1,
       installed: 1,
       current: 1,
@@ -288,7 +448,7 @@ describe("Mod Studio contract", () => {
   it("parses the bounded versioned Mod SDK schema", () => {
     expect(
       parseModStudioSdkSchema({
-        contractVersion: 10,
+        contractVersion: 13,
         schemaVersion: 2,
         symbols: [
           {
@@ -306,7 +466,7 @@ describe("Mod Studio contract", () => {
     });
     expect(() =>
       parseModStudioSdkSchema({
-        contractVersion: 10,
+        contractVersion: 13,
         schemaVersion: 1,
         symbols: [],
       }),
@@ -350,7 +510,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 10,
+          contractVersion: 13,
           generation: "2",
           entries: [
             {
@@ -387,7 +547,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 10,
+          contractVersion: 13,
           generation: "2",
           entries: [
             {
@@ -423,32 +583,168 @@ describe("Mod Studio contract", () => {
     expect(
       parseModStudioSubscriptionReceipt({
         subscriptionId: "runtime-01",
+        streamKind: "modStudioRuntime",
         streamIntervalMs: 250,
+        streamProtocolVersion: 1,
+        streamGeneration: "3",
       }),
     ).toEqual({
       subscriptionId: "runtime-01",
+      streamKind: "modStudioRuntime",
       streamIntervalMs: 250,
+      streamProtocolVersion: 1,
+      streamGeneration: "3",
     });
     expect(
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 10,
+          contractVersion: 13,
           generation: "3",
           status: "waiting",
+          bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toMatchObject({
       event: "connection",
       payload: { generation: "3", status: "waiting" },
     });
+    expect(
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "3",
+          status: "acknowledgementRequired",
+          bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
+        },
+      }),
+    ).toMatchObject({
+      event: "connection",
+      payload: { status: "acknowledgementRequired" },
+    });
+    expect(
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "3",
+          status: "probeFailed",
+          bootstrapErrorCode: null,
+          probeErrorCode: "IPC_PIPE_ACCESS_DENIED",
+          probeOsErrorCode: 5,
+        },
+      }),
+    ).toMatchObject({
+      event: "connection",
+      payload: {
+        status: "probeFailed",
+        probeErrorCode: "IPC_PIPE_ACCESS_DENIED",
+        probeOsErrorCode: 5,
+      },
+    });
     expect(() =>
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 10,
+          contractVersion: 13,
+          generation: "3",
+          status: "probeFailed",
+          bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: 5,
+        },
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "3",
+          status: "waiting",
+          bootstrapErrorCode: null,
+          probeErrorCode: "IPC_PIPE_OPEN_FAILED",
+          probeOsErrorCode: null,
+        },
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
           generation: "3",
           status: "installed",
+          bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
+        },
+      }),
+    ).toThrow(ModStudioContractError);
+
+    expect(
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "4",
+          status: "bootstrapFailed",
+          bootstrapErrorCode: "MODULE_IMAGE_MISMATCH",
+          probeErrorCode: null,
+          probeOsErrorCode: null,
+        },
+      }),
+    ).toMatchObject({
+      event: "connection",
+      payload: {
+        generation: "4",
+        status: "bootstrapFailed",
+        bootstrapErrorCode: "MODULE_IMAGE_MISMATCH",
+        probeErrorCode: null,
+        probeOsErrorCode: null,
+      },
+    });
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "4",
+          status: "bootstrapFailed",
+          bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
+        },
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "4",
+          status: "waiting",
+          bootstrapErrorCode: "MODULE_IMAGE_MISMATCH",
+          probeErrorCode: null,
+          probeOsErrorCode: null,
+        },
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "4",
+          status: "bootstrapFailed",
+          bootstrapErrorCode: "UNKNOWN_CODE",
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toThrow(ModStudioContractError);

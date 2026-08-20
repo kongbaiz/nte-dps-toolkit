@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  HISTORY_MAX_INLINE_EXPORT_CHARACTERS,
+  parseHistoryExport,
   parseHistoryFileActionResult,
   parseHistoryImportFileResult,
   parseHistorySnapshot,
@@ -81,5 +83,14 @@ describe("History contract", () => {
     expect(parseHistoryFileActionResult({ performed: false })).toEqual({
       performed: false,
     });
+  });
+
+  it("rejects an inline export beyond the WebView response budget", () => {
+    expect(() =>
+      parseHistoryExport({
+        fileName: "history.json",
+        json: "x".repeat(HISTORY_MAX_INLINE_EXPORT_CHARACTERS + 1),
+      }),
+    ).toThrow("history export.json");
   });
 });

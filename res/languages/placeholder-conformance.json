@@ -1,0 +1,37 @@
+[
+  {
+    "template": "Loaded {} rows",
+    "arguments": ["12"],
+    "expected": "Loaded 12 rows"
+  },
+  {
+    "template": "{0} / {1}",
+    "arguments": ["3", "7"],
+    "expected": "3 / 7"
+  },
+  {
+    "template": "{1} before {0}",
+    "arguments": ["first", "second"],
+    "expected": "second before first"
+  },
+  {
+    "template": "{0} and {0}",
+    "arguments": ["same"],
+    "expected": "same and same"
+  },
+  {
+    "template": "{} then {1} then {}",
+    "arguments": ["zero", "one", "two"],
+    "expected": "zero then one then two"
+  },
+  {
+    "template": "{} / {}",
+    "arguments": ["only"],
+    "expected": "only / {}"
+  },
+  {
+    "template": "{2}",
+    "arguments": ["zero", "one"],
+    "expected": "{2}"
+  }
+]

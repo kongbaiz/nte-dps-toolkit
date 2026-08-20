@@ -1,13 +1,16 @@
 use std::borrow::Cow;
+use std::collections::hash_map::RandomState;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_uint};
 use std::fs::File;
+use std::hash::BuildHasher;
 use std::io::{BufWriter, Read, Write};
+use std::marker::PhantomData;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::sync::{
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
@@ -16,20 +19,25 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use libloading::Library;
-use pcap_file::DataLink;
 use pcap_file::pcapng::blocks::enhanced_packet::EnhancedPacketBlock;
 use pcap_file::pcapng::blocks::interface_description::{
     InterfaceDescriptionBlock, InterfaceDescriptionOption,
 };
 use pcap_file::pcapng::blocks::unknown::UnknownBlock;
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
-use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use pcap_file::{DataLink, PcapError};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::Error as _,
+    ser::{SerializeMap, SerializeSeq},
+};
 
 use crate::engine::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, CombatState, DpsTimeBasis, EmptyCurtainCharacter,
-    EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit, HitCharacterSource,
-    HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, ModScriptEvent,
-    ModScriptEventPhase, PacketDebug, PacketObservation, PartyCombatState, TimeStopEvent,
+    AbyssEvent, AbyssHalf, CharacterInfo, CombatClockRuntimeHealth, CombatState, DpsTimeBasis,
+    EmptyCurtainCharacter, EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit,
+    HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId,
+    ModScriptEvent, ModScriptEventPhase, PacketDebug, PacketObservation, PartyCombatState,
+    TimeStopEvent, UnattributedServerDamage,
 };
 use crate::engine::parser::{
     AbilityCatalog, DamageRecordEncoding, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
@@ -46,7 +54,8 @@ use crate::engine::parser::{
     parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::platform::mods_plugin::{
-    CombatClockTransitionSnapshot, query_combat_clock_transitions, query_mod_events,
+    CombatClockQueryError, CombatClockTransitionSnapshot, query_combat_clock_transitions,
+    query_mod_events,
 };
 use crate::storage::io_util::atomic_write_file;
 
@@ -77,14 +86,388 @@ const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
 const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD: u8 = 3;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS: usize = 256 * 1024 * 8;
 const GAMEPLAY_EFFECT_FRAGMENT_TIMEOUT_SECONDS: f64 = 0.5;
 const CAPTURE_FRAME_QUEUE_CAPACITY: usize = 16_384;
+// The frame-count bound protects queue metadata; this independent high-water
+// mark caps payload ownership at 32 MiB. A 1,500-byte Ethernet workload can
+// still use the full count capacity, while large snaplen frames backpressure
+// acquisition much earlier.
+const CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER: usize = 32 * 1024 * 1024;
+/// PCAPNG is an external trust boundary. Runtime combat history is complete,
+/// but one imported file must fit explicit byte and structural budgets.
+pub const MAX_PCAPNG_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_PCAPNG_IMPORT_BLOCKS: usize = 2_000_000;
+pub const MAX_PCAPNG_IMPORT_PACKETS: usize = 500_000;
+pub const MAX_PCAPNG_IMPORT_PACKET_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_PCAPNG_IMPORT_INTERFACES: usize = 256;
+
+/// Keeps every actual PCAPNG read on the already-validated file handle inside
+/// the import byte budget. Metadata is only a point-in-time preflight: another
+/// writer can extend the file after `File::metadata`, so the parser itself must
+/// also be bounded. Once the budget is exhausted, one byte is probed to
+/// distinguish an exact-limit EOF from a concurrently-grown/oversized file;
+/// no bytes beyond that probe can be consumed.
+struct PcapngImportReader<R> {
+    inner: R,
+    remaining: u64,
+    exceeded: Arc<AtomicBool>,
+}
+
+impl<R> PcapngImportReader<R> {
+    fn new(inner: R, limit: u64, exceeded: Arc<AtomicBool>) -> Self {
+        Self {
+            inner,
+            remaining: limit,
+            exceeded,
+        }
+    }
+}
+
+impl<R: Read> Read for PcapngImportReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if self.remaining > 0 {
+            let remaining = usize::try_from(self.remaining).unwrap_or(usize::MAX);
+            let allowed = buffer.len().min(remaining);
+            let read = self.inner.read(&mut buffer[..allowed])?;
+            self.remaining -= read as u64;
+            return Ok(read);
+        }
+
+        let mut probe = [0_u8; 1];
+        match self.inner.read(&mut probe) {
+            Ok(0) => Ok(0),
+            Ok(_) => {
+                self.exceeded.store(true, Ordering::Relaxed);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "pcapng import byte budget exceeded",
+                ))
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn map_pcapng_reader_error(
+    error: PcapError,
+    byte_budget_exceeded: &AtomicBool,
+) -> PcapngImportError {
+    if byte_budget_exceeded.load(Ordering::Relaxed) {
+        return PcapngImportError::TooLarge {
+            size: MAX_PCAPNG_IMPORT_BYTES.saturating_add(1),
+            limit: MAX_PCAPNG_IMPORT_BYTES,
+        };
+    }
+    match error {
+        PcapError::IoError(error) => PcapngImportError::Io(error),
+        error => PcapngImportError::InvalidFormat(error.to_string()),
+    }
+}
+
+#[derive(Debug)]
+pub enum PcapngImportError {
+    NotAFile,
+    TooLarge { size: u64, limit: u64 },
+    TooManyBlocks { count: usize, limit: usize },
+    TooManyPackets { count: usize, limit: usize },
+    TooManyInterfaces { count: usize, limit: usize },
+    SnaplenTooLarge { snaplen: u32, limit: u32 },
+    FrameTooLarge { size: usize, limit: usize },
+    PacketBytesExceeded { size: u64, limit: u64 },
+    InvalidFormat(String),
+    ReceiverDisconnected,
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for PcapngImportError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAFile => formatter.write_str("import path is not a regular file"),
+            Self::TooLarge { size, limit } => write!(
+                formatter,
+                "pcapng file is too large ({size} bytes; limit {limit} bytes)"
+            ),
+            Self::TooManyBlocks { count, limit } => write!(
+                formatter,
+                "pcapng has too many blocks ({count}; limit {limit})"
+            ),
+            Self::TooManyPackets { count, limit } => write!(
+                formatter,
+                "pcapng has too many packets ({count}; limit {limit})"
+            ),
+            Self::TooManyInterfaces { count, limit } => write!(
+                formatter,
+                "pcapng has too many interfaces ({count}; limit {limit})"
+            ),
+            Self::SnaplenTooLarge { snaplen, limit } => write!(
+                formatter,
+                "pcapng interface snaplen exceeds budget ({snaplen}; limit {limit})"
+            ),
+            Self::FrameTooLarge { size, limit } => write!(
+                formatter,
+                "pcapng frame exceeds snaplen ({size} bytes; limit {limit} bytes)"
+            ),
+            Self::PacketBytesExceeded { size, limit } => write!(
+                formatter,
+                "pcapng packet bytes exceed budget ({size}; limit {limit})"
+            ),
+            Self::InvalidFormat(detail) => write!(formatter, "invalid pcapng: {detail}"),
+            Self::ReceiverDisconnected => formatter.write_str("engine event receiver disconnected"),
+            Self::Io(error) => write!(formatter, "cannot read pcapng: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for PcapngImportError {}
+
+pub fn validate_pcapng_import(path: &Path) -> Result<(), PcapngImportError> {
+    validate_pcapng_import_with_limit(path, MAX_PCAPNG_IMPORT_BYTES)
+}
+
+fn validate_pcapng_import_with_limit(path: &Path, limit: u64) -> Result<(), PcapngImportError> {
+    let metadata = std::fs::metadata(path).map_err(PcapngImportError::Io)?;
+    if !metadata.is_file() {
+        return Err(PcapngImportError::NotAFile);
+    }
+    let size = metadata.len();
+    if size > limit {
+        return Err(PcapngImportError::TooLarge { size, limit });
+    }
+    Ok(())
+}
+
+fn account_pcapng_frame(
+    size: usize,
+    packet_count: &mut usize,
+    packet_bytes: &mut u64,
+) -> Result<(), PcapngImportError> {
+    if size > CAPTURE_SNAPLEN as usize {
+        return Err(PcapngImportError::FrameTooLarge {
+            size,
+            limit: CAPTURE_SNAPLEN as usize,
+        });
+    }
+    *packet_count = packet_count.saturating_add(1);
+    if *packet_count > MAX_PCAPNG_IMPORT_PACKETS {
+        return Err(PcapngImportError::TooManyPackets {
+            count: *packet_count,
+            limit: MAX_PCAPNG_IMPORT_PACKETS,
+        });
+    }
+    *packet_bytes = packet_bytes.saturating_add(size as u64);
+    if *packet_bytes > MAX_PCAPNG_IMPORT_PACKET_BYTES {
+        return Err(PcapngImportError::PacketBytesExceeded {
+            size: *packet_bytes,
+            limit: MAX_PCAPNG_IMPORT_PACKET_BYTES,
+        });
+    }
+    Ok(())
+}
+
+fn account_pcapng_interface(
+    snaplen: u32,
+    interface_count: &mut usize,
+) -> Result<(), PcapngImportError> {
+    *interface_count = interface_count.saturating_add(1);
+    if *interface_count > MAX_PCAPNG_IMPORT_INTERFACES {
+        return Err(PcapngImportError::TooManyInterfaces {
+            count: *interface_count,
+            limit: MAX_PCAPNG_IMPORT_INTERFACES,
+        });
+    }
+    // PCAPNG uses zero to mean "unlimited", which is also outside the
+    // importer's fixed frame/snaplen contract.
+    if snaplen == 0 || snaplen > CAPTURE_SNAPLEN {
+        return Err(PcapngImportError::SnaplenTooLarge {
+            snaplen,
+            limit: CAPTURE_SNAPLEN,
+        });
+    }
+    Ok(())
+}
 
 struct CaptureFrame {
     data: Vec<u8>,
     timestamp: f64,
+    _byte_reservation: Option<CaptureFrameByteReservation>,
+}
+
+impl CaptureFrame {
+    fn new(data: Vec<u8>, timestamp: f64) -> Self {
+        Self {
+            data,
+            timestamp,
+            _byte_reservation: None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CaptureFrameSender {
+    frames: Sender<CaptureFrame>,
+    byte_budget: Arc<CaptureFrameByteBudget>,
+}
+
+struct CaptureFrameReceiver {
+    frames: Receiver<CaptureFrame>,
+    byte_budget: Arc<CaptureFrameByteBudget>,
+}
+
+struct CaptureFrameByteBudget {
+    high_water: usize,
+    state: Mutex<CaptureFrameByteBudgetState>,
+    available: Condvar,
+}
+
+struct CaptureFrameByteBudgetState {
+    reserved: usize,
+    observed_high_water: usize,
+    receiver_connected: bool,
+}
+
+struct CaptureFrameByteReservation {
+    byte_budget: Arc<CaptureFrameByteBudget>,
+    bytes: usize,
+}
+
+fn capture_frame_queue(
+    frame_capacity: usize,
+    byte_high_water: usize,
+) -> (CaptureFrameSender, CaptureFrameReceiver) {
+    let (frames, receiver) = bounded(frame_capacity);
+    let byte_budget = Arc::new(CaptureFrameByteBudget {
+        high_water: byte_high_water,
+        state: Mutex::new(CaptureFrameByteBudgetState {
+            reserved: 0,
+            observed_high_water: 0,
+            receiver_connected: true,
+        }),
+        available: Condvar::new(),
+    });
+    (
+        CaptureFrameSender {
+            frames,
+            byte_budget: Arc::clone(&byte_budget),
+        },
+        CaptureFrameReceiver {
+            frames: receiver,
+            byte_budget,
+        },
+    )
+}
+
+impl CaptureFrameSender {
+    fn send(&self, mut frame: CaptureFrame) -> Result<(), String> {
+        let reservation = self.byte_budget.reserve(frame.data.capacity())?;
+        frame._byte_reservation = Some(reservation);
+        self.frames
+            .send(frame)
+            .map_err(|_| "capture parser thread stopped unexpectedly".to_owned())
+    }
+
+    fn byte_high_water_mark(&self) -> usize {
+        self.byte_budget.observed_high_water()
+    }
+}
+
+impl CaptureFrameReceiver {
+    fn recv(&self) -> Result<CaptureFrame, crossbeam_channel::RecvError> {
+        self.frames.recv()
+    }
+}
+
+impl Drop for CaptureFrameReceiver {
+    fn drop(&mut self) {
+        self.byte_budget.disconnect_receiver();
+    }
+}
+
+impl CaptureFrameByteBudget {
+    fn reserve(self: &Arc<Self>, bytes: usize) -> Result<CaptureFrameByteReservation, String> {
+        if bytes > self.high_water {
+            return Err(format!(
+                "capture frame size {bytes} exceeds parser queue byte budget {}",
+                self.high_water
+            ));
+        }
+        let mut state = self.lock_state()?;
+        while state.receiver_connected && bytes > self.high_water - state.reserved {
+            state = match self.available.wait(state) {
+                Ok(state) => state,
+                Err(mut error) => {
+                    error.get_mut().receiver_connected = false;
+                    self.state.clear_poison();
+                    self.available.notify_all();
+                    return Err("capture frame queue byte budget became unavailable".to_owned());
+                }
+            };
+        }
+        if !state.receiver_connected {
+            return Err("capture parser thread stopped unexpectedly".to_owned());
+        }
+        state.reserved += bytes;
+        state.observed_high_water = state.observed_high_water.max(state.reserved);
+        Ok(CaptureFrameByteReservation {
+            byte_budget: Arc::clone(self),
+            bytes,
+        })
+    }
+
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, CaptureFrameByteBudgetState>, String> {
+        match self.state.lock() {
+            Ok(state) => Ok(state),
+            Err(mut error) => {
+                error.get_mut().receiver_connected = false;
+                self.state.clear_poison();
+                self.available.notify_all();
+                Err("capture frame queue byte budget became unavailable".to_owned())
+            }
+        }
+    }
+
+    fn release(&self, bytes: usize) {
+        match self.state.lock() {
+            Ok(mut state) => {
+                state.reserved = state.reserved.saturating_sub(bytes);
+            }
+            Err(mut error) => {
+                let state = error.get_mut();
+                state.reserved = 0;
+                state.receiver_connected = false;
+                self.state.clear_poison();
+            }
+        }
+        self.available.notify_all();
+    }
+
+    fn disconnect_receiver(&self) {
+        match self.state.lock() {
+            Ok(mut state) => state.receiver_connected = false,
+            Err(mut error) => {
+                error.get_mut().receiver_connected = false;
+                self.state.clear_poison();
+            }
+        }
+        self.available.notify_all();
+    }
+
+    fn observed_high_water(&self) -> usize {
+        self.state
+            .lock()
+            .map_or(self.high_water, |state| state.observed_high_water)
+    }
+}
+
+impl Drop for CaptureFrameByteReservation {
+    fn drop(&mut self) {
+        self.byte_budget.release(self.bytes);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,65 +575,86 @@ type FreeCode = unsafe extern "C" fn(*mut BpfProgram);
 type GetErr = unsafe extern "C" fn(*mut PcapT) -> *const c_char;
 type PcapDataLink = unsafe extern "C" fn(*mut PcapT) -> c_int;
 
-struct PcapHandle {
-    raw: *mut PcapT,
+struct PcapHandle<'library> {
+    raw: NonNull<PcapT>,
     close: Close,
+    _library: PhantomData<&'library Library>,
 }
 
-impl PcapHandle {
-    fn new(raw: *mut PcapT, close: Close) -> Self {
-        Self { raw, close }
+impl<'library> PcapHandle<'library> {
+    /// # Safety
+    ///
+    /// `raw` must be an exclusively owned handle returned by `pcap_open_live`,
+    /// `close` must come from the same `library`, and no other owner may close
+    /// the handle. The lifetime marker keeps that DLL loaded through Drop.
+    unsafe fn from_raw(raw: NonNull<PcapT>, close: Close, _library: &'library Library) -> Self {
+        Self {
+            raw,
+            close,
+            _library: PhantomData,
+        }
     }
 
     fn as_ptr(&self) -> *mut PcapT {
-        self.raw
+        self.raw.as_ptr()
     }
 }
 
-impl Drop for PcapHandle {
+impl Drop for PcapHandle<'_> {
     fn drop(&mut self) {
-        if !self.raw.is_null() {
-            unsafe {
-                (self.close)(self.raw);
-            }
-            self.raw = ptr::null_mut();
+        // SAFETY: `from_raw` accepts exclusive ownership of a live handle and
+        // ties the matching close symbol to its loaded library until this Drop.
+        unsafe {
+            (self.close)(self.raw.as_ptr());
         }
     }
 }
 
-struct BpfProgramGuard {
+struct BpfProgramGuard<'library> {
     program: BpfProgram,
     free_code: FreeCode,
-    active: bool,
+    compiled: bool,
+    _library: PhantomData<&'library Library>,
 }
 
-impl BpfProgramGuard {
-    fn new(free_code: FreeCode) -> Self {
+impl<'library> BpfProgramGuard<'library> {
+    fn new(free_code: FreeCode, _library: &'library Library) -> Self {
         Self {
             program: BpfProgram {
                 bf_len: 0,
                 bf_insns: ptr::null_mut(),
             },
             free_code,
-            active: true,
+            compiled: false,
+            _library: PhantomData,
         }
     }
 
-    fn as_mut(&mut self) -> &mut BpfProgram {
+    fn as_mut_ptr(&mut self) -> *mut BpfProgram {
         &mut self.program
     }
 
+    /// # Safety
+    ///
+    /// The preceding `pcap_compile` call must have returned success after
+    /// initializing this exact program through `as_mut_ptr`.
+    unsafe fn mark_compiled(&mut self) {
+        self.compiled = true;
+    }
+
     fn release(&mut self) {
-        if self.active {
+        if self.compiled {
+            // SAFETY: `compiled` is set only after successful pcap_compile;
+            // the matching symbol's library is retained by the lifetime marker.
             unsafe {
                 (self.free_code)(&mut self.program);
             }
-            self.active = false;
+            self.compiled = false;
         }
     }
 }
 
-impl Drop for BpfProgramGuard {
+impl Drop for BpfProgramGuard<'_> {
     fn drop(&mut self) {
         self.release();
     }
@@ -289,6 +693,27 @@ pub struct EngineEventSink {
     reliable: Sender<EngineEvent>,
     debug: Option<Sender<EngineEvent>>,
     dropped_debug_packets: Arc<AtomicU64>,
+    delivery_gate: Option<Arc<EngineEventDeliveryGate>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineEventDeliveryState {
+    Pending,
+    Released,
+    Cancelled,
+}
+
+struct EngineEventDeliveryGate {
+    state: Mutex<EngineEventDeliveryState>,
+    ready: Condvar,
+}
+
+/// One-shot owner for a producer delivery barrier. The capture/replay producer
+/// may be started before an authoritative session transaction commits, but no
+/// event can cross the sink until this permit is explicitly released. Dropping
+/// the permit cancels delivery and wakes blocked producers fail-closed.
+pub struct EngineEventDeliveryPermit {
+    gate: Option<Arc<EngineEventDeliveryGate>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -308,6 +733,7 @@ impl EngineEventSink {
             reliable: sender,
             debug: None,
             dropped_debug_packets: Arc::new(AtomicU64::new(0)),
+            delivery_gate: None,
         }
     }
 
@@ -316,10 +742,25 @@ impl EngineEventSink {
             reliable,
             debug: Some(debug),
             dropped_debug_packets: Arc::new(AtomicU64::new(0)),
+            delivery_gate: None,
         }
     }
 
+    /// Returns a cloneable sink whose producers block before their first event
+    /// until the paired permit is released or cancelled.
+    pub fn pause_delivery(mut self) -> (Self, EngineEventDeliveryPermit) {
+        let gate = Arc::new(EngineEventDeliveryGate {
+            state: Mutex::new(EngineEventDeliveryState::Pending),
+            ready: Condvar::new(),
+        });
+        self.delivery_gate = Some(Arc::clone(&gate));
+        (self, EngineEventDeliveryPermit { gate: Some(gate) })
+    }
+
     pub fn send(&self, event: EngineEvent) -> Result<(), EngineEventSendError> {
+        if let Some(gate) = &self.delivery_gate {
+            gate.wait_until_ready()?;
+        }
         if !event.is_droppable_debug_packet() {
             return self.reliable.send(event).map_err(|_| EngineEventSendError);
         }
@@ -364,6 +805,15 @@ pub enum PacketEmissionMode {
 }
 
 impl CaptureHandle {
+    #[cfg(test)]
+    pub(crate) fn from_test_thread(stop: Arc<AtomicBool>, thread: thread::JoinHandle<()>) -> Self {
+        Self {
+            stop,
+            thread: Some(thread),
+            raw_capture: RawCaptureBuffer::new(None),
+        }
+    }
+
     pub fn raw_capture(&self) -> RawCaptureBuffer {
         self.raw_capture.clone()
     }
@@ -866,6 +1316,65 @@ fn send_game_pause_transition(
     sender.send(EngineEvent::TimeStop(event))
 }
 
+fn combat_clock_error_health(error: CombatClockQueryError) -> CombatClockRuntimeHealth {
+    match error {
+        CombatClockQueryError::ProviderUnavailable => CombatClockRuntimeHealth::ProviderUnavailable,
+        CombatClockQueryError::ModDisabled => CombatClockRuntimeHealth::ModDisabled,
+        CombatClockQueryError::InvalidResponse => CombatClockRuntimeHealth::InvalidResponse,
+    }
+}
+
+fn combat_clock_sample_health(state_flags: u32, recorded: bool) -> CombatClockRuntimeHealth {
+    if state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 {
+        CombatClockRuntimeHealth::DataUnavailable
+    } else if recorded {
+        CombatClockRuntimeHealth::Recorded
+    } else {
+        CombatClockRuntimeHealth::Available
+    }
+}
+
+fn publish_combat_clock_health(
+    sender: &EngineEventSink,
+    previous: &mut Option<CombatClockRuntimeHealth>,
+    health: CombatClockRuntimeHealth,
+) -> Result<(), EngineEventSendError> {
+    if *previous == Some(health) {
+        return Ok(());
+    }
+    sender.send(EngineEvent::CombatClockHealth(health))?;
+    *previous = Some(health);
+    Ok(())
+}
+
+fn stable_combat_clock_error_health(
+    error: CombatClockQueryError,
+    consecutive_provider_failures: &mut u8,
+) -> Option<CombatClockRuntimeHealth> {
+    if error != CombatClockQueryError::ProviderUnavailable {
+        *consecutive_provider_failures = 0;
+        return Some(combat_clock_error_health(error));
+    }
+    *consecutive_provider_failures = consecutive_provider_failures.saturating_add(1);
+    (*consecutive_provider_failures >= COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD)
+        .then_some(CombatClockRuntimeHealth::ProviderUnavailable)
+}
+
+fn publish_combat_clock_snapshot_health(
+    sender: &EngineEventSink,
+    previous: &mut Option<CombatClockRuntimeHealth>,
+    transitions: &[CombatClockTransitionSnapshot],
+) -> Result<(), EngineEventSendError> {
+    let Some(transition) = transitions.last() else {
+        return Ok(());
+    };
+    publish_combat_clock_health(
+        sender,
+        previous,
+        combat_clock_sample_health(transition.state_flags, false),
+    )
+}
+
 fn run_plugin_monitor(
     stop: &AtomicBool,
     capture_started_100ns: u64,
@@ -892,25 +1401,82 @@ fn run_plugin_monitor(
     let mut initialized = false;
     let mut pause_state_valid = false;
     let mut previous_pause_type_mask = 0;
+    let mut previous_combat_clock_health = None;
+    let mut consecutive_combat_clock_provider_failures = 0;
     while !stop.load(Ordering::Relaxed) {
-        if let Ok(transitions) = query_combat_clock_transitions() {
-            let mut current = Vec::new();
-            for transition in transitions {
-                if transition.sequence <= last_sequence {
-                    continue;
+        match query_combat_clock_transitions() {
+            Ok(transitions) => {
+                consecutive_combat_clock_provider_failures = 0;
+                // Every response is a bounded authoritative history snapshot.
+                // Re-publish health from its newest sample even when its
+                // sequence was already consumed; otherwise one transient IPC
+                // failure leaves time-stop adjustment degraded until the next
+                // real pause transition.
+                if publish_combat_clock_snapshot_health(
+                    sender,
+                    &mut previous_combat_clock_health,
+                    &transitions,
+                )
+                .is_err()
+                {
+                    return;
                 }
-                last_sequence = transition.sequence;
-                current.push(transition);
-            }
-            for transition in current {
-                if transition.timestamp_100ns < capture_started_100ns {
+                let mut current = Vec::new();
+                for transition in transitions {
+                    if transition.sequence <= last_sequence {
+                        continue;
+                    }
+                    last_sequence = transition.sequence;
+                    current.push(transition);
+                }
+                for transition in current {
+                    if transition.timestamp_100ns < capture_started_100ns {
+                        pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
+                        previous_pause_type_mask = if pause_state_valid {
+                            transition.pause_type_mask
+                        } else {
+                            0
+                        };
+                        continue;
+                    }
+                    if !initialized {
+                        initialized = true;
+                        raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
+                            sequence: 0,
+                            timestamp_100ns: capture_started_100ns,
+                            pause_type_mask: if pause_state_valid {
+                                previous_pause_type_mask
+                            } else {
+                                0
+                            },
+                            reserved_value: 0,
+                            state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
+                        });
+                        if pause_state_valid
+                            && let Some(event) =
+                                tracker.apply_transition(capture_started, previous_pause_type_mask)
+                            && send_game_pause_transition(sender, event).is_err()
+                        {
+                            return;
+                        }
+                    }
+                    raw_capture.push_combat_clock_transition(&transition);
+                    let Some(timestamp) =
+                        filetime_100ns_to_unix_seconds(transition.timestamp_100ns)
+                    else {
+                        continue;
+                    };
                     pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
-                    previous_pause_type_mask = if pause_state_valid {
+                    let pause_type_mask = if pause_state_valid {
                         transition.pause_type_mask
                     } else {
                         0
                     };
-                    continue;
+                    if let Some(event) = tracker.apply_transition(timestamp, pause_type_mask)
+                        && send_game_pause_transition(sender, event).is_err()
+                    {
+                        return;
+                    }
                 }
                 if !initialized {
                     initialized = true;
@@ -933,37 +1499,17 @@ fn run_plugin_monitor(
                         return;
                     }
                 }
-                raw_capture.push_combat_clock_transition(&transition);
-                let Some(timestamp) = filetime_100ns_to_unix_seconds(transition.timestamp_100ns)
-                else {
-                    continue;
-                };
-                pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
-                if pause_state_valid
-                    && let Some(event) =
-                        tracker.apply_transition(timestamp, transition.pause_type_mask)
-                    && send_game_pause_transition(sender, event).is_err()
-                {
-                    return;
-                }
             }
-            if !initialized {
-                initialized = true;
-                raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
-                    sequence: 0,
-                    timestamp_100ns: capture_started_100ns,
-                    pause_type_mask: if pause_state_valid {
-                        previous_pause_type_mask
-                    } else {
-                        0
-                    },
-                    reserved_value: 0,
-                    state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
-                });
-                if pause_state_valid
-                    && let Some(event) =
-                        tracker.apply_transition(capture_started, previous_pause_type_mask)
-                    && send_game_pause_transition(sender, event).is_err()
+            Err(error) => {
+                if let Some(health) = stable_combat_clock_error_health(
+                    error,
+                    &mut consecutive_combat_clock_provider_failures,
+                ) && publish_combat_clock_health(
+                    sender,
+                    &mut previous_combat_clock_health,
+                    health,
+                )
+                .is_err()
                 {
                     return;
                 }
@@ -1035,6 +1581,31 @@ fn windows_system_directory() -> PathBuf {
         .join("System32")
 }
 
+struct NpcapLibraries {
+    // Fields drop in declaration order: unload wpcap before its Packet.dll
+    // dependency. Handles and compiled programs borrow `wpcap`, so Rust also
+    // prevents either library owner from being dropped before their guards.
+    wpcap: Library,
+    _packet: Library,
+}
+
+impl NpcapLibraries {
+    fn load() -> Result<Self, String> {
+        // SAFETY: The absolute System32/Npcap path selects the installed Npcap
+        // dependency; the returned owner remains live in this struct.
+        let packet =
+            unsafe { Library::new(packet_library_path()) }.map_err(|error| error.to_string())?;
+        // SAFETY: The absolute System32/Npcap path selects wpcap.dll. Packet.dll
+        // was loaded first and both owners are retained for the full API use.
+        let wpcap =
+            unsafe { Library::new(npcap_library_path()) }.map_err(|error| error.to_string())?;
+        Ok(Self {
+            wpcap,
+            _packet: packet,
+        })
+    }
+}
+
 unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, String> {
     // SAFETY: The requested names and signatures match the public libpcap API.
     unsafe {
@@ -1045,53 +1616,112 @@ unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, Stri
     }
 }
 
-fn c_string(value: *const c_char) -> String {
+/// # Safety
+///
+/// A non-null `value` must point to a readable NUL-terminated string for the
+/// duration of this call. Null is accepted and maps to an empty string.
+unsafe fn c_string(value: *const c_char) -> String {
     if value.is_null() {
         String::new()
     } else {
-        // SAFETY: libpcap returns null-terminated strings valid during this call.
+        // SAFETY: The caller guarantees a readable NUL-terminated buffer.
         unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
     }
 }
 
-pub fn list_devices() -> Result<Vec<CaptureDevice>, String> {
-    // SAFETY: Loading a known Npcap DLL and calling its documented API.
-    unsafe {
-        let _packet_library = Library::new(packet_library_path())
-            .map_err(|error| format!("无法加载 Npcap Packet.dll: {error}"))?;
-        let library = Library::new(npcap_library_path())
-            .map_err(|error| format!("无法加载 Npcap，请先安装 Npcap: {error}"))?;
-        let find_all_devs: FindAllDevs = load_symbol(&library, b"pcap_findalldevs\0")?;
-        let free_all_devs: FreeAllDevs = load_symbol(&library, b"pcap_freealldevs\0")?;
-        let mut devices_ptr = ptr::null_mut();
-        let mut error_buffer = [0_i8; PCAP_ERRBUF_SIZE];
-        if find_all_devs(&mut devices_ptr, error_buffer.as_mut_ptr()) != 0 {
-            return Err(c_string(error_buffer.as_ptr()));
+const MAX_NPCAP_DEVICES: usize = 1_024;
+const MAX_NPCAP_ADDRESSES_PER_DEVICE: usize = 1_024;
+
+struct NpcapDeviceList {
+    raw: *mut PcapIf,
+    free: FreeAllDevs,
+}
+
+impl Drop for NpcapDeviceList {
+    fn drop(&mut self) {
+        // SAFETY: `raw` is exactly the list returned by pcap_findalldevs and
+        // `free` is the matching symbol kept alive by the caller's library
+        // owner until this guard is dropped.
+        unsafe { (self.free)(self.raw) };
+    }
+}
+
+/// # Safety
+///
+/// `current` must be the head returned by a successful `pcap_findalldevs`
+/// call and remain owned by a live [`NpcapDeviceList`] for this call. Npcap's
+/// documented linked-list nodes and strings must remain readable until freed.
+unsafe fn project_npcap_devices(mut current: *mut PcapIf) -> Result<Vec<CaptureDevice>, String> {
+    let mut result = Vec::new();
+    while !current.is_null() {
+        if result.len() == MAX_NPCAP_DEVICES {
+            return Err("Npcap returned too many capture devices".to_owned());
         }
-        let mut result = Vec::new();
-        let mut current = devices_ptr;
-        while !current.is_null() {
-            let device = &*current;
-            let mut ipv4 = Vec::new();
-            let mut address = device.addresses;
-            while !address.is_null() {
-                let addr = (*address).addr;
-                if !addr.is_null() && (*addr).family == 2 {
-                    let bytes = &(*addr).data;
+        // SAFETY: upheld by this function's contract; current is checked
+        // non-null before dereferencing the documented PcapIf node.
+        let device = unsafe { &*current };
+        let mut ipv4 = Vec::new();
+        let mut address = device.addresses;
+        let mut address_count = 0_usize;
+        while !address.is_null() {
+            if address_count == MAX_NPCAP_ADDRESSES_PER_DEVICE {
+                return Err("Npcap returned too many addresses for a device".to_owned());
+            }
+            address_count += 1;
+            // SAFETY: upheld by this function's contract; address is checked
+            // non-null and belongs to the current Npcap address list.
+            let address_ref = unsafe { &*address };
+            let addr = address_ref.addr;
+            if !addr.is_null() {
+                // SAFETY: addr belongs to this live Npcap list and was checked
+                // non-null. sockaddr's fixed family/data prefix is ABI-stable.
+                let addr_ref = unsafe { &*addr };
+                if addr_ref.family == 2 {
+                    let bytes = &addr_ref.data;
                     ipv4.push(Ipv4Addr::new(bytes[2], bytes[3], bytes[4], bytes[5]));
                 }
-                address = (*address).next;
             }
-            result.push(CaptureDevice {
-                name: c_string(device.name),
-                description: c_string(device.description),
-                ipv4,
-            });
-            current = device.next;
+            address = address_ref.next;
         }
-        free_all_devs(devices_ptr);
-        Ok(result)
+        result.push(CaptureDevice {
+            // SAFETY: Npcap documents name/description as nullable C strings
+            // owned by the device list for its lifetime.
+            name: unsafe { c_string(device.name) },
+            // SAFETY: same lifetime and nullability guarantee as name.
+            description: unsafe { c_string(device.description) },
+            ipv4,
+        });
+        current = device.next;
     }
+    Ok(result)
+}
+
+pub fn list_devices() -> Result<Vec<CaptureDevice>, String> {
+    let libraries = NpcapLibraries::load()
+        .map_err(|error| format!("无法加载 Npcap，请先安装 Npcap: {error}"))?;
+    // SAFETY: symbol names and signatures are the documented libpcap ABI;
+    // `libraries` stays alive through every call and device-list drop below.
+    let find_all_devs: FindAllDevs =
+        unsafe { load_symbol(&libraries.wpcap, b"pcap_findalldevs\0")? };
+    // SAFETY: same ABI/lifetime proof as pcap_findalldevs.
+    let free_all_devs: FreeAllDevs =
+        unsafe { load_symbol(&libraries.wpcap, b"pcap_freealldevs\0")? };
+    let mut devices_ptr = ptr::null_mut();
+    let mut error_buffer = [0_i8; PCAP_ERRBUF_SIZE];
+    // SAFETY: both out-pointers reference writable storage of the documented
+    // size, and the loaded function remains valid while `libraries` lives.
+    if unsafe { find_all_devs(&mut devices_ptr, error_buffer.as_mut_ptr()) } != 0 {
+        // SAFETY: Npcap writes a NUL-terminated error string into errbuf on
+        // failure; the fixed 256-byte buffer remains alive for this call.
+        return Err(unsafe { c_string(error_buffer.as_ptr()) });
+    }
+    let devices = NpcapDeviceList {
+        raw: devices_ptr,
+        free: free_all_devs,
+    };
+    // SAFETY: `devices` owns the successful result and keeps it alive until
+    // projection returns; the Npcap libraries outlive the guard's Drop.
+    unsafe { project_npcap_devices(devices.raw) }
 }
 
 fn parse_udp_ipv4(
@@ -1367,12 +1997,284 @@ fn decode_payload_text(data: &[u8]) -> String {
     decode_payload_text_filtered(data, |_| true).text
 }
 
-fn decode_summary_payload_text(data: &[u8]) -> DecodedPayloadText {
-    decode_payload_text_filtered(data, |value| {
-        value.contains("Abyss")
-            || value.contains("ConditionState_Success")
-            || value.contains("UltraSkill")
+const SUMMARY_MARKER_ABYSS: usize = 0;
+const SUMMARY_MARKER_ABYSS_GAMEPLAY: usize = 1;
+const SUMMARY_MARKER_SUCCESS: usize = 2;
+const SUMMARY_MARKER_FIRST_HALF: usize = 3;
+const SUMMARY_MARKER_SECOND_HALF: usize = 4;
+const SUMMARY_MARKER_ABYSS_CLONE: usize = 5;
+const SUMMARY_MARKER_ABYSS_RESTART: usize = 6;
+const SUMMARY_MARKER_ABYSS_EXIT: usize = 7;
+const SUMMARY_MARKER_ULTRA_SKILL: usize = 8;
+const SUMMARY_MARKER_COUNT: usize = 9;
+const SUMMARY_TEXT_MAX_LEN: usize = 256;
+const SUMMARY_MARKER_PATTERNS: [&[u8]; SUMMARY_MARKER_COUNT] = [
+    b"Abyss",
+    b"FAbyssGamePlayData",
+    b"ConditionState_Success",
+    b"EAbyssFightStage::FirstHalf",
+    b"EAbyssFightStage::SecondHalf",
+    b"AbyssClone",
+    b"Abyss_Battle_Born",
+    b"Abyss_Station_LeaveClone",
+    b"UltraSkill",
+];
+
+#[derive(Default)]
+struct SummaryPayloadMarkers {
+    found: [bool; SUMMARY_MARKER_COUNT],
+    explicit_stage: Option<(u32, u32, AbyssHalf)>,
+}
+
+/// Streaming parser for a printable identifier that starts with `Abyss_`.
+/// It retains only the last three underscore-delimited numeric components,
+/// matching [`parse_abyss_stage_id`] without allocating the complete token.
+struct AbyssStageTokenScanner {
+    position: usize,
+    prefix_matches: bool,
+    capturing_components: bool,
+    component_count: usize,
+    component_value: u32,
+    component_has_digit: bool,
+    component_is_numeric: bool,
+    component_trailing_spaces: bool,
+    last_components: [Option<u32>; 3],
+}
+
+impl AbyssStageTokenScanner {
+    const PREFIX: &'static [u8] = b"Abyss_";
+
+    fn new() -> Self {
+        Self {
+            position: 0,
+            prefix_matches: true,
+            capturing_components: false,
+            component_count: 0,
+            component_value: 0,
+            component_has_digit: false,
+            component_is_numeric: true,
+            component_trailing_spaces: false,
+            last_components: [None; 3],
+        }
+    }
+
+    fn push_printable(&mut self, byte: u8) {
+        // The full decoder trims printable runs before parsing identifiers.
+        if self.position == 0 && byte == b' ' {
+            return;
+        }
+        if self.position < Self::PREFIX.len() {
+            self.prefix_matches &= byte == Self::PREFIX[self.position];
+            self.position += 1;
+            self.capturing_components = self.position == Self::PREFIX.len() && self.prefix_matches;
+            return;
+        }
+        self.position += 1;
+        if !self.capturing_components {
+            return;
+        }
+        if byte == b' ' && self.component_has_digit && self.component_is_numeric {
+            self.component_trailing_spaces = true;
+            return;
+        }
+        if self.component_trailing_spaces {
+            // Spaces are valid only when they are trimmed from the end of the
+            // whole printable run. Any following byte makes them internal.
+            self.component_is_numeric = false;
+            self.component_trailing_spaces = false;
+        }
+        if byte == b'_' {
+            self.finish_component();
+            return;
+        }
+        self.component_has_digit = true;
+        let Some(digit) = byte.checked_sub(b'0').filter(|digit| *digit <= 9) else {
+            self.component_is_numeric = false;
+            return;
+        };
+        if self.component_is_numeric {
+            match self
+                .component_value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u32::from(digit)))
+            {
+                Some(value) => self.component_value = value,
+                None => self.component_is_numeric = false,
+            }
+        }
+    }
+
+    fn finish_component(&mut self) {
+        self.last_components.rotate_left(1);
+        self.last_components[2] =
+            (self.component_has_digit && self.component_is_numeric).then_some(self.component_value);
+        self.component_count = self.component_count.saturating_add(1);
+        self.component_value = 0;
+        self.component_has_digit = false;
+        self.component_is_numeric = true;
+        self.component_trailing_spaces = false;
+    }
+
+    fn finish(mut self) -> Option<(u32, u32, AbyssHalf)> {
+        if !self.capturing_components {
+            return None;
+        }
+        self.finish_component();
+        if self.component_count < 3 {
+            return None;
+        }
+        let [Some(cycle), Some(floor), Some(half)] = self.last_components else {
+            return None;
+        };
+        let half = match half {
+            0 => AbyssHalf::First,
+            1 => AbyssHalf::Second,
+            _ => return None,
+        };
+        Some((cycle, floor, half))
+    }
+}
+
+fn shifted_payload_len(data: &[u8], bit_shift: u8) -> usize {
+    match bit_shift {
+        0 => data.len(),
+        1..=7 => data.len().saturating_sub(1),
+        _ => 0,
+    }
+}
+
+fn shifted_payload_byte(data: &[u8], bit_shift: u8, index: usize) -> Option<u8> {
+    match bit_shift {
+        0 => data.get(index).copied(),
+        1..=7 => Some(
+            (data.get(index).copied()? >> bit_shift)
+                | (data.get(index.checked_add(1)?).copied()? << (8 - bit_shift)),
+        ),
+        _ => None,
+    }
+}
+
+fn shifted_payload_ends_with(data: &[u8], bit_shift: u8, end_index: usize, pattern: &[u8]) -> bool {
+    let Some(end_exclusive) = end_index.checked_add(1) else {
+        return false;
+    };
+    let Some(start) = end_exclusive.checked_sub(pattern.len()) else {
+        return false;
+    };
+    pattern.iter().enumerate().all(|(offset, expected)| {
+        shifted_payload_byte(data, bit_shift, start + offset) == Some(*expected)
     })
+}
+
+fn scan_summary_payload_markers(data: &[u8]) -> SummaryPayloadMarkers {
+    let mut markers = SummaryPayloadMarkers::default();
+    for bit_shift in 0..8 {
+        let mut stage_token = AbyssStageTokenScanner::new();
+        for index in 0..shifted_payload_len(data, bit_shift) {
+            let Some(byte) = shifted_payload_byte(data, bit_shift, index) else {
+                break;
+            };
+            // One streaming pass per bit alignment. Only a possible terminal
+            // byte triggers a bounded comparison against its fixed marker;
+            // unrelated bytes do not fan out over every pattern.
+            let candidates: &[usize] = match byte {
+                b'a' => &[SUMMARY_MARKER_ABYSS_GAMEPLAY],
+                b'e' => &[SUMMARY_MARKER_ABYSS_CLONE, SUMMARY_MARKER_ABYSS_EXIT],
+                b'f' => &[SUMMARY_MARKER_FIRST_HALF, SUMMARY_MARKER_SECOND_HALF],
+                b'l' => &[SUMMARY_MARKER_ULTRA_SKILL],
+                b'n' => &[SUMMARY_MARKER_ABYSS_RESTART],
+                b's' => &[SUMMARY_MARKER_ABYSS, SUMMARY_MARKER_SUCCESS],
+                _ => &[],
+            };
+            for marker_index in candidates {
+                if !markers.found[*marker_index]
+                    && shifted_payload_ends_with(
+                        data,
+                        bit_shift,
+                        index,
+                        SUMMARY_MARKER_PATTERNS[*marker_index],
+                    )
+                {
+                    markers.found[*marker_index] = true;
+                }
+            }
+
+            if (0x20..=0x7e).contains(&byte) {
+                stage_token.push_printable(byte);
+            } else {
+                if let Some(stage) = stage_token.finish() {
+                    markers.explicit_stage = Some(stage);
+                }
+                stage_token = AbyssStageTokenScanner::new();
+            }
+        }
+        if let Some(stage) = stage_token.finish() {
+            markers.explicit_stage = Some(stage);
+        }
+    }
+    markers
+}
+
+fn append_summary_marker(text: &mut String, marker: &str) {
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(marker);
+}
+
+fn decode_summary_payload_text(data: &[u8]) -> DecodedPayloadText {
+    let markers = scan_summary_payload_markers(data);
+    let mut text = String::with_capacity(SUMMARY_TEXT_MAX_LEN);
+    if markers.found[SUMMARY_MARKER_ABYSS_GAMEPLAY] {
+        append_summary_marker(&mut text, "FAbyssGamePlayData");
+    }
+    if markers.found[SUMMARY_MARKER_SUCCESS] {
+        append_summary_marker(&mut text, "ConditionState_Success");
+    }
+    if markers.found[SUMMARY_MARKER_FIRST_HALF] {
+        append_summary_marker(&mut text, "EAbyssFightStage::FirstHalf");
+    }
+    if markers.found[SUMMARY_MARKER_SECOND_HALF] {
+        append_summary_marker(&mut text, "EAbyssFightStage::SecondHalf");
+    }
+    if markers.found[SUMMARY_MARKER_ABYSS_CLONE] {
+        append_summary_marker(&mut text, "AbyssClone");
+    }
+    if markers.found[SUMMARY_MARKER_ABYSS_RESTART] {
+        append_summary_marker(&mut text, "Abyss_Battle_Born");
+    }
+    if markers.found[SUMMARY_MARKER_ABYSS_EXIT] {
+        append_summary_marker(&mut text, "Abyss_Station_LeaveClone");
+    }
+    if let Some((cycle, floor, half)) = markers.explicit_stage {
+        let half = match half {
+            AbyssHalf::First => 0,
+            AbyssHalf::Second => 1,
+        };
+        append_summary_marker(&mut text, &format!("Abyss_{cycle}_{floor}_{half}"));
+    }
+    let has_specific_abyss_marker = markers.found[SUMMARY_MARKER_ABYSS_GAMEPLAY]
+        || markers.found[SUMMARY_MARKER_FIRST_HALF]
+        || markers.found[SUMMARY_MARKER_SECOND_HALF]
+        || markers.found[SUMMARY_MARKER_ABYSS_CLONE]
+        || markers.found[SUMMARY_MARKER_ABYSS_RESTART]
+        || markers.found[SUMMARY_MARKER_ABYSS_EXIT]
+        || markers.explicit_stage.is_some();
+    if markers.found[SUMMARY_MARKER_ABYSS] && !has_specific_abyss_marker {
+        append_summary_marker(&mut text, "Abyss");
+    }
+    if markers.found[SUMMARY_MARKER_ULTRA_SKILL] {
+        append_summary_marker(&mut text, "UltraSkill");
+    }
+    debug_assert!(text.len() <= SUMMARY_TEXT_MAX_LEN);
+    let has_readable_text = !text.is_empty();
+    if !has_readable_text {
+        text.push_str(UNREADABLE_PROTOCOL_TEXT);
+    }
+    DecodedPayloadText {
+        text,
+        has_readable_text,
+    }
 }
 
 fn decode_payload_text_filtered(data: &[u8], keep: impl Fn(&str) -> bool) -> DecodedPayloadText {
@@ -1675,6 +2577,7 @@ const AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS: f64 = 0.5;
 const DUPLICATE_FRAME_WINDOW_SECONDS: f64 = 0.001;
 /// Bounds memory for external captures containing many frames with one timestamp.
 const MAX_RECENT_CAPTURE_FRAMES: usize = 512;
+const FRAME_DEDUP_VERIFICATION_BYTE_BUDGET: usize = 256 * 1024;
 const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
 const FUWEN_START_SIGNATURE_OFFSET: usize = 22;
 const FUWEN_START_SIGNATURE: &[u8] = &[1, 0, 0, 0, 2, 0, 0, 0];
@@ -1683,12 +2586,14 @@ const FUWEN_ENTERING_ID_OFFSET: usize = 53;
 const FUWEN_PREVIOUS_ID_SHIFT: u8 = 2;
 const FUWEN_PREVIOUS_ID_OFFSET: usize = 66;
 const MIN_FOLLOW_UP_RESIDUAL_DAMAGE: f64 = 1.0;
+const FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME: &str = "GE_ActorReaction_2_new_Damage";
+const FUWEN_DAMAGE_EFFECT_ASSOCIATION_WINDOW_SECONDS: f64 = 1.0;
 /// How far back to look for the real owner of an attribute-locked reaction whose
 /// damage packet carried no caster. Matches the 3s window used by the 环合 retag.
 const REACTION_REATTRIBUTION_WINDOW_SECONDS: f64 = 3.0;
 const RECENT_CONFIRMED_HIT_WINDOW_SECONDS: f64 = 0.75;
 const UNTYPED_SHADOW_HIT_WINDOW_SECONDS: f64 = 0.05;
-const BOSS_HP_SYNC_WINDOW_SECONDS: f64 = 1.0;
+const MAX_SERVER_DAMAGE_TARGETS: usize = 256;
 const SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS: f64 = 1.0;
 /// The serialized GameplayEffect unique index precedes the first field of its
 /// paired legacy damage record by this SDK-specific fixed distance.
@@ -1729,6 +2634,7 @@ struct FollowUpDamageTracker {
     fuwen_active: bool,
     fuwen_start_pending: bool,
     fuwen_recorded_damage: bool,
+    fuwen_damage_effect_at: Option<f64>,
 }
 
 impl FollowUpDamageTracker {
@@ -1818,7 +2724,23 @@ impl FollowUpDamageTracker {
         self.last_server_hp = None;
     }
 
+    fn observe_fuwen_damage_effect(&mut self, timestamp: f64) {
+        self.fuwen_damage_effect_at = Some(timestamp);
+    }
+
+    fn observe_direct_fuwen_damage_hit(&mut self) {
+        self.fuwen_damage_effect_at = None;
+    }
+
     fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<HitFollowUp> {
+        let has_recent_fuwen_damage_effect =
+            self.fuwen_damage_effect_at.is_some_and(|observed_at| {
+                timestamp >= observed_at
+                    && timestamp - observed_at <= FUWEN_DAMAGE_EFFECT_ASSOCIATION_WINDOW_SECONDS
+            });
+        if self.fuwen_damage_effect_at.is_some() && !has_recent_fuwen_damage_effect {
+            self.fuwen_damage_effect_at = None;
+        }
         self.pending_hits
             .retain(|pending| timestamp - pending.hit.timestamp <= 1.0);
         let previous_hp = self.last_server_hp.or_else(|| {
@@ -1852,13 +2774,14 @@ impl FollowUpDamageTracker {
         if !has_required_team_attributes || !matches!(source_attribute.as_str(), "灵" | "咒") {
             return None;
         }
-        if !self.fuwen_active {
+        if !self.fuwen_active && !has_recent_fuwen_damage_effect {
             return None;
         }
         if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
             return None;
         }
         self.fuwen_recorded_damage = true;
+        self.fuwen_damage_effect_at = None;
         Some(HitFollowUp {
             source_timestamp: source.timestamp,
             source_char_id: source.char_id,
@@ -1885,6 +2808,7 @@ impl FollowUpDamageTracker {
         self.fuwen_active = false;
         self.fuwen_start_pending = false;
         self.fuwen_recorded_damage = false;
+        self.fuwen_damage_effect_at = None;
     }
 }
 
@@ -1928,16 +2852,42 @@ impl ServerDamageCalibrationTracker {
         }
     }
 
+    #[cfg(test)]
     fn observe_boss_hp(
         &mut self,
         timestamp: f64,
         update: &crate::engine::parser::ParsedBossHpUpdate,
     ) -> Option<HitDamageCorrection> {
+        self.observe_boss_hp_detailed(timestamp, update).0
+    }
+
+    fn observe_boss_hp_detailed(
+        &mut self,
+        timestamp: f64,
+        update: &crate::engine::parser::ParsedBossHpUpdate,
+    ) -> (
+        Option<HitDamageCorrection>,
+        Option<UnattributedServerDamage>,
+    ) {
         let current_hp = if update.current_hp <= 1.0 {
             0.0
         } else {
             update.current_hp as f64
         };
+        if !self.hp_by_handle.contains_key(&update.target_handle)
+            && self.hp_by_handle.len() >= MAX_SERVER_DAMAGE_TARGETS
+            && let Some(oldest) = self
+                .hp_by_handle
+                .iter()
+                .min_by(|(left_handle, left), (right_handle, right)| {
+                    left.timestamp
+                        .total_cmp(&right.timestamp)
+                        .then_with(|| left_handle.cmp(right_handle))
+                })
+                .map(|(handle, _)| *handle)
+        {
+            self.hp_by_handle.remove(&oldest);
+        }
         let previous = self.hp_by_handle.insert(
             update.target_handle,
             ServerHpSnapshot {
@@ -1948,51 +2898,72 @@ impl ServerDamageCalibrationTracker {
         self.pending_hits.retain(|pending| {
             timestamp - pending.hit.timestamp <= SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS
         });
-        let previous = previous?;
+        let Some(previous) = previous else {
+            return (None, None);
+        };
         if current_hp >= previous.hp {
             self.pending_hits
                 .retain(|pending| pending.hit.timestamp > timestamp);
-            return None;
+            return (None, None);
         }
-        let candidates = self
-            .pending_hits
-            .iter()
-            .enumerate()
-            .filter(|(_, pending)| {
-                pending.hit.timestamp > previous.timestamp
-                    && pending.hit.timestamp <= timestamp
-                    && pending.hit.target_max_hp > 0.0
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        if candidates.len() != 1 {
-            return None;
+        let mut candidate_count = 0_u32;
+        let mut source_index = 0_usize;
+        let mut decoded_damage = 0.0_f64;
+        for (index, pending) in self.pending_hits.iter().enumerate() {
+            if pending.hit.timestamp > previous.timestamp
+                && pending.hit.timestamp <= timestamp
+                && pending.hit.target_max_hp > 0.0
+            {
+                candidate_count = candidate_count.saturating_add(1);
+                source_index = index;
+                decoded_damage += pending.hit.damage.max(0.0);
+            }
         }
-        let source_index = candidates[0];
+        let damage = previous.hp - current_hp;
+        if damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+            return (None, None);
+        }
+        if candidate_count != 1 {
+            // A decoded hit is already present in team/personal totals. Report
+            // only the positive portion of the authoritative HP delta that the
+            // decoded candidates do not explain, regardless of candidate
+            // cardinality; diagnostics must not double-count visible damage.
+            let residual = (damage - decoded_damage).max(0.0);
+            if residual < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+                return (None, None);
+            }
+            return (
+                None,
+                Some(UnattributedServerDamage {
+                    timestamp,
+                    damage: residual,
+                    candidate_hits: candidate_count,
+                }),
+            );
+        }
         let source = self.pending_hits[source_index].hit.clone();
         self.pending_hits
             .retain(|pending| pending.hit.timestamp > source.timestamp);
-        let damage = previous.hp - current_hp;
-        if damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
-            return None;
-        }
-        Some(HitDamageCorrection {
-            source_timestamp: source.timestamp,
-            source_char_id: source.char_id,
-            source_damage: source.damage,
-            source_target_hp_before: source.target_hp_before,
-            source_target_hp_after: source.target_hp_after,
-            source_target_max_hp: source.target_max_hp,
-            source_gameplay_effect_index: source.gameplay_effect_index,
-            damage,
-            target_hp_before: previous.hp,
-            target_hp_after: current_hp,
-            target_hp_percent: if source.target_max_hp > 0.0 {
-                current_hp / source.target_max_hp * 100.0
-            } else {
-                0.0
-            },
-        })
+        (
+            Some(HitDamageCorrection {
+                source_timestamp: source.timestamp,
+                source_char_id: source.char_id,
+                source_damage: source.damage,
+                source_target_hp_before: source.target_hp_before,
+                source_target_hp_after: source.target_hp_after,
+                source_target_max_hp: source.target_max_hp,
+                source_gameplay_effect_index: source.gameplay_effect_index,
+                damage,
+                target_hp_before: previous.hp,
+                target_hp_after: current_hp,
+                target_hp_percent: if source.target_max_hp > 0.0 {
+                    current_hp / source.target_max_hp * 100.0
+                } else {
+                    0.0
+                },
+            }),
+            None,
+        )
     }
 }
 
@@ -2756,8 +3727,15 @@ impl EmptyCurtainDecoder {
 }
 
 struct RecentCaptureFrame {
+    sequence: u64,
     timestamp: f64,
-    bytes: Vec<u8>,
+    fingerprint: u64,
+    frame_len: usize,
+}
+
+struct RecentCaptureFrameBytes {
+    sequence: u64,
+    bytes: Box<[u8]>,
 }
 
 #[derive(Clone, Copy)]
@@ -2774,18 +3752,40 @@ struct CapturedPacket<'a> {
 }
 
 /// Suppresses byte-for-byte duplicate capture frames reported back-to-back by
-/// the capture layer. Full-frame comparison keeps a genuine retransmission with
-/// different network headers distinct, even when its UDP payload is unchanged.
-#[derive(Default)]
+/// the capture layer. Fingerprint/length metadata covers the full 512-entry
+/// window, while exact comparison bodies have a separate byte budget. A hash
+/// match whose body was evicted is deliberately treated as fresh, so collision
+/// or memory pressure can cause only a safe false negative, never false dedup.
 struct FrameDedup {
     recent: VecDeque<RecentCaptureFrame>,
+    verification: VecDeque<RecentCaptureFrameBytes>,
+    retained_verification_bytes: usize,
+    verification_byte_budget: usize,
+    next_sequence: u64,
     last_timestamp: Option<f64>,
+    fingerprint_builder: RandomState,
+}
+
+impl Default for FrameDedup {
+    fn default() -> Self {
+        Self::with_verification_byte_budget(FRAME_DEDUP_VERIFICATION_BYTE_BUDGET)
+    }
 }
 
 impl FrameDedup {
     fn is_duplicate(&mut self, frame: &[u8], timestamp: Option<f64>) -> bool {
+        let fingerprint = self.fingerprint_builder.hash_one(frame);
+        self.is_duplicate_with_fingerprint(frame, timestamp, fingerprint)
+    }
+
+    fn is_duplicate_with_fingerprint(
+        &mut self,
+        frame: &[u8],
+        timestamp: Option<f64>,
+        fingerprint: u64,
+    ) -> bool {
         let Some(timestamp) = timestamp.filter(|timestamp| timestamp.is_finite()) else {
-            self.recent.clear();
+            self.clear_recent();
             self.last_timestamp = None;
             return false;
         };
@@ -2793,7 +3793,7 @@ impl FrameDedup {
             .last_timestamp
             .is_some_and(|previous| timestamp < previous)
         {
-            self.recent.clear();
+            self.clear_recent();
         }
         self.last_timestamp = Some(timestamp);
 
@@ -2801,19 +3801,96 @@ impl FrameDedup {
             if timestamp - entry.timestamp <= DUPLICATE_FRAME_WINDOW_SECONDS {
                 break;
             }
-            self.recent.pop_front();
+            self.pop_oldest_recent();
         }
-        if self.recent.iter().any(|entry| entry.bytes == frame) {
+        if self.recent.iter().any(|entry| {
+            entry.fingerprint == fingerprint
+                && entry.frame_len == frame.len()
+                && self
+                    .verification
+                    .iter()
+                    .find(|body| body.sequence == entry.sequence)
+                    .is_some_and(|body| body.bytes.as_ref() == frame)
+        }) {
             return true;
         }
         if self.recent.len() == MAX_RECENT_CAPTURE_FRAMES {
-            self.recent.pop_front();
+            self.pop_oldest_recent();
+        }
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        if self.next_sequence == 0 {
+            // Sequence identity is internal to this bounded cache. Clear on
+            // wrap rather than allowing an ancient verification body to alias.
+            self.clear_recent();
         }
         self.recent.push_back(RecentCaptureFrame {
+            sequence,
             timestamp,
-            bytes: frame.to_vec(),
+            fingerprint,
+            frame_len: frame.len(),
         });
+        self.retain_verification_body(sequence, frame);
         false
+    }
+
+    fn with_verification_byte_budget(verification_byte_budget: usize) -> Self {
+        Self {
+            recent: VecDeque::new(),
+            verification: VecDeque::new(),
+            retained_verification_bytes: 0,
+            verification_byte_budget,
+            next_sequence: 0,
+            last_timestamp: None,
+            fingerprint_builder: RandomState::new(),
+        }
+    }
+
+    fn retain_verification_body(&mut self, sequence: u64, frame: &[u8]) {
+        if frame.len() > self.verification_byte_budget {
+            return;
+        }
+        while frame.len() > self.verification_byte_budget - self.retained_verification_bytes {
+            let Some(expired) = self.verification.pop_front() else {
+                self.retained_verification_bytes = 0;
+                break;
+            };
+            self.retained_verification_bytes = self
+                .retained_verification_bytes
+                .saturating_sub(expired.bytes.len());
+        }
+        self.retained_verification_bytes += frame.len();
+        self.verification.push_back(RecentCaptureFrameBytes {
+            sequence,
+            bytes: frame.into(),
+        });
+    }
+
+    fn pop_oldest_recent(&mut self) {
+        let Some(expired) = self.recent.pop_front() else {
+            return;
+        };
+        if self
+            .verification
+            .front()
+            .is_some_and(|body| body.sequence == expired.sequence)
+            && let Some(body) = self.verification.pop_front()
+        {
+            self.retained_verification_bytes = self
+                .retained_verification_bytes
+                .saturating_sub(body.bytes.len());
+        }
+    }
+
+    fn clear_recent(&mut self) {
+        self.recent.clear();
+        self.verification.clear();
+        self.retained_verification_bytes = 0;
+    }
+
+    #[cfg(test)]
+    fn retained_verification_bytes(&self) -> usize {
+        self.retained_verification_bytes
     }
 }
 
@@ -3243,7 +4320,7 @@ impl PacketDecoder {
     }
 
     fn take_all_ambiguous_hits(&mut self) -> Vec<Hit> {
-        self.pending_ambiguous_hits.drain(..).collect()
+        std::mem::take(&mut self.pending_ambiguous_hits)
     }
 
     fn emit_hits(
@@ -3255,9 +4332,11 @@ impl PacketDecoder {
         for hit in hits {
             self.follow_up_damage
                 .observe_hit(&hit, hit.gameplay_effect_index, characters);
-            if self.use_server_damage_calibration {
-                self.server_damage_calibration.observe_hit(&hit);
-            }
+            // HP-delta evidence remains observable even when automatic
+            // correction is disabled. The setting controls only whether a
+            // unique-candidate correction mutates combat damage; it must not
+            // create a diagnostics blind spot for server-only damage.
+            self.server_damage_calibration.observe_hit(&hit);
             let _ = sender.send(EngineEvent::Hit(Box::new(hit)));
         }
     }
@@ -3300,73 +4379,6 @@ impl PacketDecoder {
         prepared
     }
 
-    fn infer_boss_hp_sync_damage(
-        &mut self,
-        timestamp: f64,
-        current_hp: f64,
-        characters: &HashMap<u32, CharacterInfo>,
-    ) -> Option<HitFollowUp> {
-        self.recent_confirmed_hits
-            .retain(|hit| timestamp - hit.timestamp <= BOSS_HP_SYNC_WINDOW_SECONDS);
-        if current_hp > 1.0 {
-            return None;
-        }
-        let current_hp = 0.0;
-        if self
-            .recent_confirmed_hits
-            .iter()
-            .any(|hit| nearly_same(hit.target_hp_after, current_hp))
-        {
-            return None;
-        }
-        let mut candidates = self
-            .recent_confirmed_hits
-            .iter()
-            .enumerate()
-            .filter(|(_, hit)| {
-                !hit.direction.is_incoming()
-                    && hit.target_max_hp > 0.0
-                    && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
-            });
-        let (source_index, _) = candidates.next()?;
-        if candidates.next().is_some() {
-            return None;
-        }
-        let source = self.recent_confirmed_hits[source_index].clone();
-        self.recent_confirmed_hits[source_index].target_hp_after = current_hp;
-        self.recent_confirmed_hits[source_index].target_hp_percent = if source.target_max_hp > 0.0 {
-            current_hp / source.target_max_hp * 100.0
-        } else {
-            0.0
-        };
-        let damage = source.target_hp_after - current_hp;
-        let damage_attribute = source.damage_attribute.clone().or_else(|| {
-            characters
-                .get(&source.char_id)
-                .and_then(|character| character.attribute.clone())
-        });
-        Some(HitFollowUp {
-            source_timestamp: source.timestamp,
-            source_char_id: source.char_id,
-            source_damage: source.damage,
-            source_target_hp_before: source.target_hp_before,
-            source_target_hp_after: source.target_hp_after,
-            source_target_max_hp: source.target_max_hp,
-            source_gameplay_effect_index: source.gameplay_effect_index,
-            timestamp,
-            damage,
-            target_hp_after: current_hp,
-            target_hp_percent: if source.target_max_hp > 0.0 {
-                current_hp / source.target_max_hp * 100.0
-            } else {
-                0.0
-            },
-            damage_name: Some("HP同步伤害".to_owned()),
-            attack_type: Some("HP同步伤害".to_owned()),
-            damage_attribute,
-        })
-    }
-
     /// Reconciles this packet's boss-HP-sync candidates against the pending
     /// hits queued in each of the three damage-reconciliation mechanisms.
     ///
@@ -3377,9 +4389,11 @@ impl PacketDecoder {
     /// delta as an undiscovered correction to the base hit, silently
     /// overwriting a damage value that was already correct and erasing the
     /// follow-up attribution in the process. So each update is *claimed* by at
-    /// most one of these mechanisms, with the reaction follow-up given first
-    /// refusal — but the calibration tracker still gets to *observe* every
-    /// update regardless, since it keeps its own HP snapshot/pending-hit state
+    /// most one attribution mechanism, with the reaction follow-up given first
+    /// refusal. Conservative mode never turns an HP-sync residual into guessed
+    /// character damage; aggressive calibration remains an explicit opt-in.
+    /// The calibration tracker still gets to *observe* every update regardless,
+    /// since it keeps its own HP snapshot/pending-hit state
     /// (`ServerDamageCalibrationTracker::hp_by_handle`); skipping the call
     /// entirely on a claimed update would leave that state stale and make its
     /// *next* correction compare against the wrong baseline.
@@ -3387,35 +4401,50 @@ impl PacketDecoder {
         &mut self,
         timestamp: f64,
         boss_hp_updates: &[crate::engine::parser::ParsedBossHpUpdate],
-        characters: &HashMap<u32, CharacterInfo>,
-    ) -> (Vec<HitFollowUp>, Vec<HitFollowUp>, Vec<HitDamageCorrection>) {
+    ) -> (
+        Vec<HitFollowUp>,
+        Vec<HitFollowUp>,
+        Vec<HitDamageCorrection>,
+        Vec<UnattributedServerDamage>,
+    ) {
         let mut inferred_follow_ups = Vec::new();
-        let mut hp_sync_follow_ups = Vec::new();
+        let hp_sync_follow_ups = Vec::new();
         let mut server_damage_corrections = Vec::new();
+        let mut unattributed_server_damage = Vec::new();
         for update in boss_hp_updates {
             let follow_up = self
                 .follow_up_damage
                 .observe_server_hp(timestamp, update.current_hp as f64);
             let claimed = follow_up.is_some();
             inferred_follow_ups.extend(follow_up);
-            if self.use_server_damage_calibration {
-                let correction = self
-                    .server_damage_calibration
-                    .observe_boss_hp(timestamp, update);
-                if !claimed {
+            let (correction, unattributed) = self
+                .server_damage_calibration
+                .observe_boss_hp_detailed(timestamp, update);
+            if !claimed {
+                unattributed_server_damage.extend(unattributed);
+                if self.use_server_damage_calibration {
                     server_damage_corrections.extend(correction);
+                } else if let Some(correction) = correction {
+                    // The decoded hit already contributes source_damage to
+                    // team/personal totals. Conservative mode publishes only
+                    // the positive residual as unassigned evidence and never
+                    // fabricates a follow-up for a likely character.
+                    let residual = correction.damage - correction.source_damage;
+                    if residual >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+                        unattributed_server_damage.push(UnattributedServerDamage {
+                            timestamp,
+                            damage: residual,
+                            candidate_hits: 1,
+                        });
+                    }
                 }
-            } else if !claimed
-                && let Some(follow_up) =
-                    self.infer_boss_hp_sync_damage(timestamp, update.current_hp as f64, characters)
-            {
-                hp_sync_follow_ups.push(follow_up);
             }
         }
         (
             inferred_follow_ups,
             hp_sync_follow_ups,
             server_damage_corrections,
+            unattributed_server_damage,
         )
     }
 
@@ -4114,6 +5143,14 @@ impl PacketDecoder {
         let effective_gameplay_effects = inherited_gameplay_effect
             .as_ref()
             .map_or(gameplay_effects.as_slice(), std::slice::from_ref);
+        // SDK/CN exposes the server damage application through
+        // FHandleDamageInfo_Net.GameplayEffect and FPlayGamePlayEffect_Net.GameplayEffect.
+        // Prefer that exact GE identity over any damage-ratio inference.
+        let packet_has_fuwen_damage_effect = effective_gameplay_effects.iter().any(|effect| {
+            self.gameplay_effect_names
+                .get(&effect.unique_index)
+                .is_some_and(|name| name == FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
+        });
         let mut previous_hit_bit_offset = None;
         for hit in &mut hits {
             let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
@@ -4209,6 +5246,17 @@ impl PacketDecoder {
             hits.push(completed.hit);
         }
         hits.append(&mut bool_enum_fragment_observation.abandoned_hits);
+        let has_direct_fuwen_damage_hit = hits.iter().any(|hit| {
+            hit.gameplay_effect_name.as_deref() == Some(FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
+        });
+        if has_direct_fuwen_damage_hit {
+            // A decoded damage record already carries the authoritative GE and
+            // will be counted directly as 覆纹; do not infer the same damage
+            // again from the following boss-HP synchronization.
+            self.follow_up_damage.observe_direct_fuwen_damage_hit();
+        } else if packet_has_fuwen_damage_effect {
+            self.follow_up_damage.observe_fuwen_damage_effect(timestamp);
+        }
         for hit in &mut hits {
             let hit_timestamp = hit.timestamp;
             self.finalize_contextual_hit_attribution(hit, hit_timestamp, characters);
@@ -4297,8 +5345,12 @@ impl PacketDecoder {
             return;
         }
         if matches!(self.packet_emission, PacketEmissionMode::SummaryOnly) {
-            let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections) =
-                self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates, characters);
+            let (
+                inferred_follow_ups,
+                hp_sync_follow_ups,
+                server_damage_corrections,
+                unattributed_server_damage,
+            ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
             for event in abyss_events_from_text(timestamp, &decoded_text) {
                 let _ = sender.send(EngineEvent::Abyss(event));
             }
@@ -4314,6 +5366,9 @@ impl PacketDecoder {
             }
             for correction in server_damage_corrections {
                 let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
+            }
+            for observation in unattributed_server_damage {
+                let _ = sender.send(EngineEvent::UnattributedServerDamage(observation));
             }
             return;
         }
@@ -4416,8 +5471,12 @@ impl PacketDecoder {
             );
         }
         append_packet_note(&mut note, equipment_slots_note(&equipment_slots));
-        let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections) =
-            self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates, characters);
+        let (
+            inferred_follow_ups,
+            hp_sync_follow_ups,
+            server_damage_corrections,
+            unattributed_server_damage,
+        ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
         if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
             if packet.mode != 0 {
                 append_packet_note(
@@ -4469,6 +5528,9 @@ impl PacketDecoder {
         for correction in server_damage_corrections {
             let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
         }
+        for observation in unattributed_server_damage {
+            let _ = sender.send(EngineEvent::UnattributedServerDamage(observation));
+        }
     }
 }
 
@@ -4504,10 +5566,13 @@ pub fn start_capture(
             packet_emission,
         });
         thread_raw_capture.finish();
-        let _ = sender.send(EngineEvent::CaptureStopped);
         if let Err(error) = result {
             let _ = sender.send(EngineEvent::Error(error));
         }
+        // Lifecycle completion is the final reliable event. Consumers may
+        // safely join the producer after observing it without blocking on a
+        // later reliable send into the bounded queue.
+        let _ = sender.send(EngineEvent::CaptureStopped);
     });
     CaptureHandle {
         stop,
@@ -4542,7 +5607,7 @@ struct ParserRunConfig {
 /// Parser thread body: drains decoded frames off the bounded queue and runs the stable decode
 /// pipeline, fully decoupled from packet acquisition. It owns its own `PacketDecoder` and exits
 /// once the acquisition thread drops the frame sender, flushing any deferred ambiguous hits.
-fn run_parser(frames: Receiver<CaptureFrame>, config: ParserRunConfig) {
+fn run_parser(frames: CaptureFrameReceiver, config: ParserRunConfig) {
     let ParserRunConfig {
         link_type,
         local_ip,
@@ -4579,10 +5644,8 @@ fn run_parser(frames: Receiver<CaptureFrame>, config: ParserRunConfig) {
     decoder.emit_hits(pending_hits, &characters, &sender);
 }
 
-fn forward_capture_frame(sender: &Sender<CaptureFrame>, frame: CaptureFrame) -> Result<(), String> {
-    sender
-        .send(frame)
-        .map_err(|_| "capture parser thread stopped unexpectedly".to_owned())
+fn forward_capture_frame(sender: &CaptureFrameSender, frame: CaptureFrame) -> Result<(), String> {
+    sender.send(frame)
 }
 
 fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
@@ -4598,153 +5661,209 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         raw_capture,
         packet_emission,
     } = config;
-    // SAFETY: Function pointers are loaded from Npcap and used per the libpcap API.
-    unsafe {
-        let _packet_library =
-            Library::new(packet_library_path()).map_err(|error| error.to_string())?;
-        let library = Library::new(npcap_library_path()).map_err(|error| error.to_string())?;
-        let open_live: OpenLive = load_symbol(&library, b"pcap_open_live\0")?;
-        let next_ex: NextEx = load_symbol(&library, b"pcap_next_ex\0")?;
-        let close: Close = load_symbol(&library, b"pcap_close\0")?;
-        let compile: Compile = load_symbol(&library, b"pcap_compile\0")?;
-        let set_filter: SetFilter = load_symbol(&library, b"pcap_setfilter\0")?;
-        let free_code: FreeCode = load_symbol(&library, b"pcap_freecode\0")?;
-        let get_err: GetErr = load_symbol(&library, b"pcap_geterr\0")?;
-        let pcap_datalink: PcapDataLink = load_symbol(&library, b"pcap_datalink\0")?;
+    let libraries = NpcapLibraries::load()?;
+    let library = &libraries.wpcap;
+    // SAFETY: This exact export has the documented OpenLive signature.
+    let open_live: OpenLive = unsafe { load_symbol(library, b"pcap_open_live\0")? };
+    // SAFETY: This exact export has the documented NextEx signature.
+    let next_ex: NextEx = unsafe { load_symbol(library, b"pcap_next_ex\0")? };
+    // SAFETY: This exact export has the documented Close signature.
+    let close: Close = unsafe { load_symbol(library, b"pcap_close\0")? };
+    // SAFETY: This exact export has the documented Compile signature.
+    let compile: Compile = unsafe { load_symbol(library, b"pcap_compile\0")? };
+    // SAFETY: This exact export has the documented SetFilter signature.
+    let set_filter: SetFilter = unsafe { load_symbol(library, b"pcap_setfilter\0")? };
+    // SAFETY: This exact export has the documented FreeCode signature.
+    let free_code: FreeCode = unsafe { load_symbol(library, b"pcap_freecode\0")? };
+    // SAFETY: This exact export has the documented GetErr signature.
+    let get_err: GetErr = unsafe { load_symbol(library, b"pcap_geterr\0")? };
+    // SAFETY: This exact export has the documented PcapDataLink signature.
+    let pcap_datalink: PcapDataLink = unsafe { load_symbol(library, b"pcap_datalink\0")? };
 
-        let device_name = CString::new(device.name.as_str()).map_err(|error| error.to_string())?;
-        let mut error_buffer = [0_i8; PCAP_ERRBUF_SIZE];
-        let handle = open_live(
+    let device_name = CString::new(device.name.as_str()).map_err(|error| error.to_string())?;
+    let mut error_buffer = [0_i8; PCAP_ERRBUF_SIZE];
+    // SAFETY: All pointers reference live writable/readable buffers for the
+    // duration of this documented pcap_open_live call.
+    let raw_handle = unsafe {
+        open_live(
             device_name.as_ptr(),
-            65_535,
+            CAPTURE_SNAPLEN as c_int,
             1,
             100,
             error_buffer.as_mut_ptr(),
-        );
-        if handle.is_null() {
-            return Err(format!(
-                "failed to open device: {}",
-                c_string(error_buffer.as_ptr())
-            ));
-        }
-        let handle = PcapHandle::new(handle, close);
-        let link_type = CaptureLinkType::from_npcap_datalink(pcap_datalink(handle.as_ptr()))?;
-        raw_capture.initialize(device, link_type);
+        )
+    };
+    let Some(raw_handle) = NonNull::new(raw_handle) else {
+        // SAFETY: Npcap writes a NUL-terminated PCAP_ERRBUF_SIZE error buffer
+        // when pcap_open_live reports failure.
+        let error = unsafe { c_string(error_buffer.as_ptr()) };
+        return Err(format!("failed to open device: {error}"));
+    };
+    // SAFETY: The non-null pointer was just returned by this library's
+    // pcap_open_live and this guard becomes its sole close owner.
+    let handle = unsafe { PcapHandle::from_raw(raw_handle, close, library) };
+    // SAFETY: `handle` is live and owned, and the typed symbol's DLL is retained.
+    let data_link = unsafe { pcap_datalink(handle.as_ptr()) };
+    let link_type = CaptureLinkType::from_npcap_datalink(data_link)?;
+    raw_capture.initialize(device, link_type);
 
-        let capture_filter = CString::new(filter).map_err(|error| error.to_string())?;
-        let mut program = BpfProgramGuard::new(free_code);
-        if compile(
+    let capture_filter = CString::new(filter).map_err(|error| error.to_string())?;
+    let mut program = BpfProgramGuard::new(free_code, library);
+    // SAFETY: The handle and filter C string are live; `program` exposes its
+    // exact writable BpfProgram storage for initialization by pcap_compile.
+    let compile_result = unsafe {
+        compile(
             handle.as_ptr(),
-            program.as_mut(),
+            program.as_mut_ptr(),
             capture_filter.as_ptr(),
             1,
             u32::MAX,
-        ) != 0
-            || set_filter(handle.as_ptr(), program.as_mut()) != 0
-        {
-            let error = c_string(get_err(handle.as_ptr()));
-            return Err(format!("failed to set capture filter: {error}"));
-        }
-        program.release();
-        let raw_capture_status = raw_capture.path().map_or_else(
-            || "; raw capture unavailable".to_owned(),
-            |path| format!("; writing raw capture to {}", path.display()),
-        );
-        let _ = sender.send(EngineEvent::Status(format!(
-            "capturing: {} ({}, {}){}",
-            device.description,
-            local_ip
-                .map(|ip| ip.to_string())
-                .unwrap_or_else(|| "local IP not filtered".to_owned()),
-            link_type.label(),
-            raw_capture_status
-        )));
-
-        // The plugin monitor starts only after the capture link type has been frozen and the raw
-        // writer has emitted its matching interface block, so no custom block can precede it.
-        let monitor_stop = Arc::new(AtomicBool::new(false));
-        let monitor_thread = {
-            let stop = Arc::clone(&monitor_stop);
-            let raw_capture = raw_capture.clone();
-            let sender = sender.clone();
-            let capture_started_100ns = current_filetime_100ns();
-            thread::spawn(move || {
-                run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
-            })
-        };
-
-        // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
-        // the bounded parser queue, which applies backpressure rather than dropping live-only data.
-        let (frame_sender, frame_receiver) = bounded::<CaptureFrame>(CAPTURE_FRAME_QUEUE_CAPACITY);
-        let parser_thread = {
-            let resources = resources.clone();
-            let sender = sender.clone();
-            thread::spawn(move || {
-                run_parser(
-                    frame_receiver,
-                    ParserRunConfig {
-                        link_type,
-                        local_ip,
-                        include_incoming,
-                        use_server_damage_calibration,
-                        packet_emission,
-                        resources,
-                        sender,
-                    },
-                );
-            })
-        };
-
-        let mut loop_result = Ok(());
-        while !stop.load(Ordering::Relaxed) {
-            let mut header = ptr::null();
-            let mut packet_data = ptr::null();
-            let result = next_ex(handle.as_ptr(), &mut header, &mut packet_data);
-            if result == 0 {
-                continue;
-            }
-            if result < 0 {
-                let error = c_string(get_err(handle.as_ptr()));
-                loop_result = Err(format!("failed to read packet: {error}"));
-                break;
-            }
-            if header.is_null() || packet_data.is_null() {
-                continue;
-            }
-            let header_ref = &*header;
-            if header_ref.caplen == 0 {
-                continue;
-            }
-            let packet = std::slice::from_raw_parts(packet_data, header_ref.caplen as usize);
-            let timestamp =
-                header_ref.ts.tv_sec as f64 + header_ref.ts.tv_usec as f64 / 1_000_000.0;
-            let raw_timestamp = Duration::new(
-                header_ref.ts.tv_sec.max(0) as u64,
-                header_ref.ts.tv_usec.clamp(0, 999_999) as u32 * 1_000,
-            );
-            raw_capture.push(raw_timestamp, header_ref.len, packet);
-            if let Err(error) = forward_capture_frame(
-                &frame_sender,
-                CaptureFrame {
-                    data: packet.to_vec(),
-                    timestamp,
-                },
-            ) {
-                loop_result = Err(error);
-                break;
-            }
-        }
-        drop(frame_sender);
-        monitor_stop.store(true, Ordering::Relaxed);
-        let monitor_panicked = monitor_thread.join().is_err();
-        if parser_thread.join().is_err() && loop_result.is_ok() {
-            loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
-        }
-        if monitor_panicked && loop_result.is_ok() {
-            loop_result = Err("capture plugin monitor stopped unexpectedly".to_owned());
-        }
-        loop_result?;
+        )
+    };
+    if compile_result != 0 {
+        // SAFETY: The handle remains live and pcap_geterr returns a borrowed
+        // string valid until the next operation on this handle.
+        let error_ptr = unsafe { get_err(handle.as_ptr()) };
+        // SAFETY: The returned Npcap error pointer is NUL-terminated and is
+        // consumed before another operation can invalidate it.
+        let error = unsafe { c_string(error_ptr) };
+        return Err(format!("failed to set capture filter: {error}"));
     }
+    // SAFETY: A zero compile result initialized this exact program, making it
+    // eligible for pcap_freecode on every subsequent exit path.
+    unsafe { program.mark_compiled() };
+    // SAFETY: The handle is live and `program` was successfully compiled by the
+    // same loaded Npcap library.
+    let set_filter_result = unsafe { set_filter(handle.as_ptr(), program.as_mut_ptr()) };
+    if set_filter_result != 0 {
+        // SAFETY: The handle remains live and pcap_geterr returns a borrowed
+        // string valid until the next operation on this handle.
+        let error_ptr = unsafe { get_err(handle.as_ptr()) };
+        // SAFETY: The returned Npcap error pointer is NUL-terminated and is
+        // consumed before another operation can invalidate it.
+        let error = unsafe { c_string(error_ptr) };
+        return Err(format!("failed to set capture filter: {error}"));
+    }
+    program.release();
+    let raw_capture_status = raw_capture.path().map_or_else(
+        || "; raw capture unavailable".to_owned(),
+        |path| format!("; writing raw capture to {}", path.display()),
+    );
+    let _ = sender.send(EngineEvent::Status(format!(
+        "capturing: {} ({}, {}){}",
+        device.description,
+        local_ip
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| "local IP not filtered".to_owned()),
+        link_type.label(),
+        raw_capture_status
+    )));
+
+    // The plugin monitor starts only after the capture link type has been frozen and the raw
+    // writer has emitted its matching interface block, so no custom block can precede it.
+    let monitor_stop = Arc::new(AtomicBool::new(false));
+    let monitor_thread = {
+        let stop = Arc::clone(&monitor_stop);
+        let raw_capture = raw_capture.clone();
+        let sender = sender.clone();
+        let capture_started_100ns = current_filetime_100ns();
+        thread::spawn(move || {
+            run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
+        })
+    };
+
+    // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
+    // the FIFO parser queue. Both the frame count and payload-byte high-water are reliable
+    // backpressure bounds: full blocks the acquisition producer, no frame is dropped, and a
+    // disconnected parser fails the capture session.
+    let (frame_sender, frame_receiver) = capture_frame_queue(
+        CAPTURE_FRAME_QUEUE_CAPACITY,
+        CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER,
+    );
+    let parser_thread = {
+        let resources = resources.clone();
+        let sender = sender.clone();
+        thread::spawn(move || {
+            run_parser(
+                frame_receiver,
+                ParserRunConfig {
+                    link_type,
+                    local_ip,
+                    include_incoming,
+                    use_server_damage_calibration,
+                    packet_emission,
+                    resources,
+                    sender,
+                },
+            );
+        })
+    };
+
+    let mut loop_result = Ok(());
+    while !stop.load(Ordering::Relaxed) {
+        let mut header = ptr::null();
+        let mut packet_data = ptr::null();
+        // SAFETY: The live handle and output-pointer storage meet pcap_next_ex's
+        // contract; returned packet pointers are consumed before the next call.
+        let result = unsafe { next_ex(handle.as_ptr(), &mut header, &mut packet_data) };
+        if result == 0 {
+            continue;
+        }
+        if result < 0 {
+            // SAFETY: The handle remains live and pcap_geterr returns a borrowed
+            // string valid until the next operation on this handle.
+            let error_ptr = unsafe { get_err(handle.as_ptr()) };
+            // SAFETY: The returned pointer is NUL-terminated and copied now.
+            let error = unsafe { c_string(error_ptr) };
+            loop_result = Err(format!("failed to read packet: {error}"));
+            break;
+        }
+        if header.is_null() || packet_data.is_null() {
+            continue;
+        }
+        // SAFETY: A positive pcap_next_ex result guarantees a readable header
+        // valid until the next call; null was rejected above.
+        let header_ref = unsafe { &*header };
+        if header_ref.caplen == 0 {
+            continue;
+        }
+        if header_ref.caplen > CAPTURE_SNAPLEN {
+            loop_result = Err(format!(
+                "Npcap frame length {} exceeds configured snaplen {CAPTURE_SNAPLEN}",
+                header_ref.caplen
+            ));
+            break;
+        }
+        // SAFETY: A positive pcap_next_ex result guarantees at least `caplen`
+        // readable bytes until the next call, and caplen is snaplen-bounded.
+        let packet = unsafe { std::slice::from_raw_parts(packet_data, header_ref.caplen as usize) };
+        let timestamp = header_ref.ts.tv_sec as f64 + header_ref.ts.tv_usec as f64 / 1_000_000.0;
+        let raw_timestamp = Duration::new(
+            header_ref.ts.tv_sec.max(0) as u64,
+            header_ref.ts.tv_usec.clamp(0, 999_999) as u32 * 1_000,
+        );
+        raw_capture.push(raw_timestamp, header_ref.len, packet);
+        if let Err(error) =
+            forward_capture_frame(&frame_sender, CaptureFrame::new(packet.to_vec(), timestamp))
+        {
+            loop_result = Err(error);
+            break;
+        }
+    }
+    let frame_queue_high_water = frame_sender.byte_high_water_mark();
+    drop(frame_sender);
+    monitor_stop.store(true, Ordering::Relaxed);
+    let monitor_panicked = monitor_thread.join().is_err();
+    if parser_thread.join().is_err() && loop_result.is_ok() {
+        loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
+    }
+    if monitor_panicked && loop_result.is_ok() {
+        loop_result = Err("capture plugin monitor stopped unexpectedly".to_owned());
+    }
+    if frame_queue_high_water > CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER && loop_result.is_ok() {
+        loop_result = Err("capture parser queue exceeded its byte budget".to_owned());
+    }
+    loop_result?;
     Ok(())
 }
 
@@ -4756,9 +5875,15 @@ pub fn import_pcapng(
     use_server_damage_calibration: bool,
     sender: impl Into<EngineEventSink>,
     stop: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
+) -> std::io::Result<thread::JoinHandle<()>> {
+    // Reject an invalid path/oversized file synchronously, before creating a
+    // replay owner or allocating parser state. The worker repeats this check
+    // through the opened file to fail closed if the path changes meanwhile.
+    validate_pcapng_import(&path).map_err(std::io::Error::other)?;
     let sender = sender.into();
-    thread::spawn(move || {
+    thread::Builder::new()
+        .name("nte-pcapng-replay".to_owned())
+        .spawn(move || {
         let CaptureResources {
             characters,
             ability_catalog,
@@ -4770,11 +5895,31 @@ pub fn import_pcapng(
         let _ = sender.send(EngineEvent::Status(format!(
             "importing pcapng: {direction_mode}"
         )));
-        let result = (|| -> Result<(usize, usize), String> {
-            let file = File::open(&path).map_err(|error| error.to_string())?;
-            let mut reader = PcapNgReader::new(file).map_err(|error| error.to_string())?;
+        let result = (|| -> Result<(usize, usize), PcapngImportError> {
+            let file = File::open(&path).map_err(PcapngImportError::Io)?;
+            let metadata = file.metadata().map_err(PcapngImportError::Io)?;
+            if !metadata.is_file() {
+                return Err(PcapngImportError::NotAFile);
+            }
+            if metadata.len() > MAX_PCAPNG_IMPORT_BYTES {
+                return Err(PcapngImportError::TooLarge {
+                    size: metadata.len(),
+                    limit: MAX_PCAPNG_IMPORT_BYTES,
+                });
+            }
+            let byte_budget_exceeded = Arc::new(AtomicBool::new(false));
+            let bounded_file = PcapngImportReader::new(
+                file,
+                MAX_PCAPNG_IMPORT_BYTES,
+                byte_budget_exceeded.clone(),
+            );
+            let mut reader = PcapNgReader::new(bounded_file)
+                .map_err(|error| map_pcapng_reader_error(error, &byte_budget_exceeded))?;
             let mut decoder =
                 PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
+            // PCAP replay is an explicit diagnostics/import operation and
+            // retains the legacy full packet projection for export fidelity.
+            decoder.packet_emission = PacketEmissionMode::FullDebug;
             let mut game_pause = GamePauseIntervalTracker::default();
             let mut resource_warnings = Vec::new();
             let enemy_catalog = load_resource(
@@ -4793,23 +5938,51 @@ pub fn import_pcapng(
             }
             let mut packet_count = 0;
             let mut supported_count = 0;
+            let mut block_count = 0_usize;
+            let mut interface_count = 0_usize;
+            let mut packet_bytes = 0_u64;
+            let mut previous_recorded_clock_health = None;
 
             while let Some(block) = reader.next_block() {
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
-                let block = block.map_err(|error| error.to_string())?;
+                block_count = block_count.saturating_add(1);
+                if block_count > MAX_PCAPNG_IMPORT_BLOCKS {
+                    return Err(PcapngImportError::TooManyBlocks {
+                        count: block_count,
+                        limit: MAX_PCAPNG_IMPORT_BLOCKS,
+                    });
+                }
+                let block = block
+                    .map_err(|error| map_pcapng_reader_error(error, &byte_budget_exceeded))?;
                 let (interface_id, timestamp, data) = match block {
+                    Block::InterfaceDescription(interface) => {
+                        account_pcapng_interface(interface.snaplen, &mut interface_count)?;
+                        continue;
+                    }
                     Block::Unknown(block) if block.type_ == NTE_COMBAT_CLOCK_BLOCK_TYPE => {
-                        if let Some(transition) = decode_combat_clock_block(block.value.as_ref())
-                            && let Some(timestamp) =
+                        if let Some(transition) = decode_combat_clock_block(block.value.as_ref()) {
+                            publish_combat_clock_health(
+                                &sender,
+                                &mut previous_recorded_clock_health,
+                                combat_clock_sample_health(transition.state_flags, true),
+                            )
+                            .map_err(|_| PcapngImportError::ReceiverDisconnected)?;
+                            if let Some(timestamp) =
                                 filetime_100ns_to_unix_seconds(transition.timestamp_100ns)
-                            && transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0
-                            && let Some(event) =
-                                game_pause.apply_transition(timestamp, transition.pause_type_mask)
-                        {
-                            send_game_pause_transition(&sender, event)
-                                .map_err(|error| error.to_string())?;
+                                && let Some(event) = game_pause.apply_transition(
+                                    timestamp,
+                                    if transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0 {
+                                        transition.pause_type_mask
+                                    } else {
+                                        0
+                                    },
+                                )
+                            {
+                                send_game_pause_transition(&sender, event)
+                                    .map_err(|_| PcapngImportError::ReceiverDisconnected)?;
+                            }
                         }
                         continue;
                     }
@@ -4826,21 +5999,32 @@ pub fn import_pcapng(
                             }
                             sender
                                 .send(EngineEvent::ModScript(event))
-                                .map_err(|error| error.to_string())?;
+                                .map_err(|_| PcapngImportError::ReceiverDisconnected)?;
                         }
                         continue;
                     }
-                    Block::EnhancedPacket(packet) => (
-                        packet.interface_id as usize,
-                        FrameTimestamp::Known(packet.timestamp.as_secs_f64()),
-                        packet.data.into_owned(),
-                    ),
+                    Block::EnhancedPacket(packet) => {
+                        account_pcapng_frame(
+                            packet.data.len(),
+                            &mut packet_count,
+                            &mut packet_bytes,
+                        )?;
+                        (
+                            packet.interface_id as usize,
+                            FrameTimestamp::Known(packet.timestamp.as_secs_f64()),
+                            packet.data.into_owned(),
+                        )
+                    }
                     Block::SimplePacket(packet) => {
+                        account_pcapng_frame(
+                            packet.data.len(),
+                            &mut packet_count,
+                            &mut packet_bytes,
+                        )?;
                         (0, FrameTimestamp::Unknown, packet.data.into_owned())
                     }
                     _ => continue,
                 };
-                packet_count += 1;
                 let Some(interface) = reader.interfaces().get(interface_id) else {
                     continue;
                 };
@@ -4865,12 +6049,13 @@ pub fn import_pcapng(
             let pending_hits = decoder.take_all_ambiguous_hits();
             decoder.emit_hits(pending_hits, &characters, &sender);
             if packet_count > 0 && supported_count == 0 {
-                return Err("pcapng contains no supported Ethernet or raw IPv4 packets".to_owned());
+                return Err(PcapngImportError::InvalidFormat(
+                    "pcapng contains no supported Ethernet or raw IPv4 packets".to_owned(),
+                ));
             }
             Ok((packet_count, supported_count))
         })();
 
-        let _ = sender.send(EngineEvent::CaptureStopped);
         match result {
             Ok((packet_count, supported_count)) => {
                 let _ = sender.send(EngineEvent::Status(format!(
@@ -4881,10 +6066,15 @@ pub fn import_pcapng(
                 let _ = sender.send(EngineEvent::Error(format!("pcapng import failed: {error}")));
             }
         }
+        let _ = sender.send(EngineEvent::CaptureStopped);
     })
 }
 
 pub const CAPTURE_EXPORT_VERSION: u32 = 1;
+/// A capture export never retains a second complete in-memory hit document.
+/// The authoritative state is copied in short, generation-checked pages and
+/// serialized after the state lock has been released.
+pub const CAPTURE_EXPORT_HIT_PAGE_SIZE: usize = 1_024;
 
 fn capture_export_version() -> u32 {
     CAPTURE_EXPORT_VERSION
@@ -4937,6 +6127,27 @@ pub struct CaptureExportDocument {
     time_stop_events: Vec<TimeStopEvent>,
 }
 
+/// Immutable metadata for a generation-checked, page-streamed capture export.
+/// `document.hits` is always empty: the hit body is supplied to the writer one
+/// bounded page at a time so an arbitrarily long combat is never cloned while
+/// the authoritative state lock is held.
+#[derive(Clone, Debug)]
+pub struct CaptureExportPlan {
+    document: CaptureExportDocument,
+    hits_generation: u64,
+    hit_count: usize,
+}
+
+impl CaptureExportPlan {
+    pub fn hits_generation(&self) -> u64 {
+        self.hits_generation
+    }
+
+    pub fn hit_count(&self) -> usize {
+        self.hit_count
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
 enum CaptureTimeStopEvent {
@@ -4960,16 +6171,16 @@ enum CaptureTimeStopEvent {
     UltraAnimation {
         timestamp: f64,
         char_id: u32,
-        ability_id: String,
+        ability_id: serde::de::IgnoredAny,
         duration_seconds: f64,
     },
     ExtraStart {
         timestamp: f64,
-        reason: String,
+        reason: serde::de::IgnoredAny,
     },
     ExtraEnd {
         timestamp: f64,
-        reason: String,
+        reason: serde::de::IgnoredAny,
     },
 }
 
@@ -5192,7 +6403,7 @@ struct ExportPacket {
     direction: String,
     #[serde(default)]
     payload_len: usize,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_export_declared_ids")]
     declared_ids: serde_json::Value,
     #[serde(default)]
     parsed_hits: usize,
@@ -5206,14 +6417,90 @@ struct ExportPacket {
     decoded_text: String,
 }
 
+fn deserialize_export_declared_ids<'de, D>(deserializer: D) -> Result<serde_json::Value, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct DeclaredIdsVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for DeclaredIdsVisitor {
+        type Value = serde_json::Value;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .write_str("an array of at most 64 unsigned 32-bit ids or a bounded legacy string")
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut ids = Vec::with_capacity(
+                sequence
+                    .size_hint()
+                    .unwrap_or_default()
+                    .min(MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS),
+            );
+            while let Some(value) = sequence.next_element::<u64>()? {
+                if ids.len() >= MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS {
+                    return Err(serde::de::Error::custom("declared_ids exceeds item budget"));
+                }
+                let value = u32::try_from(value).map_err(|_| {
+                    serde::de::Error::custom("declared_ids contains a non-u32 value")
+                })?;
+                ids.push(serde_json::Value::from(value));
+            }
+            Ok(serde_json::Value::Array(ids))
+        }
+
+        fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            parse_legacy_declared_ids(value).map_err(E::custom)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            parse_legacy_declared_ids(value).map_err(E::custom)
+        }
+    }
+
+    deserializer.deserialize_any(DeclaredIdsVisitor)
+}
+
+fn parse_legacy_declared_ids(value: &str) -> Result<serde_json::Value, &'static str> {
+    if value.len() > MAX_CAPTURE_JSON_IMPORT_FILTER_BYTES {
+        return Err("declared_ids legacy string exceeds byte budget");
+    }
+    let mut ids = Vec::new();
+    for part in value
+        .trim()
+        .trim_matches(['[', ']'])
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        if ids.len() >= MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS {
+            return Err("declared_ids exceeds item budget");
+        }
+        let parsed = part
+            .parse::<u32>()
+            .map_err(|_| "declared_ids legacy string contains a non-u32 value")?;
+        ids.push(serde_json::Value::from(parsed));
+    }
+    Ok(serde_json::Value::Array(ids))
+}
+
 impl CaptureExportDocument {
-    pub fn snapshot(state: &CombatState, options: CaptureExportOptions) -> Self {
+    pub fn prepare(state: &CombatState, options: CaptureExportOptions) -> CaptureExportPlan {
         let subtract_time_stop = options.dps_time_mode.subtracts_time_stop();
         let duration = state.duration_with_time_stop(subtract_time_stop).max(0.001);
         let ended_at = state
-            .hits
-            .iter()
-            .map(|hit| hit.timestamp)
+            .ended_at
+            .into_iter()
             .chain(state.packets.iter().map(|packet| packet.timestamp))
             .max_by(|left, right| left.total_cmp(right));
         let party = capture_export_party(state, subtract_time_stop);
@@ -5229,32 +6516,54 @@ impl CaptureExportDocument {
             second_half: capture_export_abyss_half(&state.abyss.second_half, subtract_time_stop),
         };
 
-        Self {
-            version: CAPTURE_EXPORT_VERSION,
-            exported_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            filter: options.filter,
-            include_incoming: options.include_incoming,
-            game_network: options.game_network,
-            summary: CaptureExportSummary {
-                hits: state.hits.len(),
-                packets: state.packets.len(),
-                total_damage: state.total_damage,
-                dps: state.dps_with_time_stop(subtract_time_stop),
-                duration_seconds: duration,
-                dps_time_mode: options.dps_time_mode.label().to_owned(),
-                started_at_unix: state.started_at,
-                started_at_local: state.started_at.map(format_capture_time),
-                ended_at_unix: ended_at,
-                ended_at_local: ended_at.map(format_capture_time),
+        let hit_count = state.hits.len();
+        CaptureExportPlan {
+            hits_generation: state.hits_generation,
+            hit_count,
+            document: Self {
+                version: CAPTURE_EXPORT_VERSION,
+                exported_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                filter: options.filter,
+                include_incoming: options.include_incoming,
+                game_network: options.game_network,
+                summary: CaptureExportSummary {
+                    hits: hit_count,
+                    packets: state.packets.len(),
+                    total_damage: state.total_damage,
+                    dps: state.dps_with_time_stop(subtract_time_stop),
+                    duration_seconds: duration,
+                    dps_time_mode: options.dps_time_mode.label().to_owned(),
+                    started_at_unix: state.started_at,
+                    started_at_local: state.started_at.map(format_capture_time),
+                    ended_at_unix: ended_at,
+                    ended_at_local: ended_at.map(format_capture_time),
+                },
+                party,
+                abyss,
+                empty_curtain: state.empty_curtain.clone(),
+                empty_curtain_characters: state.empty_curtain_characters.clone(),
+                hits: Vec::new(),
+                packets: state.packets.iter().map(ExportPacket::from).collect(),
+                time_stop_events: state.time_stop_events.clone(),
             },
-            party,
-            abyss,
-            empty_curtain: state.empty_curtain.clone(),
-            empty_curtain_characters: state.empty_curtain_characters.clone(),
-            hits: state.hits.iter().map(ExportHit::from).collect(),
-            packets: state.packets.iter().map(ExportPacket::from).collect(),
-            time_stop_events: state.time_stop_events.clone(),
         }
+    }
+
+    /// Compatibility helper for low-frequency tests and callers that already
+    /// own an isolated state. Production desktop export uses `prepare` plus
+    /// `write_capture_export_streaming` and never calls this under a live lock.
+    pub fn snapshot(state: &CombatState, options: CaptureExportOptions) -> Self {
+        let mut plan = Self::prepare(state, options);
+        plan.document.hits = state.hits.iter().map(ExportHit::from).collect();
+        let ended_at = state
+            .hits
+            .iter()
+            .map(|hit| hit.timestamp)
+            .chain(state.packets.iter().map(|packet| packet.timestamp))
+            .max_by(f64::total_cmp);
+        plan.document.summary.ended_at_unix = ended_at;
+        plan.document.summary.ended_at_local = ended_at.map(format_capture_time);
+        plan.document
     }
 }
 
@@ -5315,6 +6624,120 @@ impl From<&PacketDebug> for ExportPacket {
 pub fn write_capture_export(path: &Path, document: &CaptureExportDocument) -> Result<(), String> {
     atomic_write_file(path, |writer| {
         serde_json::to_writer_pretty(writer, document).map_err(|error| error.to_string())
+    })
+}
+
+struct StreamingCaptureExport<'a, F> {
+    plan: &'a CaptureExportPlan,
+    load_page: std::cell::RefCell<F>,
+}
+
+impl<F> Serialize for StreamingCaptureExport<'_, F>
+where
+    F: FnMut(usize, usize) -> Result<Vec<Hit>, String>,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let document = &self.plan.document;
+        let ended_at = std::cell::RefCell::new(document.summary.ended_at_unix);
+        let mut map = serializer.serialize_map(Some(13))?;
+        map.serialize_entry("version", &document.version)?;
+        map.serialize_entry("exported_at", &document.exported_at)?;
+        map.serialize_entry("filter", &document.filter)?;
+        map.serialize_entry("include_incoming", &document.include_incoming)?;
+        map.serialize_entry("game_network", &document.game_network)?;
+        map.serialize_entry("party", &document.party)?;
+        map.serialize_entry("abyss", &document.abyss)?;
+        map.serialize_entry("empty_curtain", &document.empty_curtain)?;
+        map.serialize_entry(
+            "empty_curtain_characters",
+            &document.empty_curtain_characters,
+        )?;
+        map.serialize_entry(
+            "hits",
+            &StreamingCaptureHits {
+                hit_count: self.plan.hit_count,
+                load_page: &self.load_page,
+                ended_at: &ended_at,
+            },
+        )?;
+        let mut summary = document.summary.clone();
+        summary.ended_at_unix = *ended_at.borrow();
+        summary.ended_at_local = summary.ended_at_unix.map(format_capture_time);
+        map.serialize_entry("summary", &summary)?;
+        map.serialize_entry("packets", &document.packets)?;
+        map.serialize_entry("time_stop_events", &document.time_stop_events)?;
+        map.end()
+    }
+}
+
+struct StreamingCaptureHits<'a, F> {
+    hit_count: usize,
+    load_page: &'a std::cell::RefCell<F>,
+    ended_at: &'a std::cell::RefCell<Option<f64>>,
+}
+
+impl<F> Serialize for StreamingCaptureHits<'_, F>
+where
+    F: FnMut(usize, usize) -> Result<Vec<Hit>, String>,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.hit_count))?;
+        let mut start = 0usize;
+        while start < self.hit_count {
+            let requested = self
+                .hit_count
+                .saturating_sub(start)
+                .min(CAPTURE_EXPORT_HIT_PAGE_SIZE);
+            let page = (self.load_page.borrow_mut())(start, requested)
+                .map_err(<S::Error as serde::ser::Error>::custom)?;
+            if page.len() != requested {
+                return Err(<S::Error as serde::ser::Error>::custom(format!(
+                    "capture export hit page length changed: expected {requested}, got {}",
+                    page.len()
+                )));
+            }
+            for hit in &page {
+                if hit.timestamp.is_finite() {
+                    let previous = *self.ended_at.borrow();
+                    self.ended_at.replace(Some(
+                        previous.map_or(hit.timestamp, |value| value.max(hit.timestamp)),
+                    ));
+                }
+                sequence.serialize_element(&ExportHit::from(hit))?;
+            }
+            start = start.saturating_add(page.len());
+        }
+        sequence.end()
+    }
+}
+
+/// Atomically writes a self-contained capture document while retaining at
+/// most one bounded hit page outside the authoritative state. If the source
+/// generation changes, the loader error aborts the temporary file and the
+/// destination remains untouched.
+pub fn write_capture_export_streaming<F>(
+    path: &Path,
+    plan: &CaptureExportPlan,
+    load_page: F,
+) -> Result<(), String>
+where
+    F: FnMut(usize, usize) -> Result<Vec<Hit>, String>,
+{
+    atomic_write_file(path, |writer| {
+        serde_json::to_writer_pretty(
+            writer,
+            &StreamingCaptureExport {
+                plan,
+                load_page: std::cell::RefCell::new(load_page),
+            },
+        )
+        .map_err(|error| error.to_string())
     })
 }
 
@@ -5387,8 +6810,13 @@ fn format_capture_time(timestamp: f64) -> String {
 /// The check runs on the shared Rust import boundary, never only in a Tauri
 /// command or frontend drag-drop handler.
 pub const MAX_CAPTURE_JSON_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
-/// Structural budget for parsed hits. The live engine itself retains at most
-/// [`MAX_COMBAT_HITS`]; this allows legitimate full exports with headroom.
+/// Legacy comma repair is intentionally lower than the normal import budget:
+/// a current document parses without a second text buffer, while a malformed
+/// legacy document needs one bounded replacement allocation.
+pub const MAX_CAPTURE_JSON_LEGACY_REPAIR_BYTES: usize = 64 * 1024 * 1024;
+/// Structural budget for parsed hits. Runtime capture retains the complete
+/// combat, while this external-file boundary still needs a finite allocation
+/// budget before an untrusted document is accepted.
 pub const MAX_CAPTURE_JSON_IMPORT_HITS: usize = 500_000;
 /// Structural budget for parsed packet records in a capture export.
 pub const MAX_CAPTURE_JSON_IMPORT_PACKETS: usize = 500_000;
@@ -5396,10 +6824,23 @@ pub const MAX_CAPTURE_JSON_IMPORT_PACKETS: usize = 500_000;
 pub const MAX_CAPTURE_JSON_IMPORT_PARTY_ROWS: usize = 64;
 pub const MAX_CAPTURE_JSON_IMPORT_EMPTY_CURTAIN_ITEMS: usize = 4_096;
 pub const MAX_CAPTURE_JSON_IMPORT_EMPTY_CURTAIN_CHARACTERS: usize = 64;
-pub const MAX_CAPTURE_JSON_IMPORT_TIME_STOP_EVENTS: usize = 500_000;
+pub const MAX_CAPTURE_JSON_IMPORT_TIME_STOP_EVENTS: usize = 8_192;
 pub const MAX_CAPTURE_JSON_IMPORT_ITEM_STATS: usize = 32;
 pub const MAX_CAPTURE_JSON_IMPORT_TARGET_CONTEXT: usize = 64;
 pub const MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS: usize = 64;
+/// UTF-8 budgets for untrusted strings that can later cross a desktop stream
+/// boundary. These are checked after deserialization but before any imported
+/// record is published to the reducer.
+pub const MAX_CAPTURE_JSON_IMPORT_CHARACTER_NAME_BYTES: usize = 128;
+pub const MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES: usize = 256;
+pub const MAX_CAPTURE_JSON_IMPORT_FILTER_BYTES: usize = 4 * 1024;
+pub const MAX_CAPTURE_JSON_IMPORT_PACKET_NOTE_BYTES: usize = 4 * 1024;
+pub const MAX_CAPTURE_JSON_IMPORT_PACKET_PREVIEW_BYTES: usize = 16 * 1024;
+pub const MAX_CAPTURE_JSON_IMPORT_PACKET_PAYLOAD_BYTES: usize = 256 * 1024;
+pub const MAX_CAPTURE_JSON_IMPORT_TIMESTAMP: f64 = 253_402_300_799.0;
+pub const MAX_CAPTURE_JSON_IMPORT_DAMAGE: f64 = 1.0e18;
+pub const MAX_CAPTURE_JSON_IMPORT_TOTAL_DAMAGE: f64 = 1.0e24;
+pub const MAX_CAPTURE_JSON_IMPORT_SCALAR: f64 = 1.0e24;
 
 #[derive(Clone, Copy)]
 struct CaptureImportStructureLimits {
@@ -5434,6 +6875,12 @@ const CAPTURE_IMPORT_STRUCTURE_LIMITS: CaptureImportStructureLimits =
 #[derive(Debug)]
 pub enum CaptureImportError {
     NotAFile,
+    InvalidUtf8,
+    InvalidFormat,
+    UnsupportedVersion {
+        found: u32,
+        expected: u32,
+    },
     TooLarge {
         size: u64,
         limit: u64,
@@ -5451,6 +6898,16 @@ pub enum CaptureImportError {
         count: usize,
         limit: usize,
     },
+    FieldTooLarge {
+        field: &'static str,
+        size: usize,
+        limit: usize,
+    },
+    InvalidNumber {
+        field: &'static str,
+    },
+    InvalidEquipmentSnapshot,
+    EquipmentDataUnavailable,
     Io(std::io::Error),
 }
 
@@ -5458,6 +6915,12 @@ impl std::fmt::Display for CaptureImportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotAFile => write!(formatter, "import path is not a regular file"),
+            Self::InvalidUtf8 => formatter.write_str("capture export is not valid UTF-8"),
+            Self::InvalidFormat => formatter.write_str("capture export is not valid JSON"),
+            Self::UnsupportedVersion { found, expected } => write!(
+                formatter,
+                "unsupported capture export version {found}; expected {expected}"
+            ),
             Self::TooLarge { size, limit } => write!(
                 formatter,
                 "import file is too large ({size} bytes; limit {limit} bytes)"
@@ -5478,12 +6941,48 @@ impl std::fmt::Display for CaptureImportError {
                 formatter,
                 "capture export field {field} has too many records ({count}; limit {limit})"
             ),
+            Self::FieldTooLarge { field, size, limit } => write!(
+                formatter,
+                "capture export field {field} is too large ({size} UTF-8 bytes; limit {limit})"
+            ),
+            Self::InvalidNumber { field } => {
+                write!(
+                    formatter,
+                    "capture export field {field} is outside its numeric budget"
+                )
+            }
+            Self::InvalidEquipmentSnapshot => {
+                formatter.write_str("capture export contains an invalid Console equipment snapshot")
+            }
+            Self::EquipmentDataUnavailable => {
+                formatter.write_str("Console equipment data is unavailable")
+            }
             Self::Io(error) => write!(formatter, "cannot read import file: {error}"),
         }
     }
 }
 
 impl std::error::Error for CaptureImportError {}
+
+impl CaptureImportError {
+    /// Stable adapter code for desktop command boundaries. The technical error
+    /// remains typed here; frontends choose localized wording independently.
+    pub const fn stable_code(&self) -> &'static str {
+        match self {
+            Self::NotAFile | Self::Io(_) => "replay_file_unavailable",
+            Self::TooLarge { .. } => "replay_file_too_large",
+            Self::InvalidUtf8 | Self::InvalidFormat => "replay_file_invalid",
+            Self::UnsupportedVersion { .. } => "replay_version_unsupported",
+            Self::TooManyHits { .. }
+            | Self::TooManyPackets { .. }
+            | Self::TooManyRecords { .. }
+            | Self::FieldTooLarge { .. }
+            | Self::InvalidNumber { .. }
+            | Self::InvalidEquipmentSnapshot
+            | Self::EquipmentDataUnavailable => "replay_validation_failed",
+        }
+    }
+}
 
 /// Checks a capture JSON import path before any bytes are read:
 /// - the path must be a regular file;
@@ -5532,9 +7031,7 @@ fn read_bounded_utf8(
             limit,
         });
     }
-    String::from_utf8(bytes).map_err(|error| {
-        CaptureImportError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-    })
+    String::from_utf8(bytes).map_err(|_| CaptureImportError::InvalidUtf8)
 }
 
 fn read_capture_json_import_with_limit(
@@ -5547,14 +7044,6 @@ fn read_capture_json_import_with_limit(
         return Err(CaptureImportError::NotAFile);
     }
     read_bounded_utf8(file, metadata.len(), limit)
-}
-
-/// Structural budgets applied after JSON parsing so a hostile or corrupted
-/// export cannot allocate unbounded hit/packet vectors.
-fn validate_capture_export_structure(
-    document: &CaptureExportDocument,
-) -> Result<(), CaptureImportError> {
-    validate_capture_export_structure_with_limits(document, CAPTURE_IMPORT_STRUCTURE_LIMITS)
 }
 
 fn validate_capture_export_structure_with_limits(
@@ -5599,6 +7088,122 @@ fn validate_capture_export_structure_with_limits(
         document.time_stop_events.len(),
         limits.time_stop_events,
     )?;
+    validate_capture_text(
+        "exported_at",
+        &document.exported_at,
+        MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+    )?;
+    for (field, value) in [
+        ("summary.total_damage", document.summary.total_damage),
+        ("summary.dps", document.summary.dps),
+        (
+            "summary.duration_seconds",
+            document.summary.duration_seconds,
+        ),
+    ] {
+        validate_capture_number(field, value, 0.0, MAX_CAPTURE_JSON_IMPORT_SCALAR)?;
+    }
+    for (field, value) in [
+        ("summary.started_at_unix", document.summary.started_at_unix),
+        ("summary.ended_at_unix", document.summary.ended_at_unix),
+        ("abyss.success_at_unix", document.abyss.success_at_unix),
+        (
+            "abyss.first_half_at_unix",
+            document.abyss.first_half_at_unix,
+        ),
+        (
+            "abyss.second_half_at_unix",
+            document.abyss.second_half_at_unix,
+        ),
+        ("abyss.exited_at_unix", document.abyss.exited_at_unix),
+    ] {
+        if let Some(value) = value {
+            validate_capture_number(field, value, 0.0, MAX_CAPTURE_JSON_IMPORT_TIMESTAMP)?;
+        }
+    }
+    validate_capture_text(
+        "filter",
+        &document.filter,
+        MAX_CAPTURE_JSON_IMPORT_FILTER_BYTES,
+    )?;
+    validate_capture_text(
+        "summary.dps_time_mode",
+        &document.summary.dps_time_mode,
+        MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+    )?;
+    for value in [
+        document.summary.started_at_local.as_deref(),
+        document.summary.ended_at_local.as_deref(),
+        document.abyss.active_half.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        validate_capture_text(
+            "capture metadata label",
+            value,
+            MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+        )?;
+    }
+    if let Some(network) = &document.game_network {
+        validate_capture_text(
+            "game_network.local_ip",
+            &network.local_ip,
+            MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+        )?;
+        validate_capture_text(
+            "game_network.remote_ip",
+            &network.remote_ip,
+            MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+        )?;
+    }
+    for row in &document.party {
+        validate_capture_text(
+            "party[].name",
+            &row.name,
+            MAX_CAPTURE_JSON_IMPORT_CHARACTER_NAME_BYTES,
+        )?;
+        validate_capture_summary_row(row.damage, row.dps, row.duration_seconds, row.share_percent)?;
+    }
+    for row in document
+        .abyss
+        .first_half
+        .party
+        .iter()
+        .chain(document.abyss.second_half.party.iter())
+    {
+        validate_capture_text(
+            "abyss.*.party[].name",
+            &row.name,
+            MAX_CAPTURE_JSON_IMPORT_CHARACTER_NAME_BYTES,
+        )?;
+        validate_capture_summary_row(row.damage, row.dps, row.duration_seconds, row.share_percent)?;
+        validate_capture_number(
+            "abyss.*.party[].damage_taken",
+            row.damage_taken,
+            0.0,
+            MAX_CAPTURE_JSON_IMPORT_SCALAR,
+        )?;
+    }
+    for (field, half) in [
+        ("abyss.first_half", &document.abyss.first_half),
+        ("abyss.second_half", &document.abyss.second_half),
+    ] {
+        for value in [
+            half.total_damage,
+            half.total_damage_taken,
+            half.dps,
+            half.duration_seconds,
+        ] {
+            validate_capture_number(field, value, 0.0, MAX_CAPTURE_JSON_IMPORT_SCALAR)?;
+        }
+        for timestamp in [half.started_at_unix, half.ended_at_unix]
+            .into_iter()
+            .flatten()
+        {
+            validate_capture_number(field, timestamp, 0.0, MAX_CAPTURE_JSON_IMPORT_TIMESTAMP)?;
+        }
+    }
     for item in &document.empty_curtain {
         validate_capture_collection(
             "empty_curtain[].main_stats",
@@ -5610,13 +7215,124 @@ fn validate_capture_export_structure_with_limits(
             item.sub_stats.len(),
             limits.item_stats,
         )?;
+        validate_capture_text(
+            "empty_curtain[].item_id",
+            &item.item_id,
+            MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+        )?;
+        for stat in item.main_stats.iter().chain(item.sub_stats.iter()) {
+            validate_capture_text(
+                "empty_curtain[].stats[].property",
+                &stat.property,
+                MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+            )?;
+            validate_capture_number(
+                "empty_curtain[].stats[].value",
+                f64::from(stat.value),
+                -MAX_CAPTURE_JSON_IMPORT_SCALAR,
+                MAX_CAPTURE_JSON_IMPORT_SCALAR,
+            )?;
+        }
     }
+    let mut aggregate_damage = 0.0_f64;
     for hit in &document.hits {
         validate_capture_collection(
             "hits[].target_context",
             hit.target_context.len(),
             limits.target_context,
         )?;
+        validate_capture_text(
+            "hits[].char_name",
+            &hit.char_name,
+            MAX_CAPTURE_JSON_IMPORT_CHARACTER_NAME_BYTES,
+        )?;
+        validate_capture_text(
+            "hits[].time_local",
+            &hit.time_local,
+            MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+        )?;
+        for (field, value) in [
+            ("hits[].target_id", hit.target_id.as_deref()),
+            ("hits[].target_name", hit.target_name.as_deref()),
+            ("hits[].target_name_en", hit.target_name_en.as_deref()),
+            ("hits[].target_name_ja", hit.target_name_ja.as_deref()),
+            ("hits[].target_monster_id", hit.target_monster_id.as_deref()),
+            (
+                "hits[].gameplay_effect_name",
+                hit.gameplay_effect_name.as_deref(),
+            ),
+            ("hits[].ability_name", hit.ability_name.as_deref()),
+            ("hits[].damage_name", hit.damage_name.as_deref()),
+            ("hits[].damage_component", hit.damage_component.as_deref()),
+            ("hits[].attack_type", hit.attack_type.as_deref()),
+            ("hits[].damage_attribute", hit.damage_attribute.as_deref()),
+            (
+                "hits[].follow_up_damage_name",
+                hit.follow_up_damage_name.as_deref(),
+            ),
+            (
+                "hits[].follow_up_attack_type",
+                hit.follow_up_attack_type.as_deref(),
+            ),
+            (
+                "hits[].follow_up_damage_attribute",
+                hit.follow_up_damage_attribute.as_deref(),
+            ),
+        ] {
+            if let Some(value) = value {
+                validate_capture_text(field, value, MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES)?;
+            }
+        }
+        for value in &hit.target_context {
+            validate_capture_text(
+                "hits[].target_context[]",
+                value,
+                MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+            )?;
+        }
+        validate_capture_number(
+            "hits[].timestamp_unix",
+            hit.timestamp_unix,
+            0.0,
+            MAX_CAPTURE_JSON_IMPORT_TIMESTAMP,
+        )?;
+        validate_capture_number(
+            "hits[].damage",
+            hit.damage,
+            0.0,
+            MAX_CAPTURE_JSON_IMPORT_DAMAGE,
+        )?;
+        validate_capture_number(
+            "hits[].follow_up_damage",
+            hit.follow_up_damage,
+            0.0,
+            MAX_CAPTURE_JSON_IMPORT_DAMAGE,
+        )?;
+        if let Some(timestamp) = hit.follow_up_timestamp {
+            validate_capture_number(
+                "hits[].follow_up_timestamp",
+                timestamp,
+                0.0,
+                MAX_CAPTURE_JSON_IMPORT_TIMESTAMP,
+            )?;
+        }
+        for (field, value) in [
+            ("hits[].target_hp_before", hit.target_hp_before),
+            ("hits[].target_hp_after", hit.target_hp_after),
+            ("hits[].target_max_hp", hit.target_max_hp),
+            ("hits[].target_hp_percent", hit.target_hp_percent),
+        ] {
+            validate_capture_number(field, value, 0.0, MAX_CAPTURE_JSON_IMPORT_SCALAR)?;
+        }
+        let next_aggregate_damage = aggregate_damage + hit.damage + hit.follow_up_damage;
+        if !next_aggregate_damage.is_finite()
+            || next_aggregate_damage > MAX_CAPTURE_JSON_IMPORT_TOTAL_DAMAGE
+        {
+            return Err(CaptureImportError::InvalidNumber {
+                field: "hits[].aggregate_damage",
+            });
+        }
+        aggregate_damage = next_aggregate_damage;
     }
     for packet in &document.packets {
         let declared_id_count = match &packet.declared_ids {
@@ -5634,6 +7350,125 @@ fn validate_capture_export_structure_with_limits(
             declared_id_count,
             limits.declared_ids,
         )?;
+        for (field, value, limit) in [
+            (
+                "packets[].time_local",
+                packet.time_local.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+            ),
+            (
+                "packets[].source",
+                packet.source.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+            ),
+            (
+                "packets[].destination",
+                packet.destination.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+            ),
+            (
+                "packets[].direction",
+                packet.direction.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
+            ),
+            (
+                "packets[].note",
+                packet.note.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_PACKET_NOTE_BYTES,
+            ),
+            (
+                "packets[].payload_preview",
+                packet.payload_preview.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_PACKET_PREVIEW_BYTES,
+            ),
+            (
+                "packets[].payload_hex",
+                packet.payload_hex.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_PACKET_PAYLOAD_BYTES,
+            ),
+            (
+                "packets[].decoded_text",
+                packet.decoded_text.as_str(),
+                MAX_CAPTURE_JSON_IMPORT_PACKET_PAYLOAD_BYTES,
+            ),
+        ] {
+            validate_capture_text(field, value, limit)?;
+        }
+        if let serde_json::Value::String(value) = &packet.declared_ids {
+            validate_capture_text(
+                "packets[].declared_ids",
+                value,
+                MAX_CAPTURE_JSON_IMPORT_FILTER_BYTES,
+            )?;
+        }
+        validate_capture_number(
+            "packets[].timestamp_unix",
+            packet.timestamp_unix,
+            0.0,
+            MAX_CAPTURE_JSON_IMPORT_TIMESTAMP,
+        )?;
+        if packet.payload_len > CAPTURE_SNAPLEN as usize {
+            return Err(CaptureImportError::InvalidNumber {
+                field: "packets[].payload_len",
+            });
+        }
+    }
+    for event in &document.time_stop_events {
+        let timestamp = match event {
+            TimeStopEvent::GamePauseStarted { timestamp, .. }
+            | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+        };
+        validate_capture_number(
+            "time_stop_events[].timestamp",
+            timestamp,
+            0.0,
+            MAX_CAPTURE_JSON_IMPORT_TIMESTAMP,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_capture_summary_row(
+    damage: f64,
+    dps: f64,
+    duration_seconds: f64,
+    share_percent: f64,
+) -> Result<(), CaptureImportError> {
+    for (field, value, max) in [
+        ("party[].damage", damage, MAX_CAPTURE_JSON_IMPORT_SCALAR),
+        ("party[].dps", dps, MAX_CAPTURE_JSON_IMPORT_SCALAR),
+        (
+            "party[].duration_seconds",
+            duration_seconds,
+            MAX_CAPTURE_JSON_IMPORT_TIMESTAMP,
+        ),
+        ("party[].share_percent", share_percent, 100.0),
+    ] {
+        validate_capture_number(field, value, 0.0, max)?;
+    }
+    Ok(())
+}
+
+fn validate_capture_number(
+    field: &'static str,
+    value: f64,
+    minimum: f64,
+    maximum: f64,
+) -> Result<(), CaptureImportError> {
+    if !value.is_finite() || value < minimum || value > maximum {
+        return Err(CaptureImportError::InvalidNumber { field });
+    }
+    Ok(())
+}
+
+fn validate_capture_text(
+    field: &'static str,
+    value: &str,
+    limit: usize,
+) -> Result<(), CaptureImportError> {
+    let size = value.len();
+    if size > limit {
+        return Err(CaptureImportError::FieldTooLarge { field, size, limit });
     }
     Ok(())
 }
@@ -5653,154 +7488,298 @@ fn validate_capture_collection(
     Ok(())
 }
 
+/// Fully validated JSON replay input. The opened file is read once through a
+/// bounded reader, and every fallible document/resource validation completes
+/// before the live-capture service is allowed to replace authoritative state.
+#[derive(Debug)]
+pub struct PreparedCaptureJsonReplay {
+    document: CaptureExportDocument,
+    empty_curtain: Vec<EmptyCurtainItem>,
+    empty_curtain_characters: Vec<EmptyCurtainCharacter>,
+    time_stop_events: Vec<TimeStopEvent>,
+    equipment_catalog: EquipmentCatalog,
+    equipment_warning: Option<String>,
+}
+
+pub fn prepare_capture_json_replay(
+    path: &Path,
+) -> Result<PreparedCaptureJsonReplay, CaptureImportError> {
+    prepare_capture_json_replay_with_limits(
+        path,
+        MAX_CAPTURE_JSON_IMPORT_BYTES,
+        CAPTURE_IMPORT_STRUCTURE_LIMITS,
+    )
+}
+
+fn prepare_capture_json_replay_with_limits(
+    path: &Path,
+    byte_limit: u64,
+    structure_limits: CaptureImportStructureLimits,
+) -> Result<PreparedCaptureJsonReplay, CaptureImportError> {
+    let text = read_capture_json_import_with_limit(path, byte_limit)?;
+    let mut document = parse_capture_export_typed(text)?;
+    validate_capture_export_structure_with_limits(&document, structure_limits)?;
+    if document.packets.iter().any(|packet| {
+        !packet.payload_hex.trim().is_empty()
+            && (packet.payload_hex.len() % 2 != 0
+                || !packet
+                    .payload_hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()))
+    }) {
+        return Err(CaptureImportError::InvalidFormat);
+    }
+
+    let empty_curtain = std::mem::take(&mut document.empty_curtain);
+    let time_stop_events = std::mem::take(&mut document.time_stop_events);
+    let mut empty_curtain_characters = std::mem::take(&mut document.empty_curtain_characters);
+    if empty_curtain_characters.is_empty() {
+        empty_curtain_characters = empty_curtain
+            .iter()
+            .filter_map(|item| {
+                Some(EmptyCurtainCharacter {
+                    net_id: item.character_net_id?,
+                    character_id: item.equipped_character_id?,
+                })
+            })
+            .collect();
+        empty_curtain_characters.sort_by_key(|character| {
+            (
+                character.character_id,
+                character.net_id.solt,
+                character.net_id.serial,
+            )
+        });
+        empty_curtain_characters.dedup();
+    }
+    validate_capture_collection(
+        "empty_curtain_characters",
+        empty_curtain_characters.len(),
+        structure_limits.empty_curtain_characters,
+    )?;
+    let empty_curtain_characters = validate_empty_curtain_characters(empty_curtain_characters)
+        .ok_or(CaptureImportError::InvalidEquipmentSnapshot)?;
+
+    let (equipment_catalog, equipment_warning) =
+        match find_data_file(Path::new(EQUIPMENT_CATALOG_PATH)) {
+            Some(path) => match load_equipment_catalog(&path) {
+                Ok(catalog) => (catalog, None),
+                Err(error) if empty_curtain.is_empty() => (
+                    EquipmentCatalog::default(),
+                    Some(format!(
+                        "Failed to load Console equipment data for JSON replay: {error:#}"
+                    )),
+                ),
+                Err(_) => return Err(CaptureImportError::EquipmentDataUnavailable),
+            },
+            None if empty_curtain.is_empty() => (EquipmentCatalog::default(), None),
+            None => return Err(CaptureImportError::EquipmentDataUnavailable),
+        };
+    if !validate_empty_curtain_snapshot(&empty_curtain, &equipment_catalog) {
+        return Err(CaptureImportError::InvalidEquipmentSnapshot);
+    }
+
+    Ok(PreparedCaptureJsonReplay {
+        document,
+        empty_curtain,
+        empty_curtain_characters,
+        time_stop_events,
+        equipment_catalog,
+        equipment_warning,
+    })
+}
+
 pub fn import_capture_json(
     path: PathBuf,
     sender: impl Into<EngineEventSink>,
     stop: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
+) -> Result<thread::JoinHandle<()>, CaptureImportError> {
+    let prepared = prepare_capture_json_replay(&path)?;
+    import_prepared_capture_json(prepared, sender, stop).map_err(CaptureImportError::Io)
+}
+
+pub fn import_prepared_capture_json(
+    prepared: PreparedCaptureJsonReplay,
+    sender: impl Into<EngineEventSink>,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<thread::JoinHandle<()>> {
     let sender = sender.into();
-    thread::spawn(move || {
-        let result = (|| -> Result<(usize, usize), String> {
-            let text = read_capture_json_import_with_limit(&path, MAX_CAPTURE_JSON_IMPORT_BYTES)
-                .map_err(|error| error.to_string())?;
-            let mut document = parse_capture_export(&text)?;
-            drop(text);
-            validate_capture_export_structure(&document).map_err(|error| error.to_string())?;
-            let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
-            let mut saved_time_stop_events = std::mem::take(&mut document.time_stop_events);
-            let mut saved_empty_curtain_characters =
-                std::mem::take(&mut document.empty_curtain_characters);
-            if saved_empty_curtain_characters.is_empty() {
-                saved_empty_curtain_characters = saved_empty_curtain
-                    .iter()
-                    .filter_map(|item| {
-                        Some(EmptyCurtainCharacter {
-                            net_id: item.character_net_id?,
-                            character_id: item.equipped_character_id?,
-                        })
-                    })
-                    .collect();
-                saved_empty_curtain_characters.sort_by_key(|character| {
-                    (
-                        character.character_id,
-                        character.net_id.solt,
-                        character.net_id.serial,
-                    )
-                });
-                saved_empty_curtain_characters.dedup();
-            }
-            let saved_empty_curtain_characters =
-                validate_empty_curtain_characters(saved_empty_curtain_characters)
-                    .ok_or_else(|| "invalid Console equipment snapshot".to_owned())?;
-            let equipment_catalog = match find_data_file(Path::new(EQUIPMENT_CATALOG_PATH)) {
-                Some(path) => match load_equipment_catalog(&path) {
-                    Ok(catalog) => catalog,
-                    // stderr is invisible in the windows-subsystem GUI, so the load
-                    // failure detail must travel over the Warning channel instead.
-                    Err(error) if saved_empty_curtain.is_empty() => {
-                        let _ = sender.send(EngineEvent::Warning(format!(
-                            "Failed to load Console equipment data for JSON replay: {error:#}"
-                        )));
-                        EquipmentCatalog::default()
-                    }
-                    Err(error) => {
-                        let _ = sender.send(EngineEvent::Warning(format!(
-                            "Failed to load Console equipment data for JSON replay: {error:#}"
-                        )));
-                        // humanize_engine_error matches this exact string for the
-                        // localized message; keep the returned error stable.
-                        return Err("Console equipment data is unavailable".to_owned());
-                    }
-                },
-                None if saved_empty_curtain.is_empty() => EquipmentCatalog::default(),
-                None => return Err("Console equipment data is unavailable".to_owned()),
-            };
-            if !validate_empty_curtain_snapshot(&saved_empty_curtain, &equipment_catalog) {
-                return Err("invalid Console equipment snapshot".to_owned());
-            }
-            let mut empty_curtain = EmptyCurtainDecoder::new(equipment_catalog);
-            let hit_count = document.hits.len();
-            let mut packet_count = 0;
-            document
-                .packets
-                .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
-            document
-                .hits
-                .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
-            saved_time_stop_events.sort_by(|left, right| {
-                time_stop_event_timestamp(left).total_cmp(&time_stop_event_timestamp(right))
-            });
-            let mut packets = document.packets.into_iter().peekable();
-            let mut hits = document.hits.into_iter().peekable();
-            let mut time_stop_events = saved_time_stop_events.into_iter().peekable();
-
-            while packets.peek().is_some()
-                || hits.peek().is_some()
-                || time_stop_events.peek().is_some()
-            {
-                if stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                let packet_timestamp = packets
-                    .peek()
-                    .map_or(f64::INFINITY, |packet| packet.timestamp_unix);
-                let hit_timestamp = hits.peek().map_or(f64::INFINITY, |hit| hit.timestamp_unix);
-                let time_stop_timestamp = time_stop_events
-                    .peek()
-                    .map_or(f64::INFINITY, time_stop_event_timestamp);
-                if time_stop_timestamp <= packet_timestamp && time_stop_timestamp <= hit_timestamp {
-                    let event = time_stop_events
-                        .next()
-                        .expect("peeked time-stop event must exist");
+    thread::Builder::new()
+        .name("nte-json-replay".to_owned())
+        .spawn(move || {
+            let result = (|| -> Result<(usize, usize), String> {
+                let PreparedCaptureJsonReplay {
+                    mut document,
+                    empty_curtain: saved_empty_curtain,
+                    empty_curtain_characters: saved_empty_curtain_characters,
+                    time_stop_events: mut saved_time_stop_events,
+                    equipment_catalog,
+                    equipment_warning,
+                } = prepared;
+                if let Some(warning) = equipment_warning {
                     sender
-                        .send(EngineEvent::TimeStop(event))
+                        .send(EngineEvent::Warning(warning))
                         .map_err(|error| error.to_string())?;
-                    continue;
                 }
-                let take_packet = match (packets.peek(), hits.peek()) {
-                    (Some(packet), Some(hit)) => packet.timestamp_unix <= hit.timestamp_unix,
-                    (Some(_), None) => true,
-                    (None, Some(_)) => false,
-                    (None, None) => break,
-                };
-                if take_packet {
-                    let packet = packets.next().expect("peeked packet must exist");
-                    if send_export_packet(packet, &sender, &mut empty_curtain)? {
-                        packet_count += 1;
-                    }
-                } else {
-                    let hit = hits.next().expect("peeked hit must exist");
-                    let event = export_hit_event(hit);
-                    sender.send(event).map_err(|error| error.to_string())?;
+                if !saved_time_stop_events.is_empty() {
+                    sender
+                        .send(EngineEvent::CombatClockHealth(
+                            CombatClockRuntimeHealth::Recorded,
+                        ))
+                        .map_err(|error| error.to_string())?;
                 }
-            }
-            if !stop.load(Ordering::Relaxed) && !saved_empty_curtain_characters.is_empty() {
-                sender
-                    .send(EngineEvent::EmptyCurtainCharacters(
-                        saved_empty_curtain_characters,
-                    ))
-                    .map_err(|error| error.to_string())?;
-            }
-            if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
-                sender
-                    .send(EngineEvent::EmptyCurtain(saved_empty_curtain))
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok((hit_count, packet_count))
-        })();
+                let mut empty_curtain = EmptyCurtainDecoder::new(equipment_catalog);
+                let hit_count = document.hits.len();
+                let mut packet_count = 0;
+                document
+                    .packets
+                    .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
+                document
+                    .hits
+                    .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
+                saved_time_stop_events.sort_by(|left, right| {
+                    time_stop_event_timestamp(left).total_cmp(&time_stop_event_timestamp(right))
+                });
+                let mut packets = document.packets.into_iter().peekable();
+                let mut hits = document.hits.into_iter().peekable();
+                let mut time_stop_events = saved_time_stop_events.into_iter().peekable();
 
-        let _ = sender.send(EngineEvent::CaptureStopped);
-        match result {
-            Ok((hit_count, packet_count)) => {
-                let _ = sender.send(EngineEvent::Status(format!(
-                    "JSON import complete: {packet_count} packets, {hit_count} hits"
-                )));
+                while packets.peek().is_some()
+                    || hits.peek().is_some()
+                    || time_stop_events.peek().is_some()
+                {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let packet_timestamp = packets
+                        .peek()
+                        .map_or(f64::INFINITY, |packet| packet.timestamp_unix);
+                    let hit_timestamp = hits.peek().map_or(f64::INFINITY, |hit| hit.timestamp_unix);
+                    let time_stop_timestamp = time_stop_events
+                        .peek()
+                        .map_or(f64::INFINITY, time_stop_event_timestamp);
+                    if time_stop_timestamp <= packet_timestamp
+                        && time_stop_timestamp <= hit_timestamp
+                    {
+                        let Some(event) = time_stop_events.next() else {
+                            return Err(
+                                "capture replay time-stop ordering became invalid".to_owned()
+                            );
+                        };
+                        sender
+                            .send(EngineEvent::TimeStop(event))
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let take_packet = match (packets.peek(), hits.peek()) {
+                        (Some(packet), Some(hit)) => packet.timestamp_unix <= hit.timestamp_unix,
+                        (Some(_), None) => true,
+                        (None, Some(_)) => false,
+                        (None, None) => break,
+                    };
+                    if take_packet {
+                        let Some(packet) = packets.next() else {
+                            return Err("capture replay packet ordering became invalid".to_owned());
+                        };
+                        if send_export_packet(packet, &sender, &mut empty_curtain)? {
+                            packet_count += 1;
+                        }
+                    } else {
+                        let Some(hit) = hits.next() else {
+                            return Err("capture replay hit ordering became invalid".to_owned());
+                        };
+                        let event = export_hit_event(hit);
+                        sender.send(event).map_err(|error| error.to_string())?;
+                    }
+                }
+                if !stop.load(Ordering::Relaxed) && !saved_empty_curtain_characters.is_empty() {
+                    sender
+                        .send(EngineEvent::EmptyCurtainCharacters(
+                            saved_empty_curtain_characters,
+                        ))
+                        .map_err(|error| error.to_string())?;
+                }
+                if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
+                    sender
+                        .send(EngineEvent::EmptyCurtain(saved_empty_curtain))
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok((hit_count, packet_count))
+            })();
+
+            match result {
+                Ok((hit_count, packet_count)) => {
+                    let _ = sender.send(EngineEvent::Status(format!(
+                        "JSON import complete: {packet_count} packets, {hit_count} hits"
+                    )));
+                }
+                Err(error) => {
+                    let _ = sender.send(EngineEvent::Error(format!("JSON import failed: {error}")));
+                }
             }
-            Err(error) => {
-                let _ = sender.send(EngineEvent::Error(format!("JSON import failed: {error}")));
+            let _ = sender.send(EngineEvent::CaptureStopped);
+        })
+}
+
+impl EngineEventDeliveryGate {
+    fn wait_until_ready(&self) -> Result<(), EngineEventSendError> {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(mut error) => {
+                **error.get_mut() = EngineEventDeliveryState::Cancelled;
+                self.state.clear_poison();
+                self.ready.notify_all();
+                return Err(EngineEventSendError);
+            }
+        };
+        while *state == EngineEventDeliveryState::Pending {
+            state = match self.ready.wait(state) {
+                Ok(state) => state,
+                Err(mut error) => {
+                    **error.get_mut() = EngineEventDeliveryState::Cancelled;
+                    self.state.clear_poison();
+                    self.ready.notify_all();
+                    return Err(EngineEventSendError);
+                }
+            };
+        }
+        match *state {
+            EngineEventDeliveryState::Released => Ok(()),
+            EngineEventDeliveryState::Cancelled | EngineEventDeliveryState::Pending => {
+                Err(EngineEventSendError)
             }
         }
-    })
+    }
+}
+
+impl EngineEventDeliveryPermit {
+    pub fn release(mut self) {
+        self.finish(EngineEventDeliveryState::Released);
+    }
+
+    pub fn cancel(mut self) {
+        self.finish(EngineEventDeliveryState::Cancelled);
+    }
+
+    fn finish(&mut self, next: EngineEventDeliveryState) {
+        let Some(gate) = self.gate.take() else {
+            return;
+        };
+        match gate.state.lock() {
+            Ok(mut state) => *state = next,
+            Err(mut error) => {
+                **error.get_mut() = EngineEventDeliveryState::Cancelled;
+                gate.state.clear_poison();
+            }
+        }
+        gate.ready.notify_all();
+    }
+}
+
+impl Drop for EngineEventDeliveryPermit {
+    fn drop(&mut self) {
+        self.finish(EngineEventDeliveryState::Cancelled);
+    }
 }
 
 fn validate_empty_curtain_characters(
@@ -5955,30 +7934,85 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
     }))
 }
 
-fn parse_capture_export(text: &str) -> Result<CaptureExportDocument, String> {
-    let document: CaptureExportDocument = serde_json::from_str(text)
-        .or_else(|_| {
-            let repaired = text
-                .lines()
-                .map(|line| {
-                    if line.trim_start().starts_with(r#""payload_hex":"#) && !line.ends_with(',') {
-                        format!("{line},")
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            serde_json::from_str(&repaired)
-        })
-        .map_err(|error| error.to_string())?;
+fn parse_capture_export_typed(
+    text: impl Into<String>,
+) -> Result<CaptureExportDocument, CaptureImportError> {
+    let text = text.into();
+    let document: CaptureExportDocument = match serde_json::from_str(&text) {
+        Ok(document) => document,
+        Err(_) => {
+            // Legacy v1 writers omitted a comma after pretty-printed payload_hex
+            // lines. Build one bounded replacement buffer, release the original,
+            // and only then deserialize. The old Vec<String> + join path retained
+            // the original, every line allocation, and the repaired document at
+            // the same time for inputs up to the full import limit.
+            let repaired = repair_legacy_capture_export(&text)
+                .map_err(|_| CaptureImportError::InvalidFormat)?;
+            drop(text);
+            serde_json::from_str(&repaired).map_err(|_| CaptureImportError::InvalidFormat)?
+        }
+    };
     if document.version != CAPTURE_EXPORT_VERSION {
-        return Err(format!(
-            "unsupported capture export version {}; expected {}",
-            document.version, CAPTURE_EXPORT_VERSION
-        ));
+        return Err(CaptureImportError::UnsupportedVersion {
+            found: document.version,
+            expected: CAPTURE_EXPORT_VERSION,
+        });
     }
     Ok(document)
+}
+
+#[cfg(test)]
+fn parse_capture_export(text: impl Into<String>) -> Result<CaptureExportDocument, String> {
+    parse_capture_export_typed(text).map_err(|error| error.to_string())
+}
+
+fn repair_legacy_capture_export(text: &str) -> Result<String, String> {
+    repair_legacy_capture_export_with_limit(text, MAX_CAPTURE_JSON_LEGACY_REPAIR_BYTES)
+}
+
+fn repair_legacy_capture_export_with_limit(text: &str, limit: usize) -> Result<String, String> {
+    if text.len() > limit {
+        return Err(format!("legacy capture repair input exceeds {limit} bytes"));
+    }
+    let inserted_commas = text
+        .split_inclusive('\n')
+        .filter(|line| legacy_payload_hex_line_needs_comma(line))
+        .count();
+    let repaired_len = text
+        .len()
+        .checked_add(inserted_commas)
+        .filter(|size| *size <= limit)
+        .ok_or_else(|| format!("legacy capture repair exceeds {limit} bytes"))?;
+    let mut repaired = String::with_capacity(repaired_len);
+    for line in text.split_inclusive('\n') {
+        let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
+        let content = line_without_newline
+            .strip_suffix('\r')
+            .unwrap_or(line_without_newline);
+        repaired.push_str(content);
+        if legacy_payload_hex_line_needs_comma(content) {
+            repaired.push(',');
+        }
+        if line_without_newline.len() != line.len() {
+            if line_without_newline.ends_with('\r') {
+                repaired.push('\r');
+            }
+            repaired.push('\n');
+        }
+    }
+    debug_assert_eq!(repaired.len(), repaired_len);
+    Ok(repaired)
+}
+
+fn legacy_payload_hex_line_needs_comma(line: &str) -> bool {
+    let content = line.trim_end_matches(['\r', '\n']);
+    if content.trim_end().ends_with(',') {
+        return false;
+    }
+    let Some(after_key) = content.trim_start().strip_prefix(r#""payload_hex""#) else {
+        return false;
+    };
+    after_key.trim_start().starts_with(':')
 }
 
 fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
@@ -6008,12 +8042,319 @@ mod tests {
     };
 
     #[test]
+    fn staged_event_sink_releases_delivery_only_after_commit() {
+        let (sender, receiver) = bounded(1);
+        let (sink, permit) = EngineEventSink::reliable(sender).pause_delivery();
+        let producer = thread::spawn(move || sink.send(EngineEvent::CaptureStopped));
+
+        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
+        permit.release();
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(EngineEvent::CaptureStopped)
+        ));
+        assert!(producer.join().expect("producer should finish").is_ok());
+    }
+
+    #[test]
+    fn cancelled_staged_event_sink_wakes_the_blocked_producer() {
+        let (sender, receiver) = bounded(1);
+        let (sink, permit) = EngineEventSink::reliable(sender).pause_delivery();
+        let producer = thread::spawn(move || sink.send(EngineEvent::CaptureStopped));
+
+        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
+        permit.cancel();
+        assert!(producer.join().expect("producer should finish").is_err());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn capture_stop_drains_full_reliable_lane_before_join() {
+        let (sender, receiver) = bounded(1);
+        sender
+            .send(EngineEvent::Status("queued".to_owned()))
+            .expect("prefill reliable lane");
+        let stop = Arc::new(AtomicBool::new(false));
+        let producer_stop = Arc::clone(&stop);
+        let sink = EngineEventSink::reliable(sender);
+        let producer = thread::spawn(move || {
+            while !producer_stop.load(Ordering::Relaxed) {
+                thread::yield_now();
+            }
+            let _ = sink.send(EngineEvent::CaptureStopped);
+        });
+        let mut capture = CaptureHandle::from_test_thread(stop, producer);
+        let (completed_sender, completed_receiver) = bounded(1);
+        thread::spawn(move || {
+            let mut drained = Vec::new();
+            capture.stop_with_drain(|| {
+                drained.extend(receiver.try_iter());
+            });
+            let _ = completed_sender.send(drained);
+        });
+
+        let drained = completed_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("full reliable lane stop must finish without waiting forever");
+        assert!(matches!(drained.first(), Some(EngineEvent::Status(value)) if value == "queued"));
+        assert!(matches!(drained.last(), Some(EngineEvent::CaptureStopped)));
+    }
+
+    #[test]
     fn bounded_utf8_reader_rejects_growth_past_checked_size() {
         let limit = 8_u64;
         let reader = std::io::Cursor::new(b"123456789".to_vec());
         assert!(matches!(
             read_bounded_utf8(reader, limit, limit),
             Err(CaptureImportError::TooLarge { size: 9, limit: 8 })
+        ));
+    }
+
+    #[test]
+    fn combat_clock_health_is_typed_and_published_only_on_change() {
+        assert_eq!(
+            combat_clock_error_health(CombatClockQueryError::ProviderUnavailable),
+            CombatClockRuntimeHealth::ProviderUnavailable
+        );
+        assert_eq!(
+            combat_clock_error_health(CombatClockQueryError::ModDisabled),
+            CombatClockRuntimeHealth::ModDisabled
+        );
+        assert_eq!(
+            combat_clock_error_health(CombatClockQueryError::InvalidResponse),
+            CombatClockRuntimeHealth::InvalidResponse
+        );
+        assert_eq!(
+            combat_clock_sample_health(0, false),
+            CombatClockRuntimeHealth::DataUnavailable
+        );
+        assert_eq!(
+            combat_clock_sample_health(COMBAT_CLOCK_PAUSE_VALID, false),
+            CombatClockRuntimeHealth::Available
+        );
+        assert_eq!(
+            combat_clock_sample_health(COMBAT_CLOCK_PAUSE_VALID, true),
+            CombatClockRuntimeHealth::Recorded
+        );
+
+        let (sender, receiver) = bounded(2);
+        let sink = EngineEventSink::reliable(sender);
+        let mut previous = None;
+        publish_combat_clock_health(
+            &sink,
+            &mut previous,
+            CombatClockRuntimeHealth::ProviderUnavailable,
+        )
+        .expect("first degradation is published");
+        publish_combat_clock_health(
+            &sink,
+            &mut previous,
+            CombatClockRuntimeHealth::ProviderUnavailable,
+        )
+        .expect("duplicate degradation is a no-op");
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(EngineEvent::CombatClockHealth(
+                CombatClockRuntimeHealth::ProviderUnavailable
+            ))
+        ));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn combat_clock_valid_to_invalid_transition_publishes_typed_degradation_once() {
+        let (sender, receiver) = bounded(4);
+        let sink = EngineEventSink::reliable(sender);
+        let mut previous = None;
+        for flags in [COMBAT_CLOCK_PAUSE_VALID, 0, 0] {
+            publish_combat_clock_health(
+                &sink,
+                &mut previous,
+                combat_clock_sample_health(flags, false),
+            )
+            .expect("health transition should publish");
+        }
+
+        let health = receiver
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::CombatClockHealth(health) => Some(health),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            health,
+            vec![
+                CombatClockRuntimeHealth::Available,
+                CombatClockRuntimeHealth::DataUnavailable,
+            ]
+        );
+    }
+
+    #[test]
+    fn successful_repeated_combat_clock_snapshot_recovers_transient_degradation() {
+        let (sender, receiver) = bounded(2);
+        let sink = EngineEventSink::reliable(sender);
+        let mut previous = None;
+        publish_combat_clock_health(
+            &sink,
+            &mut previous,
+            CombatClockRuntimeHealth::ProviderUnavailable,
+        )
+        .expect("publish transient degradation");
+
+        publish_combat_clock_snapshot_health(
+            &sink,
+            &mut previous,
+            &[CombatClockTransitionSnapshot {
+                sequence: 7,
+                timestamp_100ns: 133_000_000_000_000_000,
+                pause_type_mask: 0,
+                reserved_value: 0,
+                state_flags: COMBAT_CLOCK_PAUSE_VALID,
+            }],
+        )
+        .expect("repeated authoritative snapshot restores health");
+
+        let health = receiver
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::CombatClockHealth(health) => Some(health),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            health,
+            vec![
+                CombatClockRuntimeHealth::ProviderUnavailable,
+                CombatClockRuntimeHealth::Available,
+            ]
+        );
+    }
+
+    #[test]
+    fn transient_provider_failure_requires_a_stable_threshold() {
+        let mut consecutive = 0;
+        for _ in 1..COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD {
+            assert_eq!(
+                stable_combat_clock_error_health(
+                    CombatClockQueryError::ProviderUnavailable,
+                    &mut consecutive,
+                ),
+                None
+            );
+        }
+        assert_eq!(
+            stable_combat_clock_error_health(
+                CombatClockQueryError::ProviderUnavailable,
+                &mut consecutive,
+            ),
+            Some(CombatClockRuntimeHealth::ProviderUnavailable)
+        );
+        assert_eq!(
+            stable_combat_clock_error_health(CombatClockQueryError::ModDisabled, &mut consecutive),
+            Some(CombatClockRuntimeHealth::ModDisabled)
+        );
+        assert_eq!(consecutive, 0);
+    }
+
+    #[test]
+    fn pcapng_import_validates_file_and_frame_budgets_before_allocation() {
+        let directory = std::env::temp_dir().join(format!(
+            "nte-pcapng-budget-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("create pcapng budget fixture directory");
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+
+        let file = directory.join("capture.pcapng");
+        std::fs::write(&file, b"12345678").expect("write pcapng fixture");
+        assert!(validate_pcapng_import_with_limit(&file, 8).is_ok());
+        assert!(matches!(
+            validate_pcapng_import_with_limit(&file, 7),
+            Err(PcapngImportError::TooLarge { size: 8, limit: 7 })
+        ));
+        assert!(matches!(
+            validate_pcapng_import_with_limit(&directory, 8),
+            Err(PcapngImportError::NotAFile)
+        ));
+
+        let mut packet_count = 0;
+        let mut packet_bytes = 0;
+        assert!(matches!(
+            account_pcapng_frame(
+                CAPTURE_SNAPLEN as usize + 1,
+                &mut packet_count,
+                &mut packet_bytes
+            ),
+            Err(PcapngImportError::FrameTooLarge { .. })
+        ));
+
+        packet_count = MAX_PCAPNG_IMPORT_PACKETS;
+        assert!(matches!(
+            account_pcapng_frame(0, &mut packet_count, &mut packet_bytes),
+            Err(PcapngImportError::TooManyPackets { .. })
+        ));
+
+        packet_count = 0;
+        packet_bytes = MAX_PCAPNG_IMPORT_PACKET_BYTES;
+        assert!(matches!(
+            account_pcapng_frame(1, &mut packet_count, &mut packet_bytes),
+            Err(PcapngImportError::PacketBytesExceeded { .. })
+        ));
+
+        let mut interface_count = 0;
+        assert!(account_pcapng_interface(CAPTURE_SNAPLEN, &mut interface_count).is_ok());
+        assert!(matches!(
+            account_pcapng_interface(0, &mut interface_count),
+            Err(PcapngImportError::SnaplenTooLarge { snaplen: 0, .. })
+        ));
+        interface_count = MAX_PCAPNG_IMPORT_INTERFACES;
+        assert!(matches!(
+            account_pcapng_interface(CAPTURE_SNAPLEN, &mut interface_count),
+            Err(PcapngImportError::TooManyInterfaces { .. })
+        ));
+
+        let exact_limit_flag = Arc::new(AtomicBool::new(false));
+        let mut exact_limit = PcapngImportReader::new(
+            std::io::Cursor::new(b"12345678"),
+            8,
+            exact_limit_flag.clone(),
+        );
+        let mut bytes = Vec::new();
+        exact_limit
+            .read_to_end(&mut bytes)
+            .expect("a file exactly at the limit remains readable");
+        assert_eq!(bytes, b"12345678");
+        assert!(!exact_limit_flag.load(Ordering::Relaxed));
+
+        let grown_file_flag = Arc::new(AtomicBool::new(false));
+        let mut grown_file = PcapngImportReader::new(
+            std::io::Cursor::new(b"123456789"),
+            8,
+            grown_file_flag.clone(),
+        );
+        let error = grown_file
+            .read_to_end(&mut Vec::new())
+            .expect_err("growth beyond the validated budget must stop the reader");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(grown_file_flag.load(Ordering::Relaxed));
+        assert!(matches!(
+            map_pcapng_reader_error(PcapError::IoError(error), &grown_file_flag),
+            PcapngImportError::TooLarge {
+                size,
+                limit: MAX_PCAPNG_IMPORT_BYTES
+            } if size == MAX_PCAPNG_IMPORT_BYTES + 1
         ));
     }
 
@@ -6110,6 +8451,49 @@ mod tests {
             validate_capture_export_structure_with_limits(&document, at_limit).is_ok(),
             "structure at the limit is accepted"
         );
+        let mut exact_text_limit = document.clone();
+        exact_text_limit.hits[0].char_name =
+            "a".repeat(MAX_CAPTURE_JSON_IMPORT_CHARACTER_NAME_BYTES);
+        assert!(
+            validate_capture_export_structure_with_limits(&exact_text_limit, at_limit).is_ok(),
+            "a string exactly at its UTF-8 byte limit is accepted"
+        );
+        let mut oversized_text = document.clone();
+        oversized_text.hits[0].char_name = "界".repeat(43);
+        assert!(matches!(
+            validate_capture_export_structure_with_limits(&oversized_text, at_limit),
+            Err(CaptureImportError::FieldTooLarge {
+                field: "hits[].char_name",
+                size: 129,
+                limit: MAX_CAPTURE_JSON_IMPORT_CHARACTER_NAME_BYTES,
+            })
+        ));
+        let mut oversized_item = document.clone();
+        oversized_item.empty_curtain[0].item_id =
+            "i".repeat(MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES + 1);
+        assert!(matches!(
+            validate_capture_export_structure_with_limits(&oversized_item, at_limit),
+            Err(CaptureImportError::FieldTooLarge {
+                field: "empty_curtain[].item_id",
+                ..
+            })
+        ));
+        let mut invalid_timestamp = document.clone();
+        invalid_timestamp.hits[0].timestamp_unix = MAX_CAPTURE_JSON_IMPORT_TIMESTAMP + 1.0;
+        assert!(matches!(
+            validate_capture_export_structure_with_limits(&invalid_timestamp, at_limit),
+            Err(CaptureImportError::InvalidNumber {
+                field: "hits[].timestamp_unix"
+            })
+        ));
+        let mut invalid_damage = document.clone();
+        invalid_damage.hits[0].damage = -1.0;
+        assert!(matches!(
+            validate_capture_export_structure_with_limits(&invalid_damage, at_limit),
+            Err(CaptureImportError::InvalidNumber {
+                field: "hits[].damage"
+            })
+        ));
         let mut limits = at_limit;
         limits.hits = 0;
         assert!(matches!(
@@ -6191,27 +8575,114 @@ mod tests {
     }
 
     #[test]
-    fn capture_frame_queue_applies_backpressure_without_dropping_frames() {
-        let (sender, receiver) = bounded(1);
-        forward_capture_frame(
-            &sender,
-            CaptureFrame {
-                data: vec![1],
-                timestamp: 1.0,
-            },
+    fn capture_json_preflight_returns_typed_boundary_errors() {
+        let directory = std::env::temp_dir().join(format!(
+            "nte-capture-preflight-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("create preflight fixture directory");
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+
+        let exact = directory.join("exact.json");
+        std::fs::write(&exact, b"{}").expect("write exact-limit fixture");
+        assert!(
+            prepare_capture_json_replay_with_limits(&exact, 2, CAPTURE_IMPORT_STRUCTURE_LIMITS)
+                .is_ok(),
+            "a valid document exactly at the byte limit must be prepared"
+        );
+
+        let limit_plus_one = directory.join("limit-plus-one.json");
+        std::fs::write(&limit_plus_one, b"{}\n").expect("write oversized fixture");
+        assert!(matches!(
+            prepare_capture_json_replay_with_limits(
+                &limit_plus_one,
+                2,
+                CAPTURE_IMPORT_STRUCTURE_LIMITS
+            ),
+            Err(CaptureImportError::TooLarge { size: 3, limit: 2 })
+        ));
+
+        let malformed = directory.join("malformed.json");
+        std::fs::write(&malformed, b"{").expect("write malformed fixture");
+        assert!(matches!(
+            prepare_capture_json_replay(&malformed),
+            Err(CaptureImportError::InvalidFormat)
+        ));
+
+        let invalid_utf8 = directory.join("invalid-utf8.json");
+        std::fs::write(&invalid_utf8, [0xff]).expect("write invalid UTF-8 fixture");
+        assert!(matches!(
+            prepare_capture_json_replay(&invalid_utf8),
+            Err(CaptureImportError::InvalidUtf8)
+        ));
+
+        let unsupported = directory.join("unsupported.json");
+        std::fs::write(&unsupported, br#"{"version":2}"#)
+            .expect("write unsupported-version fixture");
+        assert!(matches!(
+            prepare_capture_json_replay(&unsupported),
+            Err(CaptureImportError::UnsupportedVersion {
+                found: 2,
+                expected: CAPTURE_EXPORT_VERSION
+            })
+        ));
+
+        let too_many = directory.join("too-many.json");
+        let hit = serde_json::json!({
+            "timestamp_unix": 1.0,
+            "char_id": 1,
+            "char_name": "Fixture",
+            "damage": 1.0
+        });
+        std::fs::write(
+            &too_many,
+            serde_json::to_vec(&serde_json::json!({
+                "version": CAPTURE_EXPORT_VERSION,
+                "hits": [hit.clone(), hit],
+                "packets": []
+            }))
+            .expect("serialize too-many fixture"),
         )
-        .unwrap();
+        .expect("write too-many fixture");
+        let one_hit = CaptureImportStructureLimits {
+            hits: 1,
+            ..CAPTURE_IMPORT_STRUCTURE_LIMITS
+        };
+        assert!(matches!(
+            prepare_capture_json_replay_with_limits(&too_many, 1 << 20, one_hit),
+            Err(CaptureImportError::TooManyHits { count: 2, limit: 1 })
+        ));
+
+        let invalid_payload = directory.join("invalid-payload.json");
+        std::fs::write(
+            &invalid_payload,
+            br#"{"version":1,"hits":[],"packets":[{"timestamp_unix":1,"source":"a","destination":"b","payload_hex":"xyz"}]}"#,
+        )
+        .expect("write invalid payload fixture");
+        assert!(matches!(
+            prepare_capture_json_replay(&invalid_payload),
+            Err(CaptureImportError::InvalidFormat)
+        ));
+    }
+
+    #[test]
+    fn capture_frame_queue_applies_backpressure_without_dropping_frames() {
+        let (sender, receiver) = capture_frame_queue(1, 2);
+        forward_capture_frame(&sender, CaptureFrame::new(vec![1], 1.0)).unwrap();
         let (completed_sender, completed_receiver) = bounded(1);
         let blocked_sender = sender.clone();
         let blocked = thread::spawn(move || {
-            forward_capture_frame(
-                &blocked_sender,
-                CaptureFrame {
-                    data: vec![2],
-                    timestamp: 2.0,
-                },
-            )
-            .unwrap();
+            forward_capture_frame(&blocked_sender, CaptureFrame::new(vec![2], 2.0)).unwrap();
             completed_sender.send(()).unwrap();
         });
 
@@ -6225,6 +8696,66 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
         assert_eq!(receiver.recv().unwrap().timestamp, 2.0);
+        blocked.join().unwrap();
+    }
+
+    #[test]
+    fn capture_frame_queue_applies_byte_high_water_to_in_flight_frames() {
+        let (sender, receiver) = capture_frame_queue(4, 5);
+        forward_capture_frame(&sender, CaptureFrame::new(vec![1; 3], 1.0)).unwrap();
+        forward_capture_frame(&sender, CaptureFrame::new(vec![2; 2], 2.0)).unwrap();
+        assert_eq!(sender.byte_high_water_mark(), 5);
+
+        let (completed_sender, completed_receiver) = bounded(1);
+        let blocked_sender = sender.clone();
+        let blocked = thread::spawn(move || {
+            let result = forward_capture_frame(&blocked_sender, CaptureFrame::new(vec![3], 3.0));
+            completed_sender.send(result).unwrap();
+        });
+
+        let first = receiver.recv().unwrap();
+        assert_eq!(first.timestamp, 1.0);
+        assert!(
+            completed_receiver
+                .recv_timeout(Duration::from_millis(20))
+                .is_err(),
+            "a frame being parsed must still count against the byte budget"
+        );
+        drop(first);
+        completed_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(receiver.recv().unwrap().timestamp, 2.0);
+        assert_eq!(receiver.recv().unwrap().timestamp, 3.0);
+        assert_eq!(sender.byte_high_water_mark(), 5);
+        blocked.join().unwrap();
+    }
+
+    #[test]
+    fn capture_frame_queue_rejects_oversize_and_wakes_on_disconnect() {
+        let (sender, receiver) = capture_frame_queue(2, 2);
+        let oversize =
+            forward_capture_frame(&sender, CaptureFrame::new(vec![0; 3], 1.0)).unwrap_err();
+        assert!(oversize.contains("exceeds parser queue byte budget"));
+
+        forward_capture_frame(&sender, CaptureFrame::new(vec![1; 2], 2.0)).unwrap();
+        let (completed_sender, completed_receiver) = bounded(1);
+        let blocked_sender = sender.clone();
+        let blocked = thread::spawn(move || {
+            completed_sender
+                .send(forward_capture_frame(
+                    &blocked_sender,
+                    CaptureFrame::new(vec![2], 3.0),
+                ))
+                .unwrap();
+        });
+        drop(receiver);
+        let error = completed_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("capture parser thread stopped unexpectedly"));
         blocked.join().unwrap();
     }
 
@@ -6249,6 +8780,61 @@ mod tests {
         let mut invalid_flags = payload;
         invalid_flags[32..36].copy_from_slice(&2_u32.to_le_bytes());
         assert!(decode_combat_clock_block(&invalid_flags).is_none());
+    }
+
+    #[test]
+    fn pcapng_replay_with_only_invalid_clock_sample_is_not_marked_recorded() {
+        let path = std::env::temp_dir().join(format!(
+            "nte-invalid-clock-replay-{}-{}.pcapng",
+            std::process::id(),
+            current_filetime_100ns()
+        ));
+        let transition = CombatClockTransitionSnapshot {
+            sequence: 1,
+            timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + FILETIME_TICKS_PER_SECOND,
+            pause_type_mask: 0,
+            reserved_value: 0,
+            state_flags: 0,
+        };
+        let payload = encode_combat_clock_block(&transition);
+        let file = File::create(&path).expect("pcapng fixture should be created");
+        let mut writer =
+            PcapNgWriter::new(BufWriter::new(file)).expect("pcapng writer should initialize");
+        writer
+            .write_pcapng_block(UnknownBlock::new(NTE_COMBAT_CLOCK_BLOCK_TYPE, 0, &payload))
+            .expect("clock block should be written");
+        writer
+            .get_mut()
+            .flush()
+            .expect("clock fixture should flush");
+        drop(writer);
+
+        let (sender, receiver) = unbounded();
+        let handle = import_pcapng(
+            path.clone(),
+            CaptureResources {
+                characters: Arc::new(HashMap::new()),
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
+            None,
+            true,
+            false,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("pcapng import thread should spawn");
+        handle.join().expect("pcapng import thread should finish");
+        std::fs::remove_file(path).expect("pcapng fixture should be removable");
+
+        let health = receiver
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::CombatClockHealth(health) => Some(health),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(health, vec![CombatClockRuntimeHealth::DataUnavailable]);
+        assert!(!health.contains(&CombatClockRuntimeHealth::Recorded));
     }
 
     #[test]
@@ -6324,7 +8910,8 @@ mod tests {
             true,
             sender,
             Arc::new(AtomicBool::new(false)),
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
         std::fs::remove_file(path).expect("pcapng fixture should be removable");
 
@@ -8224,6 +10811,85 @@ mod tests {
     }
 
     #[test]
+    fn legacy_capture_repair_uses_one_bounded_buffer_and_preserves_crlf() {
+        let legacy = concat!(
+            "{\r\n",
+            "  \"version\":1,\r\n",
+            "  \"hits\":[],\r\n",
+            "  \"packets\":[{\r\n",
+            "    \"timestamp_unix\":1,\r\n",
+            "    \"source\":\"a\",\r\n",
+            "    \"destination\":\"b\",\r\n",
+            "    \"payload_hex\" : \"00\"\r\n",
+            "    \"decoded_text\":\"ok\"\r\n",
+            "  }]\r\n",
+            "}"
+        );
+        let repaired = repair_legacy_capture_export(legacy)
+            .expect("bounded legacy capture should be repairable");
+        assert!(repaired.contains("\"payload_hex\" : \"00\",\r\n"));
+        let parsed = parse_capture_export(legacy)
+            .expect("legacy missing payload comma should remain replayable");
+        assert_eq!(parsed.packets.len(), 1);
+        assert_eq!(parsed.packets[0].decoded_text, "ok");
+        assert!(repair_legacy_capture_export_with_limit(legacy, legacy.len() - 1).is_err());
+        let exact_limit_missing_comma = "  \"payload_hex\": \"00\"";
+        assert!(
+            repair_legacy_capture_export_with_limit(
+                exact_limit_missing_comma,
+                exact_limit_missing_comma.len(),
+            )
+            .is_err(),
+            "the extra comma must be budgeted before allocating the output buffer"
+        );
+        let unrelated = "  \"decoded_text\": \"payload_hex\"";
+        assert_eq!(
+            repair_legacy_capture_export_with_limit(unrelated, unrelated.len())
+                .expect("unrelated lines need no allocation growth"),
+            unrelated
+        );
+    }
+
+    #[test]
+    fn capture_export_declared_ids_rejects_invalid_shapes_before_state_use() {
+        let packet_document = |declared_ids: serde_json::Value| {
+            serde_json::json!({
+                "version": 1,
+                "hits": [],
+                "packets": [{
+                    "timestamp_unix": 1,
+                    "source": "a",
+                    "destination": "b",
+                    "declared_ids": declared_ids
+                }]
+            })
+            .to_string()
+        };
+
+        assert!(parse_capture_export(packet_document(serde_json::json!([1, 2]))).is_ok());
+        assert!(parse_capture_export(packet_document(serde_json::json!([1, "2"]))).is_err());
+        assert!(parse_capture_export(packet_document(serde_json::json!({ "id": 1 }))).is_err());
+        assert!(
+            parse_capture_export(packet_document(serde_json::json!([[1]]))).is_err(),
+            "nested arrays must not be retained as arbitrary JSON"
+        );
+        assert!(
+            parse_capture_export(packet_document(serde_json::json!(
+                (0..=MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS).collect::<Vec<_>>()
+            )))
+            .is_err()
+        );
+        let legacy = format!(
+            "[{}]",
+            (0..MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS)
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert!(parse_capture_export(packet_document(serde_json::json!(legacy))).is_ok());
+    }
+
+    #[test]
     fn capture_export_writer_persists_a_replayable_document() {
         let path = std::env::temp_dir().join(format!(
             "nte-capture-export-{}-{}.json",
@@ -8251,6 +10917,99 @@ mod tests {
         assert_eq!(restored.version, CAPTURE_EXPORT_VERSION);
         assert_eq!(restored.filter, "udp");
         assert_eq!(restored.summary.dps_time_mode, "Real Time");
+    }
+
+    #[test]
+    fn capture_export_streams_generation_checked_bounded_hit_pages() {
+        let path = std::env::temp_dir().join(format!(
+            "nte-capture-stream-export-{}-{}.json",
+            std::process::id(),
+            Local::now()
+                .timestamp_nanos_opt()
+                .expect("current local time must fit in nanoseconds")
+        ));
+        let mut state = CombatState::default();
+        let hit_count = CAPTURE_EXPORT_HIT_PAGE_SIZE * 2 + 17;
+        for index in 0..hit_count {
+            let mut hit = targetless_hit();
+            hit.timestamp = index as f64;
+            hit.damage = index as f64 + 1.0;
+            if index + 1 == hit_count {
+                hit.direction = HitDirection::Incoming;
+            }
+            state.push_hit(hit);
+        }
+        let plan = CaptureExportDocument::prepare(
+            &state,
+            CaptureExportOptions {
+                filter: "udp".to_owned(),
+                include_incoming: false,
+                game_network: None,
+                dps_time_mode: DpsTimeBasis::WallClock,
+            },
+        );
+        let mut page_sizes = Vec::new();
+
+        write_capture_export_streaming(&path, &plan, |start, limit| {
+            page_sizes.push(limit);
+            Ok(state.hits.range(start..start + limit).cloned().collect())
+        })
+        .expect("bounded capture export should stream atomically");
+        let text = std::fs::read_to_string(&path).expect("streamed export should be readable");
+        let restored = parse_capture_export(text).expect("streamed export should replay");
+        std::fs::remove_file(&path).expect("capture export fixture should be removable");
+
+        assert_eq!(restored.hits.len(), hit_count);
+        assert_eq!(restored.summary.hits, hit_count);
+        assert_eq!(restored.summary.ended_at_unix, Some((hit_count - 1) as f64));
+        assert_eq!(restored.hits[hit_count - 1].damage, hit_count as f64);
+        assert_eq!(
+            page_sizes,
+            [
+                CAPTURE_EXPORT_HIT_PAGE_SIZE,
+                CAPTURE_EXPORT_HIT_PAGE_SIZE,
+                17
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_export_source_change_preserves_existing_destination() {
+        let path = std::env::temp_dir().join(format!(
+            "nte-capture-stream-conflict-{}-{}.json",
+            std::process::id(),
+            Local::now()
+                .timestamp_nanos_opt()
+                .expect("current local time must fit in nanoseconds")
+        ));
+        std::fs::write(&path, b"existing export")
+            .expect("existing export fixture should be writable");
+        let mut state = CombatState::default();
+        for index in 0..=CAPTURE_EXPORT_HIT_PAGE_SIZE {
+            let mut hit = targetless_hit();
+            hit.timestamp = index as f64;
+            state.push_hit(hit);
+        }
+        let plan = CaptureExportDocument::prepare(
+            &state,
+            CaptureExportOptions {
+                filter: String::new(),
+                include_incoming: false,
+                game_network: None,
+                dps_time_mode: DpsTimeBasis::WallClock,
+            },
+        );
+        let result = write_capture_export_streaming(&path, &plan, |start, limit| {
+            if start != 0 {
+                return Err("capture export source changed during streaming".to_owned());
+            }
+            Ok(state.hits.range(start..start + limit).cloned().collect())
+        });
+        let contents = std::fs::read(&path).expect("existing destination should remain readable");
+        std::fs::remove_file(&path).expect("capture export fixture should be removable");
+
+        assert!(result.is_err());
+        assert_eq!(contents, b"existing export");
     }
 
     #[test]
@@ -8497,7 +11256,8 @@ mod tests {
             false,
             EngineEventSink::reliable(sender),
             Arc::new(AtomicBool::new(false)),
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let events = receiver.try_iter().collect::<Vec<_>>();
@@ -8641,6 +11401,73 @@ mod tests {
         tracker.observe_hit(&hit, None, &characters);
 
         assert!(tracker.observe_server_hp(0.1, 998_750.0).is_none());
+    }
+
+    #[test]
+    fn exact_fuwen_damage_effect_claims_server_residual_without_ratio_guessing() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        tracker.observe_fuwen_damage_effect(0.05);
+
+        let follow_up = tracker
+            .observe_server_hp(0.1, 997_500.0)
+            .expect("the exact reaction damage GE should claim the server residual");
+
+        assert_eq!(follow_up.damage, 1_500.0);
+        assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
+        assert_eq!(follow_up.damage_attribute.as_deref(), Some("灵"));
+        assert_eq!(tracker.fuwen_damage_effect_at, None);
+    }
+
+    #[test]
+    fn stale_fuwen_damage_effect_does_not_claim_later_server_residual() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        tracker.observe_fuwen_damage_effect(0.0);
+        let mut hit = targetless_hit();
+        hit.timestamp = 1.5;
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(2.0, 997_500.0).is_none());
+        assert_eq!(tracker.fuwen_damage_effect_at, None);
+    }
+
+    #[test]
+    fn exact_fuwen_damage_effect_is_attached_to_direct_damage_record() {
+        let names = HashMap::from([(555, FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME.to_owned())]);
+        let effects = [ParsedGameplayEffect {
+            unique_index: 555,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let mut hit = targetless_hit();
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
+
+        assert_eq!(hit.gameplay_effect_index, Some(555));
+        assert_eq!(
+            hit.gameplay_effect_name.as_deref(),
+            Some(FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
+        );
+        assert_eq!(hit.attack_type.as_deref(), Some("覆纹"));
     }
 
     #[test]
@@ -9239,7 +12066,7 @@ mod tests {
     #[test]
     fn summary_payload_text_retains_only_runtime_markers() {
         let irrelevant = decode_summary_payload_text(b"Some.DebugProtocolIdentifier");
-        assert!(irrelevant.has_readable_text);
+        assert!(!irrelevant.has_readable_text);
         assert_eq!(irrelevant.text, UNREADABLE_PROTOCOL_TEXT);
 
         let abyss = decode_summary_payload_text(b"FAbyssGamePlayData ConditionState_Success");
@@ -9249,7 +12076,139 @@ mod tests {
 
         let ultra = decode_summary_payload_text(b"Event.Montage.Player.UltraSkillB");
         assert!(ultra.has_readable_text);
-        assert_eq!(ultra.text, "Event.Montage.Player.UltraSkillB");
+        assert_eq!(ultra.text, "UltraSkill");
+    }
+
+    #[test]
+    fn summary_payload_text_is_bounded_to_canonical_markers() {
+        let mut payload = vec![b'X'; CAPTURE_SNAPLEN as usize];
+        payload[32_000..32_010].copy_from_slice(b"UltraSkill");
+
+        let summary = decode_summary_payload_text(&payload);
+
+        assert_eq!(summary.text, "UltraSkill");
+        assert!(summary.text.len() < 256);
+    }
+
+    fn summary_marker_presence(text: &str) -> [bool; 8] {
+        [
+            text.contains("FAbyssGamePlayData"),
+            text.contains("ConditionState_Success"),
+            text.contains("EAbyssFightStage::FirstHalf"),
+            text.contains("EAbyssFightStage::SecondHalf"),
+            text.contains("AbyssClone"),
+            text.contains("Abyss_Battle_Born"),
+            text.contains("Abyss_Station_LeaveClone"),
+            text.contains("UltraSkill"),
+        ]
+    }
+
+    #[test]
+    fn summary_payload_markers_match_full_debug_for_every_bit_shift() {
+        let text = b"FAbyssGamePlayData ConditionState_Success EAbyssFightStage::SecondHalf AbyssCloneCharacterItemData Event.Montage.Player.UltraSkillB";
+
+        for bit_shift in 0..8 {
+            let mut payload = vec![0_u8; text.len() + 4];
+            write_shifted_bytes(&mut payload, bit_shift, 1, text);
+
+            let full = decode_payload_text_filtered(&payload, |value| {
+                value.contains("Abyss")
+                    || value.contains("ConditionState_Success")
+                    || value.contains("UltraSkill")
+            });
+            let summary = decode_summary_payload_text(&payload);
+
+            assert_eq!(
+                summary_marker_presence(&summary.text),
+                summary_marker_presence(&full.text),
+                "marker parity failed at bit shift {bit_shift}"
+            );
+            assert_eq!(
+                format!("{:?}", abyss_events_from_text(30.0, &summary.text)),
+                format!("{:?}", abyss_events_from_text(30.0, &full.text)),
+                "Abyss event parity failed at bit shift {bit_shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn summary_payload_scanner_handles_stream_boundaries_and_no_match() {
+        for (bit_shift, marker, expected) in [
+            (0, b"Abyss_Battle_Born".as_slice(), "Abyss_Battle_Born"),
+            (
+                3,
+                b"ConditionState_Success".as_slice(),
+                "ConditionState_Success",
+            ),
+            (7, b"UltraSkill".as_slice(), "UltraSkill"),
+        ] {
+            let mut payload = vec![0_u8; marker.len() + usize::from(bit_shift > 0)];
+            write_shifted_bytes(&mut payload, bit_shift, 0, marker);
+            let summary = decode_summary_payload_text(&payload);
+            assert!(summary.text.contains(expected));
+        }
+
+        for payload in [
+            Vec::new(),
+            b"Abys".to_vec(),
+            b"ConditionState_Succes".to_vec(),
+            b"Event.Montage.Player.UltraSkil".to_vec(),
+            vec![0xff; 257],
+        ] {
+            let summary = decode_summary_payload_text(&payload);
+            assert_eq!(summary.text, UNREADABLE_PROTOCOL_TEXT);
+            assert!(!summary.has_readable_text);
+        }
+    }
+
+    #[test]
+    fn summary_payload_explicit_stage_matches_full_debug() {
+        let text = b"  Abyss_12_6_1  ";
+        for bit_shift in 0..8 {
+            let mut payload = vec![0_u8; text.len() + 3];
+            write_shifted_bytes(&mut payload, bit_shift, 1, text);
+            let full = decode_payload_text_filtered(&payload, |value| value.contains("Abyss"));
+            let summary = decode_summary_payload_text(&payload);
+            assert_eq!(
+                format!("{:?}", abyss_events_from_text(40.0, &summary.text)),
+                format!("{:?}", abyss_events_from_text(40.0, &full.text)),
+                "explicit stage parity failed at bit shift {bit_shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn summary_payload_length_prefixed_stage_matches_full_debug() {
+        let identifier = b"Abyss_12_6_1";
+        let mut logical_payload = Vec::with_capacity(identifier.len() + 5);
+        logical_payload.extend_from_slice(&((identifier.len() + 1) as u32).to_le_bytes());
+        logical_payload.extend_from_slice(identifier);
+        logical_payload.push(0);
+
+        for bit_shift in 0..8 {
+            let mut payload = vec![0_u8; logical_payload.len() + 3];
+            write_shifted_bytes(&mut payload, bit_shift, 1, &logical_payload);
+            let full = decode_payload_text_filtered(&payload, |value| value.contains("Abyss"));
+            let summary = decode_summary_payload_text(&payload);
+            assert_eq!(
+                format!("{:?}", abyss_events_from_text(50.0, &summary.text)),
+                format!("{:?}", abyss_events_from_text(50.0, &full.text)),
+                "length-prefixed stage parity failed at bit shift {bit_shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn summary_payload_scanner_never_panics_on_untrusted_payloads() {
+        for length in 0..=CAPTURE_SNAPLEN as usize {
+            if length > 512 && length != CAPTURE_SNAPLEN as usize {
+                continue;
+            }
+            let payload = (0..length)
+                .map(|index| (index as u8).wrapping_mul(37).wrapping_add(length as u8))
+                .collect::<Vec<_>>();
+            let _ = decode_summary_payload_text(&payload);
+        }
     }
 
     #[test]
@@ -9264,7 +12223,11 @@ mod tests {
 
         let (full_sender, full_receiver) = unbounded();
         let full_sender = EngineEventSink::reliable(full_sender);
-        PacketDecoder::default().process_ethernet_frame(
+        PacketDecoder {
+            packet_emission: PacketEmissionMode::FullDebug,
+            ..PacketDecoder::default()
+        }
+        .process_ethernet_frame(
             &packet,
             FrameTimestamp::Known(10.0),
             Some(local_ip),
@@ -9348,6 +12311,43 @@ mod tests {
         }
 
         assert_eq!(dedup.recent.len(), MAX_RECENT_CAPTURE_FRAMES);
+    }
+
+    #[test]
+    fn frame_dedup_hash_collision_never_drops_a_distinct_frame() {
+        let mut dedup = FrameDedup::default();
+        let forced_fingerprint = 7;
+
+        assert!(!dedup.is_duplicate_with_fingerprint(
+            b"first frame",
+            Some(10.0),
+            forced_fingerprint,
+        ));
+        assert!(!dedup.is_duplicate_with_fingerprint(
+            b"other frame",
+            Some(10.000_01),
+            forced_fingerprint,
+        ));
+        assert!(dedup.is_duplicate_with_fingerprint(
+            b"first frame",
+            Some(10.000_02),
+            forced_fingerprint,
+        ));
+    }
+
+    #[test]
+    fn frame_dedup_bounds_collision_verification_bytes() {
+        let mut dedup = FrameDedup::with_verification_byte_budget(8);
+
+        assert!(!dedup.is_duplicate_with_fingerprint(b"123456", Some(10.0), 1));
+        assert!(!dedup.is_duplicate_with_fingerprint(b"abcdef", Some(10.000_01), 2,));
+        assert!(dedup.retained_verification_bytes() <= 8);
+        assert_eq!(dedup.recent.len(), 2);
+        assert!(
+            !dedup.is_duplicate_with_fingerprint(b"123456", Some(10.000_02), 1),
+            "an evicted verification body must cause a safe false negative, not hash-only dedup"
+        );
+        assert!(dedup.retained_verification_bytes() <= 8);
     }
 
     #[test]
@@ -10587,6 +13587,65 @@ mod tests {
     }
 
     #[test]
+    fn server_damage_calibration_reports_unattributed_hp_delta_without_guessing_a_role() {
+        let mut no_candidate = ServerDamageCalibrationTracker::default();
+        assert!(
+            no_candidate
+                .observe_boss_hp(9.0, &boss_hp_update(10_000.0))
+                .is_none()
+        );
+        let (correction, observation) =
+            no_candidate.observe_boss_hp_detailed(10.0, &boss_hp_update(9_500.0));
+        assert!(correction.is_none());
+        assert_eq!(
+            observation,
+            Some(UnattributedServerDamage {
+                timestamp: 10.0,
+                damage: 500.0,
+                candidate_hits: 0,
+            })
+        );
+
+        let mut ambiguous = ServerDamageCalibrationTracker::default();
+        let _ = ambiguous.observe_boss_hp(9.0, &boss_hp_update(10_000.0));
+        for (timestamp, damage) in [(10.0, 600.0), (10.02, 400.0)] {
+            let mut hit = duplicate_test_hit(timestamp, HitCharacterSource::Packet, "outgoing");
+            hit.damage = damage;
+            hit.target_hp_before = 10_000.0;
+            hit.target_hp_after = 10_000.0 - damage;
+            hit.target_max_hp = 10_000.0;
+            ambiguous.observe_hit(&hit);
+        }
+        let (correction, observation) =
+            ambiguous.observe_boss_hp_detailed(10.05, &boss_hp_update(8_500.0));
+        assert!(correction.is_none());
+        assert_eq!(observation.map(|row| row.candidate_hits), Some(2));
+        assert_eq!(
+            observation.map(|row| row.damage),
+            Some(500.0),
+            "only the HP delta unexplained by both decoded hits is unassigned"
+        );
+    }
+
+    #[test]
+    fn server_damage_calibration_bounds_untrusted_target_handles() {
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        for index in 0..MAX_SERVER_DAMAGE_TARGETS + 20 {
+            let mut update = boss_hp_update(10_000.0);
+            update.target_handle[..8].copy_from_slice(&(index as u64).to_le_bytes());
+            let _ = tracker.observe_boss_hp_detailed(index as f64, &update);
+        }
+
+        assert_eq!(tracker.hp_by_handle.len(), MAX_SERVER_DAMAGE_TARGETS);
+        let mut newest = [7_u8; 16];
+        newest[..8].copy_from_slice(&((MAX_SERVER_DAMAGE_TARGETS + 19) as u64).to_le_bytes());
+        assert!(tracker.hp_by_handle.contains_key(&newest));
+        let mut oldest = [7_u8; 16];
+        oldest[..8].copy_from_slice(&0_u64.to_le_bytes());
+        assert!(!tracker.hp_by_handle.contains_key(&oldest));
+    }
+
+    #[test]
     fn reconcile_boss_hp_updates_lets_follow_up_claim_before_calibration() {
         let characters = follow_up_test_characters();
         let mut decoder = PacketDecoder::with_server_damage_calibration(true);
@@ -10596,7 +13655,7 @@ mod tests {
         observe_visible_fuwen_trigger(&mut decoder.follow_up_damage, 1, 0.0);
 
         let warm_up = boss_hp_update(1_000_000.0);
-        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up), &characters);
+        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up));
 
         let mut hit = targetless_hit();
         hit.char_id = 1;
@@ -10611,12 +13670,13 @@ mod tests {
         decoder.server_damage_calibration.observe_hit(&hit);
 
         let update = boss_hp_update(998_750.0);
-        let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections) =
-            decoder.reconcile_boss_hp_updates(0.2, std::slice::from_ref(&update), &characters);
+        let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(0.2, std::slice::from_ref(&update));
 
         assert_eq!(inferred_follow_ups.len(), 1);
         assert_eq!(inferred_follow_ups[0].damage, 250.0);
         assert!(hp_sync_follow_ups.is_empty());
+        assert!(unattributed.is_empty());
         assert!(
             server_damage_corrections.is_empty(),
             "calibration must not also overwrite a hit the reaction follow-up already fully explained"
@@ -10633,7 +13693,7 @@ mod tests {
         observe_visible_fuwen_trigger(&mut decoder.follow_up_damage, 1, 0.0);
 
         let warm_up = boss_hp_update(1_000_000.0);
-        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up), &characters);
+        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up));
 
         // This hit is claimed by the reaction follow-up below.
         let mut hit = targetless_hit();
@@ -10649,10 +13709,11 @@ mod tests {
         decoder.server_damage_calibration.observe_hit(&hit);
 
         let claimed_update = boss_hp_update(998_750.0);
-        let (inferred_follow_ups, _, server_damage_corrections) = decoder
-            .reconcile_boss_hp_updates(0.2, std::slice::from_ref(&claimed_update), &characters);
+        let (inferred_follow_ups, _, server_damage_corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(0.2, std::slice::from_ref(&claimed_update));
         assert_eq!(inferred_follow_ups.len(), 1);
         assert!(server_damage_corrections.is_empty());
+        assert!(unattributed.is_empty());
 
         // A later, fuwen-ineligible hit (its own attack_type is itself an
         // excluded reaction label) that calibration alone should evaluate.
@@ -10669,8 +13730,9 @@ mod tests {
         decoder.server_damage_calibration.observe_hit(&second_hit);
 
         let next_update = boss_hp_update(998_000.0);
-        let (_, _, server_damage_corrections) =
-            decoder.reconcile_boss_hp_updates(0.4, std::slice::from_ref(&next_update), &characters);
+        let (_, _, server_damage_corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(0.4, std::slice::from_ref(&next_update));
+        assert!(unattributed.is_empty());
 
         // If the claimed update above hadn't also advanced calibration's own
         // HP snapshot and pending queue, this would compare against the stale
@@ -10690,7 +13752,7 @@ mod tests {
         let mut decoder = PacketDecoder::with_server_damage_calibration(true);
 
         let warm_up = boss_hp_update(10_000.0);
-        let _ = decoder.reconcile_boss_hp_updates(9.0, std::slice::from_ref(&warm_up), &characters);
+        let _ = decoder.reconcile_boss_hp_updates(9.0, std::slice::from_ref(&warm_up));
 
         let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         hit.damage = 1_000.0;
@@ -10703,13 +13765,165 @@ mod tests {
         decoder.server_damage_calibration.observe_hit(&hit);
 
         let update = boss_hp_update(8_750.0);
-        let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections) =
-            decoder.reconcile_boss_hp_updates(10.05, std::slice::from_ref(&update), &characters);
+        let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(10.05, std::slice::from_ref(&update));
 
         assert!(inferred_follow_ups.is_empty());
         assert!(hp_sync_follow_ups.is_empty());
+        assert!(unattributed.is_empty());
         assert_eq!(server_damage_corrections.len(), 1);
         assert_eq!(server_damage_corrections[0].damage, 1_250.0);
+    }
+
+    #[test]
+    fn disabled_calibration_still_reports_server_only_damage_without_polluting_totals() {
+        let mut decoder = PacketDecoder::with_server_damage_calibration(false);
+        let warm_up = boss_hp_update(10_000.0);
+        let _ = decoder.reconcile_boss_hp_updates(9.0, std::slice::from_ref(&warm_up));
+
+        let update = boss_hp_update(9_500.0);
+        let (inferred_follow_ups, hp_sync_follow_ups, corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(10.0, std::slice::from_ref(&update));
+
+        assert!(inferred_follow_ups.is_empty());
+        assert!(hp_sync_follow_ups.is_empty());
+        assert!(corrections.is_empty());
+        assert_eq!(
+            unattributed,
+            vec![UnattributedServerDamage {
+                timestamp: 10.0,
+                damage: 500.0,
+                candidate_hits: 0,
+            }]
+        );
+
+        let mut state = CombatState::default();
+        for observation in unattributed {
+            assert!(state.observe_unattributed_server_damage(observation));
+        }
+        assert_eq!(state.total_damage, 0.0);
+        assert!(state.stats.is_empty());
+        assert_eq!(state.unattributed_server_damage, 500.0);
+    }
+
+    #[test]
+    fn disabled_calibration_observes_hits_but_exposes_only_the_unassigned_residual() {
+        let characters = duplicate_test_characters();
+        let mut decoder = PacketDecoder::with_server_damage_calibration(false);
+        let warm_up = boss_hp_update(10_000.0);
+        let _ = decoder.reconcile_boss_hp_updates(9.0, std::slice::from_ref(&warm_up));
+
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        hit.damage = 1_000.0;
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        let (sender, _receiver) = bounded(4);
+        decoder.emit_hits(
+            std::iter::once(hit),
+            &characters,
+            &EngineEventSink::reliable(sender),
+        );
+
+        let update = boss_hp_update(8_750.0);
+        let (inferred_follow_ups, hp_sync_follow_ups, corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(10.05, std::slice::from_ref(&update));
+
+        assert!(inferred_follow_ups.is_empty());
+        assert!(hp_sync_follow_ups.is_empty());
+        assert!(corrections.is_empty());
+        assert_eq!(
+            unattributed,
+            vec![UnattributedServerDamage {
+                timestamp: 10.05,
+                damage: 250.0,
+                candidate_hits: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn disabled_calibration_reports_only_multi_candidate_residual_without_mutating_totals() {
+        let mut decoder = PacketDecoder::with_server_damage_calibration(false);
+        let warm_up = boss_hp_update(10_000.0);
+        let _ = decoder.reconcile_boss_hp_updates(9.0, std::slice::from_ref(&warm_up));
+
+        let mut hits = Vec::new();
+        for (timestamp, damage) in [(10.0, 600.0), (10.02, 400.0)] {
+            let mut hit = duplicate_test_hit(timestamp, HitCharacterSource::Packet, "outgoing");
+            hit.damage = damage;
+            hit.target_hp_before = 10_000.0;
+            hit.target_hp_after = 10_000.0 - damage;
+            hit.target_max_hp = 10_000.0;
+            decoder.server_damage_calibration.observe_hit(&hit);
+            hits.push(hit);
+        }
+
+        let update = boss_hp_update(8_500.0);
+        let (_, hp_sync_follow_ups, corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(10.05, std::slice::from_ref(&update));
+        assert!(hp_sync_follow_ups.is_empty());
+        assert!(corrections.is_empty());
+        assert_eq!(
+            unattributed,
+            vec![UnattributedServerDamage {
+                timestamp: 10.05,
+                damage: 500.0,
+                candidate_hits: 2,
+            }]
+        );
+
+        let mut state = CombatState::default();
+        for hit in hits {
+            state.push_hit(hit);
+        }
+        let decoded_total = state.total_damage;
+        for observation in unattributed {
+            assert!(state.observe_unattributed_server_damage(observation));
+        }
+        assert_eq!(decoded_total, 1_000.0);
+        assert_eq!(state.total_damage, decoded_total);
+        assert_eq!(state.unattributed_server_damage, 500.0);
+    }
+
+    #[test]
+    fn disabled_calibration_keeps_lethal_residual_unattributed() {
+        let characters = duplicate_test_characters();
+        let mut decoder = PacketDecoder::with_server_damage_calibration(false);
+        let warm_up = boss_hp_update(29_700.0);
+        let _ = decoder.reconcile_boss_hp_updates(9.0, std::slice::from_ref(&warm_up));
+
+        let mut source = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        source.damage = 26_185.0;
+        source.target_hp_before = 29_700.0;
+        source.target_hp_after = 3_515.0;
+        source.target_max_hp = 1_930_389.0;
+        let prepared = decoder.prepare_hits_for_emission(vec![source], &[1051], false, &characters);
+        let (sender, _receiver) = bounded(4);
+        decoder.emit_hits(
+            prepared.emit,
+            &characters,
+            &EngineEventSink::reliable(sender),
+        );
+
+        let lethal = boss_hp_update(1.0);
+        let (inferred_follow_ups, hp_sync_follow_ups, corrections, unattributed) =
+            decoder.reconcile_boss_hp_updates(10.04, std::slice::from_ref(&lethal));
+
+        assert!(inferred_follow_ups.is_empty());
+        assert!(corrections.is_empty());
+        assert!(
+            hp_sync_follow_ups.is_empty(),
+            "conservative mode must not guess that a lethal environmental residual belongs to the recent role"
+        );
+        assert_eq!(
+            unattributed,
+            vec![UnattributedServerDamage {
+                timestamp: 10.04,
+                damage: 3_515.0,
+                candidate_hits: 1,
+            }]
+        );
     }
 
     #[test]
@@ -10761,55 +13975,6 @@ mod tests {
     }
 
     #[test]
-    fn boss_hp_sync_damage_merges_into_recent_confirmed_hit() {
-        let mut decoder = PacketDecoder::default();
-        let characters = duplicate_test_characters();
-        let mut source = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
-        source.damage = 26_185.0;
-        source.target_hp_before = 29_700.0;
-        source.target_hp_after = 3_515.0;
-        source.target_max_hp = 1_930_389.0;
-
-        let prepared = decoder.prepare_hits_for_emission(vec![source], &[1051], false, &characters);
-        assert_eq!(prepared.emit.len(), 1);
-
-        let follow_up = decoder
-            .infer_boss_hp_sync_damage(10.04, 1.0, &characters)
-            .expect("server HP sync should add the missing lethal delta");
-
-        assert_eq!(follow_up.damage, 3_515.0);
-        assert_eq!(follow_up.target_hp_after, 0.0);
-        assert_eq!(follow_up.damage_name.as_deref(), Some("HP同步伤害"));
-        assert_eq!(follow_up.source_char_id, 1051);
-    }
-
-    #[test]
-    fn boss_hp_sync_damage_does_not_guess_between_multiple_recent_hits() {
-        let mut decoder = PacketDecoder::default();
-        let characters = duplicate_test_characters();
-        let mut first = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
-        first.damage = 726.0;
-        first.target_hp_before = 7_060.0;
-        first.target_hp_after = 6_334.0;
-        first.gameplay_effect_index = Some(1_001);
-        let mut second = duplicate_test_hit(10.02, HitCharacterSource::Packet, "outgoing");
-        second.damage = 1_196.0;
-        second.target_hp_before = 6_334.0;
-        second.target_hp_after = 5_138.0;
-        second.gameplay_effect_index = Some(1_002);
-
-        let prepared =
-            decoder.prepare_hits_for_emission(vec![first, second], &[1051], false, &characters);
-        assert_eq!(prepared.emit.len(), 2);
-
-        assert!(
-            decoder
-                .infer_boss_hp_sync_damage(10.04, 0.0, &characters)
-                .is_none()
-        );
-    }
-
-    #[test]
     #[ignore = "set NTE_TEST_CAPTURE to a local large or concatenated pcapng path"]
     fn stress_large_pcapng_import_with_bounded_event_lanes() {
         let path =
@@ -10838,7 +14003,8 @@ mod tests {
             false,
             sink,
             Arc::new(AtomicBool::new(false)),
-        );
+        )
+        .expect("pcapng import thread should spawn");
 
         let mut semantic_events = 0;
         let mut debug_packets = 0;
@@ -10867,25 +14033,6 @@ mod tests {
         println!(
             "large pcapng import completed: semantic_events={semantic_events}, debug_packets={debug_packets}, dropped_debug_packets={}",
             dropped_debug_probe.take_dropped_debug_packets()
-        );
-    }
-
-    #[test]
-    fn nonlethal_boss_hp_sync_does_not_merge_into_recent_confirmed_hit() {
-        let mut decoder = PacketDecoder::default();
-        let characters = duplicate_test_characters();
-        let mut source = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
-        source.damage = 8_446.0;
-        source.target_hp_after = 1_081_975.0;
-        source.target_max_hp = 1_930_389.0;
-
-        let prepared = decoder.prepare_hits_for_emission(vec![source], &[1051], false, &characters);
-        assert_eq!(prepared.emit.len(), 1);
-
-        assert!(
-            decoder
-                .infer_boss_hp_sync_damage(10.04, 1_057_660.0, &characters)
-                .is_none()
         );
     }
 
@@ -10987,7 +14134,8 @@ mod tests {
             true,
             sender,
             stop,
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let mut state = CombatState::default();
@@ -11125,7 +14273,8 @@ mod tests {
             true,
             sender,
             stop,
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let mut latest = Vec::new();
@@ -11196,7 +14345,8 @@ mod tests {
             true,
             sender,
             stop,
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let mut shinku_hits = Vec::new();
@@ -11356,7 +14506,8 @@ mod tests {
         let (sender, receiver) = unbounded();
         let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
-        let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop);
+        let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop)
+            .expect("JSON import thread should spawn");
         handle.join().expect("json import thread should finish");
 
         // `import_capture_json` drops packets through `should_keep_debug_packet`,

@@ -10,6 +10,7 @@ $forbiddenCliDependencyPattern =
     '(^|[\s│├└─])(?:tauri|wry|webview2-com|eframe|egui(?:-[A-Za-z0-9_-]+)?|wgpu(?:-[A-Za-z0-9_-]+)?|rfd|raw-window-handle) v'
 $forbiddenLegacyUiDependencyPattern =
     '(^|[\s│├└─])(?:eframe|egui(?:-[A-Za-z0-9_-]+)?|wgpu(?:-[A-Za-z0-9_-]+)?|rfd) v'
+$approvedTauriDialogAncestor = "tauri-plugin-dialog"
 $forbiddenCliRealNames = @(
     "tauri", "wry", "webview2-com", "eframe", "egui", "wgpu", "rfd",
     "raw-window-handle"
@@ -60,6 +61,60 @@ function Test-ForbiddenLockedName {
     return $false
 }
 
+function ConvertFrom-CargoTreeLine {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Line
+    )
+
+    $connector = [regex]::Match($Line, '[├└]── ')
+    if ($connector.Success) {
+        $depth = [int]($connector.Index / 4) + 1
+        $nodeText = $Line.Substring($connector.Index + $connector.Length)
+    }
+    else {
+        $depth = 0
+        $nodeText = $Line
+    }
+
+    if ($nodeText -notmatch '^(?<name>[A-Za-z0-9_.-]+) v') {
+        return $null
+    }
+
+    [pscustomobject]@{
+        Depth = $depth
+        Name = $Matches.name
+        Line = $Line
+    }
+}
+
+function Find-ForbiddenTauriDependency {
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$TreeLines
+    )
+
+    $ancestors = @()
+    $violations = @()
+    foreach ($line in $TreeLines) {
+        $node = ConvertFrom-CargoTreeLine $line
+        if ($null -eq $node) {
+            continue
+        }
+
+        $ancestors = @($ancestors | Select-Object -First $node.Depth)
+        $isForbidden = Test-ForbiddenLockedName $node.Name $script:forbiddenLegacyUiRealNames
+        $isApprovedDialogDependency =
+            $node.Name -eq "rfd" -and
+            $ancestors -contains $script:approvedTauriDialogAncestor
+        if ($isForbidden -and -not $isApprovedDialogDependency) {
+            $violations += $node.Line
+        }
+        $ancestors += $node.Name
+    }
+    return $violations
+}
+
 function Find-ForbiddenLockedNames {
     param(
         [Parameter(Mandatory)]
@@ -97,9 +152,55 @@ function Test-PolicyHelpers {
         (@(Find-ForbiddenDependency $forbiddenTree $script:forbiddenCliDependencyPattern).Count -eq 2) `
         "Architecture policy self-test missed a forbidden dependency"
 
+    $cliRfdTree = @(
+        "nte-dps-tool v0.0.0",
+        "└── rfd v0.0.0"
+    )
+    Assert-Policy `
+        (@(Find-ForbiddenDependency $cliRfdTree $script:forbiddenCliDependencyPattern).Count -eq 1) `
+        "Architecture policy self-test allowed rfd in the root/CLI dependency tree"
+
+    $approvedTauriTree = @(
+        "nte-dps-tool-desktop v0.0.0",
+        "└── tauri-plugin-dialog v0.0.0",
+        "    └── rfd v0.0.0"
+    )
+    Assert-Policy `
+        (@(Find-ForbiddenTauriDependency $approvedTauriTree).Count -eq 0) `
+        "Architecture policy self-test rejected tauri-plugin-dialog's rfd dependency"
+
+    $directTauriRfdTree = @(
+        "nte-dps-tool-desktop v0.0.0",
+        "└── rfd v0.0.0"
+    )
+    Assert-Policy `
+        (@(Find-ForbiddenTauriDependency $directTauriRfdTree).Count -eq 1) `
+        "Architecture policy self-test allowed a direct Tauri rfd dependency"
+
+    $unapprovedTauriRfdTree = @(
+        "nte-dps-tool-desktop v0.0.0",
+        "└── unrelated-dialog-wrapper v0.0.0",
+        "    └── rfd v0.0.0"
+    )
+    Assert-Policy `
+        (@(Find-ForbiddenTauriDependency $unapprovedTauriRfdTree).Count -eq 1) `
+        "Architecture policy self-test allowed rfd outside tauri-plugin-dialog"
+
+    $overbroadTauriExemptionTree = @(
+        "nte-dps-tool-desktop v0.0.0",
+        "└── tauri-plugin-dialog v0.0.0",
+        "    └── egui v0.0.0"
+    )
+    Assert-Policy `
+        (@(Find-ForbiddenTauriDependency $overbroadTauriExemptionTree).Count -eq 1) `
+        "Architecture policy self-test exempted a non-rfd legacy UI dependency"
+
     Assert-Policy `
         (Test-ForbiddenLockedName "tauri-utils" $script:forbiddenCliRealNames) `
         "Forbidden locked-name helper must match prefixed real names"
+    Assert-Policy `
+        (Test-ForbiddenLockedName "rfd" $script:forbiddenCliRealNames) `
+        "Forbidden locked-name helper must continue rejecting rfd in the root lockfile"
     Assert-Policy `
         (-not (Test-ForbiddenLockedName "serde" $script:forbiddenCliRealNames)) `
         "Forbidden locked-name helper must reject unrelated names"
@@ -190,7 +291,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
-    $forbiddenTauri = @(Find-ForbiddenDependency $tauriTree $forbiddenLegacyUiDependencyPattern)
+    $forbiddenTauri = @(Find-ForbiddenTauriDependency $tauriTree)
     Assert-Policy `
         ($forbiddenTauri.Count -eq 0) `
         "Tauri dependency tree contains legacy UI crates:`n$($forbiddenTauri -join "`n")"
@@ -203,11 +304,23 @@ try {
         "Root crate lockfile must not resolve desktop UI crates: $($forbiddenLockedCli -join ', ')"
 
     $forbiddenLockedTauri = @(
-        Find-ForbiddenLockedNames (Join-Path $repositoryRoot "src-tauri\Cargo.lock") $forbiddenLegacyUiRealNames
+        Find-ForbiddenLockedNames `
+            (Join-Path $repositoryRoot "src-tauri\Cargo.lock") `
+            @("eframe", "egui", "wgpu")
     )
     Assert-Policy `
         ($forbiddenLockedTauri.Count -eq 0) `
         "Tauri lockfile must not resolve legacy UI crates: $($forbiddenLockedTauri -join ', ')"
+
+    $lockedTauriRfd = @(
+        Find-ForbiddenLockedNames `
+            (Join-Path $repositoryRoot "src-tauri\Cargo.lock") `
+            @("rfd")
+    )
+    $resolvedTauriRfd = @($tauriTree | Where-Object { $_ -match '(^|[\s│├└─])rfd v' })
+    Assert-Policy `
+        ($lockedTauriRfd.Count -eq 0 -or $resolvedTauriRfd.Count -gt 0) `
+        "Tauri lockfile contains stale rfd without an approved resolved dependency path"
 
     Assert-Policy (-not (Test-Path -LiteralPath "src/app")) "Legacy src/app directory must stay removed"
     Assert-Policy (-not (Test-Path -LiteralPath "vendor/egui-winit-0.34.3")) "Vendored egui-winit must stay removed"

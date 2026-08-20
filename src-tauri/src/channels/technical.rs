@@ -1,9 +1,14 @@
-use std::{sync::atomic::Ordering, thread, time::Duration};
-
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
-    contract::{CommandError, SubscriptionReceipt, TechnicalEvent},
+    channels::stream_runtime::{
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
+        validate_subscription_id,
+    },
+    contract::{
+        CommandError, SubscriptionReceipt, TechnicalEvent,
+        stream::{StreamDeliveryBody, StreamKind},
+    },
     state::{AppState, TECHNICAL_STREAM_INTERVAL_MS},
     windows::hud,
 };
@@ -11,40 +16,47 @@ use crate::{
 #[tauri::command]
 pub(crate) fn subscribe_technical_state(
     subscription_id: String,
-    on_event: Channel<TechnicalEvent>,
+    on_event: Channel<StreamDeliveryBody<TechnicalEvent>>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     hud::validate_window(&window)?;
+    state.snapshot().map_err(CommandError::from_core)?;
 
+    let stream_kind = StreamKind::Technical;
+    let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let stop = state.begin_stream(window.label().to_owned(), subscription_id.clone());
-    let stream_subscription_id = subscription_id.clone();
-    thread::spawn(move || {
-        let mut last_revision = None;
-        while !stop.load(Ordering::Acquire) {
+    let registration = state
+        .reserve_stream(window.label(), &stream_key)
+        .map_err(stream_registry_error)?;
+    let stream_generation = registration.generation();
+    let mut last_revision = None;
+    spawn_polling_stream(
+        "nte-technical-stream",
+        StreamDeliveryEndpoint::new(on_event),
+        state,
+        registration,
+        TECHNICAL_STREAM_INTERVAL_MS,
+        move |state| {
             let revision = state.stream_revision();
-            if should_emit_snapshot(last_revision, revision) {
-                if on_event
-                    .send(TechnicalEvent::Snapshot(state.snapshot()))
-                    .is_err()
-                {
-                    break;
-                }
-                last_revision = Some(revision);
+            if !should_emit_snapshot(last_revision, revision) {
+                return PollingStreamOutput::NoChange;
             }
-            thread::sleep(Duration::from_millis(u64::from(
-                TECHNICAL_STREAM_INTERVAL_MS,
-            )));
-        }
-        state.finish_stream(&stream_subscription_id, &stop);
-    });
+            let Ok(next) = state.snapshot() else {
+                return PollingStreamOutput::Stop;
+            };
+            last_revision = Some(revision);
+            PollingStreamOutput::Event(TechnicalEvent::Snapshot(next))
+        },
+    )?;
 
-    Ok(SubscriptionReceipt {
+    Ok(SubscriptionReceipt::new(
         subscription_id,
-        stream_interval_ms: TECHNICAL_STREAM_INTERVAL_MS,
-    })
+        stream_kind,
+        stream_generation,
+        TECHNICAL_STREAM_INTERVAL_MS,
+    ))
 }
 
 #[tauri::command]
@@ -55,7 +67,12 @@ pub(crate) fn unsubscribe_technical_state(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     hud::validate_window(&window)?;
-    state.stop_stream(&subscription_id);
+    state
+        .stop_stream(
+            window.label(),
+            &StreamKind::Technical.stream_key(&subscription_id),
+        )
+        .map_err(stream_registry_error)?;
     Ok(())
 }
 
@@ -64,19 +81,6 @@ fn should_emit_snapshot(
     current_revision: crate::state::StreamRevision,
 ) -> bool {
     last_revision != Some(current_revision)
-}
-
-fn validate_subscription_id(subscription_id: &str) -> Result<(), CommandError> {
-    let is_valid_length = (1..=64).contains(&subscription_id.len());
-    let has_valid_characters = subscription_id
-        .bytes()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, b'-' | b'_'));
-
-    if is_valid_length && has_valid_characters {
-        Ok(())
-    } else {
-        Err(CommandError::invalid_subscription_id())
-    }
 }
 
 #[cfg(test)]

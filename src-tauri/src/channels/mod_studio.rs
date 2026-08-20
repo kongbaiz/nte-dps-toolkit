@@ -1,13 +1,17 @@
-use std::{sync::atomic::Ordering, thread, time::Duration};
-
 use nte_dps_tool::core::mod_studio::{
     ModStudioRuntimeEvent as CoreModStudioRuntimeEvent, ModStudioRuntimeLog,
     ModStudioRuntimeSnapshot,
 };
-use nte_dps_tool::platform::mods_plugin::probe_runtime_presence;
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
+    channels::{
+        mod_studio_runtime::{ModStudioMonitorRuntime, ModStudioPollState},
+        stream_runtime::{
+            PollingStreamOutput, StreamDeliveryEndpoint, is_valid_subscription_id,
+            spawn_polling_stream, stream_registry_error,
+        },
+    },
     contract::{
         CommandError, SubscriptionReceipt,
         mod_studio::{
@@ -15,55 +19,81 @@ use crate::{
             ModStudioRuntimeConnectionSnapshot, ModStudioRuntimeConnectionStatusSnapshot,
             ModStudioRuntimeEntrySnapshot, ModStudioRuntimeEvent,
         },
+        stream::{StreamDeliveryBody, StreamKind},
     },
     state::AppState,
     windows::console,
 };
 
 pub(crate) const MOD_STUDIO_RUNTIME_STREAM_INTERVAL_MS: u32 = 250;
-const STREAM_KEY_PREFIX: &str = "mod-studio:";
-
 #[tauri::command]
 pub(crate) fn subscribe_mod_studio_runtime(
     subscription_id: String,
-    on_event: Channel<ModStudioRuntimeEvent>,
+    on_event: Channel<StreamDeliveryBody<ModStudioRuntimeEvent>>,
     state: State<'_, AppState>,
+    runtime: State<'_, ModStudioMonitorRuntime>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
 
-    let stream_key = stream_key(&subscription_id);
+    let stream_kind = StreamKind::ModStudioRuntime;
+    let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
-    thread::spawn(move || {
-        let mut cursor = RuntimeStreamCursor::default();
-        while !stop.load(Ordering::Acquire) {
-            let events = match state.poll_mod_studio_runtime() {
-                Ok(snapshot) => cursor.ingest_connected(snapshot),
-                Err(_) => match probe_runtime_presence() {
-                    Ok(true) => cursor.ingest_unavailable(RuntimeConnectionStatus::LoaderPresent),
-                    Ok(false) => cursor.ingest_unavailable(RuntimeConnectionStatus::Waiting),
-                    Err(_) => cursor.ingest_unavailable(RuntimeConnectionStatus::ProbeFailed),
-                },
+    let registration = state
+        .reserve_stream(window.label(), &stream_key)
+        .map_err(stream_registry_error)?;
+    let stream_generation = registration.generation();
+    let mut cursor = RuntimeStreamCursor::default();
+    let mut last_poll_generation = 0_u64;
+    let monitor = runtime.handle();
+    spawn_polling_stream(
+        "nte-mod-studio-stream",
+        StreamDeliveryEndpoint::new(on_event),
+        state,
+        registration,
+        MOD_STUDIO_RUNTIME_STREAM_INTERVAL_MS,
+        move |_state| {
+            let observation = match monitor.observe() {
+                Ok(Some(observation)) => observation,
+                Ok(None) => return PollingStreamOutput::NoChange,
+                Err(_) => return PollingStreamOutput::Stop,
             };
-            for event in events {
-                if on_event.send(event).is_err() {
-                    state.finish_stream(&stream_key, &stop);
-                    return;
-                }
+            if observation.generation == last_poll_generation {
+                return PollingStreamOutput::NoChange;
             }
-            thread::sleep(Duration::from_millis(u64::from(
-                MOD_STUDIO_RUNTIME_STREAM_INTERVAL_MS,
-            )));
-        }
-        state.finish_stream(&stream_key, &stop);
-    });
+            last_poll_generation = observation.generation;
+            let events = match observation.state {
+                ModStudioPollState::Connected(snapshot) => {
+                    cursor.ingest_connected((*snapshot).clone())
+                }
+                ModStudioPollState::LoaderPresent => {
+                    cursor.ingest_unavailable(RuntimeConnectionStatus::LoaderPresent)
+                }
+                ModStudioPollState::Waiting => {
+                    cursor.ingest_unavailable(RuntimeConnectionStatus::Waiting)
+                }
+                ModStudioPollState::AcknowledgementRequired => {
+                    cursor.ingest_unavailable(RuntimeConnectionStatus::AcknowledgementRequired)
+                }
+                ModStudioPollState::ProbeFailed(error) => {
+                    cursor.ingest_unavailable(RuntimeConnectionStatus::ProbeFailed(error))
+                }
+            };
+            if events.is_empty() {
+                PollingStreamOutput::NoChange
+            } else {
+                PollingStreamOutput::Events(events)
+            }
+        },
+    )?;
 
-    Ok(SubscriptionReceipt {
+    Ok(SubscriptionReceipt::new(
         subscription_id,
-        stream_interval_ms: MOD_STUDIO_RUNTIME_STREAM_INTERVAL_MS,
-    })
+        stream_kind,
+        stream_generation,
+        MOD_STUDIO_RUNTIME_STREAM_INTERVAL_MS,
+    ))
 }
 
 #[tauri::command]
@@ -74,20 +104,17 @@ pub(crate) fn unsubscribe_mod_studio_runtime(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state.stop_stream(&stream_key(&subscription_id));
+    state
+        .stop_stream(
+            window.label(),
+            &StreamKind::ModStudioRuntime.stream_key(&subscription_id),
+        )
+        .map_err(stream_registry_error)?;
     Ok(())
 }
 
-fn stream_key(subscription_id: &str) -> String {
-    format!("{STREAM_KEY_PREFIX}{subscription_id}")
-}
-
 fn validate_subscription_id(subscription_id: &str) -> Result<(), CommandError> {
-    let valid_length = (1..=64).contains(&subscription_id.len());
-    let valid_characters = subscription_id
-        .bytes()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, b'-' | b'_'));
-    if valid_length && valid_characters {
+    if is_valid_subscription_id(subscription_id) {
         Ok(())
     } else {
         Err(CommandError::invalid_mod_runtime_subscription_id())
@@ -108,7 +135,8 @@ enum RuntimeConnectionStatus {
     Connected,
     LoaderPresent,
     Waiting,
-    ProbeFailed,
+    AcknowledgementRequired,
+    ProbeFailed(nte_dps_tool::platform::mods_plugin::ModsPluginRuntimeProbeError),
 }
 
 impl RuntimeStreamCursor {
@@ -208,6 +236,12 @@ impl RuntimeStreamCursor {
     }
 
     fn connection_event(&self, status: RuntimeConnectionStatus) -> ModStudioRuntimeEvent {
+        let (probe_error_code, probe_os_error_code) = match status {
+            RuntimeConnectionStatus::ProbeFailed(error) => {
+                (Some(error.code.as_str()), error.os_error_code)
+            }
+            _ => (None, None),
+        };
         ModStudioRuntimeEvent::Connection(ModStudioRuntimeConnectionSnapshot {
             contract_version: MOD_STUDIO_CONTRACT_VERSION,
             generation: self.generation.to_string(),
@@ -221,10 +255,16 @@ impl RuntimeStreamCursor {
                 RuntimeConnectionStatus::Waiting => {
                     ModStudioRuntimeConnectionStatusSnapshot::Waiting
                 }
-                RuntimeConnectionStatus::ProbeFailed => {
+                RuntimeConnectionStatus::AcknowledgementRequired => {
+                    ModStudioRuntimeConnectionStatusSnapshot::AcknowledgementRequired
+                }
+                RuntimeConnectionStatus::ProbeFailed(_) => {
                     ModStudioRuntimeConnectionStatusSnapshot::ProbeFailed
                 }
             },
+            bootstrap_error_code: None,
+            probe_error_code,
+            probe_os_error_code,
         })
     }
 }
@@ -246,6 +286,9 @@ impl PendingRuntimeEntry {
 #[cfg(test)]
 mod tests {
     use nte_dps_tool::core::mod_studio::ModStudioRuntimeLevel;
+    use nte_dps_tool::platform::mods_plugin::{
+        ModsPluginRuntimeProbeError, ModsPluginRuntimeProbeErrorCode,
+    };
 
     use super::*;
 
@@ -356,5 +399,37 @@ mod tests {
             waiting.status,
             ModStudioRuntimeConnectionStatusSnapshot::Waiting
         );
+    }
+
+    #[test]
+    fn missing_risk_acknowledgement_is_distinct_from_probe_failure() {
+        let mut cursor = RuntimeStreamCursor::default();
+        let events = cursor.ingest_unavailable(RuntimeConnectionStatus::AcknowledgementRequired);
+
+        let ModStudioRuntimeEvent::Connection(connection) = &events[0] else {
+            panic!("risk acknowledgement is emitted as a connection snapshot");
+        };
+        assert_eq!(
+            connection.status,
+            ModStudioRuntimeConnectionStatusSnapshot::AcknowledgementRequired
+        );
+        assert_eq!(connection.bootstrap_error_code, None);
+    }
+
+    #[test]
+    fn probe_failure_keeps_stable_and_win32_error_codes() {
+        let mut cursor = RuntimeStreamCursor::default();
+        let events = cursor.ingest_unavailable(RuntimeConnectionStatus::ProbeFailed(
+            ModsPluginRuntimeProbeError {
+                code: ModsPluginRuntimeProbeErrorCode::IpcPipeAccessDenied,
+                os_error_code: Some(5),
+            },
+        ));
+
+        let ModStudioRuntimeEvent::Connection(connection) = &events[0] else {
+            panic!("probe failure is emitted as a connection snapshot");
+        };
+        assert_eq!(connection.probe_error_code, Some("IPC_PIPE_ACCESS_DENIED"));
+        assert_eq!(connection.probe_os_error_code, Some(5));
     }
 }

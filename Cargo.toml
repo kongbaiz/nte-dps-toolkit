@@ -1,6 +1,6 @@
 [package]
 name = "nte-dps-tool"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Local Windows DPS diagnostics tool for NTE."
@@ -39,6 +39,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 crossbeam-channel = "0.5"
 ed25519-dalek = { version = "3.0", default-features = false, features = ["fast"], optional = true }
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 hex = "0.4"
 libloading = "0.8"
 pcap-file = "2.0"
@@ -56,14 +57,16 @@ windows-sys = { version = "0.60", features = [
     "Win32_Networking_WinHttp",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_IO",
     "Win32_System_Pipes",
     "Win32_System_Registry",
+    "Win32_System_SystemServices",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Controls_Dialogs",
     "Win32_UI_Shell",
-    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
 zip = { version = "7.2", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
@@ -77,6 +80,7 @@ strip = true
 debug = false
 
 [build-dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 serde_json = "1.0"
 winresource = "0.1.31"

@@ -25,7 +25,8 @@ use nte_dps_tool::storage::config::ModStudioLoadingMethod;
 
 use super::CommandError;
 
-pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 10;
+pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 13;
+pub(crate) const MOD_MARKET_CONTRACT_VERSION: u32 = 11;
 pub(crate) const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION: u32 = 1;
 pub(crate) const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION: u32 = 1;
 pub(crate) const MOD_LOADER_RUNTIME_CONTRACT_VERSION: u32 = 1;
@@ -114,6 +115,9 @@ pub(crate) struct ModStudioRuntimeConnectionSnapshot {
     pub contract_version: u32,
     pub generation: String,
     pub status: ModStudioRuntimeConnectionStatusSnapshot,
+    pub bootstrap_error_code: Option<&'static str>,
+    pub probe_error_code: Option<&'static str>,
+    pub probe_os_error_code: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -122,6 +126,7 @@ pub(crate) enum ModStudioRuntimeConnectionStatusSnapshot {
     Connected,
     LoaderPresent,
     Waiting,
+    AcknowledgementRequired,
     ProbeFailed,
 }
 
@@ -265,9 +270,25 @@ pub(crate) struct ModMarketItemSnapshot {
     pub author: String,
     pub capabilities: Vec<String>,
     pub package_size: u64,
-    pub installed: bool,
-    pub enabled: bool,
-    pub current: bool,
+    pub local_state: ModMarketLocalStateSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum ModMarketLocalStateSnapshot {
+    NotInstalled,
+    Installed {
+        enabled: bool,
+        current: bool,
+    },
+    Unreadable {
+        code: &'static str,
+        message_key: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -307,17 +328,17 @@ impl From<ModMarketLocalizations> for ModMarketLocalizationsSnapshot {
 impl ModMarketCatalogSnapshot {
     pub(crate) fn from_catalog(
         catalog: ModMarketCatalog,
-        local_status: impl Fn(&ModMarketItem) -> (bool, bool, bool),
+        local_status: impl Fn(&ModMarketItem) -> ModMarketLocalStateSnapshot,
     ) -> Self {
         Self {
-            contract_version: MOD_STUDIO_CONTRACT_VERSION,
+            contract_version: MOD_MARKET_CONTRACT_VERSION,
             published_at: catalog.published_at,
             privacy_mode: "anonymous-read-only",
             mods: catalog
                 .mods
                 .into_iter()
                 .map(|item| {
-                    let (installed, enabled, current) = local_status(&item);
+                    let local_state = local_status(&item);
                     ModMarketItemSnapshot {
                         id: item.id,
                         bindings: item.bindings,
@@ -326,9 +347,7 @@ impl ModMarketCatalogSnapshot {
                         author: item.author,
                         capabilities: item.capabilities,
                         package_size: item.package_size,
-                        installed,
-                        enabled,
-                        current,
+                        local_state,
                     }
                 })
                 .collect(),
@@ -474,6 +493,15 @@ impl ModStudioRuntimeEntrySnapshot {
 }
 
 impl CommandError {
+    pub(crate) fn mod_studio_risk_acknowledgement_required() -> Self {
+        Self {
+            code: "mod_studio_risk_acknowledgement_required",
+            message_key: "Confirm the Mod risk warning before starting the game runtime.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn from_mod_market(error: ModMarketError) -> Self {
         let (code, message_key) = match error.code {
             ModMarketErrorCode::InvalidCatalog => (
@@ -692,6 +720,18 @@ impl CommandError {
                 "mod_loader_probe_failed",
                 "Failed to check nte-mod-loader status.",
             ),
+            ModLoaderRuntimeError::TargetProcessProbeFailed(_) => (
+                "mod_loader_target_probe_failed",
+                "Failed to check whether HTGame.exe or launcher processes are running.",
+            ),
+            ModLoaderRuntimeError::TargetProcessStopFailed(_) => (
+                "mod_loader_target_stop_failed",
+                "Failed to close HTGame.exe or launcher processes.",
+            ),
+            ModLoaderRuntimeError::TargetProcessStopTimedOut => (
+                "mod_loader_target_stop_timed_out",
+                "HTGame.exe or a launcher process did not close in time.",
+            ),
             ModLoaderRuntimeError::StatePoisoned => (
                 "mod_loader_state_unavailable",
                 "The Mod Loader runtime state is unavailable.",
@@ -700,6 +740,15 @@ impl CommandError {
         Self {
             code,
             message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn mod_loader_process_confirmation_required() -> Self {
+        Self {
+            code: "mod_loader_process_confirmation_required",
+            message_key: "Confirm closing HTGame.exe and launcher processes before changing Mod Loader.",
             message_arguments: Vec::new(),
             diagnostic_line: None,
         }
@@ -836,11 +885,34 @@ mod tests {
             contract_version: MOD_STUDIO_CONTRACT_VERSION,
             generation: "4".to_owned(),
             status: ModStudioRuntimeConnectionStatusSnapshot::LoaderPresent,
+            bootstrap_error_code: None,
+            probe_error_code: None,
+            probe_os_error_code: None,
         };
         let value = serde_json::to_value(snapshot).expect("serialize runtime connection");
 
         assert_eq!(value["status"], "loaderPresent");
+        assert!(value["bootstrapErrorCode"].is_null());
+        assert!(value["probeErrorCode"].is_null());
+        assert!(value["probeOsErrorCode"].is_null());
         assert!(value.get("connected").is_none());
+    }
+
+    #[test]
+    fn runtime_connection_preserves_exact_probe_diagnostics() {
+        let snapshot = ModStudioRuntimeConnectionSnapshot {
+            contract_version: MOD_STUDIO_CONTRACT_VERSION,
+            generation: "5".to_owned(),
+            status: ModStudioRuntimeConnectionStatusSnapshot::ProbeFailed,
+            bootstrap_error_code: None,
+            probe_error_code: Some("IPC_PIPE_ACCESS_DENIED"),
+            probe_os_error_code: Some(5),
+        };
+        let value = serde_json::to_value(snapshot).expect("serialize runtime connection");
+
+        assert_eq!(value["status"], "probeFailed");
+        assert_eq!(value["probeErrorCode"], "IPC_PIPE_ACCESS_DENIED");
+        assert_eq!(value["probeOsErrorCode"], 5);
     }
 
     #[test]
@@ -873,19 +945,82 @@ mod tests {
             }],
         };
         let value = serde_json::to_value(ModMarketCatalogSnapshot::from_catalog(catalog, |_| {
-            (false, false, false)
+            ModMarketLocalStateSnapshot::NotInstalled
         }))
         .expect("serialize market catalog");
         let serialized = value.to_string();
 
+        assert_eq!(value["contractVersion"], MOD_MARKET_CONTRACT_VERSION);
         assert_eq!(value["privacyMode"], "anonymous-read-only");
         assert_eq!(value["mods"][0]["bindings"][0], "feature.sample");
         assert_eq!(value["mods"][0]["localizations"]["zh-CN"]["name"], "示例");
         assert_eq!(value["mods"][0]["packageSize"], 1024);
+        assert_eq!(value["mods"][0]["localState"]["status"], "notInstalled");
         assert!(!serialized.contains("https://"));
         assert!(!serialized.contains("sha256"));
         assert!(!serialized.contains("device"));
         assert!(!serialized.contains("account"));
+    }
+
+    #[test]
+    fn market_snapshot_keeps_readable_and_unreadable_entries_together() {
+        let readable = ModMarketItem {
+            id: "readable".to_owned(),
+            bindings: vec!["feature.readable".to_owned()],
+            localizations: ModMarketLocalizations {
+                english: nte_dps_tool::core::mod_market::ModMarketLocalizedText {
+                    name: "Readable".to_owned(),
+                    summary: "Readable Mod".to_owned(),
+                },
+                simplified_chinese: nte_dps_tool::core::mod_market::ModMarketLocalizedText {
+                    name: "可读取".to_owned(),
+                    summary: "可读取 Mod".to_owned(),
+                },
+                japanese: nte_dps_tool::core::mod_market::ModMarketLocalizedText {
+                    name: "読み取り可能".to_owned(),
+                    summary: "読み取り可能 Mod".to_owned(),
+                },
+            },
+            version: "1.0.0".parse().expect("valid test version"),
+            author: "NTE".to_owned(),
+            capabilities: vec!["viewport.tick".to_owned()],
+            package_url: "https://dps.o-na-ni.com/mods/v1/packages/readable-1.0.0.nte".to_owned(),
+            package_size: 1024,
+            package_sha256: [7; 32],
+        };
+        let unreadable = ModMarketItem {
+            id: "unreadable".to_owned(),
+            bindings: vec!["feature.unreadable".to_owned()],
+            package_url: "https://dps.o-na-ni.com/mods/v1/packages/unreadable-1.0.0.nte".to_owned(),
+            ..readable.clone()
+        };
+        let catalog = ModMarketCatalog {
+            published_at: "2026-08-03T00:00:00Z".to_owned(),
+            mods: vec![readable, unreadable],
+        };
+
+        let value = serde_json::to_value(ModMarketCatalogSnapshot::from_catalog(catalog, |item| {
+            if item.id == "unreadable" {
+                ModMarketLocalStateSnapshot::Unreadable {
+                    code: "mod_workspace_invalid",
+                    message_key: "The Mod workspace data is invalid.",
+                }
+            } else {
+                ModMarketLocalStateSnapshot::Installed {
+                    enabled: true,
+                    current: true,
+                }
+            }
+        }))
+        .expect("serialize market catalog");
+
+        assert_eq!(value["mods"].as_array().map(Vec::len), Some(2));
+        assert_eq!(value["mods"][0]["localState"]["status"], "installed");
+        assert_eq!(value["mods"][1]["localState"]["status"], "unreadable");
+        assert_eq!(
+            value["mods"][1]["localState"]["code"],
+            "mod_workspace_invalid"
+        );
     }
 
     #[test]

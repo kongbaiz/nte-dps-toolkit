@@ -1,5 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
   parseTimelineEvent,
   parseTimelineSnapshot,
@@ -9,10 +7,11 @@ import {
   type TimelineScope,
   type TimelineSnapshot,
 } from "@/lib/tauri/timeline-contract";
+import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  parseSubscriptionReceipt,
-  TechnicalContractError,
-} from "@/lib/tauri/technical-contract";
+  subscribeStream,
+  tauriStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   getSnapshot: "get_timeline_snapshot",
@@ -43,14 +42,7 @@ export interface TimelineClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: TimelineTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: TimelineTransport = tauriStreamTransport;
 
 export function createTimelineClient(
   transport: TimelineTransport = tauriTransport,
@@ -73,32 +65,17 @@ export function createTimelineClient(
       run(COMMANDS.setPreferences, { scope, bucketSeconds, viewMode }),
     subscribe: (scope, onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onEvent = transport.createChannel((message) => {
-        if (closed) return;
-        try {
-          onSnapshot(parseTimelineEvent(message));
-        } catch (error) {
-          onError(timelineError(error));
-        }
+      return subscribeStream({
+        transport,
+        streamKind: "timeline",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribe,
+        unsubscribeCommand: COMMANDS.unsubscribe,
+        subscribeArguments: { scope },
+        parseEvent: parseTimelineEvent,
+        onEvent: onSnapshot,
+        onError: (error) => onError(timelineError(error)),
       });
-      const receipt = transport
-        .invoke(COMMANDS.subscribe, { subscriptionId, scope, onEvent })
-        .then(parseSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) onError(timelineError(error));
-          return undefined;
-        });
-      return async () => {
-        if (closed) return;
-        closed = true;
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribe, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
     },
   };
 }

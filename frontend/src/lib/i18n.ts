@@ -27,13 +27,25 @@ export function t(key: string): string {
 }
 
 export function tf(key: string, arguments_: readonly string[]): string {
+  return formatTemplate(t(key), arguments_);
+}
+
+/**
+ * Formats the shared Rust/TypeScript placeholder grammar. `{n}` reuses argument
+ * n anywhere in the template; when the current argument has no indexed token,
+ * it consumes the next `{}` token. Unknown or unfilled tokens stay literal.
+ */
+export function formatTemplate(
+  template: string,
+  arguments_: readonly string[],
+): string {
   return arguments_.reduce((message, argument, index) => {
     const indexed = `{${index}}`;
     if (message.includes(indexed)) {
       return message.replaceAll(indexed, argument);
     }
     return message.replace("{}", argument);
-  }, t(key));
+  }, template);
 }
 
 export function setFrontendLanguage(next: SettingsLanguage): void {

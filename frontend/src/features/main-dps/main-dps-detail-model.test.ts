@@ -118,6 +118,7 @@ function fakeSnapshot(ids: string[], totalHits: number): MainDpsDetailSnapshot {
     skills: [],
     skillTotalCount: 0,
     skillsTruncated: false,
+    textTruncated: false,
     totalHits,
     totalDamage: 0,
     maxRowDamage: 1,
