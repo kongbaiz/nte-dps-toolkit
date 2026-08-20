@@ -9,8 +9,8 @@ import {
 } from "@/lib/tauri/diagnostics-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -45,7 +45,7 @@ export interface DiagnosticsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: DiagnosticsTransport = tauriAckedStreamTransport;
+const tauriTransport: DiagnosticsTransport = tauriStreamTransport;
 
 export function createDiagnosticsClient(
   transport: DiagnosticsTransport = tauriTransport,
@@ -77,7 +77,7 @@ export function createDiagnosticsClient(
     exportPcapng: () => invokeAction(COMMANDS.exportPcapng),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "diagnostics",
         subscriptionId,

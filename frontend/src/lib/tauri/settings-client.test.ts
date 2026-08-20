@@ -1,20 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { MAX_STREAM_DELIVERY_BYTES } from "@/lib/tauri/stream-contract";
 import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
 
 import { createSettingsClient } from "./settings-client";
 import type { SettingsSnapshot } from "./settings-contract";
 
-const encodeDelivery = (events: unknown[]): ArrayBuffer => {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify({ streamProtocolVersion: 1, events }),
-  );
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-};
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
 
 function settingsFixture(): SettingsSnapshot {
   return {
@@ -251,6 +245,17 @@ describe("settings client", () => {
       arguments_?: Record<string, unknown>;
     }> = [];
     const snapshots: ReturnType<typeof settingsFixture>[] = [];
+    const settledEvent = {
+      event: "snapshot",
+      payload: {
+        ...settingsFixture(),
+        updates: {
+          ...settingsFixture().updates,
+          status: "up-to-date",
+          messageKey: "NTE DPS Tool is up to date",
+        },
+      },
+    };
     const client = createSettingsClient(
       {
         invoke: async (command, arguments_) => {
@@ -262,26 +267,8 @@ describe("settings client", () => {
               streamIntervalMs: 200,
               streamProtocolVersion: 1,
               streamGeneration: "1",
-              maxInFlightDeliveries: 1,
-              maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
             };
           }
-          if (command === "read_stream_delivery") {
-            return encodeDelivery([
-              {
-                event: "snapshot",
-                payload: {
-                  ...settingsFixture(),
-                  updates: {
-                    ...settingsFixture().updates,
-                    status: "up-to-date",
-                    messageKey: "NTE DPS Tool is up to date",
-                  },
-                },
-              },
-            ]);
-          }
-          if (command === "ack_stream_delivery") return { accepted: true };
           return undefined;
         },
         createChannel: (callback) => {
@@ -299,21 +286,13 @@ describe("settings client", () => {
         throw new Error(error.code);
       },
     );
-    onMessage({
-      streamProtocolVersion: 1,
-      streamKind: "settings",
-      subscriptionId: "settings-test",
-      streamGeneration: "1",
-      deliverySequence: "1",
-    });
+    onMessage(encodeDelivery([settledEvent]));
     await vi.waitFor(() => expect(snapshots).toHaveLength(1));
     await unsubscribe();
 
     expect(snapshots[0]?.updates.status).toBe("up-to-date");
     expect(calls.map((call) => call.command)).toEqual([
       "subscribe_settings",
-      "read_stream_delivery",
-      "ack_stream_delivery",
       "unsubscribe_settings",
     ]);
   });

@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $pluginRoot = Split-Path -Parent $PSScriptRoot
 $sourceRoot = Join-Path $pluginRoot "src"
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $pluginRoot "..\.."))
 $project = Get-Content -LiteralPath (Join-Path $pluginRoot "nte-mods-plugin.vcxproj") -Raw
 
 function Require-Pattern {
@@ -146,6 +147,9 @@ Require-Pattern $runtime `
     'enum class\s+PluginLifecycleState[\s\S]+SRWLOCK\s+runtime_lifecycle_lock\s*=\s*SRWLOCK_INIT' `
     "Plugin Start/Stop does not have one explicit lifecycle owner/state."
 Require-Pattern $runtime `
+    'ScheduleRecordedPluginRuntimeInitialization\(\)[\s\S]+InterlockedCompareExchange\([\s\S]+CreateThread\([\s\S]+InitializeRecordedPluginRuntime[\s\S]+CloseHandle' `
+    "Proxy deployment does not schedule one finite in-process initialization worker."
+Require-Pattern $runtime `
     'runtime_stopping[\s\S]+InterlockedExchange\([\s\S]*&runtime_stopping,\s*1\)[\s\S]+SetIpcStopping\(true\)' `
     "Runtime shutdown does not close both detour and IPC dispatch gates first."
 Require-Pattern $runtime `
@@ -173,17 +177,26 @@ if (-not $dllMainBody) {
     throw "DllMain was not found."
 }
 Reject-Pattern $dllMainBody `
-    'LoadLibrary|FreeLibrary|CreateThread|WaitForSingleObject|InitializeDwmapiProxy|ResolveDwmapiExport|StopPluginRuntime|ShutdownDwmapiProxy|DisableThreadLibraryCalls' `
+    'LoadLibrary|FreeLibrary|WaitForSingleObject|InitializeDwmapiProxy|ResolveDwmapiExport|StopPluginRuntime|ShutdownDwmapiProxy|DisableThreadLibraryCalls' `
     "DllMain contains loader work, teardown work, or cross-thread waiting."
 Require-Pattern $dllMainBody `
-    'RecordPluginModule\(module\)[\s\S]+IsExplicitAttach\(reserved\)[\s\S]+InitializeRecordedPluginRuntime\(\)' `
-    "DllMain does not limit OS attach to module recording or preserve explicit manual-map startup."
+    'RecordPluginModule\(module\)[\s\S]+IsExplicitAttach\(reserved\)[\s\S]+InitializeRecordedPluginRuntime\(\)[\s\S]+ScheduleRecordedPluginRuntimeInitialization\(\)' `
+    "DllMain does not preserve explicit manual-map startup and schedule proxy startup in-process."
 Require-Pattern $dllMain `
     'NteModsPluginShutdown[\s\S]+PluginStopAllowsUnload\([\s\S]+StopPluginRuntime\(\)' `
     "Manual-map deployments have no explicit unload-safe shutdown export."
 Require-Pattern $dllMain `
     'NteModsPluginInitialize[\s\S]+InitializeRecordedPluginRuntime\(\)' `
     "Loader-lock-outside hosts have no explicit runtime initialization export."
+
+$desktopRuntime = Get-Content -LiteralPath (
+    Join-Path $repositoryRoot "src-tauri\src\channels\mod_studio_runtime.rs") -Raw
+Reject-Pattern $desktopRuntime `
+    'inspect_running_deployed_mods_plugin_context|initialize_running_deployed_mods_plugin_context|CreateToolhelp32Snapshot|ReadProcessMemory|CreateRemoteThread' `
+    "Desktop runtime polling still inspects or modifies the protected game process."
+Require-Pattern $desktopRuntime `
+    'poll_mod_studio_runtime[\s\S]+probe_runtime_presence\(\)[\s\S]+mod_studio_risk_acknowledged' `
+    "Desktop runtime readiness is not derived exclusively from authenticated IPC presence."
 
 $proxy = Get-Content -LiteralPath (Join-Path $sourceRoot "dwmapi_proxy.cpp") -Raw
 Reject-Pattern $proxy `

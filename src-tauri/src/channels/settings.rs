@@ -10,7 +10,7 @@ use crate::{
     contract::{
         CommandError, SubscriptionReceipt,
         settings::SettingsEvent,
-        stream::{StreamKind, StreamReadySignal},
+        stream::{StreamDeliveryBody, StreamKind},
     },
     state::{AppState, UpdateActionError},
     windows::console,
@@ -20,7 +20,7 @@ pub(crate) const SETTINGS_STREAM_INTERVAL_MS: u32 = 200;
 #[tauri::command]
 pub(crate) fn subscribe_settings(
     subscription_id: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<SettingsEvent>>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -39,7 +39,7 @@ pub(crate) fn subscribe_settings(
     let mut last_combat_clock_health = None;
     spawn_polling_stream(
         "nte-settings-stream",
-        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         SETTINGS_STREAM_INTERVAL_MS,

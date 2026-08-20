@@ -8,8 +8,8 @@ import {
   type TechnicalSnapshot,
 } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -57,7 +57,7 @@ export interface TechnicalClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: TechnicalTransport = tauriAckedStreamTransport;
+const tauriTransport: TechnicalTransport = tauriStreamTransport;
 
 export function createTechnicalClient(
   transport: TechnicalTransport = tauriTransport,
@@ -99,7 +99,7 @@ export function createTechnicalClient(
     stopCapture: () => snapshotCommand(COMMANDS.stopCapture),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "technical",
         subscriptionId,

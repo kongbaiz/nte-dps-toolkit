@@ -80,7 +80,7 @@ describe("Base UI migration invariants", () => {
   it("migrates every reported W-03 consumer to project primitives", () => {
     expect(consolePageSource).toContain("<AlertDialog");
     expect(encryptedIniSource).toContain("<AlertDialog");
-    expect(modStudioSource.match(/<AlertDialog(?:\s|>)/g)).toHaveLength(2);
+    expect(modStudioSource.match(/<AlertDialog(?:\s|>)/g)).toHaveLength(3);
     expect(mainDpsSource).toContain("<AlertDialog");
     expect(mainDpsSource).toContain("<Dialog");
     expect(mainDpsSource).toContain("<Popover");

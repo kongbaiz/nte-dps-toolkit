@@ -254,8 +254,28 @@ pub(crate) async fn get_mod_loader_runtime(
 }
 
 #[tauri::command]
+pub(crate) async fn get_mod_loader_game_running(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<bool, CommandError> {
+    console::validate_window(&window)?;
+    let loader = state.mod_loader();
+    tauri::async_runtime::spawn_blocking(move || loader.game_is_running())
+        .await
+        .map_err(|error| {
+            log::error!("Mod Loader game process probe task failed: {error}");
+            CommandError::mod_workspace_task_failed()
+        })?
+        .map_err(|error| {
+            log::error!("Mod Loader game process probe failed: {error:?}");
+            CommandError::from_mod_loader_runtime(error)
+        })
+}
+
+#[tauri::command]
 pub(crate) async fn set_mod_loader_running(
     running: bool,
+    terminate_processes: bool,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModLoaderRuntimeStateSnapshot, CommandError> {
@@ -265,6 +285,17 @@ pub(crate) async fn set_mod_loader_running(
     let workspace = state.mod_studio();
     tauri::async_runtime::spawn_blocking(move || {
         if running {
+            let game_running = loader.game_is_running().map_err(|error| {
+                log::error!("probe game process before Mod Loader start failed: {error:?}");
+                CommandError::from_mod_loader_runtime(error)
+            })?;
+            require_mod_loader_process_confirmation(running, game_running, terminate_processes)?;
+            if terminate_processes {
+                loader.terminate_game_and_launchers().map_err(|error| {
+                    log::error!("close game processes before Mod Loader start failed: {error:?}");
+                    CommandError::from_mod_loader_runtime(error)
+                })?;
+            }
             workspace.load_workspace().map_err(|error| {
                 log::error!(
                     "prepare Mod workspace before loader start failed: {}",
@@ -272,14 +303,26 @@ pub(crate) async fn set_mod_loader_running(
                 );
                 CommandError::from_mod_studio(error)
             })?;
-            loader.start()
+            loader.start().map_err(|error| {
+                log::error!("Mod Loader runtime operation failed: {error:?}");
+                CommandError::from_mod_loader_runtime(error)
+            })
         } else {
-            loader.stop()
+            loader.stop().map_err(|error| {
+                log::error!("Mod Loader runtime operation failed: {error:?}");
+                CommandError::from_mod_loader_runtime(error)
+            })?;
+            if terminate_processes {
+                loader.terminate_game_and_launchers().map_err(|error| {
+                    log::error!("close game processes after Mod Loader stop failed: {error:?}");
+                    CommandError::from_mod_loader_runtime(error)
+                })?;
+            }
+            loader.snapshot().map_err(|error| {
+                log::error!("project Mod Loader state after process shutdown failed: {error:?}");
+                CommandError::from_mod_loader_runtime(error)
+            })
         }
-        .map_err(|error| {
-            log::error!("Mod Loader runtime operation failed: {error:?}");
-            CommandError::from_mod_loader_runtime(error)
-        })
     })
     .await
     .map_err(|error| {
@@ -287,6 +330,18 @@ pub(crate) async fn set_mod_loader_running(
         CommandError::mod_workspace_task_failed()
     })?
     .map(Into::into)
+}
+
+fn require_mod_loader_process_confirmation(
+    running: bool,
+    game_running: bool,
+    terminate_processes: bool,
+) -> Result<(), CommandError> {
+    if running && game_running && !terminate_processes {
+        Err(CommandError::mod_loader_process_confirmation_required())
+    } else {
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -816,5 +871,19 @@ mod tests {
             ),
         );
         assert!(require_mod_studio_risk(&acknowledged, true).is_ok());
+    }
+
+    #[test]
+    fn loader_process_confirmation_is_required_for_running_game_start() {
+        assert!(require_mod_loader_process_confirmation(true, false, false).is_ok());
+        assert_eq!(
+            require_mod_loader_process_confirmation(true, true, false)
+                .expect_err("running game must require confirmation")
+                .code,
+            "mod_loader_process_confirmation_required"
+        );
+        assert!(require_mod_loader_process_confirmation(false, false, false).is_ok());
+        assert!(require_mod_loader_process_confirmation(true, true, true).is_ok());
+        assert!(require_mod_loader_process_confirmation(false, false, true).is_ok());
     }
 }

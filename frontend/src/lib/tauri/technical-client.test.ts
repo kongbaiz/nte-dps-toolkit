@@ -1,17 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createTechnicalClient } from "./technical-client";
-import { MAX_STREAM_DELIVERY_BYTES } from "./stream-contract";
 
-const encodeDelivery = (events: unknown[]): ArrayBuffer => {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify({ streamProtocolVersion: 1, events }),
-  );
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-};
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
 
 const snapshot = {
   contractVersion: 5,
@@ -157,17 +151,7 @@ describe("technical client subscription", () => {
           streamIntervalMs: 100,
           streamProtocolVersion: 1,
           streamGeneration: "1",
-          maxInFlightDeliveries: 1,
-          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
         });
-      }
-      if (command === "read_stream_delivery") {
-        return Promise.resolve(
-          encodeDelivery([{ event: "snapshot", payload: snapshot }]),
-        );
-      }
-      if (command === "ack_stream_delivery") {
-        return Promise.resolve({ accepted: true });
       }
       return Promise.resolve(undefined);
     });
@@ -185,22 +169,10 @@ describe("technical client subscription", () => {
     const receiveError = vi.fn();
 
     const cleanup = client.subscribe(receive, receiveError);
-    onMessage?.({
-      streamProtocolVersion: 1,
-      streamKind: "technical",
-      subscriptionId: "test-subscription",
-      streamGeneration: "1",
-      deliverySequence: "1",
-    });
+    onMessage?.(encodeDelivery([{ event: "snapshot", payload: snapshot }]));
     await vi.waitFor(() => expect(receive).toHaveBeenCalledTimes(1));
     await cleanup();
-    onMessage?.({
-      streamProtocolVersion: 1,
-      streamKind: "technical",
-      subscriptionId: "test-subscription",
-      streamGeneration: "1",
-      deliverySequence: "2",
-    });
+    onMessage?.(encodeDelivery([{ event: "snapshot", payload: snapshot }]));
 
     expect(receive).toHaveBeenCalledTimes(1);
     expect(receiveError).not.toHaveBeenCalled();

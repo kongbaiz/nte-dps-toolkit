@@ -44,15 +44,9 @@ const {
   record,
   string,
   stringArray,
-} = createContractPrimitives(
-  (message) => {
-    throw new TechnicalContractError(message);
-  },
-  {
-    booleanArticle: true,
-    decimalTypeFirst: true,
-  },
-);
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type HudSettingOptionId = (typeof HUD_SETTING_OPTION_IDS)[number];
 export type HudPresetId = (typeof HUD_PRESET_IDS)[number];

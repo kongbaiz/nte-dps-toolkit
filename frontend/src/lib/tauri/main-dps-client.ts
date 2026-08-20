@@ -11,8 +11,8 @@ import {
 } from "@/lib/tauri/main-dps-contract";
 import type { MainDpsDetailFilter } from "@/lib/tauri/main-dps-detail-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const command = (name: string, arguments_?: Record<string, unknown>) =>
@@ -106,8 +106,8 @@ export const mainDpsClient = {
     onError: (error: MainDpsCommandError) => void,
   ): () => void {
     const subscriptionId = crypto.randomUUID();
-    const close = subscribeAckedStream({
-      transport: tauriAckedStreamTransport,
+    const close = subscribeStream({
+      transport: tauriStreamTransport,
       streamKind: "mainDps",
       subscriptionId,
       subscribeCommand: "subscribe_main_dps",

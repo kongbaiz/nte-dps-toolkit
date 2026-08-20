@@ -1,17 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createPacketsClient } from "./packets-client";
-import { MAX_STREAM_DELIVERY_BYTES } from "./stream-contract";
 
-const encodeDelivery = (events: unknown[]): ArrayBuffer => {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify({ streamProtocolVersion: 1, events }),
-  );
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-};
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
 
 const PACKETS_FIXTURE = {
   contractVersion: 2,
@@ -48,7 +42,7 @@ const PACKETS_FIXTURE = {
 };
 
 describe("Packets client", () => {
-  it("subscribes through a Channel and releases the acknowledged stream", async () => {
+  it("subscribes through a Channel and releases the stream", async () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_packets") {
@@ -58,16 +52,8 @@ describe("Packets client", () => {
           streamIntervalMs: 100,
           streamProtocolVersion: 1,
           streamGeneration: "1",
-          maxInFlightDeliveries: 1,
-          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
         };
       }
-      if (command === "read_stream_delivery") {
-        return encodeDelivery([
-          { event: "snapshot", payload: PACKETS_FIXTURE },
-        ]);
-      }
-      if (command === "ack_stream_delivery") return { accepted: true };
       if (command === "get_packets_snapshot") return PACKETS_FIXTURE;
       return undefined;
     });
@@ -83,13 +69,9 @@ describe("Packets client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
-    onMessage?.({
-      streamProtocolVersion: 1,
-      streamKind: "packets",
-      subscriptionId: "packets-test",
-      streamGeneration: "1",
-      deliverySequence: "1",
-    });
+    onMessage?.(
+      encodeDelivery([{ event: "snapshot", payload: PACKETS_FIXTURE }]),
+    );
     await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 

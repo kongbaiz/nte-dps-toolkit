@@ -14,8 +14,8 @@ import {
 } from "@/lib/tauri/empty-curtain-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -65,7 +65,7 @@ export interface EmptyCurtainClient {
   importLoadout(): Promise<EmptyCurtainFileResult>;
 }
 
-const tauriTransport: EmptyCurtainTransport = tauriAckedStreamTransport;
+const tauriTransport: EmptyCurtainTransport = tauriStreamTransport;
 
 export function createEmptyCurtainClient(
   transport: EmptyCurtainTransport = tauriTransport,
@@ -88,7 +88,7 @@ export function createEmptyCurtainClient(
       command(COMMANDS.getSnapshot, undefined, parseEmptyCurtainSnapshot),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "emptyCurtain",
         subscriptionId,

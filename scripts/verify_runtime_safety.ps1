@@ -19,6 +19,7 @@ $script:RuleIds = @{
     ContractSlice   = "RUNTIME-CONTRACT-SLICE"
     RetiredModCode  = "RUNTIME-RETIRED-MOD-CODE"
     PoisonRecovery  = "RUNTIME-BLIND-POISON-RECOVERY"
+    SourceTest      = "RUNTIME-SOURCE-TEST"
 }
 
 # Baselines use counts so a line move does not silently make a finding
@@ -712,6 +713,21 @@ try {
                     -Path $occurrence.Path `
                     -Line $occurrence.Line `
                     -Message "Blind Mutex poison recovery is forbidden; classify the protected invariant and use typed fail-closed or explicit full-state rebuild semantics."))
+    }
+
+    foreach ($file in $rustFiles) {
+        $path = ConvertTo-RelativePath $file.FullName
+        $lines = @(Get-Content -LiteralPath $file.FullName)
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -match 'include_str!\s*\([^)]*\.rs["'']\s*\)') {
+                $diagnostics.Add((New-Diagnostic `
+                            -Severity Error `
+                            -Rule $script:RuleIds['SourceTest'] `
+                            -Path $path `
+                            -Line ($index + 1) `
+                            -Message "Rust tests must verify behavior; mechanical source policy belongs in this repository-level check."))
+            }
+        }
     }
 
     $hotOccurrences = @(Find-HotCloneOccurrences $rustFiles)

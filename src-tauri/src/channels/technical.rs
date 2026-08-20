@@ -7,7 +7,7 @@ use crate::{
     },
     contract::{
         CommandError, SubscriptionReceipt, TechnicalEvent,
-        stream::{StreamKind, StreamReadySignal},
+        stream::{StreamDeliveryBody, StreamKind},
     },
     state::{AppState, TECHNICAL_STREAM_INTERVAL_MS},
     windows::hud,
@@ -16,7 +16,7 @@ use crate::{
 #[tauri::command]
 pub(crate) fn subscribe_technical_state(
     subscription_id: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<TechnicalEvent>>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -34,7 +34,7 @@ pub(crate) fn subscribe_technical_state(
     let mut last_revision = None;
     spawn_polling_stream(
         "nte-technical-stream",
-        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         TECHNICAL_STREAM_INTERVAL_MS,

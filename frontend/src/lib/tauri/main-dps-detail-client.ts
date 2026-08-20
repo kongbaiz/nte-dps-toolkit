@@ -8,8 +8,8 @@ import {
   type MainDpsDetailSnapshot,
 } from "@/lib/tauri/main-dps-detail-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const DETAIL_CHANGED_EVENT = "main-dps-detail-requested";
@@ -55,8 +55,8 @@ export const mainDpsDetailClient = {
     onError: (error: unknown) => void,
   ): () => void {
     const subscriptionId = crypto.randomUUID();
-    const close = subscribeAckedStream({
-      transport: tauriAckedStreamTransport,
+    const close = subscribeStream({
+      transport: tauriStreamTransport,
       streamKind: "mainDpsDetail",
       subscriptionId,
       subscribeCommand: "subscribe_main_dps_detail",

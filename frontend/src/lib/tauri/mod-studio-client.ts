@@ -26,14 +26,15 @@ import {
   type ModStudioWorkspaceSnapshot,
 } from "@/lib/tauri/mod-studio-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   acknowledgeRisk: "acknowledge_mod_studio_risk",
   getMarketCatalog: "get_mod_market_catalog",
   getLoaderRuntime: "get_mod_loader_runtime",
+  getLoaderGameRunning: "get_mod_loader_game_running",
   installMarketItem: "install_mod_market_item",
   deleteDocument: "delete_mod_studio_document",
   chooseGameDirectory: "choose_mod_studio_game_directory",
@@ -67,6 +68,7 @@ interface ModStudioTransport {
 export interface ModStudioClient {
   acknowledgeRisk(): Promise<ModStudioLoadingMethodPreferenceSnapshot>;
   getLoaderRuntime(): Promise<ModLoaderRuntimeSnapshot>;
+  getLoaderGameRunning(): Promise<boolean>;
   getMarketCatalog(): Promise<ModMarketCatalogSnapshot>;
   installMarketItem(id: string): Promise<ModStudioDocumentSnapshot>;
   deleteDocument(id: string): Promise<ModStudioWorkspaceSnapshot>;
@@ -101,14 +103,17 @@ export interface ModStudioClient {
     enabled: boolean,
     gameDirectory: string | null,
   ): Promise<ModStudioDeploymentSnapshot>;
-  setLoaderRunning(running: boolean): Promise<ModLoaderRuntimeSnapshot>;
+  setLoaderRunning(
+    running: boolean,
+    terminateProcesses: boolean,
+  ): Promise<ModLoaderRuntimeSnapshot>;
   subscribeRuntime(
     onEvent: (event: ModStudioRuntimeEvent) => void,
     onError: (error: ModStudioCommandError) => void,
   ): () => Promise<void>;
 }
 
-const tauriTransport: ModStudioTransport = tauriAckedStreamTransport;
+const tauriTransport: ModStudioTransport = tauriStreamTransport;
 
 export function createModStudioClient(
   transport: ModStudioTransport = tauriTransport,
@@ -134,6 +139,13 @@ export function createModStudioClient(
       request(COMMANDS.acknowledgeRisk, parseModStudioLoadingMethodPreference),
     getLoaderRuntime: () =>
       request(COMMANDS.getLoaderRuntime, parseModLoaderRuntime),
+    getLoaderGameRunning: () =>
+      request(COMMANDS.getLoaderGameRunning, (value) => {
+        if (typeof value !== "boolean") {
+          throw new TypeError("Mod Loader game process state is invalid");
+        }
+        return value;
+      }),
     getMarketCatalog: () =>
       request(COMMANDS.getMarketCatalog, parseModMarketCatalog),
     installMarketItem: (id) =>
@@ -198,11 +210,14 @@ export function createModStudioClient(
         enabled,
         gameDirectory,
       }),
-    setLoaderRunning: (running) =>
-      request(COMMANDS.setLoaderRunning, parseModLoaderRuntime, { running }),
+    setLoaderRunning: (running, terminateProcesses) =>
+      request(COMMANDS.setLoaderRunning, parseModLoaderRuntime, {
+        running,
+        terminateProcesses,
+      }),
     subscribeRuntime: (onEvent, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "modStudioRuntime",
         subscriptionId,

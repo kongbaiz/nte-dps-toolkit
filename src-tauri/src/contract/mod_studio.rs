@@ -25,7 +25,7 @@ use nte_dps_tool::storage::config::ModStudioLoadingMethod;
 
 use super::CommandError;
 
-pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 11;
+pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 13;
 pub(crate) const MOD_MARKET_CONTRACT_VERSION: u32 = 11;
 pub(crate) const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION: u32 = 1;
 pub(crate) const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION: u32 = 1;
@@ -116,6 +116,8 @@ pub(crate) struct ModStudioRuntimeConnectionSnapshot {
     pub generation: String,
     pub status: ModStudioRuntimeConnectionStatusSnapshot,
     pub bootstrap_error_code: Option<&'static str>,
+    pub probe_error_code: Option<&'static str>,
+    pub probe_os_error_code: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -126,7 +128,6 @@ pub(crate) enum ModStudioRuntimeConnectionStatusSnapshot {
     Waiting,
     AcknowledgementRequired,
     ProbeFailed,
-    BootstrapFailed,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -719,6 +720,18 @@ impl CommandError {
                 "mod_loader_probe_failed",
                 "Failed to check nte-mod-loader status.",
             ),
+            ModLoaderRuntimeError::TargetProcessProbeFailed(_) => (
+                "mod_loader_target_probe_failed",
+                "Failed to check whether HTGame.exe or launcher processes are running.",
+            ),
+            ModLoaderRuntimeError::TargetProcessStopFailed(_) => (
+                "mod_loader_target_stop_failed",
+                "Failed to close HTGame.exe or launcher processes.",
+            ),
+            ModLoaderRuntimeError::TargetProcessStopTimedOut => (
+                "mod_loader_target_stop_timed_out",
+                "HTGame.exe or a launcher process did not close in time.",
+            ),
             ModLoaderRuntimeError::StatePoisoned => (
                 "mod_loader_state_unavailable",
                 "The Mod Loader runtime state is unavailable.",
@@ -727,6 +740,15 @@ impl CommandError {
         Self {
             code,
             message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn mod_loader_process_confirmation_required() -> Self {
+        Self {
+            code: "mod_loader_process_confirmation_required",
+            message_key: "Confirm closing HTGame.exe and launcher processes before changing Mod Loader.",
             message_arguments: Vec::new(),
             diagnostic_line: None,
         }
@@ -864,12 +886,33 @@ mod tests {
             generation: "4".to_owned(),
             status: ModStudioRuntimeConnectionStatusSnapshot::LoaderPresent,
             bootstrap_error_code: None,
+            probe_error_code: None,
+            probe_os_error_code: None,
         };
         let value = serde_json::to_value(snapshot).expect("serialize runtime connection");
 
         assert_eq!(value["status"], "loaderPresent");
         assert!(value["bootstrapErrorCode"].is_null());
+        assert!(value["probeErrorCode"].is_null());
+        assert!(value["probeOsErrorCode"].is_null());
         assert!(value.get("connected").is_none());
+    }
+
+    #[test]
+    fn runtime_connection_preserves_exact_probe_diagnostics() {
+        let snapshot = ModStudioRuntimeConnectionSnapshot {
+            contract_version: MOD_STUDIO_CONTRACT_VERSION,
+            generation: "5".to_owned(),
+            status: ModStudioRuntimeConnectionStatusSnapshot::ProbeFailed,
+            bootstrap_error_code: None,
+            probe_error_code: Some("IPC_PIPE_ACCESS_DENIED"),
+            probe_os_error_code: Some(5),
+        };
+        let value = serde_json::to_value(snapshot).expect("serialize runtime connection");
+
+        assert_eq!(value["status"], "probeFailed");
+        assert_eq!(value["probeErrorCode"], "IPC_PIPE_ACCESS_DENIED");
+        assert_eq!(value["probeOsErrorCode"], 5);
     }
 
     #[test]

@@ -83,7 +83,7 @@ describe("Mod Studio contract", () => {
   it("parses a bounded workspace index without source bodies", () => {
     expect(
       parseModStudioWorkspace({
-        contractVersion: 11,
+        contractVersion: 13,
         generation: "7",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -96,7 +96,7 @@ describe("Mod Studio contract", () => {
         ],
       }),
     ).toEqual({
-      contractVersion: 11,
+      contractVersion: 13,
       generation: "7",
       workspaceLabel: "plugins/nte-mods",
       documents: [
@@ -121,7 +121,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 11,
+        contractVersion: 13,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -136,7 +136,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 11,
+        contractVersion: 13,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -160,13 +160,13 @@ describe("Mod Studio contract", () => {
   it("parses a requested document body", () => {
     expect(
       parseModStudioDocument({
-        contractVersion: 11,
+        contractVersion: 13,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
       }),
     ).toEqual({
-      contractVersion: 11,
+      contractVersion: 13,
       id: "combat-clock",
       enabled: true,
       source: "NTE_SCRIPT(5);",
@@ -361,7 +361,7 @@ describe("Mod Studio contract", () => {
 
   it("parses bounded deployment state and a validated manual path selection", () => {
     const deployment = {
-      contractVersion: 11,
+      contractVersion: 13,
       installations: 1,
       installed: 1,
       current: 1,
@@ -448,7 +448,7 @@ describe("Mod Studio contract", () => {
   it("parses the bounded versioned Mod SDK schema", () => {
     expect(
       parseModStudioSdkSchema({
-        contractVersion: 11,
+        contractVersion: 13,
         schemaVersion: 2,
         symbols: [
           {
@@ -466,7 +466,7 @@ describe("Mod Studio contract", () => {
     });
     expect(() =>
       parseModStudioSdkSchema({
-        contractVersion: 11,
+        contractVersion: 13,
         schemaVersion: 1,
         symbols: [],
       }),
@@ -510,7 +510,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "2",
           entries: [
             {
@@ -547,7 +547,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "2",
           entries: [
             {
@@ -587,8 +587,6 @@ describe("Mod Studio contract", () => {
         streamIntervalMs: 250,
         streamProtocolVersion: 1,
         streamGeneration: "3",
-        maxInFlightDeliveries: 1,
-        maxDeliveryBytes: 16_777_216,
       }),
     ).toEqual({
       subscriptionId: "runtime-01",
@@ -596,17 +594,17 @@ describe("Mod Studio contract", () => {
       streamIntervalMs: 250,
       streamProtocolVersion: 1,
       streamGeneration: "3",
-      maxInFlightDeliveries: 1,
-      maxDeliveryBytes: 16_777_216,
     });
     expect(
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "3",
           status: "waiting",
           bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toMatchObject({
@@ -617,24 +615,74 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "3",
           status: "acknowledgementRequired",
           bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toMatchObject({
       event: "connection",
       payload: { status: "acknowledgementRequired" },
     });
+    expect(
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "3",
+          status: "probeFailed",
+          bootstrapErrorCode: null,
+          probeErrorCode: "IPC_PIPE_ACCESS_DENIED",
+          probeOsErrorCode: 5,
+        },
+      }),
+    ).toMatchObject({
+      event: "connection",
+      payload: {
+        status: "probeFailed",
+        probeErrorCode: "IPC_PIPE_ACCESS_DENIED",
+        probeOsErrorCode: 5,
+      },
+    });
     expect(() =>
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
+          generation: "3",
+          status: "probeFailed",
+          bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: 5,
+        },
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
+          generation: "3",
+          status: "waiting",
+          bootstrapErrorCode: null,
+          probeErrorCode: "IPC_PIPE_OPEN_FAILED",
+          probeOsErrorCode: null,
+        },
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 13,
           generation: "3",
           status: "installed",
           bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toThrow(ModStudioContractError);
@@ -643,10 +691,12 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "4",
           status: "bootstrapFailed",
           bootstrapErrorCode: "MODULE_IMAGE_MISMATCH",
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toMatchObject({
@@ -655,16 +705,20 @@ describe("Mod Studio contract", () => {
         generation: "4",
         status: "bootstrapFailed",
         bootstrapErrorCode: "MODULE_IMAGE_MISMATCH",
+        probeErrorCode: null,
+        probeOsErrorCode: null,
       },
     });
     expect(() =>
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "4",
           status: "bootstrapFailed",
           bootstrapErrorCode: null,
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toThrow(ModStudioContractError);
@@ -672,10 +726,12 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "4",
           status: "waiting",
           bootstrapErrorCode: "MODULE_IMAGE_MISMATCH",
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toThrow(ModStudioContractError);
@@ -683,10 +739,12 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 11,
+          contractVersion: 13,
           generation: "4",
           status: "bootstrapFailed",
           bootstrapErrorCode: "UNKNOWN_CODE",
+          probeErrorCode: null,
+          probeOsErrorCode: null,
         },
       }),
     ).toThrow(ModStudioContractError);

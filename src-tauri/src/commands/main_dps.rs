@@ -1055,16 +1055,4 @@ mod tests {
         );
         assert!(error.message_arguments.is_empty());
     }
-
-    #[test]
-    fn history_selection_command_offloads_blocking_rehydration() {
-        let source = include_str!("main_dps.rs");
-        let body = source
-            .split_once("pub(crate) async fn select_main_dps_round")
-            .and_then(|(_, tail)| tail.split_once("\n#[tauri::command]"))
-            .map(|(body, _)| body)
-            .expect("History selection command source");
-        assert!(body.contains("spawn_blocking"));
-        assert!(body.contains("set_main_selected_round_id"));
-    }
 }

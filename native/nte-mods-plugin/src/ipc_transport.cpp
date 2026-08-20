@@ -4,10 +4,8 @@
 #include "mod_runtime.hpp"
 #include "obfuscated_string.hpp"
 
-#include <Aclapi.h>
 #include <Windows.h>
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -16,15 +14,6 @@ namespace nte::mods
 	namespace
 	{
 		constexpr ULONGLONG IPC_CLIENT_IO_TIMEOUT_MS = 1000;
-		constexpr DWORD IPC_PIPE_CLIENT_ACCESS =
-			FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE;
-		constexpr DWORD IPC_PRESENCE_OWNER_ACCESS =
-			EVENT_MODIFY_STATE | SYNCHRONIZE | READ_CONTROL;
-		// Later clients may wait and inspect owner/DACL identity, but cannot signal
-		// or reset the published event.
-		constexpr DWORD IPC_PRESENCE_CLIENT_ACCESS =
-			SYNCHRONIZE | READ_CONTROL;
-
 		static_assert(sizeof(NteModsIpcRequest) == NTE_MODS_IPC_REQUEST_SIZE);
 		static_assert(sizeof(NteModsIpcResponse) == NTE_MODS_IPC_RESPONSE_SIZE);
 		static_assert(
@@ -48,32 +37,6 @@ namespace nte::mods
 			RequestReady,
 		};
 
-		struct TokenIdentity
-		{
-			std::array<uint8_t, SECURITY_MAX_SID_SIZE> user_sid{};
-			std::array<uint8_t, SECURITY_MAX_SID_SIZE> logon_sid{};
-			DWORD session_id = 0;
-			bool valid = false;
-
-			PSID UserSid()
-			{
-				return user_sid.data();
-			}
-			PSID UserSid() const
-			{
-				return const_cast<uint8_t*>(user_sid.data());
-			}
-
-			PSID LogonSid()
-			{
-				return logon_sid.data();
-			}
-			PSID LogonSid() const
-			{
-				return const_cast<uint8_t*>(logon_sid.data());
-			}
-		};
-
 		HANDLE ipc_pipe = INVALID_HANDLE_VALUE;
 		HANDLE ipc_event = nullptr;
 		HANDLE runtime_presence_event = nullptr;
@@ -84,7 +47,6 @@ namespace nte::mods
 		ULONGLONG ipc_io_deadline = 0;
 		uint64_t ipc_generation = 0;
 		ipc::OperationEpoch ipc_operation{};
-		TokenIdentity ipc_server_identity{};
 		bool ipc_stopping = false;
 		NteModsIpcRequest ipc_request{};
 		NteModsIpcResponse ipc_response{};
@@ -150,143 +112,6 @@ namespace nte::mods
 			}
 		};
 
-		class OwnedHandle
-		{
-		public:
-			explicit OwnedHandle(HANDLE value = nullptr)
-				: value_(value)
-			{
-			}
-
-			OwnedHandle(const OwnedHandle&) = delete;
-			OwnedHandle& operator=(const OwnedHandle&) = delete;
-
-			~OwnedHandle()
-			{
-				if (value_ != nullptr && value_ != INVALID_HANDLE_VALUE)
-					CloseHandle(value_);
-			}
-
-			HANDLE Get() const
-			{
-				return value_;
-			}
-
-		private:
-			HANDLE value_;
-		};
-
-		class LocalAllocation
-		{
-		public:
-			LocalAllocation() = default;
-			LocalAllocation(const LocalAllocation&) = delete;
-			LocalAllocation& operator=(const LocalAllocation&) = delete;
-
-			~LocalAllocation()
-			{
-				if (value_ != nullptr)
-					LocalFree(value_);
-			}
-
-			bool Allocate(SIZE_T size)
-			{
-				if (value_ != nullptr || size == 0)
-					return false;
-				value_ = LocalAlloc(LPTR, size);
-				return value_ != nullptr;
-			}
-
-			void* Get() const
-			{
-				return value_;
-			}
-
-		private:
-			HLOCAL value_ = nullptr;
-		};
-
-		bool QueryTokenIdentity(HANDLE token, TokenIdentity& identity)
-		{
-			identity = {};
-
-			DWORD required = 0;
-			GetTokenInformation(token, TokenUser, nullptr, 0, &required);
-			if (required < sizeof(TOKEN_USER) ||
-				GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-				return false;
-			LocalAllocation user_buffer;
-			if (!user_buffer.Allocate(required) ||
-				!GetTokenInformation(
-					token,
-					TokenUser,
-					user_buffer.Get(),
-					required,
-					&required))
-				return false;
-			const auto* token_user = static_cast<const TOKEN_USER*>(
-				user_buffer.Get());
-			if (!IsValidSid(token_user->User.Sid) ||
-				GetLengthSid(token_user->User.Sid) > identity.user_sid.size() ||
-				!CopySid(
-					static_cast<DWORD>(identity.user_sid.size()),
-					identity.UserSid(),
-					token_user->User.Sid))
-				return false;
-
-			DWORD returned = 0;
-			if (!GetTokenInformation(
-					token,
-					TokenSessionId,
-					&identity.session_id,
-					sizeof(identity.session_id),
-					&returned) ||
-				returned != sizeof(identity.session_id))
-				return false;
-
-			required = 0;
-			GetTokenInformation(token, TokenGroups, nullptr, 0, &required);
-			if (required < sizeof(TOKEN_GROUPS) ||
-				GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-				return false;
-			LocalAllocation groups_buffer;
-			if (!groups_buffer.Allocate(required) ||
-				!GetTokenInformation(
-					token,
-					TokenGroups,
-					groups_buffer.Get(),
-					required,
-					&required))
-				return false;
-			const auto* token_groups = static_cast<const TOKEN_GROUPS*>(
-				groups_buffer.Get());
-			for (DWORD index = 0; index < token_groups->GroupCount; ++index)
-			{
-				const SID_AND_ATTRIBUTES& group = token_groups->Groups[index];
-				if ((group.Attributes & SE_GROUP_LOGON_ID) != SE_GROUP_LOGON_ID ||
-					!IsValidSid(group.Sid) ||
-					GetLengthSid(group.Sid) > identity.logon_sid.size())
-					continue;
-				if (!CopySid(
-						static_cast<DWORD>(identity.logon_sid.size()),
-						identity.LogonSid(),
-						group.Sid))
-					return false;
-				identity.valid = true;
-				return true;
-			}
-			return false;
-		}
-
-		bool QueryCurrentTokenIdentity(TokenIdentity& identity)
-		{
-			HANDLE token_value = nullptr;
-			if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token_value))
-				return false;
-			const OwnedHandle token(token_value);
-			return QueryTokenIdentity(token.Get(), identity);
-		}
-
 		class LocalIpcSecurityAttributes
 		{
 		public:
@@ -296,72 +121,43 @@ namespace nte::mods
 
 			~LocalIpcSecurityAttributes()
 			{
-				if (dacl_ != nullptr)
-					LocalFree(dacl_);
-				if (sacl_ != nullptr)
-					LocalFree(sacl_);
+				if (descriptor_ != nullptr)
+					LocalFree(descriptor_);
+				if (advapi_ != nullptr)
+					FreeLibrary(advapi_);
 			}
 
-			bool Initialize(
-				DWORD client_access,
-				WELL_KNOWN_SID_TYPE mandatory_label,
-				TokenIdentity* identity_out)
+			bool Initialize()
 			{
-				if (!QueryCurrentTokenIdentity(identity_))
+				const auto library_name =
+					NTE_OBFUSCATE_STRING(L"advapi32.dll");
+				advapi_ = LoadLibraryW(library_name.c_str());
+				if (advapi_ == nullptr)
 					return false;
 
-				const DWORD logon_sid_length = GetLengthSid(identity_.LogonSid());
-				const SIZE_T dacl_size = sizeof(ACL) +
-					sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) + logon_sid_length;
-				dacl_ = static_cast<PACL>(LocalAlloc(LPTR, dacl_size));
-				if (dacl_ == nullptr ||
-					!InitializeAcl(dacl_, static_cast<DWORD>(dacl_size), ACL_REVISION))
-					return false;
-				if (!AddAccessAllowedAceEx(
-						dacl_,
-						ACL_REVISION,
-						0,
-						client_access,
-						identity_.LogonSid()))
+				using ConvertSecurityDescriptor =
+					BOOL(WINAPI*)(LPCWSTR, DWORD, PSECURITY_DESCRIPTOR*, PULONG);
+				const auto function_name = NTE_OBFUSCATE_STRING(
+					"ConvertStringSecurityDescriptorToSecurityDescriptorW");
+				const auto convert = reinterpret_cast<ConvertSecurityDescriptor>(
+					GetProcAddress(advapi_, function_name.c_str()));
+				if (convert == nullptr)
 					return false;
 
-				DWORD mandatory_sid_size =
-					static_cast<DWORD>(mandatory_sid_.size());
-				if (!CreateWellKnownSid(
-						mandatory_label,
-						nullptr,
-						mandatory_sid_.data(),
-						&mandatory_sid_size))
-					return false;
-				const SIZE_T sacl_size = sizeof(ACL) +
-					sizeof(SYSTEM_MANDATORY_LABEL_ACE) - sizeof(DWORD) +
-					GetLengthSid(mandatory_sid_.data());
-				sacl_ = static_cast<PACL>(LocalAlloc(LPTR, sacl_size));
-				if (sacl_ == nullptr ||
-					!InitializeAcl(sacl_, static_cast<DWORD>(sacl_size), ACL_REVISION) ||
-					!AddMandatoryAce(
-						sacl_,
-						ACL_REVISION,
-						0,
-						SYSTEM_MANDATORY_LABEL_NO_WRITE_UP,
-						mandatory_sid_.data()) ||
-					!InitializeSecurityDescriptor(
-						&descriptor_, SECURITY_DESCRIPTOR_REVISION) ||
-					!SetSecurityDescriptorOwner(
-						&descriptor_, identity_.UserSid(), FALSE) ||
-					!SetSecurityDescriptorDacl(
-						&descriptor_, TRUE, dacl_, FALSE) ||
-					!SetSecurityDescriptorSacl(
-						&descriptor_, TRUE, sacl_, FALSE))
+				// The game can run at high integrity while the desktop client normally
+				// runs at medium integrity. Keep IPC local and permit the interactive
+				// desktop session without binding to launcher-specific token details.
+				const auto descriptor = NTE_OBFUSCATE_STRING(
+					L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;IU)"
+					L"S:(ML;;NW;;;ME)");
+				if (!convert(descriptor.c_str(), 1, &descriptor_, nullptr))
 					return false;
 
 				attributes_ = {
 					sizeof(SECURITY_ATTRIBUTES),
-					&descriptor_,
+					descriptor_,
 					FALSE,
 				};
-				if (identity_out != nullptr)
-					*identity_out = identity_;
 				return true;
 			}
 
@@ -371,98 +167,10 @@ namespace nte::mods
 			}
 
 		private:
-			TokenIdentity identity_{};
-			SECURITY_DESCRIPTOR descriptor_{};
-			PACL dacl_ = nullptr;
-			PACL sacl_ = nullptr;
-			std::array<uint8_t, SECURITY_MAX_SID_SIZE> mandatory_sid_{};
+			HMODULE advapi_ = nullptr;
+			PSECURITY_DESCRIPTOR descriptor_ = nullptr;
 			SECURITY_ATTRIBUTES attributes_{};
 		};
-
-		bool TokenIdentitiesMatch(
-			const TokenIdentity& expected,
-			const TokenIdentity& actual)
-		{
-			return expected.valid && actual.valid &&
-				expected.session_id == actual.session_id &&
-				EqualSid(expected.UserSid(), actual.UserSid()) != FALSE &&
-				EqualSid(expected.LogonSid(), actual.LogonSid()) != FALSE;
-		}
-
-		bool ValidateIpcClient()
-		{
-			if (!ipc_server_identity.valid || ipc_pipe == INVALID_HANDLE_VALUE)
-				return false;
-			ULONG client_process_id = 0;
-			if (!GetNamedPipeClientProcessId(ipc_pipe, &client_process_id) ||
-				client_process_id == 0)
-				return false;
-
-			const OwnedHandle process(OpenProcess(
-				PROCESS_QUERY_LIMITED_INFORMATION,
-				FALSE,
-				client_process_id));
-			if (process.Get() == nullptr)
-				return false;
-			HANDLE token_value = nullptr;
-			if (!OpenProcessToken(process.Get(), TOKEN_QUERY, &token_value))
-				return false;
-			const OwnedHandle token(token_value);
-			TokenIdentity client_identity{};
-			return QueryTokenIdentity(token.Get(), client_identity) &&
-				TokenIdentitiesMatch(ipc_server_identity, client_identity);
-		}
-
-		bool ValidatePresenceEventSecurity(
-			HANDLE event,
-			const TokenIdentity& expected)
-		{
-			PSID owner = nullptr;
-			PACL dacl = nullptr;
-			PSECURITY_DESCRIPTOR security_descriptor = nullptr;
-			const DWORD status = GetSecurityInfo(
-				event,
-				SE_KERNEL_OBJECT,
-				OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-				&owner,
-				nullptr,
-				&dacl,
-				nullptr,
-				&security_descriptor);
-			if (status != ERROR_SUCCESS || security_descriptor == nullptr)
-			{
-				if (security_descriptor != nullptr)
-					LocalFree(security_descriptor);
-				return false;
-			}
-
-			bool valid = false;
-			ACL_SIZE_INFORMATION acl_information{};
-			if (expected.valid && owner != nullptr && dacl != nullptr &&
-				EqualSid(owner, expected.UserSid()) != FALSE &&
-				GetAclInformation(
-					dacl,
-					&acl_information,
-					sizeof(acl_information),
-					AclSizeInformation) &&
-				acl_information.AceCount == 1)
-			{
-				void* ace_value = nullptr;
-				if (GetAce(dacl, 0, &ace_value) && ace_value != nullptr)
-				{
-					const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(
-						ace_value);
-					const PSID ace_sid = const_cast<DWORD*>(&ace->SidStart);
-					valid = ace->Header.AceType == ACCESS_ALLOWED_ACE_TYPE &&
-						ace->Header.AceFlags == 0 &&
-						ace->Mask == IPC_PRESENCE_CLIENT_ACCESS &&
-						IsValidSid(ace_sid) &&
-						EqualSid(ace_sid, expected.LogonSid()) != FALSE;
-				}
-			}
-			LocalFree(security_descriptor);
-			return valid;
-		}
 
 		bool IsZeroItemId(const NteItemNetId& item)
 		{
@@ -559,7 +267,6 @@ namespace nte::mods
 			ipc_request = {};
 			ipc_response = {};
 			ipc_delivery_ack = {};
-			ipc_server_identity = {};
 			return true;
 		}
 
@@ -720,11 +427,6 @@ namespace nte::mods
 
 		IpcPollResult BeginIpcRead()
 		{
-			if (!ValidateIpcClient())
-			{
-				CloseIpcPipe();
-				return IpcPollResult::Error;
-			}
 			ipc_request = {};
 			if (!ResetIpcOverlapped() ||
 				!ipc_operation.Begin(ipc_generation))
@@ -767,11 +469,7 @@ namespace nte::mods
 				return true;
 
 			LocalIpcSecurityAttributes security;
-			TokenIdentity server_identity{};
-			if (!security.Initialize(
-					IPC_PIPE_CLIENT_ACCESS,
-					WinMediumLabelSid,
-					&server_identity))
+			if (!security.Initialize())
 				return false;
 
 			ipc_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -796,7 +494,6 @@ namespace nte::mods
 				CloseIpcPipe();
 				return false;
 			}
-			ipc_server_identity = server_identity;
 			++ipc_generation;
 			if (ipc_generation == 0)
 				++ipc_generation;
@@ -1092,35 +789,15 @@ namespace nte::mods
 			return true;
 
 		LocalIpcSecurityAttributes security;
-		TokenIdentity server_identity{};
-		if (!security.Initialize(
-				IPC_PRESENCE_CLIENT_ACCESS,
-				WinMediumLabelSid,
-				&server_identity))
+		if (!security.Initialize())
 			return false;
 
 		const auto event_name = NTE_OBFUSCATE_STRING(
 			NTE_MODS_RUNTIME_PRESENCE_NAME);
-		// For a newly created object, CreateEventExW grants the requested server
-		// handle access while the DACL governs later opens. The published DACL can
-		// therefore expose only SYNCHRONIZE. Any pre-existing fixed-name object is
-		// rejected rather than trusted or repaired in place.
-		SetLastError(ERROR_SUCCESS);
-		const HANDLE event = CreateEventExW(
-			security.Get(),
-			event_name.c_str(),
-			CREATE_EVENT_MANUAL_RESET | CREATE_EVENT_INITIAL_SET,
-			IPC_PRESENCE_OWNER_ACCESS);
-		const DWORD create_error = GetLastError();
+		const HANDLE event = CreateEventW(
+			security.Get(), TRUE, TRUE, event_name.c_str());
 		if (event == nullptr)
 			return false;
-		if (create_error == ERROR_ALREADY_EXISTS ||
-			!ValidatePresenceEventSecurity(event, server_identity) ||
-			!SetEvent(event))
-		{
-			CloseHandle(event);
-			return false;
-		}
 		runtime_presence_event = event;
 		return true;
 	}

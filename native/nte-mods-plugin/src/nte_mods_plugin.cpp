@@ -31,15 +31,18 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved)
 {
 	if (reason == DLL_PROCESS_ATTACH)
 	{
-		// Recording one already-supplied image address is the complete OS-loader
-		// attach path. Normal proxy deployments call NteModsPluginInitialize from
-		// a target-process thread after module/startup initialization returns.
+		// Record the already-supplied image address before choosing the deployment
+		// lifecycle. The manual mapper already owns a loader-lock-free remote
+		// thread. A normal proxy load schedules a finite in-process worker whose
+		// entry cannot run until this loader callback has returned.
 		nte::mods::RecordPluginModule(module);
 		// The vendored manual mapper invokes this entry on its dedicated remote
 		// thread after imports, TLS, and unwind registration, outside the OS loader
 		// lock. Its private marker preserves that explicit initialization contract.
 		if (nte::mods::manual_map::IsExplicitAttach(reserved))
 			nte::mods::InitializeRecordedPluginRuntime();
+		else
+			nte::mods::ScheduleRecordedPluginRuntimeInitialization();
 	}
 	return TRUE;
 }

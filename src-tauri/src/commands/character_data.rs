@@ -47,11 +47,6 @@ fn character_data_error(error: CharacterDataServiceError) -> CommandError {
             "Another character data operation is in progress.",
             Vec::new(),
         ),
-        CharacterDataServiceError::Unavailable => CommandError::character_data(
-            "character_data_unavailable",
-            "Character data operations are unavailable.",
-            Vec::new(),
-        ),
         CharacterDataServiceError::Domain(error) => character_data_domain_error(error),
     }
 }
@@ -146,11 +141,7 @@ mod tests {
     #[test]
     fn service_state_errors_are_stable_and_redacted() {
         let busy = character_data_error(CharacterDataServiceError::Busy);
-        let unavailable = character_data_error(CharacterDataServiceError::Unavailable);
-
         assert_eq!(busy.code, "character_data_busy");
-        assert_eq!(unavailable.code, "character_data_unavailable");
         assert!(busy.diagnostic_line.is_none());
-        assert!(unavailable.diagnostic_line.is_none());
     }
 }

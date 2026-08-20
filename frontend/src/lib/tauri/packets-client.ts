@@ -8,8 +8,8 @@ import {
 } from "@/lib/tauri/packets-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -34,7 +34,7 @@ export interface PacketsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: PacketsTransport = tauriAckedStreamTransport;
+const tauriTransport: PacketsTransport = tauriStreamTransport;
 
 export function createPacketsClient(
   transport: PacketsTransport = tauriTransport,
@@ -53,7 +53,7 @@ export function createPacketsClient(
     },
     subscribe: (onEvent, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "packets",
         subscriptionId,

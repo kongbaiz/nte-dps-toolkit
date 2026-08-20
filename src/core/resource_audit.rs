@@ -12,10 +12,8 @@ use crate::engine::parser::{
 use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists};
 
-const ABYSS_MONSTERS_PATH: &str = "res/data/abyss/abyss_monsters.json";
 const REACTIONS_PATH: &str = "res/data/reactions/reactions.json";
 const DAMAGE_DIGIT_IMAGE_DIR: &str = "res/images/font/tiaozi1";
-const MONSTER_IMAGE_DIR: &str = "res/images/monsters";
 const REACTION_TEXT_IMAGE_COUNT: u8 = 8;
 
 const ATTRIBUTE_ICON_PATHS: [(&str, &str); 6] = [
@@ -57,7 +55,6 @@ pub enum ResourceAuditCategory {
     Character,
     Skill,
     GameplayEffect,
-    Abyss,
     Reaction,
     File,
 }
@@ -68,7 +65,6 @@ impl ResourceAuditCategory {
             Self::Character,
             Self::Skill,
             Self::GameplayEffect,
-            Self::Abyss,
             Self::Reaction,
             Self::File,
         ]
@@ -80,7 +76,6 @@ impl ResourceAuditCategory {
             Self::Character => "Character",
             Self::Skill => "Skill",
             Self::GameplayEffect => "GE",
-            Self::Abyss => "Abyss",
             Self::Reaction => "Reaction",
             Self::File => "File",
         }
@@ -103,7 +98,6 @@ pub struct ResourceAuditCounts {
     pub skill_damage: usize,
     pub mapped_effects: usize,
     pub semantic_effects: usize,
-    pub abyss_monsters: usize,
     pub reactions: usize,
 }
 
@@ -132,12 +126,11 @@ impl ResourceAuditSummary {
         let mut text = String::new();
         text.push_str("NTE DPS TOOL 资源覆盖率报告\n");
         text.push_str(&format!(
-            "角色 {}，技能 {}，GE 映射 {}，GE 语义 {}，深渊怪物 {}，反应 {}\n",
+            "角色 {}，技能 {}，GE 映射 {}，GE 语义 {}，反应 {}\n",
             self.counts.characters,
             self.counts.skill_damage,
             self.counts.mapped_effects,
             self.counts.semantic_effects,
-            self.counts.abyss_monsters,
             self.counts.reactions
         ));
         text.push_str(&format!(
@@ -222,7 +215,6 @@ fn audit_with_reader(reader: &dyn ResourceReader) -> ResourceAuditSummary {
     let mut audit = ResourceAuditSummary::default();
     audit_characters(reader, &mut audit);
     audit_skills(reader, &mut audit);
-    audit_abyss_monsters(reader, &mut audit);
     audit_reactions(reader, &mut audit);
     audit.items.sort_by(|left, right| {
         left.severity
@@ -387,57 +379,6 @@ fn audit_skills(reader: &dyn ResourceReader, audit: &mut ResourceAuditSummary) {
                 GAMEPLAY_EFFECT_MAPPING_PATH,
             );
         }
-    }
-}
-
-fn audit_abyss_monsters(reader: &dyn ResourceReader, audit: &mut ResourceAuditSummary) {
-    let Some(document) = read_json_object(reader, ABYSS_MONSTERS_PATH, audit) else {
-        return;
-    };
-    let mut monsters = HashMap::<String, String>::new();
-    for season in document
-        .get("seasons")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        for floor in season
-            .get("floors")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            for monster in floor
-                .get("monsters")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let Some(monster_id) = json_string(monster, "monster_id") else {
-                    continue;
-                };
-                let name = json_string(monster, "name").unwrap_or_default();
-                monsters.entry(monster_id).or_insert(name);
-            }
-        }
-    }
-    audit.counts.abyss_monsters = monsters.len();
-    for (monster_id, name) in monsters {
-        if monster_image_candidates(&monster_id)
-            .iter()
-            .any(|stem| reader.exists(&format!("{MONSTER_IMAGE_DIR}/{stem}.png")))
-        {
-            continue;
-        }
-        push_item(
-            audit,
-            ResourceAuditSeverity::Warning,
-            ResourceAuditCategory::Abyss,
-            &monster_id,
-            display_or_id(&name, &monster_id),
-            "深渊怪物头像缺失",
-            MONSTER_IMAGE_DIR,
-        );
     }
 }
 
@@ -640,87 +581,6 @@ fn push_item(
     });
 }
 
-fn monster_image_candidates(value: &str) -> Vec<String> {
-    let mut candidates = Vec::new();
-    let raw = value
-        .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(value);
-    push_unique(&mut candidates, raw.to_owned());
-    push_trimmed_monster_stems(&mut candidates, raw);
-    let canonical = canonical_monster_image_key(value);
-    push_unique(&mut candidates, canonical.clone());
-    push_unique(&mut candidates, titlecase_boss_key(&canonical));
-    push_trimmed_monster_keys(&mut candidates, &canonical);
-    candidates
-}
-
-fn push_trimmed_monster_stems(candidates: &mut Vec<String>, stem: &str) {
-    let suffixes = ["_Abyss", "_abyss", "_BP", "_bp", "_BF", "_bf", "_B", "_b"];
-    let mut current = stem.to_owned();
-    while let Some(next) = suffixes
-        .iter()
-        .find_map(|suffix| current.strip_suffix(suffix).map(str::to_owned))
-    {
-        push_unique(candidates, next.clone());
-        current = next;
-    }
-}
-
-fn push_trimmed_monster_keys(candidates: &mut Vec<String>, key: &str) {
-    let suffixes = ["_abyss", "_bp", "_bf", "_b"];
-    let mut current = key.to_owned();
-    while let Some(next) = suffixes
-        .iter()
-        .find_map(|suffix| current.strip_suffix(suffix).map(str::to_owned))
-    {
-        push_unique(candidates, next.clone());
-        current = next;
-    }
-    if let Some(without_blue) = current.strip_suffix("_blue") {
-        push_unique(candidates, without_blue.to_owned());
-    }
-    if let Some(without_red) = current.strip_suffix("_red") {
-        push_unique(candidates, without_red.to_owned());
-    }
-    if let Some((base, _)) = current.split_once("_summon") {
-        push_unique(candidates, base.to_owned());
-    }
-    if let Some((base, _)) = current.split_once("_double_") {
-        push_unique(candidates, base.to_owned());
-    }
-}
-
-fn titlecase_boss_key(key: &str) -> String {
-    key.strip_prefix("boss_")
-        .map(|suffix| format!("Boss_{suffix}"))
-        .unwrap_or_else(|| key.to_owned())
-}
-
-fn canonical_monster_image_key(value: &str) -> String {
-    let without_extension = value
-        .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(value)
-        .to_ascii_lowercase();
-    without_extension
-        .split('_')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            part.parse::<u32>()
-                .map(|number| number.to_string())
-                .unwrap_or_else(|_| part.to_owned())
-        })
-        .collect::<Vec<_>>()
-        .join("_")
-}
-
-fn push_unique(values: &mut Vec<String>, value: String) {
-    if !values.iter().any(|existing| existing == &value) {
-        values.push(value);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,11 +610,6 @@ mod tests {
         );
         write(
             &root,
-            ABYSS_MONSTERS_PATH,
-            r#"{"seasons":[{"floors":[{"monsters":[{"monster_id":"mon_01_BP","name":"测试怪"}]}]}]}"#,
-        );
-        write(
-            &root,
             REACTIONS_PATH,
             r#"{"reactions":{"1":{"name_zh":"延滞"}}}"#,
         );
@@ -774,9 +629,6 @@ mod tests {
         assert!(summary.items.iter().any(|item| {
             item.category == ResourceAuditCategory::GameplayEffect
                 && item.message == "技能表存在但 GE index 映射缺失"
-        }));
-        assert!(summary.items.iter().any(|item| {
-            item.category == ResourceAuditCategory::Abyss && item.message == "深渊怪物头像缺失"
         }));
         assert!(summary.items.iter().any(|item| {
             item.category == ResourceAuditCategory::Reaction && item.message == "反应文字素材缺失"

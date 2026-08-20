@@ -109,7 +109,7 @@ describe("main DPS contract", () => {
     delete onboarding.captureDevicesAvailable;
 
     expect(() => parseMainDpsSnapshot({ ...sample, onboarding })).toThrow(
-      /onboarding.captureDevicesAvailable must be boolean/,
+      /onboarding.captureDevicesAvailable must be a boolean/,
     );
   });
 

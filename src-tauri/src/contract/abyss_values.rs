@@ -2,19 +2,22 @@ use std::collections::BTreeMap;
 
 use nte_dps_tool::engine::{
     abyss_data::{
-        AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry, AbyssRecommendedElements, AbyssSeason,
-        AbyssStarThreshold,
+        AbyssFloor, AbyssMonsterEntry, AbyssRecommendedElements, AbyssSeason, AbyssStarThreshold,
     },
     model::{TeamDps, TeamDpsMember},
 };
+use nte_dps_tool::storage::abyss_remote::LoadedAbyssDataset;
 use serde::Serialize;
 
-pub(crate) const ABYSS_VALUES_CONTRACT_VERSION: u32 = 2;
+pub(crate) const ABYSS_VALUES_CONTRACT_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssValuesSnapshot {
     pub contract_version: u32,
+    pub data_version: String,
+    pub data_updated_at: String,
+    pub data_stale: bool,
     pub season_count: usize,
     pub floor_count: usize,
     pub monster_count: u32,
@@ -108,10 +111,16 @@ pub(crate) struct AbyssTeamMemberSnapshot {
 
 impl AbyssValuesSnapshot {
     pub(crate) fn new(
-        dataset: AbyssMonsterDataset,
+        loaded: LoadedAbyssDataset,
         teams: (Option<TeamDps>, Option<TeamDps>),
         current_team_available: [bool; 2],
     ) -> Self {
+        let LoadedAbyssDataset {
+            dataset,
+            data_version,
+            updated_at,
+            stale,
+        } = loaded;
         let season_count = dataset.seasons.len();
         let floor_count = dataset
             .seasons
@@ -126,6 +135,9 @@ impl AbyssValuesSnapshot {
             .sum();
         Self {
             contract_version: ABYSS_VALUES_CONTRACT_VERSION,
+            data_version,
+            data_updated_at: updated_at,
+            data_stale: stale,
             season_count,
             floor_count,
             monster_count,

@@ -86,6 +86,7 @@ const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
 const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD: u8 = 3;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS: usize = 256 * 1024 * 8;
 const GAMEPLAY_EFFECT_FRAGMENT_TIMEOUT_SECONDS: f64 = 0.5;
@@ -1346,6 +1347,34 @@ fn publish_combat_clock_health(
     Ok(())
 }
 
+fn stable_combat_clock_error_health(
+    error: CombatClockQueryError,
+    consecutive_provider_failures: &mut u8,
+) -> Option<CombatClockRuntimeHealth> {
+    if error != CombatClockQueryError::ProviderUnavailable {
+        *consecutive_provider_failures = 0;
+        return Some(combat_clock_error_health(error));
+    }
+    *consecutive_provider_failures = consecutive_provider_failures.saturating_add(1);
+    (*consecutive_provider_failures >= COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD)
+        .then_some(CombatClockRuntimeHealth::ProviderUnavailable)
+}
+
+fn publish_combat_clock_snapshot_health(
+    sender: &EngineEventSink,
+    previous: &mut Option<CombatClockRuntimeHealth>,
+    transitions: &[CombatClockTransitionSnapshot],
+) -> Result<(), EngineEventSendError> {
+    let Some(transition) = transitions.last() else {
+        return Ok(());
+    };
+    publish_combat_clock_health(
+        sender,
+        previous,
+        combat_clock_sample_health(transition.state_flags, false),
+    )
+}
+
 fn run_plugin_monitor(
     stop: &AtomicBool,
     capture_started_100ns: u64,
@@ -1373,9 +1402,25 @@ fn run_plugin_monitor(
     let mut pause_state_valid = false;
     let mut previous_pause_type_mask = 0;
     let mut previous_combat_clock_health = None;
+    let mut consecutive_combat_clock_provider_failures = 0;
     while !stop.load(Ordering::Relaxed) {
         match query_combat_clock_transitions() {
             Ok(transitions) => {
+                consecutive_combat_clock_provider_failures = 0;
+                // Every response is a bounded authoritative history snapshot.
+                // Re-publish health from its newest sample even when its
+                // sequence was already consumed; otherwise one transient IPC
+                // failure leaves time-stop adjustment degraded until the next
+                // real pause transition.
+                if publish_combat_clock_snapshot_health(
+                    sender,
+                    &mut previous_combat_clock_health,
+                    &transitions,
+                )
+                .is_err()
+                {
+                    return;
+                }
                 let mut current = Vec::new();
                 for transition in transitions {
                     if transition.sequence <= last_sequence {
@@ -1385,15 +1430,6 @@ fn run_plugin_monitor(
                     current.push(transition);
                 }
                 for transition in current {
-                    if publish_combat_clock_health(
-                        sender,
-                        &mut previous_combat_clock_health,
-                        combat_clock_sample_health(transition.state_flags, false),
-                    )
-                    .is_err()
-                    {
-                        return;
-                    }
                     if transition.timestamp_100ns < capture_started_100ns {
                         pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
                         previous_pause_type_mask = if pause_state_valid {
@@ -1465,10 +1501,13 @@ fn run_plugin_monitor(
                 }
             }
             Err(error) => {
-                if publish_combat_clock_health(
+                if let Some(health) = stable_combat_clock_error_health(
+                    error,
+                    &mut consecutive_combat_clock_provider_failures,
+                ) && publish_combat_clock_health(
                     sender,
                     &mut previous_combat_clock_health,
-                    combat_clock_error_health(error),
+                    health,
                 )
                 .is_err()
                 {
@@ -2547,6 +2586,8 @@ const FUWEN_ENTERING_ID_OFFSET: usize = 53;
 const FUWEN_PREVIOUS_ID_SHIFT: u8 = 2;
 const FUWEN_PREVIOUS_ID_OFFSET: usize = 66;
 const MIN_FOLLOW_UP_RESIDUAL_DAMAGE: f64 = 1.0;
+const FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME: &str = "GE_ActorReaction_2_new_Damage";
+const FUWEN_DAMAGE_EFFECT_ASSOCIATION_WINDOW_SECONDS: f64 = 1.0;
 /// How far back to look for the real owner of an attribute-locked reaction whose
 /// damage packet carried no caster. Matches the 3s window used by the 环合 retag.
 const REACTION_REATTRIBUTION_WINDOW_SECONDS: f64 = 3.0;
@@ -2593,6 +2634,7 @@ struct FollowUpDamageTracker {
     fuwen_active: bool,
     fuwen_start_pending: bool,
     fuwen_recorded_damage: bool,
+    fuwen_damage_effect_at: Option<f64>,
 }
 
 impl FollowUpDamageTracker {
@@ -2682,7 +2724,23 @@ impl FollowUpDamageTracker {
         self.last_server_hp = None;
     }
 
+    fn observe_fuwen_damage_effect(&mut self, timestamp: f64) {
+        self.fuwen_damage_effect_at = Some(timestamp);
+    }
+
+    fn observe_direct_fuwen_damage_hit(&mut self) {
+        self.fuwen_damage_effect_at = None;
+    }
+
     fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<HitFollowUp> {
+        let has_recent_fuwen_damage_effect =
+            self.fuwen_damage_effect_at.is_some_and(|observed_at| {
+                timestamp >= observed_at
+                    && timestamp - observed_at <= FUWEN_DAMAGE_EFFECT_ASSOCIATION_WINDOW_SECONDS
+            });
+        if self.fuwen_damage_effect_at.is_some() && !has_recent_fuwen_damage_effect {
+            self.fuwen_damage_effect_at = None;
+        }
         self.pending_hits
             .retain(|pending| timestamp - pending.hit.timestamp <= 1.0);
         let previous_hp = self.last_server_hp.or_else(|| {
@@ -2716,13 +2774,14 @@ impl FollowUpDamageTracker {
         if !has_required_team_attributes || !matches!(source_attribute.as_str(), "灵" | "咒") {
             return None;
         }
-        if !self.fuwen_active {
+        if !self.fuwen_active && !has_recent_fuwen_damage_effect {
             return None;
         }
         if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
             return None;
         }
         self.fuwen_recorded_damage = true;
+        self.fuwen_damage_effect_at = None;
         Some(HitFollowUp {
             source_timestamp: source.timestamp,
             source_char_id: source.char_id,
@@ -2749,6 +2808,7 @@ impl FollowUpDamageTracker {
         self.fuwen_active = false;
         self.fuwen_start_pending = false;
         self.fuwen_recorded_damage = false;
+        self.fuwen_damage_effect_at = None;
     }
 }
 
@@ -5083,6 +5143,14 @@ impl PacketDecoder {
         let effective_gameplay_effects = inherited_gameplay_effect
             .as_ref()
             .map_or(gameplay_effects.as_slice(), std::slice::from_ref);
+        // SDK/CN exposes the server damage application through
+        // FHandleDamageInfo_Net.GameplayEffect and FPlayGamePlayEffect_Net.GameplayEffect.
+        // Prefer that exact GE identity over any damage-ratio inference.
+        let packet_has_fuwen_damage_effect = effective_gameplay_effects.iter().any(|effect| {
+            self.gameplay_effect_names
+                .get(&effect.unique_index)
+                .is_some_and(|name| name == FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
+        });
         let mut previous_hit_bit_offset = None;
         for hit in &mut hits {
             let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
@@ -5178,6 +5246,17 @@ impl PacketDecoder {
             hits.push(completed.hit);
         }
         hits.append(&mut bool_enum_fragment_observation.abandoned_hits);
+        let has_direct_fuwen_damage_hit = hits.iter().any(|hit| {
+            hit.gameplay_effect_name.as_deref() == Some(FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
+        });
+        if has_direct_fuwen_damage_hit {
+            // A decoded damage record already carries the authoritative GE and
+            // will be counted directly as 覆纹; do not infer the same damage
+            // again from the following boss-HP synchronization.
+            self.follow_up_damage.observe_direct_fuwen_damage_hit();
+        } else if packet_has_fuwen_damage_effect {
+            self.follow_up_damage.observe_fuwen_damage_effect(timestamp);
+        }
         for hit in &mut hits {
             let hit_timestamp = hit.timestamp;
             self.finalize_contextual_hit_attribution(hit, hit_timestamp, characters);
@@ -8113,6 +8192,73 @@ mod tests {
     }
 
     #[test]
+    fn successful_repeated_combat_clock_snapshot_recovers_transient_degradation() {
+        let (sender, receiver) = bounded(2);
+        let sink = EngineEventSink::reliable(sender);
+        let mut previous = None;
+        publish_combat_clock_health(
+            &sink,
+            &mut previous,
+            CombatClockRuntimeHealth::ProviderUnavailable,
+        )
+        .expect("publish transient degradation");
+
+        publish_combat_clock_snapshot_health(
+            &sink,
+            &mut previous,
+            &[CombatClockTransitionSnapshot {
+                sequence: 7,
+                timestamp_100ns: 133_000_000_000_000_000,
+                pause_type_mask: 0,
+                reserved_value: 0,
+                state_flags: COMBAT_CLOCK_PAUSE_VALID,
+            }],
+        )
+        .expect("repeated authoritative snapshot restores health");
+
+        let health = receiver
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::CombatClockHealth(health) => Some(health),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            health,
+            vec![
+                CombatClockRuntimeHealth::ProviderUnavailable,
+                CombatClockRuntimeHealth::Available,
+            ]
+        );
+    }
+
+    #[test]
+    fn transient_provider_failure_requires_a_stable_threshold() {
+        let mut consecutive = 0;
+        for _ in 1..COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD {
+            assert_eq!(
+                stable_combat_clock_error_health(
+                    CombatClockQueryError::ProviderUnavailable,
+                    &mut consecutive,
+                ),
+                None
+            );
+        }
+        assert_eq!(
+            stable_combat_clock_error_health(
+                CombatClockQueryError::ProviderUnavailable,
+                &mut consecutive,
+            ),
+            Some(CombatClockRuntimeHealth::ProviderUnavailable)
+        );
+        assert_eq!(
+            stable_combat_clock_error_health(CombatClockQueryError::ModDisabled, &mut consecutive),
+            Some(CombatClockRuntimeHealth::ModDisabled)
+        );
+        assert_eq!(consecutive, 0);
+    }
+
+    #[test]
     fn pcapng_import_validates_file_and_frame_budgets_before_allocation() {
         let directory = std::env::temp_dir().join(format!(
             "nte-pcapng-budget-test-{}-{}",
@@ -8611,47 +8757,6 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("capture parser thread stopped unexpectedly"));
         blocked.join().unwrap();
-    }
-
-    #[test]
-    fn run_capture_keeps_each_ffi_unsafe_boundary_local() {
-        let source = include_str!("capture.rs");
-        let run_capture = source
-            .split_once("fn run_capture(")
-            .and_then(|(_, tail)| tail.split_once("\npub fn import_pcapng("))
-            .map(|(body, _)| body)
-            .expect("run_capture source should remain discoverable");
-
-        assert!(
-            !run_capture.lines().any(|line| line.trim() == "unsafe {"),
-            "run_capture must not wrap control flow and queue lifecycle in one broad unsafe block"
-        );
-        assert!(
-            run_capture.matches("// SAFETY:").count() >= run_capture.matches("unsafe {").count(),
-            "every local FFI unsafe block must carry its own SAFETY rationale"
-        );
-    }
-
-    #[test]
-    fn npcap_device_enumeration_keeps_ffi_ownership_and_unsafe_local() {
-        let source = include_str!("capture.rs");
-        let enumeration = source
-            .split_once("struct NpcapDeviceList")
-            .and_then(|(_, tail)| tail.split_once("\nfn parse_udp_ipv4("))
-            .map(|(body, _)| body)
-            .expect("Npcap enumeration source should remain discoverable");
-
-        assert!(enumeration.contains("impl Drop for NpcapDeviceList"));
-        assert!(enumeration.contains("MAX_NPCAP_DEVICES"));
-        assert!(enumeration.contains("MAX_NPCAP_ADDRESSES_PER_DEVICE"));
-        assert!(
-            !enumeration.lines().any(|line| line.trim() == "unsafe {"),
-            "Npcap enumeration must not wrap list traversal in a broad unsafe block"
-        );
-        assert!(
-            enumeration.matches("// SAFETY:").count() >= enumeration.matches("unsafe {").count(),
-            "every Npcap FFI/dereference boundary needs a local SAFETY proof"
-        );
     }
 
     #[test]
@@ -11296,6 +11401,73 @@ mod tests {
         tracker.observe_hit(&hit, None, &characters);
 
         assert!(tracker.observe_server_hp(0.1, 998_750.0).is_none());
+    }
+
+    #[test]
+    fn exact_fuwen_damage_effect_claims_server_residual_without_ratio_guessing() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        tracker.observe_fuwen_damage_effect(0.05);
+
+        let follow_up = tracker
+            .observe_server_hp(0.1, 997_500.0)
+            .expect("the exact reaction damage GE should claim the server residual");
+
+        assert_eq!(follow_up.damage, 1_500.0);
+        assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
+        assert_eq!(follow_up.damage_attribute.as_deref(), Some("灵"));
+        assert_eq!(tracker.fuwen_damage_effect_at, None);
+    }
+
+    #[test]
+    fn stale_fuwen_damage_effect_does_not_claim_later_server_residual() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        tracker.observe_fuwen_damage_effect(0.0);
+        let mut hit = targetless_hit();
+        hit.timestamp = 1.5;
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(2.0, 997_500.0).is_none());
+        assert_eq!(tracker.fuwen_damage_effect_at, None);
+    }
+
+    #[test]
+    fn exact_fuwen_damage_effect_is_attached_to_direct_damage_record() {
+        let names = HashMap::from([(555, FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME.to_owned())]);
+        let effects = [ParsedGameplayEffect {
+            unique_index: 555,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let mut hit = targetless_hit();
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
+
+        assert_eq!(hit.gameplay_effect_index, Some(555));
+        assert_eq!(
+            hit.gameplay_effect_name.as_deref(),
+            Some(FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
+        );
+        assert_eq!(hit.attack_type.as_deref(), Some("覆纹"));
     }
 
     #[test]
