@@ -1,9 +1,48 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace nte::hook
 {
+struct ViewportOriginalBinding
+{
+    const void* viewport;
+    const void* original;
+    std::uint64_t generation;
+    std::uint32_t host_thread_id;
+};
+
+constexpr const void* FindViewportOriginal(
+    const ViewportOriginalBinding* bindings,
+    size_t count,
+    const void* viewport) noexcept
+{
+    if (bindings == nullptr || viewport == nullptr)
+        return nullptr;
+    for (size_t index = count; index != 0; --index)
+    {
+        const ViewportOriginalBinding& binding = bindings[index - 1];
+        if (binding.viewport == viewport)
+            return binding.original;
+    }
+    return nullptr;
+}
+
+constexpr bool CanReuseViewportBinding(
+    const ViewportOriginalBinding& binding,
+    const void* viewport,
+    const void* original,
+    std::uint64_t generation,
+    std::uint32_t host_thread_id) noexcept
+{
+    return viewport != nullptr && original != nullptr &&
+           generation != 0 && host_thread_id != 0 &&
+           binding.viewport == viewport && binding.original == original &&
+           binding.generation == generation &&
+           binding.host_thread_id == host_thread_id;
+}
+
 constexpr bool IsConsistentViewportChain(
     const void* world,
     const void* game_instance,

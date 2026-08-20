@@ -1,7 +1,12 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import { parseUpdateSettings, type UpdateSettings } from "./settings-contract";
 import { TechnicalContractError } from "./technical-contract";
 
 export const UPDATE_PROMPT_CONTRACT_VERSION = 1;
+
+const { integer, record } = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export interface UpdatePromptSnapshot {
   contractVersion: number;
@@ -27,18 +32,4 @@ export function parseUpdatePromptSnapshot(
       record(source.updates, "updatePrompt.updates"),
     ),
   };
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw new TechnicalContractError(`${field} must be an integer`);
-  }
-  return value;
 }

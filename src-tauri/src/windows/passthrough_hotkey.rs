@@ -89,19 +89,51 @@ fn run_dispatcher(
                 dispatch_global_action(&app, &state, action);
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Disconnected) => {
+                handle_dispatcher_disconnect(
+                    stop.load(Ordering::Acquire),
+                    || state.set_passthrough_hotkey_ready(false),
+                    || {
+                        log::error!("HUD passthrough hotkey event channel disconnected");
+                        restore_editing_after_hook_failure(&app, &state);
+                    },
+                );
+                return;
+            }
         }
     }
+}
+
+fn handle_dispatcher_disconnect(
+    stop_requested: bool,
+    mark_unready: impl FnOnce(),
+    restore_editing: impl FnOnce(),
+) {
+    if stop_requested {
+        return;
+    }
+    mark_unready();
+    restore_editing();
 }
 
 fn dispatch_global_action(app: &AppHandle, state: &AppState, action: GlobalHotkeyAction) {
     match action {
         GlobalHotkeyAction::ToggleCapture => {
             let phase = state.capture_phase();
+            let has_data = match state.session_has_data() {
+                Ok(has_data) => has_data,
+                Err(error) => {
+                    log::error!(
+                        "check session data from global hotkey failed: {:?}",
+                        error.code
+                    );
+                    return;
+                }
+            };
             if matches!(
                 phase,
                 LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed
-            ) && state.session_has_data()
+            ) && has_data
             {
                 request_main_confirmation(app, "start");
                 return;
@@ -119,14 +151,27 @@ fn dispatch_global_action(app: &AppHandle, state: &AppState, action: GlobalHotke
             }
         }
         GlobalHotkeyAction::ResetSession => {
+            let replay_running = match state.replay_running() {
+                Ok(replay_running) => replay_running,
+                Err(error) => {
+                    log::error!("check replay from global hotkey failed: {:?}", error.code);
+                    return;
+                }
+            };
             let active = matches!(
                 state.capture_phase(),
                 LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
-            ) || state.replay_running();
+            ) || replay_running;
             if active {
                 request_main_confirmation(app, "reset");
             } else {
-                let undo_token = state.reset_session_with_undo();
+                let undo_token = match state.reset_session_with_undo() {
+                    Ok(undo_token) => undo_token,
+                    Err(error) => {
+                        log::error!("reset session from global hotkey failed: {:?}", error.code);
+                        return;
+                    }
+                };
                 state.publish_island_notice(
                     "success",
                     if undo_token.is_some() {
@@ -192,5 +237,28 @@ fn restore_editing_after_hook_failure(app: &AppHandle, state: &AppState) {
         && let Err(error) = hud::set_passthrough(&window, state, false)
     {
         log::error!("restore HUD editing after hotkey hook failure failed: {error:?}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unexpected_dispatch_disconnect_requires_fail_closed_recovery() {
+        let (sender, receiver) = std::sync::mpsc::channel::<PassthroughHotkeyEvent>();
+        drop(sender);
+        assert!(matches!(
+            receiver.recv_timeout(Duration::ZERO),
+            Err(RecvTimeoutError::Disconnected)
+        ));
+
+        let mut marked_unready = 0;
+        let mut restored = 0;
+        handle_dispatcher_disconnect(false, || marked_unready += 1, || restored += 1);
+        assert_eq!((marked_unready, restored), (1, 1));
+
+        handle_dispatcher_disconnect(true, || marked_unready += 1, || restored += 1);
+        assert_eq!((marked_unready, restored), (1, 1));
     }
 }

@@ -1,7 +1,10 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use image::ImageEncoder;
 use image::codecs::webp::WebPEncoder;
 use serde_json::Value;
@@ -14,6 +17,7 @@ const EXCLUDED_EMBEDDED_RESOURCES: &[&str] = &[
 ];
 
 const CORE_MANIFEST_PATH: &str = "res/data/core_manifest.json";
+const EMBEDDED_ABYSS_DISPLAY_NAMES: &str = "res/data/abyss/monster_stat_names_zh_cn.json";
 
 #[derive(Clone, Copy)]
 enum ResourceMode {
@@ -40,6 +44,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_EXTERNAL_RESOURCES");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DESKTOP");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CLI");
+    println!("cargo:rerun-if-env-changed=NTE_EMBEDDED_RESOURCE_REPORT");
     match mode {
         ResourceMode::Full => println!("cargo:rerun-if-changed={}", resource_dir.display()),
         ResourceMode::Core => println!(
@@ -71,7 +76,17 @@ fn generate_embedded_resources(
 ) {
     if matches!(mode, ResourceMode::External) {
         let generated = concat!(
-            "fn embedded_resource(_path: &str) -> Option<&'static [u8]> {\n",
+            "#[allow(dead_code)]\n",
+            "#[derive(Clone, Copy)]\n",
+            "enum EmbeddedResourceEncoding { Original, ZlibJson }\n",
+            "#[allow(dead_code)]\n",
+            "#[derive(Clone, Copy)]\n",
+            "struct EmbeddedResourceEntry {\n",
+            "    bytes: &'static [u8],\n",
+            "    decoded_len: usize,\n",
+            "    encoding: EmbeddedResourceEncoding,\n",
+            "}\n",
+            "fn embedded_resource(_path: &str) -> Option<EmbeddedResourceEntry> {\n",
             "    None\n",
             "}\n",
         );
@@ -96,7 +111,17 @@ fn generate_embedded_resources(
         .expect("failed to create generated embedded resource directory");
 
     let mut generated = String::from(concat!(
-        "fn embedded_resource(path: &str) -> Option<&'static [u8]> {\n",
+        "#[allow(dead_code)]\n",
+        "#[derive(Clone, Copy)]\n",
+        "enum EmbeddedResourceEncoding { Original, ZlibJson }\n",
+        "#[allow(dead_code)]\n",
+        "#[derive(Clone, Copy)]\n",
+        "struct EmbeddedResourceEntry {\n",
+        "    bytes: &'static [u8],\n",
+        "    decoded_len: usize,\n",
+        "    encoding: EmbeddedResourceEncoding,\n",
+        "}\n",
+        "fn embedded_resource(path: &str) -> Option<EmbeddedResourceEntry> {\n",
         "  let normalized = path.replace('\\\\', \"/\");\n",
         "  match normalized.as_str() {\n",
     ));
@@ -104,7 +129,10 @@ fn generate_embedded_resources(
     let mut original_bytes = 0_u64;
     let mut embedded_bytes = 0_u64;
     let mut skipped = 0_usize;
-    let mut minified_json = 0_usize;
+    let mut compressed_json = 0_usize;
+    let mut json_source_bytes = 0_u64;
+    let mut json_decoded_bytes = 0_u64;
+    let mut json_compressed_bytes = 0_u64;
     let mut webp_images = 0_usize;
 
     for resource in resources {
@@ -122,7 +150,12 @@ fn generate_embedded_resources(
         original_bytes += original.len() as u64;
         let processed = process_embedded_resource(&relative, &original);
         match processed.kind {
-            EmbeddedResourceKind::Json => minified_json += 1,
+            EmbeddedResourceKind::ZlibJson => {
+                compressed_json += 1;
+                json_source_bytes += original.len() as u64;
+                json_decoded_bytes += processed.decoded_len as u64;
+                json_compressed_bytes += processed.bytes.len() as u64;
+            }
             EmbeddedResourceKind::Webp => webp_images += 1,
             EmbeddedResourceKind::Original => {}
         }
@@ -135,8 +168,15 @@ fn generate_embedded_resources(
         fs::write(&generated_path, &processed.bytes)
             .expect("failed to write generated embedded resource");
         let absolute = generated_path.to_string_lossy();
+        let encoding = match processed.kind {
+            EmbeddedResourceKind::ZlibJson => "EmbeddedResourceEncoding::ZlibJson",
+            EmbeddedResourceKind::Original | EmbeddedResourceKind::Webp => {
+                "EmbeddedResourceEncoding::Original"
+            }
+        };
         generated.push_str(&format!(
-            "        {relative:?} => Some(include_bytes!({absolute:?})),\n"
+            "        {relative:?} => Some(EmbeddedResourceEntry {{ bytes: include_bytes!({absolute:?}), decoded_len: {}, encoding: {encoding} }}),\n",
+            processed.decoded_len
         ));
     }
 
@@ -145,8 +185,11 @@ fn generate_embedded_resources(
     fs::write(output_path, generated).expect("failed to generate embedded resource map");
     if env::var_os("NTE_EMBEDDED_RESOURCE_REPORT").is_some() {
         println!(
-            "cargo:warning=embedded resources: skipped {skipped}, minified_json {minified_json}, webp_images {webp_images}, bytes {} -> {}",
+            "cargo:warning=embedded resources: skipped {skipped}, compressed_json {compressed_json}, webp_images {webp_images}, bytes {} -> {}",
             original_bytes, embedded_bytes
+        );
+        println!(
+            "cargo:warning=embedded JSON: source {json_source_bytes}, minified {json_decoded_bytes}, zlib {json_compressed_bytes} bytes"
         );
     }
 }
@@ -224,29 +267,38 @@ fn collect_resources(directory: &Path, resources: &mut Vec<PathBuf>) {
 }
 
 fn should_exclude_embedded_resource(relative: &str) -> bool {
-    EXCLUDED_EMBEDDED_RESOURCES
-        .iter()
-        .any(|excluded| relative.eq_ignore_ascii_case(excluded))
+    (relative.starts_with("res/data/abyss/") && relative != EMBEDDED_ABYSS_DISPLAY_NAMES)
+        || EXCLUDED_EMBEDDED_RESOURCES
+            .iter()
+            .any(|excluded| relative.eq_ignore_ascii_case(excluded))
 }
 
 struct EmbeddedResource {
     bytes: Vec<u8>,
+    decoded_len: usize,
     kind: EmbeddedResourceKind,
 }
 
 enum EmbeddedResourceKind {
     Original,
-    Json,
+    ZlibJson,
     Webp,
 }
 
 fn process_embedded_resource(relative: &str, original: &[u8]) -> EmbeddedResource {
-    if relative.ends_with(".json")
-        && let Ok(document) = serde_json::from_slice::<Value>(original)
-    {
+    if relative.ends_with(".json") {
+        let document = serde_json::from_slice::<Value>(original)
+            .unwrap_or_else(|error| panic!("invalid JSON resource {relative}: {error}"));
+        let minified = serde_json::to_vec(&document).expect("failed to minify JSON resource");
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+        encoder
+            .write_all(&minified)
+            .expect("failed to compress JSON resource");
+        let bytes = encoder.finish().expect("failed to finish JSON compression");
         return EmbeddedResource {
-            bytes: serde_json::to_vec(&document).expect("failed to minify JSON resource"),
-            kind: EmbeddedResourceKind::Json,
+            bytes,
+            decoded_len: minified.len(),
+            kind: EmbeddedResourceKind::ZlibJson,
         };
     }
 
@@ -255,6 +307,7 @@ fn process_embedded_resource(relative: &str, original: &[u8]) -> EmbeddedResourc
         && webp.len() < original.len()
     {
         return EmbeddedResource {
+            decoded_len: webp.len(),
             bytes: webp,
             kind: EmbeddedResourceKind::Webp,
         };
@@ -262,6 +315,7 @@ fn process_embedded_resource(relative: &str, original: &[u8]) -> EmbeddedResourc
 
     EmbeddedResource {
         bytes: original.to_vec(),
+        decoded_len: original.len(),
         kind: EmbeddedResourceKind::Original,
     }
 }

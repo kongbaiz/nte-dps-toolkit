@@ -14,11 +14,20 @@ pub(crate) fn get_skills_snapshot(
     window: WebviewWindow,
 ) -> Result<SkillsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    Ok(snapshot(state.inner(), parse_scope(&scope)?))
+    snapshot(state.inner(), parse_scope(&scope)?)
 }
 
-pub(crate) fn snapshot(state: &AppState, scope: SkillsScope) -> SkillsSnapshot {
-    SkillsSnapshot::from_projection(state.skills_projection(scope), state.next_sequence(), scope)
+pub(crate) fn snapshot(
+    state: &AppState,
+    scope: SkillsScope,
+) -> Result<SkillsSnapshot, CommandError> {
+    Ok(SkillsSnapshot::from_projection(
+        state
+            .skills_projection(scope)
+            .map_err(CommandError::from_core)?,
+        state.next_sequence(),
+        scope,
+    ))
 }
 
 pub(crate) fn parse_scope(value: &str) -> Result<SkillsScope, CommandError> {

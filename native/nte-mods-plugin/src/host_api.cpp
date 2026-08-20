@@ -40,6 +40,7 @@ namespace nte::mods
 		constexpr size_t GAMEPLAY_EFFECT_DURATION_POLICY_OFFSET = 0x0030;
 		constexpr size_t MODIFIED_ATTRIBUTE_SIZE = 0x0040;
 		constexpr size_t MODIFIED_ATTRIBUTE_MAGNITUDE_OFFSET = 0x0038;
+		constexpr size_t MAX_REFLECTED_PARAM_SIZE = 512;
 		constexpr uint32_t MAX_PARTY_MEMBERS = 4;
 		constexpr uint32_t MAX_ACTIVE_EFFECTS_PER_CHARACTER = 64;
 
@@ -274,6 +275,70 @@ namespace nte::mods
 		static_assert(sizeof(BoolFloatReturnParams) == 8);
 		static_assert(static_cast<size_t>(SdkReadApi::CharacterSlomoMilli) + 1 == 12);
 
+		bool ReadObjectSnapshot(const UeObject* object, UeObject& snapshot)
+		{
+			return memory::ReadValue(object, 0, snapshot);
+		}
+
+		bool ResolveProcessEvent(
+			const UeObject& object,
+			ProcessEvent& process_event)
+		{
+			process_event = nullptr;
+			return object.vtable != nullptr &&
+				memory::ReadValue(
+					object.vtable,
+					PROCESS_EVENT_INDEX * sizeof(void*),
+					process_event) &&
+				memory::IsImageExecutableAddress(
+					reinterpret_cast<const void*>(process_event));
+		}
+
+		bool InvokeNativeProcessEvent(
+			const UeObject* object,
+			UeFunction* function,
+			ProcessEvent process_event,
+			void* params)
+		{
+			uint32_t original_flags = 0;
+			if (function == nullptr || process_event == nullptr ||
+				!memory::ReadValue(
+					function,
+					offsetof(UeFunction, function_flags),
+					original_flags))
+				return false;
+
+			const uint32_t native_flags = original_flags | NATIVE_FUNCTION_FLAG;
+			if (!memory::WriteValue(
+					function,
+					offsetof(UeFunction, function_flags),
+					native_flags))
+				return false;
+
+			bool invoked = false;
+			bool restored = false;
+			__try
+			{
+				__try
+				{
+					process_event(object, function, params);
+					invoked = true;
+				}
+				__finally
+				{
+					restored = memory::WriteValue(
+						function,
+						offsetof(UeFunction, function_flags),
+						original_flags);
+				}
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				invoked = false;
+			}
+			return invoked && restored;
+		}
+
 		uint64_t CurrentFileTime100ns()
 		{
 			FILETIME timestamp{};
@@ -284,7 +349,9 @@ namespace nte::mods
 
 		bool IsValidItemId(const NteItemNetId* item)
 		{
-			return item != nullptr && (item->slot != 0 || item->serial != 0);
+			NteItemNetId snapshot{};
+			return memory::ReadValue(item, 0, snapshot) &&
+				(snapshot.slot != 0 || snapshot.serial != 0);
 		}
 
 		bool IsValidGridPosition(int32_t row, int32_t column)
@@ -295,10 +362,11 @@ namespace nte::mods
 
 		NteModsStatus ValidateContext(const PluginContext* context)
 		{
-			if (context == nullptr)
+			PluginContext snapshot{};
+			if (!memory::ReadValue(context, 0, snapshot))
 				return NTE_MODS_STATUS_INVALID_CONTEXT;
 
-			if (context->player_state == nullptr)
+			if (snapshot.player_state == nullptr)
 				return NTE_MODS_STATUS_INVALID_PLAYER_STATE;
 
 			return NTE_MODS_STATUS_DRY_RUN_OK;
@@ -373,7 +441,7 @@ namespace nte::mods
 				return false;
 			const auto append_name = reinterpret_cast<AppendName>(
 				resolved->append_name_address);
-			if (!memory::IsExecutableAddress(reinterpret_cast<const void*>(append_name)))
+			if (!memory::IsImageExecutableAddress(reinterpret_cast<const void*>(append_name)))
 				return false;
 
 			append_name(&name, output);
@@ -464,24 +532,21 @@ namespace nte::mods
 
 		uint32_t CharacterIdFromItem(UeObject* character)
 		{
-			if (!memory::IsReadableRange(character, sizeof(UeObject)))
+			UeObject character_snapshot{};
+			if (!ReadObjectSnapshot(character, character_snapshot))
 				return 0;
 			UeFunction* function = FindFunction(
-				character->object_class,
+				character_snapshot.object_class,
 				NTE_OBFUSCATE_STRING("HTPlayerCharacter").c_str(),
 				NTE_OBFUSCATE_STRING("GetCharacterItem").c_str());
-			if (function == nullptr || !memory::IsReadableRange(
-					character->vtable, (PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
-				return 0;
-			const auto process_event = reinterpret_cast<ProcessEvent>(
-				character->vtable[PROCESS_EVENT_INDEX]);
-			if (!memory::IsExecutableAddress(reinterpret_cast<const void*>(process_event)))
+			ProcessEvent process_event = nullptr;
+			if (function == nullptr ||
+				!ResolveProcessEvent(character_snapshot, process_event))
 				return 0;
 			PointerReturnParams params{};
-			const uint32_t original_flags = function->function_flags;
-			function->function_flags |= NATIVE_FUNCTION_FLAG;
-			process_event(character, function, &params);
-			function->function_flags = original_flags;
+			if (!InvokeNativeProcessEvent(
+					character, function, process_event, &params))
+				return 0;
 			auto* item = static_cast<UeObject*>(params.return_value);
 			UeName item_id{};
 			if (!memory::ReadValue(item, 0x28, item_id))
@@ -600,30 +665,37 @@ namespace nte::mods
 			const char* function_name)
 		{
 			for (auto* current = static_cast<UeStruct*>(object_class);
-				current != nullptr;
-				current = current->super)
+				current != nullptr;)
 			{
-				if (!memory::IsReadableRange(current, sizeof(UeStruct)))
+				UeStruct current_snapshot{};
+				if (!memory::ReadValue(current, 0, current_snapshot))
 					return nullptr;
-				if (!NameEquals(current->name, owner_class_name))
-					continue;
-
-				for (UeField* field = current->children;
-					field != nullptr;
-					field = field->next)
+				if (!NameEquals(current_snapshot.name, owner_class_name))
 				{
-					if (!memory::IsReadableRange(field, sizeof(UeField)))
+					current = current_snapshot.super;
+					continue;
+				}
+
+				for (UeField* field = current_snapshot.children;
+					field != nullptr;)
+				{
+					UeField field_snapshot{};
+					if (!memory::ReadValue(field, 0, field_snapshot))
 						return nullptr;
 
 					uint64_t cast_flags = 0;
 					if (!memory::ReadValue(
-						field->object_class,
+						field_snapshot.object_class,
 						offsetof(UeClass, cast_flags),
 						cast_flags) ||
 						(cast_flags & FUNCTION_CAST_FLAG) == 0)
+					{
+						field = field_snapshot.next;
 						continue;
-					if (NameEquals(field->name, function_name))
+					}
+					if (NameEquals(field_snapshot.name, function_name))
 						return reinterpret_cast<UeFunction*>(field);
+					field = field_snapshot.next;
 				}
 				return nullptr;
 			}
@@ -654,10 +726,17 @@ namespace nte::mods
 				return false;
 
 			IsGamePausedByTypeParams params{ paused_type, 0 };
-			process_event(
-				player_controller,
-				game_pause_function_cache.is_game_paused_by_type,
-				&params);
+			__try
+			{
+				process_event(
+					player_controller,
+					game_pause_function_cache.is_game_paused_by_type,
+					&params);
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
 			paused = params.return_value != 0;
 			return true;
 		}
@@ -666,21 +745,17 @@ namespace nte::mods
 			UeObject* player_controller,
 			uint32_t& pause_type_mask)
 		{
-			if (!memory::IsReadableRange(player_controller, sizeof(UeObject)) ||
-				player_controller->object_class == nullptr ||
-				!memory::IsReadableRange(
-					player_controller->vtable,
-					(PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
+			UeObject controller_snapshot{};
+			if (!ReadObjectSnapshot(player_controller, controller_snapshot) ||
+				controller_snapshot.object_class == nullptr)
 				return false;
 
-			ResolveGamePauseFunctions(player_controller->object_class);
+			ResolveGamePauseFunctions(controller_snapshot.object_class);
 			if (game_pause_function_cache.is_game_paused_by_type == nullptr)
 				return false;
 
-			const auto process_event = reinterpret_cast<ProcessEvent>(
-				player_controller->vtable[PROCESS_EVENT_INDEX]);
-			if (!memory::IsExecutableAddress(
-				reinterpret_cast<const void*>(process_event)))
+			ProcessEvent process_event = nullptr;
+			if (!ResolveProcessEvent(controller_snapshot, process_event))
 				return false;
 
 			pause_type_mask = 0;
@@ -825,31 +900,25 @@ namespace nte::mods
 			SdkReadApi api,
 			void* params)
 		{
-			if (!memory::IsReadableRange(object, sizeof(UeObject)) ||
-				object->object_class == nullptr ||
-				!memory::IsReadableRange(
-					object->vtable,
-					(PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
+			UeObject object_snapshot{};
+			if (!ReadObjectSnapshot(object, object_snapshot) ||
+				object_snapshot.object_class == nullptr)
 				return false;
 
-			UeFunction* function = ResolveSdkFunction(object->object_class, api);
+			UeFunction* function = ResolveSdkFunction(
+				object_snapshot.object_class, api);
 			if (function == nullptr ||
 				!memory::IsReadableRange(
 					function,
 					offsetof(UeFunction, function_flags) + sizeof(uint32_t)))
 				return false;
 
-			const auto process_event = reinterpret_cast<ProcessEvent>(
-				object->vtable[PROCESS_EVENT_INDEX]);
-			if (!memory::IsExecutableAddress(
-				reinterpret_cast<const void*>(process_event)))
+			ProcessEvent process_event = nullptr;
+			if (!ResolveProcessEvent(object_snapshot, process_event))
 				return false;
 
-			const uint32_t original_flags = function->function_flags;
-			function->function_flags |= NATIVE_FUNCTION_FLAG;
-			process_event(object, function, params);
-			function->function_flags = original_flags;
-			return true;
+			return InvokeNativeProcessEvent(
+				object, function, process_event, params);
 		}
 
 		bool FloatToMilli(float value, uint64_t& output)
@@ -939,35 +1008,44 @@ namespace nte::mods
 			size_t function_count = 0;
 
 			for (auto* current = static_cast<UeStruct*>(object_class);
-				current != nullptr;
-				current = current->super)
+				current != nullptr;)
 			{
-				if (!memory::IsReadableRange(current, sizeof(UeStruct)))
+				UeStruct current_snapshot{};
+				if (!memory::ReadValue(current, 0, current_snapshot))
 					return false;
 				if (!NameEquals(
-					current->name,
+					current_snapshot.name,
 					NTE_OBFUSCATE_STRING("HTPlayerState").c_str()))
-					continue;
-
-				for (UeField* field = current->children;
-					field != nullptr;
-					field = field->next)
 				{
-					if (!memory::IsReadableRange(field, sizeof(UeField)))
+					current = current_snapshot.super;
+					continue;
+				}
+
+				for (UeField* field = current_snapshot.children;
+					field != nullptr;)
+				{
+					UeField field_snapshot{};
+					if (!memory::ReadValue(field, 0, field_snapshot))
 						return false;
 
 					uint64_t cast_flags = 0;
 					if (!memory::ReadValue(
-						field->object_class,
+						field_snapshot.object_class,
 						offsetof(UeClass, cast_flags),
 						cast_flags) ||
 						(cast_flags & FUNCTION_CAST_FLAG) == 0)
+					{
+						field = field_snapshot.next;
 						continue;
+					}
 
 					const EquipmentFunction function =
-						IdentifyEquipmentFunction(field->name);
+						IdentifyEquipmentFunction(field_snapshot.name);
 					if (function == EquipmentFunction::Count)
+					{
+						field = field_snapshot.next;
 						continue;
+					}
 
 					auto& cached = candidate.functions[
 						static_cast<size_t>(function)];
@@ -977,6 +1055,7 @@ namespace nte::mods
 						if (++function_count == candidate.functions.size())
 							break;
 					}
+					field = field_snapshot.next;
 				}
 				break;
 			}
@@ -1010,32 +1089,27 @@ namespace nte::mods
 			void* params)
 		{
 			auto* player_state = static_cast<UeObject*>(context.player_state);
-			if (!memory::IsReadableRange(player_state, sizeof(UeObject)) ||
-				player_state->object_class == nullptr ||
-				!memory::IsReadableRange(
-					player_state->vtable,
-					(PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
+			UeObject player_state_snapshot{};
+			if (!ReadObjectSnapshot(player_state, player_state_snapshot) ||
+				player_state_snapshot.object_class == nullptr)
 				return NTE_MODS_STATUS_INVALID_PLAYER_STATE;
 
 			UeFunction* function = ResolveFunction(
-				player_state->object_class, function_id);
+				player_state_snapshot.object_class, function_id);
 			if (function == nullptr)
 				return NTE_MODS_STATUS_FUNCTION_NOT_FOUND;
 			if (!memory::IsReadableRange(
 				function, offsetof(UeFunction, function_flags) + sizeof(uint32_t)))
 				return NTE_MODS_STATUS_FUNCTION_NOT_FOUND;
 
-			const auto process_event = reinterpret_cast<ProcessEvent>(
-				player_state->vtable[PROCESS_EVENT_INDEX]);
-			if (!memory::IsExecutableAddress(reinterpret_cast<const void*>(process_event)))
+			ProcessEvent process_event = nullptr;
+			if (!ResolveProcessEvent(player_state_snapshot, process_event))
 				return NTE_MODS_STATUS_INVALID_PLAYER_STATE;
 
-			const auto original_flags = function->function_flags;
-			function->function_flags |= NATIVE_FUNCTION_FLAG;
-			process_event(player_state, function, params);
-			function->function_flags = original_flags;
-
-			return NTE_MODS_STATUS_RPC_DISPATCHED;
+			return InvokeNativeProcessEvent(
+					player_state, function, process_event, params)
+				? NTE_MODS_STATUS_RPC_DISPATCHED
+				: NTE_MODS_STATUS_INVALID_PLAYER_STATE;
 		}
 	} // namespace
 
@@ -1049,11 +1123,17 @@ namespace nte::mods
 		if (ValidateContext(context) != NTE_MODS_STATUS_DRY_RUN_OK)
 			return false;
 
-		auto* player_state = static_cast<UeObject*>(context->player_state);
-		return memory::IsReadableRange(player_state, sizeof(UeObject)) &&
-			player_state->object_class != nullptr &&
+		PluginContext context_snapshot{};
+		UeObject player_state_snapshot{};
+		if (!memory::ReadValue(context, 0, context_snapshot) ||
+			!ReadObjectSnapshot(
+				static_cast<UeObject*>(context_snapshot.player_state),
+				player_state_snapshot))
+			return false;
+		return player_state_snapshot.object_class != nullptr &&
 			function_cache.initialized &&
-			function_cache.player_state_class == player_state->object_class;
+			function_cache.player_state_class ==
+				player_state_snapshot.object_class;
 	}
 
 	void PrepareEquipmentRpcCache(const PluginContext* context)
@@ -1061,14 +1141,19 @@ namespace nte::mods
 		if (ValidateContext(context) != NTE_MODS_STATUS_DRY_RUN_OK)
 			return;
 
-		auto* player_state = static_cast<UeObject*>(context->player_state);
-		if (!memory::IsReadableRange(player_state, sizeof(UeObject)) ||
-			player_state->object_class == nullptr)
+		PluginContext context_snapshot{};
+		UeObject player_state_snapshot{};
+		if (!memory::ReadValue(context, 0, context_snapshot) ||
+			!ReadObjectSnapshot(
+				static_cast<UeObject*>(context_snapshot.player_state),
+				player_state_snapshot) ||
+			player_state_snapshot.object_class == nullptr)
 			return;
 
 		if (!function_cache.initialized ||
-			function_cache.player_state_class != player_state->object_class)
-			BuildFunctionCache(player_state->object_class);
+			function_cache.player_state_class !=
+				player_state_snapshot.object_class)
+			BuildFunctionCache(player_state_snapshot.object_class);
 	}
 
 	uint64_t SampleCombatClockState(void* player_controller)
@@ -1191,13 +1276,14 @@ namespace nte::mods
 	{
 		result = nullptr;
 		auto* ue_object = static_cast<UeObject*>(object);
-		if (!memory::IsReadableRange(ue_object, sizeof(UeObject)) ||
-			ue_object->object_class == nullptr ||
+		UeObject object_snapshot{};
+		if (!ReadObjectSnapshot(ue_object, object_snapshot) ||
+			object_snapshot.object_class == nullptr ||
 			owner_class_name == nullptr ||
 			function_name == nullptr)
 			return false;
 		result = FindFunction(
-			ue_object->object_class,
+			object_snapshot.object_class,
 			owner_class_name,
 			function_name);
 		return result != nullptr;
@@ -1213,9 +1299,14 @@ namespace nte::mods
 				ue_function,
 				FUNCTION_PARAM_SIZE_OFFSET + sizeof(uint16_t)))
 			return false;
+		UeClass* object_class = nullptr;
 		uint64_t cast_flags = 0;
 		return memory::ReadValue(
-				ue_function->object_class,
+				ue_function,
+				offsetof(UeObject, object_class),
+				object_class) &&
+			memory::ReadValue(
+				object_class,
 				offsetof(UeClass, cast_flags),
 				cast_flags) &&
 			(cast_flags & FUNCTION_CAST_FLAG) != 0 &&
@@ -1233,13 +1324,17 @@ namespace nte::mods
 	{
 		auto* ue_object = static_cast<UeObject*>(object);
 		auto* ue_function = static_cast<UeFunction*>(function);
-		if (!memory::IsReadableRange(ue_object, sizeof(UeObject)) ||
-			ue_object->object_class == nullptr ||
-			!memory::IsReadableRange(
-				ue_object->vtable,
-				(PROCESS_EVENT_INDEX + 1) * sizeof(void*)) ||
+		UeObject object_snapshot{};
+		std::array<uint8_t, MAX_REFLECTED_PARAM_SIZE> params_snapshot{};
+		if (!ReadObjectSnapshot(ue_object, object_snapshot) ||
+			object_snapshot.object_class == nullptr ||
+			params_size > params_snapshot.size() ||
 			(params_size != 0 &&
-				!memory::IsReadableRange(params, params_size)))
+				!memory::ReadBytes(
+					params,
+					0,
+					params_snapshot.data(),
+					params_size)))
 			return false;
 
 		uint16_t reflected_params_size = 0;
@@ -1249,20 +1344,18 @@ namespace nte::mods
 			reflected_params_size != params_size)
 			return false;
 
-		const auto process_event = reinterpret_cast<ProcessEvent>(
-			ue_object->vtable[PROCESS_EVENT_INDEX]);
-		if (!memory::IsExecutableAddress(
-			reinterpret_cast<const void*>(process_event)))
+		ProcessEvent process_event = nullptr;
+		if (!ResolveProcessEvent(object_snapshot, process_event))
 			return false;
 
-		const uint32_t original_flags = ue_function->function_flags;
-		ue_function->function_flags |= NATIVE_FUNCTION_FLAG;
-		process_event(
-			ue_object,
-			ue_function,
-			params_size == 0 ? nullptr : params);
-		ue_function->function_flags = original_flags;
-		return true;
+		if (!InvokeNativeProcessEvent(
+				ue_object,
+				ue_function,
+				process_event,
+				params_size == 0 ? nullptr : params_snapshot.data()))
+			return false;
+		return params_size == 0 || memory::WriteBytes(
+			params, 0, params_snapshot.data(), params_size);
 	}
 
 	uint32_t CopyCombatClockTransitions(
@@ -1330,11 +1423,12 @@ namespace nte::mods
 					const auto* effect = static_cast<const uint8_t*>(effects.data) +
 						static_cast<size_t>(effect_index) * ACTIVE_EFFECT_SIZE;
 					UeObject* definition = nullptr;
+					UeObject definition_snapshot{};
 					if (!memory::ReadValue(effect, ACTIVE_EFFECT_DEF_OFFSET, definition) ||
-						!memory::IsReadableRange(definition, sizeof(UeObject)))
+						!ReadObjectSnapshot(definition, definition_snapshot))
 						continue;
 					uint64_t name_hash = 0;
-					if (!HashEffectName(definition->name, name_hash))
+					if (!HashEffectName(definition_snapshot.name, name_hash))
 						continue;
 					float duration = 0.0f;
 					float started = 0.0f;
@@ -1351,7 +1445,7 @@ namespace nte::mods
 					std::memcpy(&started_bits, &started, sizeof(started_bits));
 					uint64_t effect_key = name_hash ^
 						(static_cast<uint64_t>(started_bits) << 32) ^
-						static_cast<uint32_t>(definition->index);
+						static_cast<uint32_t>(definition_snapshot.index);
 					uint32_t duration_ms = 0;
 					if (IsFiniteFloat(duration) && duration > 0.0f)
 					{
@@ -1369,7 +1463,8 @@ namespace nte::mods
 					output.duration_ms = duration_ms;
 					output.stack_count = static_cast<uint16_t>(
 						stack_count <= 0 ? 1 : (stack_count > UINT16_MAX ? UINT16_MAX : stack_count));
-					output.kind = ClassifyEffect(definition->name, effect);
+					output.kind = ClassifyEffect(
+						definition_snapshot.name, effect);
 					output.flags = (inhibited != 0 ? NTE_CHARACTER_EFFECT_INHIBITED : 0) |
 						(duration_policy == 1 || duration < 0.0f
 							? NTE_CHARACTER_EFFECT_INFINITE

@@ -1,14 +1,12 @@
 use std::fs;
 
-use nte_dps_tool::{
-    core::live_capture::LiveCapturePhase, platform::file_dialog::open_directory,
-    storage::paths::capture_log_dir,
-};
+use nte_dps_tool::{core::live_capture::LiveCapturePhase, storage::paths::capture_log_dir};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::{
     commands::desktop_window,
     contract::CommandError,
+    file_dialog,
     state::{AppState, DesktopWindowKind},
     windows::{console, hud, main_dps},
 };
@@ -26,7 +24,7 @@ enum ConsoleControlAction {
 }
 
 #[tauri::command]
-pub(crate) fn execute_console_control(
+pub(crate) async fn execute_console_control(
     action: String,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -36,21 +34,28 @@ pub(crate) fn execute_console_control(
     match parse_action(&action)? {
         ConsoleControlAction::ToggleCapture => toggle_capture(&state),
         ConsoleControlAction::ResetSession => {
+            state
+                .ensure_session_undo_runtime_available()
+                .map_err(super::main_dps::session_undo_error)?;
             if matches!(
                 state.capture_phase(),
                 LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
-            ) || state.replay_running()
+            ) || state.replay_running().map_err(CommandError::from_core)?
             {
                 return Err(CommandError::main_dps(
                     "confirmation_required",
                     "Confirm resetting the active capture from the main window",
                 ));
             }
-            let undo_token = state.reset_session_with_undo();
-            state.set_main_processing_paused(false);
+            let undo_token = state
+                .reset_session_with_undo_action()
+                .map_err(super::main_dps::session_undo_error)?;
+            state
+                .set_main_processing_paused(false)
+                .map_err(super::main_dps::presentation_error)?;
             state
                 .set_main_selected_round_id(None)
-                .expect("live main DPS round is always valid");
+                .map_err(super::main_dps::presentation_error)?;
             state.publish_island_notice(
                 "success",
                 if undo_token.is_some() {
@@ -67,12 +72,14 @@ pub(crate) fn execute_console_control(
         ConsoleControlAction::ToggleHud => toggle_hud(&app, &state),
         ConsoleControlAction::TogglePassthrough => toggle_passthrough(&app, &state),
         ConsoleControlAction::ToggleProcessing => {
-            state.set_main_processing_paused(!state.main_processing_paused());
+            state
+                .set_main_processing_paused(!state.main_processing_paused())
+                .map_err(super::main_dps::presentation_error)?;
             Ok(())
         }
         ConsoleControlAction::TogglePin => toggle_pin(&state, &window),
         ConsoleControlAction::OpenTeamDetails => super::main_dps::open_team_details(&app, &state),
-        ConsoleControlAction::OpenCaptureLogs => open_capture_logs(),
+        ConsoleControlAction::OpenCaptureLogs => open_capture_logs().await,
     }
 }
 
@@ -149,13 +156,21 @@ fn toggle_pin(state: &AppState, console_window: &WebviewWindow) -> Result<(), Co
     )
 }
 
-fn open_capture_logs() -> Result<(), CommandError> {
+async fn open_capture_logs() -> Result<(), CommandError> {
     let path = capture_log_dir();
-    fs::create_dir_all(&path).map_err(|error| {
-        log::error!("create capture log directory failed: {error}");
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        fs::create_dir_all(&path).map_err(|error| {
+            log::error!("create capture log directory failed: {error}");
+            CommandError::window_operation_failed()
+        })?;
+        Ok::<_, CommandError>(path)
+    })
+    .await
+    .map_err(|error| {
+        log::error!("create capture log directory task failed: {error}");
         CommandError::window_operation_failed()
-    })?;
-    open_directory(&path).map_err(|error| {
+    })??;
+    file_dialog::open_directory(path).await.map_err(|error| {
         log::error!("open capture log directory failed: {error}");
         CommandError::window_operation_failed()
     })

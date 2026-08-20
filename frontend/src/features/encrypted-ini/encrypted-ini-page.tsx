@@ -21,8 +21,18 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogBackdrop,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogPortal,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
 import type { EncryptedIniKey } from "@/lib/tauri/encrypted-ini-contract";
@@ -388,26 +398,31 @@ function EncryptedIniConfirmation({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  return createPortal(
-    <div className="fixed inset-0 z-[110] flex items-start justify-center bg-black/15 px-4 pt-4 backdrop-blur-[1px]">
-      <Alert className="w-full max-w-lg bg-background shadow-xl">
-        <TriangleAlert aria-hidden="true" />
-        <AlertTitle>
-          {t(action === "reload" ? "Confirm Reload" : "Confirm Clear")}
-        </AlertTitle>
-        <AlertDescription>
-          {t("Unsaved changes will be discarded.")}
-        </AlertDescription>
-        <AlertAction className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={onCancel}>
-            {t("Cancel")}
-          </Button>
-          <Button size="sm" onClick={onConfirm}>
-            {t("Confirm")}
-          </Button>
-        </AlertAction>
-      </Alert>
-    </div>,
-    document.body,
+  return (
+    <AlertDialog
+      open
+      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
+    >
+      <AlertDialogPortal>
+        <AlertDialogBackdrop className="z-[110] bg-black/15 backdrop-blur-[1px]" />
+        <AlertDialogPopup className="top-4 left-1/2 z-[111] grid w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 grid-cols-[0_1fr] gap-y-0.5 rounded-lg border bg-background px-4 py-3 text-sm shadow-xl has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-[>svg]:gap-x-3">
+          <TriangleAlert aria-hidden="true" />
+          <AlertDialogTitle className="col-start-2 text-sm">
+            {t(action === "reload" ? "Confirm Reload" : "Confirm Clear")}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="col-start-2">
+            {t("Unsaved changes will be discarded.")}
+          </AlertDialogDescription>
+          <div className="col-start-2 mt-2 flex justify-end gap-2">
+            <AlertDialogClose render={<Button size="sm" variant="outline" />}>
+              {t("Cancel")}
+            </AlertDialogClose>
+            <Button size="sm" onClick={onConfirm}>
+              {t("Confirm")}
+            </Button>
+          </div>
+        </AlertDialogPopup>
+      </AlertDialogPortal>
+    </AlertDialog>
   );
 }

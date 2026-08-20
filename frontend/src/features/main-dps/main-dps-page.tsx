@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
@@ -20,10 +12,49 @@ import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { ActionNotice } from "@/components/nte/action-notice";
 import { AnimatedNumber } from "@/components/nte/animated-number";
 import { useWindowMotion } from "@/components/nte/window-motion-context";
+import {
+  AlertDialog,
+  AlertDialogBackdrop,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogPortal,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBackdrop,
+  DialogPopup,
+  DialogPortal,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuPortal,
+  ContextMenuPositioner,
+  ContextMenuTrigger,
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuPortal,
+  MenuPositioner,
+  MenuTrigger,
+} from "@/components/ui/menu";
+import {
+  Popover,
+  PopoverClose,
+  PopoverPopup,
+  PopoverPortal,
+  PopoverPositioner,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { characterAttributeUrl } from "@/lib/character-attribute";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
-import { useDismissibleLayer } from "@/hooks/use-dismissible-layer";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import { t, tf, useTranslationRevision } from "@/lib/i18n";
 import {
@@ -43,7 +74,6 @@ import { subscribeMainDpsConfirmationRequested } from "@/lib/tauri/window-events
 import { cn } from "@/lib/utils";
 
 import {
-  appearancePanelPosition,
   characterAccent,
   damagePercent,
   formatDuration,
@@ -79,12 +109,6 @@ export function MainDpsPage() {
   } = useMainDps();
   const { transitionToWindow } = useWindowMotion();
   const [appearanceOpen, setAppearanceOpen] = useState(false);
-  const [appearancePosition, setAppearancePosition] = useState<{
-    left: number;
-    top: number;
-  } | null>(null);
-  const appearanceButtonRef = useRef<HTMLButtonElement>(null);
-  const appearancePanelRef = useRef<HTMLDivElement>(null);
   const [replayOpen, setReplayOpen] = useState(false);
   const [confirmation, setConfirmation] = useState<MainDpsConfirmation | null>(
     null,
@@ -106,8 +130,6 @@ export function MainDpsPage() {
   const [abyssCollapsed, setAbyssCollapsed] = useState(false);
   const [hidden, setHidden] = useState<Set<number>>(() => new Set());
   const [context, setContext] = useState<{
-    x: number;
-    y: number;
     row: MainDpsCharacter;
   } | null>(null);
   const selectedIndex =
@@ -202,15 +224,14 @@ export function MainDpsPage() {
     }
   };
 
-  useDismissibleLayer({
-    open: appearanceOpen,
-    layerRef: appearancePanelRef,
-    triggerRef: appearanceButtonRef,
-    onDismiss: () => {
-      setAppearanceOpen(false);
-      setAppearancePosition(null);
-    },
-  });
+  useEffect(() => {
+    if (!appearanceOpen) return;
+    const closeAppearanceOnWindowBlur = () => setAppearanceOpen(false);
+    window.addEventListener("blur", closeAppearanceOnWindowBlur);
+    return () => {
+      window.removeEventListener("blur", closeAppearanceOnWindowBlur);
+    };
+  }, [appearanceOpen]);
 
   useEffect(() => {
     if (snapshot === null) return;
@@ -233,37 +254,12 @@ export function MainDpsPage() {
 
   useEffect(() => {
     if (context === null) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setContext(null);
-    };
-    const close = () => setContext(null);
-    window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", close);
+    const closeContextMenuOnWindowBlur = () => setContext(null);
+    window.addEventListener("blur", closeContextMenuOnWindowBlur);
     return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", close);
+      window.removeEventListener("blur", closeContextMenuOnWindowBlur);
     };
   }, [context]);
-
-  useLayoutEffect(() => {
-    if (!appearanceOpen) return;
-
-    const updatePosition = () => {
-      const anchor = appearanceButtonRef.current?.getBoundingClientRect();
-      if (anchor === undefined) return;
-      setAppearancePosition(
-        appearancePanelPosition(anchor, {
-          width: window.innerWidth,
-          height: window.innerHeight,
-        }),
-      );
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-    };
-  }, [appearanceOpen]);
 
   useEffect(() => {
     return cleanupAsyncRegistration(
@@ -399,10 +395,7 @@ export function MainDpsPage() {
   };
 
   return (
-    <div
-      className="main-dps-root motion-content-ready"
-      onClick={() => context !== null && setContext(null)}
-    >
+    <div className="main-dps-root motion-content-ready">
       <div className="motion-notice-stack">
         {error !== null && (
           <ActionNotice
@@ -442,47 +435,50 @@ export function MainDpsPage() {
           )}
       </div>
       {confirmation !== null && (
-        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/45 p-4">
-          <section
-            aria-modal="true"
-            role="dialog"
-            aria-labelledby="main-dps-confirm-title"
-            className="w-full max-w-md rounded-xl border bg-background p-5 shadow-2xl"
-          >
-            <h2 id="main-dps-confirm-title" className="text-base font-semibold">
-              {t(
-                confirmation.kind === "start"
-                  ? "Confirm Start"
-                  : confirmation.kind === "reset"
-                    ? "Confirm Reset"
-                    : "Confirm Import",
-              )}
-            </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t(
-                confirmation.kind === "start"
-                  ? "Starting live capture clears the current stats and re-detects the game connection."
-                  : confirmation.kind === "reset"
-                    ? "This stops the current task and clears this session's stats, abyss state and detail caches."
-                    : "Importing a replay stops the current task and clears existing stats.",
-              )}
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setConfirmation(null)}>
-                {t("Cancel")}
-              </Button>
-              <Button onClick={confirmAction}>
+        <AlertDialog
+          open
+          onOpenChange={(open) =>
+            dismissLayerWhenClosed(open, () => setConfirmation(null))
+          }
+        >
+          <AlertDialogPortal>
+            <AlertDialogBackdrop className="z-[70] bg-black/45" />
+            <AlertDialogPopup className="top-1/2 left-1/2 z-[71] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-background p-5 shadow-2xl">
+              <AlertDialogTitle className="text-base">
                 {t(
                   confirmation.kind === "start"
-                    ? "Start"
+                    ? "Confirm Start"
                     : confirmation.kind === "reset"
-                      ? "Reset"
-                      : "Import",
+                      ? "Confirm Reset"
+                      : "Confirm Import",
                 )}
-              </Button>
-            </div>
-          </section>
-        </div>
+              </AlertDialogTitle>
+              <AlertDialogDescription className="mt-2">
+                {t(
+                  confirmation.kind === "start"
+                    ? "Starting live capture clears the current stats and re-detects the game connection."
+                    : confirmation.kind === "reset"
+                      ? "This stops the current task and clears this session's stats, abyss state and detail caches."
+                      : "Importing a replay stops the current task and clears existing stats.",
+                )}
+              </AlertDialogDescription>
+              <div className="mt-5 flex justify-end gap-2">
+                <AlertDialogClose render={<Button variant="outline" />}>
+                  {t("Cancel")}
+                </AlertDialogClose>
+                <Button onClick={confirmAction}>
+                  {t(
+                    confirmation.kind === "start"
+                      ? "Start"
+                      : confirmation.kind === "reset"
+                        ? "Reset"
+                        : "Import",
+                  )}
+                </Button>
+              </div>
+            </AlertDialogPopup>
+          </AlertDialogPortal>
+        </AlertDialog>
       )}
       {updatePromptOpen && updatePrompt !== null ? (
         <UpdatePromptDialog
@@ -547,6 +543,19 @@ export function MainDpsPage() {
           />
         }
       />
+
+      {snapshot.selectedRoundId === null &&
+      (captureRunning ||
+        snapshot.replayRunning ||
+        snapshot.hasLiveSessionData) &&
+      snapshot.dpsTime.warningMessageKey ? (
+        <div
+          className="border-b border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300"
+          role="status"
+        >
+          {t(snapshot.dpsTime.warningMessageKey)}
+        </div>
+      ) : null}
 
       <main className="main-dps-content">
         {!abyssCollapsed && (
@@ -649,114 +658,92 @@ export function MainDpsPage() {
               >
                 {t(snapshot.passthrough ? "Passthrough on" : "Passthrough")}
               </Button>
-              <Button
-                ref={appearanceButtonRef}
-                size="sm"
-                variant="outline"
-                aria-expanded={appearanceOpen}
-                onClick={() => {
-                  if (appearanceOpen) {
-                    setAppearanceOpen(false);
-                    setAppearancePosition(null);
-                    return;
-                  }
-                  const anchor =
-                    appearanceButtonRef.current?.getBoundingClientRect();
-                  if (anchor !== undefined) {
-                    setAppearancePosition(
-                      appearancePanelPosition(anchor, {
-                        width: window.innerWidth,
-                        height: window.innerHeight,
-                      }),
-                    );
-                  }
-                  setAppearanceOpen(true);
-                }}
+              <Popover
+                modal="trap-focus"
+                open={appearanceOpen}
+                onOpenChange={setAppearanceOpen}
               >
-                {t("Appearance")}
-              </Button>
-              {appearanceOpen &&
-                appearancePosition !== null &&
-                createPortal(
-                  <div
-                    ref={appearancePanelRef}
-                    role="dialog"
-                    aria-label={t("Appearance")}
-                    className="fixed z-50 flex w-44 flex-col gap-2 rounded-xl border bg-popover p-3 shadow-lg"
-                    style={appearancePosition}
-                  >
-                    <span className="text-xs text-muted-foreground">
-                      {t("Theme Preset")}
-                    </span>
-                    <div className="grid grid-cols-2 gap-2">
-                      {([false, true] as const).map((dark) => (
-                        <Button
-                          key={String(dark)}
-                          size="sm"
-                          variant={
-                            snapshot.appearance.darkMode === dark
-                              ? "default"
-                              : "outline"
-                          }
-                          onClick={() =>
-                            void mutate("appearance", async () => {
-                              const next = await mainDpsClient.setAppearance(
-                                dark,
-                                snapshot.appearance.opacity,
-                              );
-                              applySettingsPresentation({
-                                ...presentation,
-                                darkMode: dark,
-                              });
-                              setAppearanceOpen(false);
-                              setAppearancePosition(null);
-                              return next;
-                            })
-                          }
-                        >
-                          {t(dark ? "Dark" : "Light")}
-                        </Button>
-                      ))}
-                    </div>
-                    <label className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
-                      <span className="flex justify-between">
-                        <span>{t("Opacity")}</span>
-                        <span>
-                          {Math.round(snapshot.appearance.opacity * 100)}%
+                <PopoverTrigger render={<Button size="sm" variant="outline" />}>
+                  {t("Appearance")}
+                </PopoverTrigger>
+                <PopoverPortal>
+                  <PopoverPositioner align="end" side="bottom">
+                    <PopoverPopup className="flex w-44 flex-col gap-2 p-3">
+                      <PopoverTitle className="text-xs font-normal text-muted-foreground">
+                        {t("Theme Preset")}
+                      </PopoverTitle>
+                      <div className="grid grid-cols-2 gap-2">
+                        {([false, true] as const).map((dark) => (
+                          <Button
+                            key={String(dark)}
+                            size="sm"
+                            variant={
+                              snapshot.appearance.darkMode === dark
+                                ? "default"
+                                : "outline"
+                            }
+                            onClick={() =>
+                              void mutate("appearance", async () => {
+                                const next = await mainDpsClient.setAppearance(
+                                  dark,
+                                  snapshot.appearance.opacity,
+                                );
+                                applySettingsPresentation({
+                                  ...presentation,
+                                  darkMode: dark,
+                                });
+                                setAppearanceOpen(false);
+                                return next;
+                              })
+                            }
+                          >
+                            {t(dark ? "Dark" : "Light")}
+                          </Button>
+                        ))}
+                      </div>
+                      <label className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
+                        <span className="flex justify-between">
+                          <span>{t("Opacity")}</span>
+                          <span>
+                            {Math.round(snapshot.appearance.opacity * 100)}%
+                          </span>
                         </span>
-                      </span>
-                      <input
-                        type="range"
-                        min="35"
-                        max="100"
-                        defaultValue={Math.round(
-                          snapshot.appearance.opacity * 100,
-                        )}
-                        onPointerUp={(event) =>
-                          void mutate("appearance", () =>
-                            mainDpsClient.setAppearance(
-                              snapshot.appearance.darkMode,
-                              Number(event.currentTarget.value) / 100,
-                            ),
-                          )
-                        }
-                        onKeyUp={(event) => {
-                          if (
-                            event.key === "ArrowLeft" ||
-                            event.key === "ArrowRight"
-                          )
+                        <input
+                          type="range"
+                          min="35"
+                          max="100"
+                          defaultValue={Math.round(
+                            snapshot.appearance.opacity * 100,
+                          )}
+                          onPointerUp={(event) =>
                             void mutate("appearance", () =>
                               mainDpsClient.setAppearance(
                                 snapshot.appearance.darkMode,
                                 Number(event.currentTarget.value) / 100,
                               ),
-                            );
-                        }}
-                      />
-                    </label>
-                  </div>,
-                  document.body,
-                )}
+                            )
+                          }
+                          onKeyUp={(event) => {
+                            if (
+                              event.key === "ArrowLeft" ||
+                              event.key === "ArrowRight"
+                            )
+                              void mutate("appearance", () =>
+                                mainDpsClient.setAppearance(
+                                  snapshot.appearance.darkMode,
+                                  Number(event.currentTarget.value) / 100,
+                                ),
+                              );
+                          }}
+                        />
+                      </label>
+                      <PopoverClose className="sr-only">
+                        {t("Close")}
+                      </PopoverClose>
+                    </PopoverPopup>
+                  </PopoverPositioner>
+                </PopoverPortal>
+              </Popover>
             </div>
           </section>
         )}
@@ -952,92 +939,110 @@ export function MainDpsPage() {
                   </Button>
                 </div>
               ) : (
-                <div
-                  className="main-dps-team-list"
-                  style={
-                    {
-                      "--main-dps-team-row-count": characters.length,
-                    } as React.CSSProperties
+                <ContextMenu
+                  open={context !== null}
+                  onOpenChange={(open) =>
+                    dismissLayerWhenClosed(open, () => setContext(null))
                   }
                 >
-                  {characters.map((row, index) => (
-                    <CharacterRow
-                      key={row.characterId}
-                      row={row}
-                      index={index}
-                      onClick={() =>
-                        void effect(
-                          `character-details-${row.characterId}`,
-                          () =>
-                            mainDpsClient.openCharacterDetails(row.characterId),
-                        )
-                      }
-                      onContext={(event) => {
-                        event.preventDefault();
-                        setContext({ x: event.clientX, y: event.clientY, row });
-                      }}
-                    />
-                  ))}
-                </div>
+                  <ContextMenuTrigger
+                    render={
+                      <div
+                        className="main-dps-team-list"
+                        style={
+                          {
+                            "--main-dps-team-row-count": characters.length,
+                          } as React.CSSProperties
+                        }
+                      >
+                        {characters.map((row, index) => (
+                          <CharacterRow
+                            key={row.characterId}
+                            row={row}
+                            index={index}
+                            onClick={() =>
+                              void effect(
+                                `character-details-${row.characterId}`,
+                                () =>
+                                  mainDpsClient.openCharacterDetails(
+                                    row.characterId,
+                                  ),
+                              )
+                            }
+                            onContext={() => setContext({ row })}
+                          />
+                        ))}
+                      </div>
+                    }
+                  />
+                  {context !== null && (
+                    <ContextMenuPortal>
+                      <ContextMenuPositioner>
+                        <ContextMenuPopup
+                          aria-label={t("Character actions")}
+                          className="motion-popover min-w-52"
+                        >
+                          <ContextMenuItem
+                            className="gap-2 px-3 py-2"
+                            onClick={() =>
+                              void effect(
+                                `character-details-${context.row.characterId}`,
+                                () =>
+                                  mainDpsClient.openCharacterDetails(
+                                    context.row.characterId,
+                                  ),
+                              )
+                            }
+                          >
+                            <Eye className="size-4" aria-hidden="true" />
+                            {t("View combat details")}
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            className="gap-2 px-3 py-2"
+                            onClick={() =>
+                              void navigator.clipboard.writeText(
+                                [
+                                  tf("Character: {}", [context.row.name]),
+                                  tf("DPS: {}", [
+                                    formatMainMetric(context.row.dps),
+                                  ]),
+                                  tf("Damage: {}", [
+                                    formatMainMetric(context.row.damage),
+                                  ]),
+                                  tf("Share: {}%", [
+                                    context.row.damageSharePercent.toFixed(1),
+                                  ]),
+                                  tf("Taken: {}", [
+                                    formatMainMetric(context.row.damageTaken),
+                                  ]),
+                                ].join("\n"),
+                              )
+                            }
+                          >
+                            <Copy className="size-4" aria-hidden="true" />
+                            {t("Copy values")}
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            className="gap-2 px-3 py-2"
+                            onClick={() =>
+                              setHidden((current) =>
+                                new Set(current).add(context.row.characterId),
+                              )
+                            }
+                          >
+                            <EyeOff className="size-4" aria-hidden="true" />
+                            {t("Hide from ranking")}
+                          </ContextMenuItem>
+                        </ContextMenuPopup>
+                      </ContextMenuPositioner>
+                    </ContextMenuPortal>
+                  )}
+                </ContextMenu>
               )}
             </section>
           </>
         )}
       </main>
-
-      {context !== null && (
-        <div
-          className="motion-popover fixed z-40 min-w-52 rounded-lg border bg-popover p-1 shadow-xl"
-          style={{
-            left: Math.max(8, Math.min(context.x, window.innerWidth - 216)),
-            top: Math.max(8, Math.min(context.y, window.innerHeight - 152)),
-          }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted"
-            onClick={() => {
-              void effect(`character-details-${context.row.characterId}`, () =>
-                mainDpsClient.openCharacterDetails(context.row.characterId),
-              );
-              setContext(null);
-            }}
-          >
-            <Eye className="size-4" />
-            {t("View combat details")}
-          </button>
-          <button
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted"
-            onClick={() => {
-              void navigator.clipboard.writeText(
-                [
-                  tf("Character: {}", [context.row.name]),
-                  tf("DPS: {}", [formatMainMetric(context.row.dps)]),
-                  tf("Damage: {}", [formatMainMetric(context.row.damage)]),
-                  tf("Share: {}%", [context.row.damageSharePercent.toFixed(1)]),
-                  tf("Taken: {}", [formatMainMetric(context.row.damageTaken)]),
-                ].join("\n"),
-              );
-              setContext(null);
-            }}
-          >
-            <Copy className="size-4" />
-            {t("Copy values")}
-          </button>
-          <button
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted"
-            onClick={() => {
-              setHidden((current) =>
-                new Set(current).add(context.row.characterId),
-              );
-              setContext(null);
-            }}
-          >
-            <EyeOff className="size-4" />
-            {t("Hide from ranking")}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1292,14 +1297,14 @@ function EmptyCombat({
   start(): void;
   redetect(): void;
 }) {
-  const replayButtonRef = useRef<HTMLButtonElement>(null);
-  const replayMenuRef = useRef<HTMLDivElement>(null);
-  useDismissibleLayer({
-    open: replayOpen,
-    layerRef: replayMenuRef,
-    triggerRef: replayButtonRef,
-    onDismiss: () => setReplayOpen(false),
-  });
+  useEffect(() => {
+    if (!replayOpen) return;
+    const closeReplayMenuOnWindowBlur = () => setReplayOpen(false);
+    window.addEventListener("blur", closeReplayMenuOnWindowBlur);
+    return () => {
+      window.removeEventListener("blur", closeReplayMenuOnWindowBlur);
+    };
+  }, [replayOpen, setReplayOpen]);
 
   return (
     <div className="m-auto flex w-full max-w-[26rem] flex-col gap-3 rounded-xl border bg-card p-5">
@@ -1341,7 +1346,6 @@ function EmptyCombat({
       <div className="flex gap-2">
         {!gameDetected ? (
           <Button
-            ref={replayButtonRef}
             size="sm"
             variant="outline"
             disabled={pending !== null}
@@ -1358,36 +1362,35 @@ function EmptyCombat({
           {t("Start Capture")}
         </Button>
         <div className="relative">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending !== null}
-            aria-expanded={replayOpen}
-            aria-haspopup="menu"
-            onClick={() => setReplayOpen(!replayOpen)}
-          >
-            {t("Import Replay")}
-          </Button>
-          {replayOpen && (
-            <div
-              ref={replayMenuRef}
-              role="menu"
-              className="motion-popover absolute bottom-11 left-0 z-20 flex min-w-40 flex-col gap-1 rounded-lg border bg-popover p-1 shadow-lg"
+          <Menu open={replayOpen} onOpenChange={setReplayOpen}>
+            <MenuTrigger
+              disabled={pending !== null}
+              render={<Button size="sm" variant="outline" />}
             >
-              <button
-                className="rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
-                onClick={() => void importReplay("json")}
-              >
-                {t("JSON replay")}
-              </button>
-              <button
-                className="rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
-                onClick={() => void importReplay("pcapng")}
-              >
-                {t("PCAPNG replay")}
-              </button>
-            </div>
-          )}
+              {t("Import Replay")}
+            </MenuTrigger>
+            <MenuPortal>
+              <MenuPositioner align="start" side="top" sideOffset={8}>
+                <MenuPopup
+                  aria-label={t("Import Replay")}
+                  className="motion-popover flex min-w-40 flex-col gap-1"
+                >
+                  <MenuItem
+                    className="px-3 py-2"
+                    onClick={() => void importReplay("json")}
+                  >
+                    {t("JSON replay")}
+                  </MenuItem>
+                  <MenuItem
+                    className="px-3 py-2"
+                    onClick={() => void importReplay("pcapng")}
+                  >
+                    {t("PCAPNG replay")}
+                  </MenuItem>
+                </MenuPopup>
+              </MenuPositioner>
+            </MenuPortal>
+          </Menu>
         </div>
       </div>
       {captureRunning ? (
@@ -1441,131 +1444,134 @@ function OnboardingOverlay({
     "Choose a HUD preset",
   ] as const;
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/55 p-4">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="onboarding-title"
-        className="w-full max-w-lg rounded-2xl border bg-background p-6 shadow-2xl"
-      >
-        <div className="mb-5 flex gap-2" aria-label={t("Onboarding progress")}>
-          {[0, 1, 2, 3].map((index) => (
-            <span
-              key={index}
-              className={cn(
-                "h-1.5 flex-1 rounded-full",
-                index <= step ? "bg-primary" : "bg-muted",
-              )}
-            />
-          ))}
-        </div>
-        <h2 id="onboarding-title" className="text-lg font-semibold">
-          {t(titles[step])}
-        </h2>
-        <div className="mt-4 min-h-32 text-sm text-muted-foreground">
-          {step === 0 ? (
-            <div className="space-y-3">
-              <p>
-                {t(
-                  "This guide checks capture, recovery controls and the initial HUD layout.",
+    <Dialog open>
+      <DialogPortal>
+        <DialogBackdrop className="z-[80]" />
+        <DialogPopup className="top-1/2 left-1/2 z-[81] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-background p-6 shadow-2xl">
+          <div
+            className="mb-5 flex gap-2"
+            aria-label={t("Onboarding progress")}
+          >
+            {[0, 1, 2, 3].map((index) => (
+              <span
+                key={index}
+                className={cn(
+                  "h-1.5 flex-1 rounded-full",
+                  index <= step ? "bg-primary" : "bg-muted",
                 )}
-              </p>
-              <p>
-                {t(
-                  onboarding.gameDetectionStatus === "probeFailed"
-                    ? "Game process detection failed."
-                    : onboarding.gameDetected
-                      ? "The game process is detected."
-                      : "Start the game before beginning live capture.",
-                )}
-              </p>
-            </div>
-          ) : step === 1 ? (
-            <div className="space-y-3">
-              <p>
-                {tf("{} capture devices are currently available.", [
-                  String(onboarding.captureDeviceCount),
-                ])}
-              </p>
-              <p>
-                {t(
-                  "Automatic adapter selection remains the recommended default; manual selection is available in Settings.",
-                )}
-              </p>
-            </div>
-          ) : step === 2 ? (
-            <div className="space-y-3">
-              <p>
-                {t(
-                  "Use the recovery hotkey whenever the HUD is in mouse-passthrough mode.",
-                )}
-              </p>
-              <kbd className="inline-flex rounded-md border bg-muted px-3 py-1.5 font-mono text-foreground">
-                {onboarding.passthroughHotkeyLabel}
-              </kbd>
-              {!onboarding.passthroughHotkeyReady ? (
-                <p className="text-amber-600">
+              />
+            ))}
+          </div>
+          <DialogTitle>{t(titles[step])}</DialogTitle>
+          <div className="mt-4 min-h-32 text-sm text-muted-foreground">
+            {step === 0 ? (
+              <div className="space-y-3">
+                <p>
                   {t(
-                    "The recovery hotkey is not currently available; keep the Console open before enabling passthrough.",
+                    "This guide checks capture, recovery controls and the initial HUD layout.",
                   )}
                 </p>
-              ) : null}
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-2">
-              {(["minimal", "standard", "detailed"] as const).map((preset) => (
-                <button
-                  key={preset}
-                  className={cn(
-                    "rounded-xl border p-3 text-left",
-                    hudPreset === preset && "border-primary bg-primary/10",
+                <p>
+                  {t(
+                    onboarding.gameDetectionStatus === "probeFailed"
+                      ? "Game process detection failed."
+                      : onboarding.gameDetected
+                        ? "The game process is detected."
+                        : "Start the game before beginning live capture.",
                   )}
-                  onClick={() => onHudPresetChange(preset)}
-                >
-                  <strong className="block text-foreground">
+                </p>
+              </div>
+            ) : step === 1 ? (
+              <div className="space-y-3">
+                <p>
+                  {onboarding.captureDevicesAvailable
+                    ? tf("{} capture devices are currently available.", [
+                        String(onboarding.captureDeviceCount),
+                      ])
+                    : t("Capture devices are unavailable.")}
+                </p>
+                <p>
+                  {t(
+                    "Automatic adapter selection remains the recommended default; manual selection is available in Settings.",
+                  )}
+                </p>
+              </div>
+            ) : step === 2 ? (
+              <div className="space-y-3">
+                <p>
+                  {t(
+                    "Use the recovery hotkey whenever the HUD is in mouse-passthrough mode.",
+                  )}
+                </p>
+                <kbd className="inline-flex rounded-md border bg-muted px-3 py-1.5 font-mono text-foreground">
+                  {onboarding.passthroughHotkeyLabel}
+                </kbd>
+                {!onboarding.passthroughHotkeyReady ? (
+                  <p className="text-amber-600">
                     {t(
-                      preset === "minimal"
-                        ? "Minimal"
-                        : preset === "standard"
-                          ? "Standard"
-                          : "Detailed",
+                      "The recovery hotkey is not currently available; keep the Console open before enabling passthrough.",
                     )}
-                  </strong>
-                  <span className="mt-1 block text-xs">
-                    {t(
-                      preset === "minimal"
-                        ? "Team DPS and duration"
-                        : preset === "standard"
-                          ? "Core combat summary"
-                          : "All HUD modules",
-                    )}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="mt-6 flex items-center justify-between gap-2">
-          <Button variant="ghost" disabled={pending} onClick={onFinish}>
-            {t("Skip")}
-          </Button>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              disabled={pending || step === 0}
-              onClick={() => onStep(step - 1)}
-            >
-              {t("Back")}
-            </Button>
-            <Button
-              disabled={pending}
-              onClick={step === 3 ? onFinish : () => onStep(step + 1)}
-            >
-              {t(step === 3 ? "Finish" : "Next")}
-            </Button>
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {(["minimal", "standard", "detailed"] as const).map(
+                  (preset) => (
+                    <button
+                      key={preset}
+                      className={cn(
+                        "rounded-xl border p-3 text-left",
+                        hudPreset === preset && "border-primary bg-primary/10",
+                      )}
+                      onClick={() => onHudPresetChange(preset)}
+                    >
+                      <strong className="block text-foreground">
+                        {t(
+                          preset === "minimal"
+                            ? "Minimal"
+                            : preset === "standard"
+                              ? "Standard"
+                              : "Detailed",
+                        )}
+                      </strong>
+                      <span className="mt-1 block text-xs">
+                        {t(
+                          preset === "minimal"
+                            ? "Team DPS and duration"
+                            : preset === "standard"
+                              ? "Core combat summary"
+                              : "All HUD modules",
+                        )}
+                      </span>
+                    </button>
+                  ),
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      </section>
-    </div>
+          <div className="mt-6 flex items-center justify-between gap-2">
+            <Button variant="ghost" disabled={pending} onClick={onFinish}>
+              {t("Skip")}
+            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={pending || step === 0}
+                onClick={() => onStep(step - 1)}
+              >
+                {t("Back")}
+              </Button>
+              <Button
+                disabled={pending}
+                onClick={step === 3 ? onFinish : () => onStep(step + 1)}
+              >
+                {t(step === 3 ? "Finish" : "Next")}
+              </Button>
+            </div>
+          </div>
+        </DialogPopup>
+      </DialogPortal>
+    </Dialog>
   );
 }

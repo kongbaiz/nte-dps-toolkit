@@ -8,7 +8,7 @@ import {
 } from "@/lib/tauri/diagnostics-contract";
 
 const SNAPSHOT = {
-  contractVersion: 2,
+  contractVersion: 3,
   captureGeneration: "9007199254740993",
   qualityGeneration: "9007199254740994",
   reportGeneration: "2",
@@ -76,6 +76,8 @@ const SNAPSHOT = {
     timeStopIntervalCount: 1,
     abyssEventCount: "0",
     serverDamageCorrections: "0",
+    unattributedServerDamageEvents: "0",
+    unattributedServerDamage: 0,
   },
   actions: {
     canImport: true,

@@ -1,9 +1,29 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 
-export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 4;
+export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 5;
 export const MAIN_DPS_DETAIL_MAX_QTE_SUMMARIES = 32;
 export const MAIN_DPS_DETAIL_MAX_SKILLS = 250;
 export const MAIN_DPS_DETAIL_MAX_ROWS = 250;
+export const MAIN_DPS_DETAIL_MAX_TEXT_BYTES = 256;
+export const MAIN_DPS_DETAIL_MAX_PROJECTED_TEXT_BYTES = 512 * 1024;
+
+const {
+  array: list,
+  boolean: bool,
+  boundedArray: boundedList,
+  boundedUtf8StringAllowEmpty: boundedText,
+  enumValue: oneOf,
+  finiteNumber: finite,
+  integer,
+  nonNegativeInteger,
+  nullableEnumValue: nullableOneOf,
+  nullableInteger,
+  nullableBoundedUtf8StringAllowEmpty: nullableBoundedText,
+  record: object,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type MainDpsDetailFilter =
   | "all"
@@ -39,6 +59,7 @@ export interface MainDpsDetailSnapshot {
   skills: MainDpsSkillSummary[];
   skillTotalCount: number;
   skillsTruncated: boolean;
+  textTruncated: boolean;
   totalHits: number;
   totalDamage: number;
   maxRowDamage: number;
@@ -176,20 +197,13 @@ export function parseMainDpsDetailSnapshot(
     "skillTotalCount",
   );
   const skillsTruncated = bool(source.skillsTruncated, "skillsTruncated");
-  validateTruncation(
-    skillTotalCount,
-    skills.length,
-    skillsTruncated,
-    "skills",
+  validateTruncation(skillTotalCount, skills.length, skillsTruncated, "skills");
+  const rows = boundedList(source.rows, "rows", MAIN_DPS_DETAIL_MAX_ROWS).map(
+    parseHit,
   );
-  const rows = boundedList(
-    source.rows,
-    "rows",
-    MAIN_DPS_DETAIL_MAX_ROWS,
-  ).map(parseHit);
-  return {
+  const snapshot: MainDpsDetailSnapshot = {
     contractVersion,
-    generation: text(source.generation, "generation"),
+    generation: boundedText(source.generation, "generation", 32),
     kind: oneOf(source.kind, ["character", "team"] as const, "kind"),
     abyssHalf: nullableOneOf(
       source.abyssHalf,
@@ -197,8 +211,16 @@ export function parseMainDpsDetailSnapshot(
       "abyssHalf",
     ),
     characterId: nullableInteger(source.characterId, "characterId"),
-    characterName: nullableText(source.characterName, "characterName"),
-    characterColor: nullableText(source.characterColor, "characterColor"),
+    characterName: nullableBoundedText(
+      source.characterName,
+      "characterName",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    characterColor: nullableBoundedText(
+      source.characterColor,
+      "characterColor",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
     filter: oneOf(
       source.filter,
       [
@@ -214,8 +236,16 @@ export function parseMainDpsDetailSnapshot(
       ] as const,
       "filter",
     ),
-    qteType: nullableText(source.qteType, "qteType"),
-    skillFilter: nullableText(source.skillFilter, "skillFilter"),
+    qteType: nullableBoundedText(
+      source.qteType,
+      "qteType",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    skillFilter: nullableBoundedText(
+      source.skillFilter,
+      "skillFilter",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
     columns: parseColumns(source.columns),
     actions: parseActions(source.actions),
     metrics: parseMetrics(source.metrics),
@@ -228,12 +258,15 @@ export function parseMainDpsDetailSnapshot(
     skills,
     skillTotalCount,
     skillsTruncated,
+    textTruncated: bool(source.textTruncated, "textTruncated"),
     totalHits: integer(source.totalHits, "totalHits"),
     totalDamage: finite(source.totalDamage, "totalDamage"),
     maxRowDamage: finite(source.maxRowDamage, "maxRowDamage"),
     offset: integer(source.offset, "offset"),
     rows,
   };
+  validateProjectedTextBudget(snapshot);
+  return snapshot;
 }
 
 function parseColumns(value: unknown): MainDpsDetailColumns {
@@ -335,7 +368,11 @@ function parseAttribution(value: unknown): MainDpsAttributionSummary {
 function parseQteSummary(value: unknown): MainDpsQteSummary {
   const source = object(value, "reaction summary");
   return {
-    attackType: text(source.attackType, "reaction.attackType"),
+    attackType: boundedText(
+      source.attackType,
+      "reaction.attackType",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
     hits: integer(source.hits, "reaction.hits"),
     damage: finite(source.damage, "reaction.damage"),
     sharePercent: finite(source.sharePercent, "reaction.sharePercent"),
@@ -345,9 +382,17 @@ function parseQteSummary(value: unknown): MainDpsQteSummary {
 function parseSkillSummary(value: unknown): MainDpsSkillSummary {
   const source = object(value, "skill summary");
   return {
-    id: text(source.id, "skill.id"),
-    name: text(source.name, "skill.name"),
-    category: text(source.category, "skill.category"),
+    id: boundedText(source.id, "skill.id", MAIN_DPS_DETAIL_MAX_TEXT_BYTES),
+    name: boundedText(
+      source.name,
+      "skill.name",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    category: boundedText(
+      source.category,
+      "skill.category",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
     hits: integer(source.hits, "skill.hits"),
     damage: finite(source.damage, "skill.damage"),
     sharePercent: finite(source.sharePercent, "skill.sharePercent"),
@@ -357,10 +402,14 @@ function parseSkillSummary(value: unknown): MainDpsSkillSummary {
 function parseHit(value: unknown): MainDpsHit {
   const source = object(value, "detail hit");
   return {
-    id: text(source.id, "hit.id"),
+    id: boundedText(source.id, "hit.id", MAIN_DPS_DETAIL_MAX_TEXT_BYTES),
     timestamp: finite(source.timestamp, "hit.timestamp"),
     characterId: integer(source.characterId, "hit.characterId"),
-    characterName: text(source.characterName, "hit.characterName"),
+    characterName: boundedText(
+      source.characterName,
+      "hit.characterName",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
     direction: oneOf(
       source.direction,
       ["outgoing", "incoming", "unknown"] as const,
@@ -369,23 +418,49 @@ function parseHit(value: unknown): MainDpsHit {
     damage: finite(source.damage, "hit.damage"),
     primaryDamage: finite(source.primaryDamage, "hit.primaryDamage"),
     followUpDamage: finite(source.followUpDamage, "hit.followUpDamage"),
-    skillId: text(source.skillId, "hit.skillId"),
-    skill: text(source.skill, "hit.skill"),
-    damageType: text(source.damageType, "hit.damageType"),
-    typeLabel: text(source.typeLabel, "hit.typeLabel"),
+    skillId: boundedText(
+      source.skillId,
+      "hit.skillId",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    skill: boundedText(
+      source.skill,
+      "hit.skill",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    damageType: boundedText(
+      source.damageType,
+      "hit.damageType",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    typeLabel: boundedText(
+      source.typeLabel,
+      "hit.typeLabel",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
     reactionTextKey: nullableInteger(
       source.reactionTextKey,
       "hit.reactionTextKey",
     ),
-    damageDigitKey: nullableText(source.damageDigitKey, "hit.damageDigitKey"),
-    followUpDamageDigitKey: nullableText(
+    damageDigitKey: nullableBoundedText(
+      source.damageDigitKey,
+      "hit.damageDigitKey",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    followUpDamageDigitKey: nullableBoundedText(
       source.followUpDamageDigitKey,
       "hit.followUpDamageDigitKey",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
     ),
-    target: text(source.target, "hit.target"),
-    targetMonsterId: nullableText(
+    target: boundedText(
+      source.target,
+      "hit.target",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+    ),
+    targetMonsterId: nullableBoundedText(
       source.targetMonsterId,
       "hit.targetMonsterId",
+      MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
     ),
     targetHpAfter: finite(source.targetHpAfter, "hit.targetHpAfter"),
     targetMaxHp: finite(source.targetMaxHp, "hit.targetMaxHp"),
@@ -393,47 +468,40 @@ function parseHit(value: unknown): MainDpsHit {
   };
 }
 
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an object`);
-  return value as Record<string, unknown>;
+function validateProjectedTextBudget(snapshot: MainDpsDetailSnapshot): void {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  const add = (value: string | null): void => {
+    if (value !== null) bytes += encoder.encode(value).byteLength;
+  };
+  add(snapshot.characterName);
+  add(snapshot.characterColor);
+  add(snapshot.qteType);
+  add(snapshot.skillFilter);
+  for (const summary of snapshot.qteSummaries) add(summary.attackType);
+  for (const skill of snapshot.skills) {
+    add(skill.id);
+    add(skill.name);
+    add(skill.category);
+  }
+  for (const hit of snapshot.rows) {
+    add(hit.id);
+    add(hit.characterName);
+    add(hit.skillId);
+    add(hit.skill);
+    add(hit.damageType);
+    add(hit.typeLabel);
+    add(hit.damageDigitKey);
+    add(hit.followUpDamageDigitKey);
+    add(hit.target);
+    add(hit.targetMonsterId);
+  }
+  if (bytes > MAIN_DPS_DETAIL_MAX_PROJECTED_TEXT_BYTES)
+    throw new TechnicalContractError(
+      `main DPS detail text exceeds ${MAIN_DPS_DETAIL_MAX_PROJECTED_TEXT_BYTES} UTF-8 bytes`,
+    );
 }
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an array`);
-  return value;
-}
-function boundedList(value: unknown, field: string, limit: number): unknown[] {
-  const rows = list(value, field);
-  if (rows.length > limit)
-    throw new TechnicalContractError(`${field} exceeds the contract limit`);
-  return rows;
-}
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string")
-    throw new TechnicalContractError(`${field} must be a string`);
-  return value;
-}
-function nullableText(value: unknown, field: string): string | null {
-  return value === null ? null : text(value, field);
-}
-function finite(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value))
-    throw new TechnicalContractError(`${field} must be finite`);
-  return value;
-}
-function integer(value: unknown, field: string): number {
-  const number = finite(value, field);
-  if (!Number.isInteger(number))
-    throw new TechnicalContractError(`${field} must be an integer`);
-  return number;
-}
-function nonNegativeInteger(value: unknown, field: string): number {
-  const number = integer(value, field);
-  if (number < 0)
-    throw new TechnicalContractError(`${field} must be non-negative`);
-  return number;
-}
+
 function validateTruncation(
   totalCount: number,
   returnedCount: number,
@@ -441,32 +509,11 @@ function validateTruncation(
   field: string,
 ): void {
   if (totalCount < returnedCount)
-    throw new TechnicalContractError(`${field} total count is below returned rows`);
-  if (truncated !== (totalCount > returnedCount))
-    throw new TechnicalContractError(`${field} truncation metadata is inconsistent`);
-}
-function nullableInteger(value: unknown, field: string): number | null {
-  return value === null ? null : integer(value, field);
-}
-function bool(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean")
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  return value;
-}
-function oneOf<const T extends readonly string[]>(
-  value: unknown,
-  values: T,
-  field: string,
-): T[number] {
-  const candidate = text(value, field);
-  if (!values.includes(candidate))
-    throw new TechnicalContractError(`${field} is unsupported`);
-  return candidate as T[number];
-}
-function nullableOneOf<const T extends readonly string[]>(
-  value: unknown,
-  values: T,
-  field: string,
-): T[number] | null {
-  return value === null ? null : oneOf(value, values, field);
+    throw new TechnicalContractError(
+      `${field} total count is below returned rows`,
+    );
+  if (truncated !== totalCount > returnedCount)
+    throw new TechnicalContractError(
+      `${field} truncation metadata is inconsistent`,
+    );
 }

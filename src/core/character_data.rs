@@ -43,6 +43,12 @@ pub struct CharacterDataRecordInput {
     pub avatar: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CharacterDataSaveOutcome {
+    Saved,
+    Unchanged,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CharacterDataError {
     Read(String),
@@ -101,16 +107,21 @@ pub fn load_character_data(path: &Path) -> Result<CharacterDataProjection, Chara
 pub fn save_character_data_record(
     path: &Path,
     input: CharacterDataRecordInput,
-) -> Result<CharacterDataProjection, CharacterDataError> {
+) -> Result<(CharacterDataProjection, CharacterDataSaveOutcome), CharacterDataError> {
     let text =
         read_resource_text(path).map_err(|error| CharacterDataError::Read(error.to_string()))?;
     let mut document = serde_json::from_str::<Value>(&text)
         .map_err(|error| CharacterDataError::Json(error.to_string()))?;
+    let previous = project_document(&document)?;
     apply_character_data_record(&mut document, input)?;
+    let projection = project_document(&document)?;
+    if projection == previous {
+        return Ok((projection, CharacterDataSaveOutcome::Unchanged));
+    }
     let serialized = serde_json::to_string_pretty(&document)
         .map_err(|error| CharacterDataError::Serialize(error.to_string()))?;
     atomic_write_text(path, &format!("{serialized}\n")).map_err(CharacterDataError::Write)?;
-    load_character_data(path)
+    Ok((projection, CharacterDataSaveOutcome::Saved))
 }
 
 pub fn apply_character_data_record(
@@ -357,10 +368,10 @@ mod tests {
     }
 
     #[test]
-    fn atomic_update_preserves_unknown_fields_and_reloads_projection() {
+    fn atomic_update_preserves_unknown_fields_and_returns_projection() {
         let path = temporary_character_path("save");
         write_fixture(&path);
-        let projection = save_character_data_record(
+        let (projection, outcome) = save_character_data_record(
             &path,
             CharacterDataRecordInput {
                 original_id: Some("20".to_owned()),
@@ -376,10 +387,39 @@ mod tests {
         )
         .expect("save character data");
 
+        assert_eq!(outcome, CharacterDataSaveOutcome::Saved);
         assert_eq!(projection.records[1].name_zh, "二十改");
         let saved: Value = serde_json::from_str(&fs::read_to_string(&path).expect("saved text"))
             .expect("saved JSON");
         assert_eq!(saved["characters"]["20"]["future"], 42);
+        fs::remove_dir_all(path.ancestors().nth(3).expect("fixture root")).expect("remove fixture");
+    }
+
+    #[test]
+    fn semantically_identical_update_skips_the_file_write() {
+        let path = temporary_character_path("no-op");
+        write_fixture(&path);
+        let before = fs::read(&path).expect("read original fixture");
+
+        let (projection, outcome) = save_character_data_record(
+            &path,
+            CharacterDataRecordInput {
+                original_id: Some("20".to_owned()),
+                id: "20".to_owned(),
+                name_zh: "二十".to_owned(),
+                name_en: "Twenty".to_owned(),
+                codename: String::new(),
+                attribute: String::new(),
+                verified: false,
+                color: String::new(),
+                avatar: String::new(),
+            },
+        )
+        .expect("save identical character data");
+
+        assert_eq!(outcome, CharacterDataSaveOutcome::Unchanged);
+        assert_eq!(projection.records[1].id, 20);
+        assert_eq!(fs::read(&path).expect("read unchanged fixture"), before);
         fs::remove_dir_all(path.ancestors().nth(3).expect("fixture root")).expect("remove fixture");
     }
 

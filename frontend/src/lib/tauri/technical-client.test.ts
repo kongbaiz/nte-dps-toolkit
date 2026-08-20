@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTechnicalClient } from "./technical-client";
 
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
+
 const snapshot = {
   contractVersion: 5,
   sequence: "1",
@@ -142,7 +147,10 @@ describe("technical client subscription", () => {
       if (command === "subscribe_technical_state") {
         return Promise.resolve({
           subscriptionId: "test-subscription",
+          streamKind: "technical",
           streamIntervalMs: 100,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
         });
       }
       return Promise.resolve(undefined);
@@ -161,9 +169,10 @@ describe("technical client subscription", () => {
     const receiveError = vi.fn();
 
     const cleanup = client.subscribe(receive, receiveError);
-    onMessage?.({ event: "snapshot", payload: snapshot });
+    onMessage?.(encodeDelivery([{ event: "snapshot", payload: snapshot }]));
+    await vi.waitFor(() => expect(receive).toHaveBeenCalledTimes(1));
     await cleanup();
-    onMessage?.({ event: "snapshot", payload: snapshot });
+    onMessage?.(encodeDelivery([{ event: "snapshot", payload: snapshot }]));
 
     expect(receive).toHaveBeenCalledTimes(1);
     expect(receiveError).not.toHaveBeenCalled();

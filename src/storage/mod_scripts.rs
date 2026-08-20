@@ -8,12 +8,17 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::io_util::atomic_write_text;
 
 pub(crate) const MAX_MOD_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_ENABLED_MODS: usize = 16;
+const MAX_MOD_SCRIPTS: usize = 64;
+const MAX_MOD_WORKSPACE_ENTRIES: usize = 256;
+const MAX_MOD_WORKSPACE_BYTES: usize = 512 * 1024;
+const MAX_MOD_SET_BYTES: usize = 4 * 1024;
 const MAX_MOD_INSTRUCTIONS: usize = 256;
 const MAX_MOD_VARIABLES: usize = 12;
 const MAX_MOD_STATES: usize = 16;
@@ -51,6 +56,10 @@ pub(crate) enum ModScriptError {
     DuplicateModId(String),
     InvalidModId(String),
     TooManyEnabledMods,
+    TooManyScripts,
+    TooManyWorkspaceEntries,
+    WorkspaceTooLarge,
+    ModSetTooLarge,
     SourceTooLarge,
     SourceContainsNul,
     SourceNotUtf8(String),
@@ -78,8 +87,14 @@ pub(crate) fn load_mod_script_workspace(
     };
 
     let mut scripts = Vec::new();
+    let mut entry_count = 0_usize;
+    let mut total_source_bytes = 0_usize;
     for entry in entries {
         let entry = entry.map_err(|error| ModScriptError::FileSystem(error.to_string()))?;
+        entry_count = entry_count.saturating_add(1);
+        if entry_count > MAX_MOD_WORKSPACE_ENTRIES {
+            return Err(ModScriptError::TooManyWorkspaceEntries);
+        }
         let file_type = entry
             .file_type()
             .map_err(|error| ModScriptError::FileSystem(error.to_string()))?;
@@ -91,6 +106,9 @@ pub(crate) fn load_mod_script_workspace(
         if !file_type.is_file() || !is_nte {
             continue;
         }
+        if scripts.len() == MAX_MOD_SCRIPTS {
+            return Err(ModScriptError::TooManyScripts);
+        }
         let id = entry
             .path()
             .file_stem()
@@ -100,10 +118,10 @@ pub(crate) fn load_mod_script_workspace(
             })?
             .to_owned();
         validate_mod_id(&id)?;
-        let bytes = fs::read(entry.path())
-            .map_err(|error| ModScriptError::FileSystem(error.to_string()))?;
-        if bytes.len() > MAX_MOD_SOURCE_BYTES {
-            return Err(ModScriptError::SourceTooLarge);
+        let bytes = read_mod_file_bounded(&entry.path(), MAX_MOD_SOURCE_BYTES)?;
+        total_source_bytes = total_source_bytes.saturating_add(bytes.len());
+        if total_source_bytes > MAX_MOD_WORKSPACE_BYTES {
+            return Err(ModScriptError::WorkspaceTooLarge);
         }
         let source =
             String::from_utf8(bytes).map_err(|_| ModScriptError::SourceNotUtf8(id.clone()))?;
@@ -510,17 +528,78 @@ fn push_transpiled_line(
 
 fn strip_cpp_line_comment(line: &str) -> &str {
     let bytes = line.as_bytes();
-    let mut in_string = false;
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'"' {
-            in_string = !in_string;
-        } else if !in_string && bytes[index..].starts_with(b"//") {
+        if let Some(end) = cpp_raw_string_end(bytes, index) {
+            index = end;
+            continue;
+        }
+        if matches!(bytes[index], b'"' | b'\'') {
+            index = cpp_quoted_literal_end(bytes, index, bytes[index]);
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            index = bytes[index + 2..]
+                .windows(2)
+                .position(|window| window == b"*/")
+                .map_or(bytes.len(), |offset| index + offset + 4);
+            continue;
+        }
+        if bytes[index..].starts_with(b"//") {
             return &line[..index];
         }
         index += 1;
     }
     line
+}
+
+fn cpp_quoted_literal_end(bytes: &[u8], start: usize, quote: u8) -> usize {
+    let mut index = start + 1;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        index += 1;
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == quote {
+            break;
+        }
+    }
+    index
+}
+
+fn cpp_raw_string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start..start + 2)? != b"R\"" {
+        return None;
+    }
+    let delimiter_start = start + 2;
+    let delimiter_end = bytes[delimiter_start..]
+        .iter()
+        .take(17)
+        .position(|byte| *byte == b'(')?
+        + delimiter_start;
+    let delimiter = &bytes[delimiter_start..delimiter_end];
+    if delimiter.len() > 16
+        || delimiter
+            .iter()
+            .any(|byte| matches!(byte, b'/' | b'\\' | b'(' | b')' | b' ' | b'\t'))
+    {
+        return None;
+    }
+    let content_start = delimiter_end + 1;
+    let mut index = content_start;
+    while index < bytes.len() {
+        if bytes[index] == b')'
+            && bytes.get(index + 1..index + 1 + delimiter.len()) == Some(delimiter)
+            && bytes.get(index + 1 + delimiter.len()) == Some(&b'"')
+        {
+            return Some(index + delimiter.len() + 2);
+        }
+        index += 1;
+    }
+    Some(bytes.len())
 }
 
 fn parse_cpp_macro_arguments<'a>(line: &'a str, name: &str) -> Option<&'a str> {
@@ -656,17 +735,7 @@ fn normalize_cpp_expression(expression: &str, states: &[String]) -> String {
     output
 }
 
-const CAPABILITY_VIEWPORT_TICK: u16 = 1 << 0;
-const CAPABILITY_MEMORY_READ: u16 = 1 << 1;
-const CAPABILITY_IPC: u16 = 1 << 2;
-const CAPABILITY_SDK_READ: u16 = 1 << 3;
-const CAPABILITY_EQUIPMENT: u16 = 1 << 4;
-const CAPABILITY_COMBAT_CLOCK: u16 = 1 << 5;
-const CAPABILITY_LOG: u16 = 1 << 6;
-const CAPABILITY_GAME_SESSION: u16 = 1 << 7;
-const CAPABILITY_MEMORY_WRITE: u16 = 1 << 8;
-const CAPABILITY_UNREAL_REFLECTION: u16 = 1 << 9;
-const CAPABILITY_PROCESS_EVENT: u16 = 1 << 10;
+include!("mod_runtime_schema.generated.rs");
 
 #[derive(Clone, Copy)]
 struct ModSourceLine<'a> {
@@ -1503,38 +1572,17 @@ pub(crate) fn is_mod_binding_id(name: &str) -> bool {
 }
 
 fn mod_capability(name: &str) -> Option<u16> {
-    Some(match name {
-        "viewport.tick" => CAPABILITY_VIEWPORT_TICK,
-        "memory.read" => CAPABILITY_MEMORY_READ,
-        "ipc" => CAPABILITY_IPC,
-        "sdk.read" => CAPABILITY_SDK_READ,
-        "equipment" => CAPABILITY_EQUIPMENT,
-        "combat-clock" => CAPABILITY_COMBAT_CLOCK,
-        "log" => CAPABILITY_LOG,
-        "game.session" => CAPABILITY_GAME_SESSION,
-        "memory.write" => CAPABILITY_MEMORY_WRITE,
-        "unreal.reflection" => CAPABILITY_UNREAL_REFLECTION,
-        "process.event" => CAPABILITY_PROCESS_EVENT,
-        _ => return None,
-    })
+    MOD_CAPABILITIES
+        .iter()
+        .find_map(|(candidate, value)| (*candidate == name).then_some(*value))
 }
 
 fn mod_ipc_service(name: &str) -> Option<(u16, u16)> {
-    Some(match name {
-        "equipment.equip_module" => (1, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.equip_core" => (2, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.unequip_module" => (3, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.unequip_core" => (4, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.unequip_all" => (5, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.equip_one_key" => (6, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.move_module_to_character" => (7, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.move_core_to_character" => (8, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.set_item_discarded" => (9, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.set_item_locked" => (10, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "combat_clock.query_transitions" => (11, CAPABILITY_IPC | CAPABILITY_COMBAT_CLOCK),
-        "ipc.query_mod_events" => (12, CAPABILITY_IPC),
-        _ => return None,
-    })
+    MOD_IPC_SERVICES
+        .iter()
+        .find_map(|(candidate, operation, capability)| {
+            (*candidate == name).then_some((*operation, *capability))
+        })
 }
 
 fn split_mod_arguments(arguments: &str, capacity: usize) -> Option<Vec<&str>> {
@@ -1671,14 +1719,42 @@ pub(crate) fn validate_mod_id(id: &str) -> Result<(), ModScriptError> {
 
 fn read_enabled_mods(workspace_directory: &Path) -> Result<HashSet<String>, ModScriptError> {
     let path = workspace_directory.join(MOD_SET_FILE_NAME);
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(HashSet::new());
-        }
+    match fs::metadata(&path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashSet::new()),
         Err(error) => return Err(ModScriptError::FileSystem(error.to_string())),
+    }
+    let bytes = match read_mod_file_bounded(&path, MAX_MOD_SET_BYTES) {
+        Ok(bytes) => bytes,
+        Err(ModScriptError::SourceTooLarge) => return Err(ModScriptError::ModSetTooLarge),
+        Err(error) => return Err(error),
     };
+    let text = String::from_utf8(bytes).map_err(|_| ModScriptError::InvalidModSet)?;
     parse_enabled_mods(&text)
+}
+
+fn read_mod_file_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, ModScriptError> {
+    let file =
+        fs::File::open(path).map_err(|error| ModScriptError::FileSystem(error.to_string()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| ModScriptError::FileSystem(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(ModScriptError::FileSystem(
+            "Mod workspace entry is not a regular file".to_owned(),
+        ));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(ModScriptError::SourceTooLarge);
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(max_bytes));
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ModScriptError::FileSystem(error.to_string()))?;
+    if bytes.len() > max_bytes {
+        return Err(ModScriptError::SourceTooLarge);
+    }
+    Ok(bytes)
 }
 
 fn parse_enabled_mods(text: &str) -> Result<HashSet<String>, ModScriptError> {
@@ -1939,6 +2015,154 @@ mod tests {
             ),
             Err(ModScriptError::CapabilityMismatch)
         );
+    }
+
+    #[test]
+    fn source_validation_accepts_character_effects_runtime_route() {
+        validate_mod_source(
+            "effect-probe",
+            concat!(
+                "nte_mod(4)\n",
+                "mod(\"effect-probe\")\n",
+                "requires(\"viewport.tick\")\n",
+                "requires(\"ipc\")\n",
+                "requires(\"character.effects\")\n",
+                "route_ipc(14, \"character.query_effects\")\n",
+                "def on_viewport_tick(event):\n",
+                "    value = 0\n",
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn workspace_rejects_source_and_batch_budgets_before_unbounded_growth() {
+        let root = temp_workspace();
+        let mod_directory = root.join(MOD_DIRECTORY_NAME);
+        fs::create_dir_all(&mod_directory).unwrap();
+
+        fs::write(
+            mod_directory.join("oversized.nte"),
+            vec![b'x'; MAX_MOD_SOURCE_BYTES + 1],
+        )
+        .unwrap();
+        assert_eq!(
+            load_mod_script_workspace(&root),
+            Err(ModScriptError::SourceTooLarge)
+        );
+        fs::remove_file(mod_directory.join("oversized.nte")).unwrap();
+
+        for index in 0..=MAX_MOD_SCRIPTS {
+            fs::write(mod_directory.join(format!("mod-{index}.nte")), b"x").unwrap();
+        }
+        assert_eq!(
+            load_mod_script_workspace(&root),
+            Err(ModScriptError::TooManyScripts)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_rejects_total_bytes_entries_and_malformed_utf8() {
+        let total_root = temp_workspace();
+        let total_mods = total_root.join(MOD_DIRECTORY_NAME);
+        fs::create_dir_all(&total_mods).unwrap();
+        for index in 0..=MAX_MOD_WORKSPACE_BYTES / MAX_MOD_SOURCE_BYTES {
+            fs::write(
+                total_mods.join(format!("total-{index}.nte")),
+                vec![b'x'; MAX_MOD_SOURCE_BYTES],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            load_mod_script_workspace(&total_root),
+            Err(ModScriptError::WorkspaceTooLarge)
+        );
+        fs::remove_dir_all(total_root).unwrap();
+
+        let entry_root = temp_workspace();
+        let entry_mods = entry_root.join(MOD_DIRECTORY_NAME);
+        fs::create_dir_all(&entry_mods).unwrap();
+        for index in 0..=MAX_MOD_WORKSPACE_ENTRIES {
+            fs::write(entry_mods.join(format!("ignored-{index}.txt")), b"x").unwrap();
+        }
+        assert_eq!(
+            load_mod_script_workspace(&entry_root),
+            Err(ModScriptError::TooManyWorkspaceEntries)
+        );
+        fs::remove_dir_all(entry_root).unwrap();
+
+        let malformed_root = temp_workspace();
+        let malformed_mods = malformed_root.join(MOD_DIRECTORY_NAME);
+        fs::create_dir_all(&malformed_mods).unwrap();
+        fs::write(malformed_mods.join("malformed.nte"), [0xff, 0xfe]).unwrap();
+        assert_eq!(
+            load_mod_script_workspace(&malformed_root),
+            Err(ModScriptError::SourceNotUtf8("malformed".to_owned()))
+        );
+        fs::remove_dir_all(malformed_root).unwrap();
+    }
+
+    #[test]
+    fn workspace_rejects_oversized_enabled_set_before_utf8_parse() {
+        let root = temp_workspace();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join(MOD_SET_FILE_NAME),
+            vec![b'x'; MAX_MOD_SET_BYTES + 1],
+        )
+        .unwrap();
+        assert_eq!(
+            load_mod_script_workspace(&root),
+            Err(ModScriptError::ModSetTooLarge)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn line_comment_lexer_matches_shared_mod_script_corpus() {
+        let corpus: serde_json::Value =
+            serde_json::from_str(include_str!("../../res/mod-script-conformance.json"))
+                .expect("Mod script conformance corpus should be valid JSON");
+        assert_eq!(corpus["version"].as_u64(), Some(1));
+        for vector in corpus["lineCommentVectors"]
+            .as_array()
+            .expect("lineCommentVectors should be an array")
+        {
+            let name = vector["name"].as_str().expect("vector name");
+            let source = vector["source"].as_str().expect("vector source");
+            let expected = vector["uncommented"]
+                .as_str()
+                .expect("vector uncommented source");
+            assert_eq!(strip_cpp_line_comment(source), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn generated_mod_runtime_schema_matches_shared_conformance_source() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../res/mod-runtime-schema.json")).unwrap();
+        let capabilities = schema["capabilities"].as_array().unwrap();
+        assert_eq!(capabilities.len(), MOD_CAPABILITIES.len());
+        for capability in capabilities {
+            let name = capability["name"].as_str().unwrap();
+            let bit = capability["bit"].as_u64().unwrap();
+            assert_eq!(mod_capability(name), Some(1u16 << bit));
+        }
+
+        let services = schema["services"].as_array().unwrap();
+        assert_eq!(services.len(), MOD_IPC_SERVICES.len());
+        for service in services {
+            let name = service["name"].as_str().unwrap();
+            let operation = service["operation"].as_u64().unwrap() as u16;
+            let capability = service["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|name| mod_capability(name.as_str().unwrap()).unwrap())
+                .fold(0, |mask, value| mask | value);
+            assert_eq!(mod_ipc_service(name), Some((operation, capability)));
+        }
     }
 
     #[test]

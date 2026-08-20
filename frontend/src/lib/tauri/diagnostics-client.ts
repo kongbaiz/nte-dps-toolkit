@@ -1,5 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
   diagnosticsError,
   parseDiagnosticsActionResult,
@@ -9,10 +7,11 @@ import {
   type DiagnosticsCommandError,
   type DiagnosticsSnapshot,
 } from "@/lib/tauri/diagnostics-contract";
+import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  parseSubscriptionReceipt,
-  TechnicalContractError,
-} from "@/lib/tauri/technical-contract";
+  subscribeStream,
+  tauriStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   getSnapshot: "get_diagnostics_snapshot",
@@ -46,14 +45,7 @@ export interface DiagnosticsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: DiagnosticsTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: DiagnosticsTransport = tauriStreamTransport;
 
 export function createDiagnosticsClient(
   transport: DiagnosticsTransport = tauriTransport,
@@ -85,32 +77,16 @@ export function createDiagnosticsClient(
     exportPcapng: () => invokeAction(COMMANDS.exportPcapng),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onEvent = transport.createChannel((message) => {
-        if (closed) return;
-        try {
-          onSnapshot(parseDiagnosticsEvent(message));
-        } catch (error) {
-          onError(diagnosticsError(error));
-        }
+      return subscribeStream({
+        transport,
+        streamKind: "diagnostics",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribe,
+        unsubscribeCommand: COMMANDS.unsubscribe,
+        parseEvent: parseDiagnosticsEvent,
+        onEvent: onSnapshot,
+        onError: (error) => onError(diagnosticsError(error)),
       });
-      const receipt = transport
-        .invoke(COMMANDS.subscribe, { subscriptionId, onEvent })
-        .then(parseSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) onError(diagnosticsError(error));
-          return undefined;
-        });
-      return async () => {
-        if (closed) return;
-        closed = true;
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribe, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
     },
   };
 }

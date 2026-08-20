@@ -47,6 +47,7 @@ const PREVIEW_BUCKETS = (() => {
 export const TIMELINE_UI_PREVIEW: TimelinePreviewSnapshot = {
   duration: 48,
   bucketSeconds: 2,
+  effectiveBucketSeconds: 2,
   totalDamage: 5_688_311,
   peakDps: 176_000,
   timeStopIntervals: [

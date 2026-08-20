@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import modScriptConformance from "@res/mod-script-conformance.json";
+
 import type { ModStudioSdkSchemaSnapshot } from "@/lib/tauri/mod-studio-contract";
 
 import {
@@ -9,13 +11,15 @@ import {
 
 import {
   modSourceCompletion,
+  modSourceDocumentSymbols,
   modSourceHover,
   modSourceOccurrences,
   modSourceSignatureHelp,
 } from "./mod-source-intelligence";
+import { stripCppLineComment } from "./mod-source-lexical";
 
 const schema: ModStudioSdkSchemaSnapshot = {
-  contractVersion: 10,
+  contractVersion: 13,
   schemaVersion: 1,
   symbols: [
     {
@@ -36,6 +40,15 @@ const schema: ModStudioSdkSchemaSnapshot = {
 };
 
 describe("Mod source intelligence", () => {
+  it("matches the shared Mod line-comment conformance corpus", () => {
+    expect(modScriptConformance.version).toBe(1);
+    for (const vector of modScriptConformance.lineCommentVectors) {
+      expect(stripCppLineComment(vector.source), vector.name).toBe(
+        vector.uncommented,
+      );
+    }
+  });
+
   it("keeps automatic completion enabled for code and namespace triggers", () => {
     expect(MOD_SOURCE_SUGGEST_OPTIONS).toMatchObject({
       quickSuggestions: {
@@ -70,6 +83,20 @@ describe("Mod source intelligence", () => {
 
     expect(completion?.items.map((item) => item.label)).toContain(
       "player_state",
+    );
+  });
+
+  it("keeps line-comment markers inside quoted and raw string literals", () => {
+    const quoted =
+      'std::string endpoint(const char* value = "https://example.test") {';
+    const raw =
+      'std::string raw_endpoint(const char* value = R"(https://example.test)") {';
+
+    expect(modSourceDocumentSymbols(quoted)[0]?.label).toBe(
+      'endpoint(const char* value = "https://example.test")',
+    );
+    expect(modSourceDocumentSymbols(raw)[0]?.label).toBe(
+      'raw_endpoint(const char* value = R"(https://example.test)")',
     );
   });
 

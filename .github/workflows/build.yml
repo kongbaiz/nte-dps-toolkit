@@ -11,6 +11,8 @@ on:
       - "native/**"
       - "plugins/**"
       - "res/**"
+      - "images/**"
+      - "site/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
@@ -30,6 +32,8 @@ on:
       - "native/**"
       - "plugins/**"
       - "res/**"
+      - "images/**"
+      - "site/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
@@ -89,6 +93,9 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           if ([string]::IsNullOrWhiteSpace($env:NTE_UPDATE_KEY_ID)) {
             throw "NTE_UPDATE_KEY_ID must be configured for an official build"
           }
@@ -109,6 +116,9 @@ jobs:
       - name: Build native NTE Mods Plugin
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $installation = & $vswhere `
             -latest `
@@ -202,6 +212,23 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Verify PowerShell CI fail-fast policy
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test_ci_powershell_fail_fast.ps1
+
+      - name: Verify native runtime safety policies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          & ./native/nte-mods-plugin/tests/ipc_transport_security_source_tests.ps1
+          & ./native/nte-mods-plugin/tests/native_lifecycle_source_tests.ps1
+          & ./native/nte-mods-plugin/tests/proxy_forwarding_runtime_tests.ps1
+          & ./scripts/test_native_signature_policy.ps1
+          & ./scripts/test_native_shadow_vtable_hook.ps1
+          & ./scripts/test_mod_runtime_schema.ps1
+
       - name: Check shared desktop build
         run: cargo check
 
@@ -211,6 +238,9 @@ jobs:
       - name: Check Tauri and CLI targets
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           cargo fmt --check --manifest-path src-tauri/Cargo.toml
           cargo check --manifest-path src-tauri/Cargo.toml
           cargo check --bin nte-core --no-default-features --features cli
@@ -218,6 +248,9 @@ jobs:
       - name: Lint desktop, Tauri, and CLI targets
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           cargo clippy --all-targets --features desktop -- -D warnings
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
           cargo clippy --all-targets --no-default-features --features cli -- -D warnings
@@ -225,6 +258,9 @@ jobs:
       - name: Test Tauri and CLI targets
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           cargo test --manifest-path src-tauri/Cargo.toml
           cargo test --no-default-features --features cli
           cargo test --features external_resources
@@ -232,6 +268,9 @@ jobs:
       - name: Check frontend
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           pnpm --dir frontend lint
           pnpm --dir frontend typecheck
           pnpm --dir frontend test
@@ -244,15 +283,33 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/verify_runtime_safety.ps1
 
+      - name: Verify Rust and TypeScript contract version parity
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test_contract_version_parity.ps1
+
+      - name: Verify i18n source coverage
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test_i18n_source_coverage.ps1
+
+      - name: Build and verify canonical site assets
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test_site_build.ps1
+
       - name: Audit Rust dependency vulnerabilities
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           cargo install cargo-audit --locked
           cargo audit --deny warnings
 
       - name: Build release variants
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           pnpm --dir frontend tauri:build --no-bundle --ci
           cargo build --release --bin nte-updater --features desktop
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
@@ -279,6 +336,9 @@ jobs:
       - name: Compress release executables with UPX
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           $archive = "$env:RUNNER_TEMP/upx-$env:UPX_VERSION-win64.zip"
           $upxRoot = "$env:RUNNER_TEMP/upx"
           Invoke-WebRequest `
@@ -316,6 +376,9 @@ jobs:
       - name: Prepare release packages
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
           $variantNotes = @{
             "nte-dps-tool-windows-x64" = @"
           # NTE DPS Tool - Windows x64
@@ -370,9 +433,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
-            $PSNativeCommandUseErrorActionPreference = $false
-          }
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
 
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
           $crateVersion = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value

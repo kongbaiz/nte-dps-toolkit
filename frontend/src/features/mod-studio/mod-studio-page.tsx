@@ -21,6 +21,15 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogBackdrop,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogPortal,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -38,6 +47,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { t, tf, useTranslationRevision } from "@/lib/i18n";
+import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import type {
   ModStudioCommandError,
@@ -114,6 +124,7 @@ export function ModStudioWorkspace() {
     loaderState,
     retryLoader,
     setLoaderRunning,
+    checkLoaderGameRunning,
     openLoaderDirectory,
     loaderDirectoryState,
   } = useModStudio();
@@ -143,6 +154,7 @@ export function ModStudioWorkspace() {
         loaderState={loaderState}
         onRetryLoader={retryLoader}
         onSetLoaderRunning={setLoaderRunning}
+        onCheckLoaderGameRunning={checkLoaderGameRunning}
         onOpenLoaderDirectory={openLoaderDirectory}
         loaderDirectoryState={loaderDirectoryState}
         dirty={dirtyDocumentIds.size > 0}
@@ -232,6 +244,7 @@ function ModStudioHeader({
   loaderState,
   onRetryLoader,
   onSetLoaderRunning,
+  onCheckLoaderGameRunning,
   onOpenLoaderDirectory,
   loaderDirectoryState,
   dirty,
@@ -255,13 +268,20 @@ function ModStudioHeader({
   onSetProxyEnabled: (enabled: boolean) => void | Promise<void>;
   loaderState: ModLoaderControlState;
   onRetryLoader: () => void | Promise<void>;
-  onSetLoaderRunning: (running: boolean) => void | Promise<void>;
+  onSetLoaderRunning: (
+    running: boolean,
+    terminateProcesses: boolean,
+  ) => void | Promise<void>;
+  onCheckLoaderGameRunning: () => Promise<boolean | null>;
   onOpenLoaderDirectory: () => void | Promise<void>;
   loaderDirectoryState: ModStudioActionState;
   dirty: boolean;
 }) {
   const runtimeConnected = runtimeState.connection === "connected";
   const [riskMethod, setRiskMethod] = useState<ModLoadingMethod | null>(null);
+  const [pendingLoaderRunning, setPendingLoaderRunning] = useState<
+    boolean | null
+  >(null);
   const preferencesReady = preferenceState.status === "ready";
   const preferenceBusy =
     preferenceState.status === "loading" ||
@@ -306,24 +326,34 @@ function ModStudioHeader({
           preferenceState.error.messageKey,
           preferenceState.error.messageArguments,
         )
-      : deploymentState.status === "error"
+      : loaderDirectoryState.status === "error"
         ? tf(
-            deploymentState.error.messageKey,
-            deploymentState.error.messageArguments,
+            loaderDirectoryState.error.messageKey,
+            loaderDirectoryState.error.messageArguments,
           )
-        : loaderState.status === "error"
-          ? tf(loaderState.error.messageKey, loaderState.error.messageArguments)
-          : loaderDirectoryState.status === "error"
-            ? tf(
-                loaderDirectoryState.error.messageKey,
-                loaderDirectoryState.error.messageArguments,
-              )
-            : folderState.status === "error"
-              ? tf(
-                  folderState.error.messageKey,
-                  folderState.error.messageArguments,
-                )
-              : null;
+        : folderState.status === "error"
+          ? tf(folderState.error.messageKey, folderState.error.messageArguments)
+          : null;
+  const proxyStatus =
+    deploymentState.status === "error"
+      ? tf(
+          deploymentState.error.messageKey,
+          deploymentState.error.messageArguments,
+        )
+      : t(proxyDeploymentStatusKey(deploymentState, selectedGame));
+  const loaderStatus =
+    loaderState.status === "error"
+      ? tf(loaderState.error.messageKey, loaderState.error.messageArguments)
+      : t(loaderRuntimeStatusKey(loaderState));
+  const requestLoaderStart = async () => {
+    const gameRunning = await onCheckLoaderGameRunning();
+    if (gameRunning === null) return;
+    if (gameRunning) {
+      setPendingLoaderRunning(true);
+    } else {
+      void onSetLoaderRunning(true, false);
+    }
+  };
   return (
     <header className="border bg-card px-3 py-2.5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -450,8 +480,14 @@ function ModStudioHeader({
                 }
               }}
             />
-            <span className="text-muted-foreground">
-              {t(proxyDeploymentStatusKey(deploymentState, selectedGame))}
+            <span
+              className={cn(
+                "text-muted-foreground",
+                deploymentState.status === "error" && "text-destructive",
+              )}
+              role={deploymentState.status === "error" ? "alert" : undefined}
+            >
+              {proxyStatus}
             </span>
             <Tooltip>
               <TooltipTrigger
@@ -502,17 +538,23 @@ function ModStudioHeader({
               onCheckedChange={(running) => {
                 if (running) {
                   if (riskAcknowledged) {
-                    void onSetLoaderRunning(true);
+                    void requestLoaderStart();
                   } else {
                     setRiskMethod("loader");
                   }
                 } else {
-                  void onSetLoaderRunning(false);
+                  setPendingLoaderRunning(false);
                 }
               }}
             />
-            <span className="text-muted-foreground">
-              {t(loaderRuntimeStatusKey(loaderState))}
+            <span
+              className={cn(
+                "text-muted-foreground",
+                loaderState.status === "error" && "text-destructive",
+              )}
+              role={loaderState.status === "error" ? "alert" : undefined}
+            >
+              {loaderStatus}
             </span>
             <Tooltip>
               <TooltipTrigger
@@ -563,9 +605,20 @@ function ModStudioHeader({
             if (method === "proxy") {
               void onSetProxyEnabled(true);
             } else {
-              void onSetLoaderRunning(true);
+              void requestLoaderStart();
             }
             return true;
+          }}
+        />
+      ) : null}
+      {pendingLoaderRunning !== null ? (
+        <ModLoaderProcessDialog
+          running={pendingLoaderRunning}
+          onCancel={() => setPendingLoaderRunning(null)}
+          onConfirm={() => {
+            const running = pendingLoaderRunning;
+            setPendingLoaderRunning(null);
+            void onSetLoaderRunning(running, true);
           }}
         />
       ) : null}
@@ -617,11 +670,36 @@ function runtimeConnectionMessage(
       return "Hot reload connected";
     case "loaderPresent":
       return "Mod loader is loaded; waiting for the game hook";
+    case "acknowledgementRequired":
+      return "Confirm the Mod risk warning before starting the game runtime.";
     case "probeFailed":
-      return "Unable to check the game Mod loader state";
+      return "The Mod loader status probe failed without a diagnostic code.";
+    case "bootstrapFailed":
+      return "Failed to initialize the game Mod runtime";
     case "connecting":
     case "waiting":
       return "Waiting for the game Mod loader";
+  }
+}
+
+function runtimeProbeFailureMessage(
+  code: NonNullable<ModStudioRuntimeState["probeErrorCode"]>,
+): string {
+  switch (code) {
+    case "RUNTIME_EVENT_ACCESS_DENIED":
+      return "Access to the Mod loader runtime event was denied ({0}{1}).";
+    case "RUNTIME_EVENT_OPEN_FAILED":
+      return "Failed to open the Mod loader runtime event ({0}{1}).";
+    case "IPC_CLIENT_UNAVAILABLE":
+      return "The Mod IPC client is unavailable on this platform ({0}{1}).";
+    case "IPC_PIPE_ACCESS_DENIED":
+      return "Access to the Mod IPC pipe was denied ({0}{1}).";
+    case "IPC_PIPE_OPEN_FAILED":
+      return "Failed to open the Mod IPC pipe ({0}{1}).";
+    case "POLL_WORKER_FAILED":
+      return "The Mod runtime status worker failed ({0}{1}).";
+    case "RUNTIME_SUBSCRIPTION_FAILED":
+      return "The Mod runtime event subscription failed ({0}{1}).";
   }
 }
 
@@ -650,49 +728,88 @@ function ModLoaderRiskDialog({
   }, []);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="mod-loader-risk-title"
+    <AlertDialog
+      open
+      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
     >
-      <section className="w-full max-w-lg rounded-xl border border-destructive bg-card p-5 shadow-xl">
-        <h2
-          id="mod-loader-risk-title"
-          className="text-lg font-semibold text-destructive"
-        >
-          {t("Risk warning")}
-        </h2>
-        <p className="mt-3 text-sm text-destructive">
-          {t(
-            "Third-party Mods may cause game crashes, integrity-check failures, or account penalties.",
-          )}
-        </p>
-        {remainingSeconds > 0 ? (
-          <p className="mt-3 text-sm font-medium text-[var(--console-warning)]">
-            {tf("Enable available in {} seconds.", [
-              remainingSeconds.toString(),
-            ])}
-          </p>
-        ) : null}
-        <div className="mt-4 flex gap-2">
-          <Button
-            disabled={remainingSeconds > 0 || confirming}
-            onClick={() => {
-              setConfirming(true);
-              void onConfirm().then((confirmed) => {
-                if (!confirmed) setConfirming(false);
-              });
-            }}
-          >
-            {t("Accept Risk and Enable")}
-          </Button>
-          <Button variant="outline" disabled={confirming} onClick={onCancel}>
-            {t("Cancel")}
-          </Button>
-        </div>
-      </section>
-    </div>
+      <AlertDialogPortal>
+        <AlertDialogBackdrop />
+        <AlertDialogPopup className="top-1/2 left-1/2 w-[calc(100vw-3rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-destructive bg-card p-5 shadow-xl">
+          <AlertDialogTitle className="text-destructive">
+            {t("Risk warning")}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="mt-3 text-destructive">
+            {t(
+              "Third-party Mods may cause game crashes, integrity-check failures, or account penalties.",
+            )}
+          </AlertDialogDescription>
+          {remainingSeconds > 0 ? (
+            <p className="mt-3 text-sm font-medium text-[var(--console-warning)]">
+              {tf("Enable available in {} seconds.", [
+                remainingSeconds.toString(),
+              ])}
+            </p>
+          ) : null}
+          <div className="mt-4 flex gap-2">
+            <Button
+              disabled={remainingSeconds > 0 || confirming}
+              onClick={() => {
+                setConfirming(true);
+                void onConfirm().then((confirmed) => {
+                  if (!confirmed) setConfirming(false);
+                });
+              }}
+            >
+              {t("Accept Risk and Enable")}
+            </Button>
+            <AlertDialogClose
+              render={<Button variant="outline" disabled={confirming} />}
+            >
+              {t("Cancel")}
+            </AlertDialogClose>
+          </div>
+        </AlertDialogPopup>
+      </AlertDialogPortal>
+    </AlertDialog>
+  );
+}
+
+function ModLoaderProcessDialog({
+  running,
+  onCancel,
+  onConfirm,
+}: {
+  running: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog
+      open
+      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
+    >
+      <AlertDialogPortal>
+        <AlertDialogBackdrop />
+        <AlertDialogPopup className="top-1/2 left-1/2 w-[calc(100vw-3rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card p-5 shadow-xl">
+          <AlertDialogTitle>{t("Close game processes?")}</AlertDialogTitle>
+          <AlertDialogDescription className="mt-3">
+            {t(
+              running
+                ? "The game is running. Enabling Mod Loader will close HTGame.exe and the launcher processes."
+                : "Disabling Mod Loader will close HTGame.exe and the launcher processes.",
+            )}
+          </AlertDialogDescription>
+          <div className="mt-4 flex gap-2">
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("Cancel")}
+            </AlertDialogClose>
+            <Button variant="destructive" onClick={onConfirm}>
+              {t("Close processes and continue")}
+            </Button>
+          </div>
+        </AlertDialogPopup>
+      </AlertDialogPortal>
+    </AlertDialog>
   );
 }
 
@@ -994,33 +1111,32 @@ function DeleteModDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="delete-mod-title"
+    <AlertDialog
+      open
+      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
     >
-      <section className="w-full max-w-md rounded-xl border bg-card p-5 shadow-xl">
-        <h2 id="delete-mod-title" className="text-lg font-semibold">
-          {t("Delete Mod")}
-        </h2>
-        <p className="mt-3 text-sm text-muted-foreground">
-          {tf(
-            "Delete {0}.nte from the Mod workspace? This also disables the Mod.",
-            [id],
-          )}
-        </p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="outline" onClick={onCancel}>
-            {t("Cancel")}
-          </Button>
-          <Button variant="destructive" onClick={onConfirm}>
-            <Trash2 aria-hidden="true" />
-            {t("Delete")}
-          </Button>
-        </div>
-      </section>
-    </div>
+      <AlertDialogPortal>
+        <AlertDialogBackdrop />
+        <AlertDialogPopup className="top-1/2 left-1/2 w-[calc(100vw-3rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card p-5 shadow-xl">
+          <AlertDialogTitle>{t("Delete Mod")}</AlertDialogTitle>
+          <AlertDialogDescription className="mt-3">
+            {tf(
+              "Delete {0}.nte from the Mod workspace? This also disables the Mod.",
+              [id],
+            )}
+          </AlertDialogDescription>
+          <div className="mt-5 flex justify-end gap-2">
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("Cancel")}
+            </AlertDialogClose>
+            <Button variant="destructive" onClick={onConfirm}>
+              <Trash2 aria-hidden="true" />
+              {t("Delete")}
+            </Button>
+          </div>
+        </AlertDialogPopup>
+      </AlertDialogPortal>
+    </AlertDialog>
   );
 }
 
@@ -1278,7 +1394,20 @@ function RuntimeConsole({
   const connectionText =
     runtimeState.error !== null
       ? tf(runtimeState.error.messageKey, runtimeState.error.messageArguments)
-      : t(runtimeConnectionMessage(runtimeState.connection));
+      : runtimeState.connection === "bootstrapFailed" &&
+          runtimeState.bootstrapErrorCode !== null
+        ? tf("Failed to initialize the game Mod runtime ({0}).", [
+            runtimeState.bootstrapErrorCode,
+          ])
+        : runtimeState.connection === "probeFailed" &&
+            runtimeState.probeErrorCode !== null
+          ? tf(runtimeProbeFailureMessage(runtimeState.probeErrorCode), [
+              runtimeState.probeErrorCode,
+              runtimeState.probeOsErrorCode === null
+                ? ""
+                : ` / Win32 ${runtimeState.probeOsErrorCode}`,
+            ])
+          : t(runtimeConnectionMessage(runtimeState.connection));
   const entries = useMemo(
     () =>
       visibleRuntimeEntries(

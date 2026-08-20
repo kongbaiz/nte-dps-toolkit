@@ -1,432 +1,616 @@
 .code
 extern mProcs:QWORD
+extern ResolveDwmapiExport:PROC
+
+; Preserve the complete Windows x64 register argument set while the first call
+; resolves the real system export outside DllMain. The original stack (and all
+; stack arguments) is restored before the tail jump.
+DwmapiDispatch proc
+  lea r11, mProcs
+  mov r11, [r11+r10*8]
+  test r11, r11
+  jz DwmapiResolve
+  jmp r11
+DwmapiDispatch endp
+
+DwmapiResolve proc frame
+  sub rsp, 88h
+  .allocstack 88h
+  .endprolog
+  mov [rsp+20h], rcx
+  mov [rsp+28h], rdx
+  mov [rsp+30h], r8
+  mov [rsp+38h], r9
+  movdqu xmmword ptr [rsp+40h], xmm0
+  movdqu xmmword ptr [rsp+50h], xmm1
+  movdqu xmmword ptr [rsp+60h], xmm2
+  movdqu xmmword ptr [rsp+70h], xmm3
+  mov [rsp+80h], r10
+  mov ecx, r10d
+  call ResolveDwmapiExport
+  mov rcx, [rsp+20h]
+  mov rdx, [rsp+28h]
+  mov r8, [rsp+30h]
+  mov r9, [rsp+38h]
+  movdqu xmm0, xmmword ptr [rsp+40h]
+  movdqu xmm1, xmmword ptr [rsp+50h]
+  movdqu xmm2, xmmword ptr [rsp+60h]
+  movdqu xmm3, xmmword ptr [rsp+70h]
+  mov r10, [rsp+80h]
+  lea r11, mProcs
+  add rsp, 88h
+  jmp qword ptr [r11+r10*8]
+DwmapiResolve endp
 f0 proc
-  jmp mProcs[8*0]
+  mov r10d, 0
+  jmp DwmapiDispatch
 f0 endp
 f1 proc
-  jmp mProcs[8*1]
+  mov r10d, 1
+  jmp DwmapiDispatch
 f1 endp
 f2 proc
-  jmp mProcs[8*2]
+  mov r10d, 2
+  jmp DwmapiDispatch
 f2 endp
 f3 proc
-  jmp mProcs[8*3]
+  mov r10d, 3
+  jmp DwmapiDispatch
 f3 endp
 f4 proc
-  jmp mProcs[8*4]
+  mov r10d, 4
+  jmp DwmapiDispatch
 f4 endp
 f5 proc
-  jmp mProcs[8*5]
+  mov r10d, 5
+  jmp DwmapiDispatch
 f5 endp
 f6 proc
-  jmp mProcs[8*6]
+  mov r10d, 6
+  jmp DwmapiDispatch
 f6 endp
 f7 proc
-  jmp mProcs[8*7]
+  mov r10d, 7
+  jmp DwmapiDispatch
 f7 endp
 f8 proc
-  jmp mProcs[8*8]
+  mov r10d, 8
+  jmp DwmapiDispatch
 f8 endp
 f9 proc
-  jmp mProcs[8*9]
+  mov r10d, 9
+  jmp DwmapiDispatch
 f9 endp
 f10 proc
-  jmp mProcs[8*10]
+  mov r10d, 10
+  jmp DwmapiDispatch
 f10 endp
 f11 proc
-  jmp mProcs[8*11]
+  mov r10d, 11
+  jmp DwmapiDispatch
 f11 endp
 f12 proc
-  jmp mProcs[8*12]
+  mov r10d, 12
+  jmp DwmapiDispatch
 f12 endp
 f13 proc
-  jmp mProcs[8*13]
+  mov r10d, 13
+  jmp DwmapiDispatch
 f13 endp
 f14 proc
-  jmp mProcs[8*14]
+  mov r10d, 14
+  jmp DwmapiDispatch
 f14 endp
 f15 proc
-  jmp mProcs[8*15]
+  mov r10d, 15
+  jmp DwmapiDispatch
 f15 endp
 f16 proc
-  jmp mProcs[8*16]
+  mov r10d, 16
+  jmp DwmapiDispatch
 f16 endp
 f17 proc
-  jmp mProcs[8*17]
+  mov r10d, 17
+  jmp DwmapiDispatch
 f17 endp
 f18 proc
-  jmp mProcs[8*18]
+  mov r10d, 18
+  jmp DwmapiDispatch
 f18 endp
 f19 proc
-  jmp mProcs[8*19]
+  mov r10d, 19
+  jmp DwmapiDispatch
 f19 endp
 f20 proc
-  jmp mProcs[8*20]
+  mov r10d, 20
+  jmp DwmapiDispatch
 f20 endp
 f21 proc
-  jmp mProcs[8*21]
+  mov r10d, 21
+  jmp DwmapiDispatch
 f21 endp
 f22 proc
-  jmp mProcs[8*22]
+  mov r10d, 22
+  jmp DwmapiDispatch
 f22 endp
 f23 proc
-  jmp mProcs[8*23]
+  mov r10d, 23
+  jmp DwmapiDispatch
 f23 endp
 f24 proc
-  jmp mProcs[8*24]
+  mov r10d, 24
+  jmp DwmapiDispatch
 f24 endp
 f25 proc
-  jmp mProcs[8*25]
+  mov r10d, 25
+  jmp DwmapiDispatch
 f25 endp
 f26 proc
-  jmp mProcs[8*26]
+  mov r10d, 26
+  jmp DwmapiDispatch
 f26 endp
 f27 proc
-  jmp mProcs[8*27]
+  mov r10d, 27
+  jmp DwmapiDispatch
 f27 endp
 f28 proc
-  jmp mProcs[8*28]
+  mov r10d, 28
+  jmp DwmapiDispatch
 f28 endp
 f29 proc
-  jmp mProcs[8*29]
+  mov r10d, 29
+  jmp DwmapiDispatch
 f29 endp
 f30 proc
-  jmp mProcs[8*30]
+  mov r10d, 30
+  jmp DwmapiDispatch
 f30 endp
 f31 proc
-  jmp mProcs[8*31]
+  mov r10d, 31
+  jmp DwmapiDispatch
 f31 endp
 f32 proc
-  jmp mProcs[8*32]
+  mov r10d, 32
+  jmp DwmapiDispatch
 f32 endp
 f33 proc
-  jmp mProcs[8*33]
+  mov r10d, 33
+  jmp DwmapiDispatch
 f33 endp
 f34 proc
-  jmp mProcs[8*34]
+  mov r10d, 34
+  jmp DwmapiDispatch
 f34 endp
 f35 proc
-  jmp mProcs[8*35]
+  mov r10d, 35
+  jmp DwmapiDispatch
 f35 endp
 f36 proc
-  jmp mProcs[8*36]
+  mov r10d, 36
+  jmp DwmapiDispatch
 f36 endp
 f37 proc
-  jmp mProcs[8*37]
+  mov r10d, 37
+  jmp DwmapiDispatch
 f37 endp
 f38 proc
-  jmp mProcs[8*38]
+  mov r10d, 38
+  jmp DwmapiDispatch
 f38 endp
 f39 proc
-  jmp mProcs[8*39]
+  mov r10d, 39
+  jmp DwmapiDispatch
 f39 endp
 f40 proc
-  jmp mProcs[8*40]
+  mov r10d, 40
+  jmp DwmapiDispatch
 f40 endp
 f41 proc
-  jmp mProcs[8*41]
+  mov r10d, 41
+  jmp DwmapiDispatch
 f41 endp
 f42 proc
-  jmp mProcs[8*42]
+  mov r10d, 42
+  jmp DwmapiDispatch
 f42 endp
 f43 proc
-  jmp mProcs[8*43]
+  mov r10d, 43
+  jmp DwmapiDispatch
 f43 endp
 f44 proc
-  jmp mProcs[8*44]
+  mov r10d, 44
+  jmp DwmapiDispatch
 f44 endp
 f45 proc
-  jmp mProcs[8*45]
+  mov r10d, 45
+  jmp DwmapiDispatch
 f45 endp
 f46 proc
-  jmp mProcs[8*46]
+  mov r10d, 46
+  jmp DwmapiDispatch
 f46 endp
 f47 proc
-  jmp mProcs[8*47]
+  mov r10d, 47
+  jmp DwmapiDispatch
 f47 endp
 f48 proc
-  jmp mProcs[8*48]
+  mov r10d, 48
+  jmp DwmapiDispatch
 f48 endp
 f49 proc
-  jmp mProcs[8*49]
+  mov r10d, 49
+  jmp DwmapiDispatch
 f49 endp
 f50 proc
-  jmp mProcs[8*50]
+  mov r10d, 50
+  jmp DwmapiDispatch
 f50 endp
 f51 proc
-  jmp mProcs[8*51]
+  mov r10d, 51
+  jmp DwmapiDispatch
 f51 endp
 f52 proc
-  jmp mProcs[8*52]
+  mov r10d, 52
+  jmp DwmapiDispatch
 f52 endp
 f53 proc
-  jmp mProcs[8*53]
+  mov r10d, 53
+  jmp DwmapiDispatch
 f53 endp
 f54 proc
-  jmp mProcs[8*54]
+  mov r10d, 54
+  jmp DwmapiDispatch
 f54 endp
 f55 proc
-  jmp mProcs[8*55]
+  mov r10d, 55
+  jmp DwmapiDispatch
 f55 endp
 f56 proc
-  jmp mProcs[8*56]
+  mov r10d, 56
+  jmp DwmapiDispatch
 f56 endp
 f57 proc
-  jmp mProcs[8*57]
+  mov r10d, 57
+  jmp DwmapiDispatch
 f57 endp
 f58 proc
-  jmp mProcs[8*58]
+  mov r10d, 58
+  jmp DwmapiDispatch
 f58 endp
 f59 proc
-  jmp mProcs[8*59]
+  mov r10d, 59
+  jmp DwmapiDispatch
 f59 endp
 f60 proc
-  jmp mProcs[8*60]
+  mov r10d, 60
+  jmp DwmapiDispatch
 f60 endp
 f61 proc
-  jmp mProcs[8*61]
+  mov r10d, 61
+  jmp DwmapiDispatch
 f61 endp
 f62 proc
-  jmp mProcs[8*62]
+  mov r10d, 62
+  jmp DwmapiDispatch
 f62 endp
 f63 proc
-  jmp mProcs[8*63]
+  mov r10d, 63
+  jmp DwmapiDispatch
 f63 endp
 f64 proc
-  jmp mProcs[8*64]
+  mov r10d, 64
+  jmp DwmapiDispatch
 f64 endp
 f65 proc
-  jmp mProcs[8*65]
+  mov r10d, 65
+  jmp DwmapiDispatch
 f65 endp
 f66 proc
-  jmp mProcs[8*66]
+  mov r10d, 66
+  jmp DwmapiDispatch
 f66 endp
 f67 proc
-  jmp mProcs[8*67]
+  mov r10d, 67
+  jmp DwmapiDispatch
 f67 endp
 f68 proc
-  jmp mProcs[8*68]
+  mov r10d, 68
+  jmp DwmapiDispatch
 f68 endp
 f69 proc
-  jmp mProcs[8*69]
+  mov r10d, 69
+  jmp DwmapiDispatch
 f69 endp
 f70 proc
-  jmp mProcs[8*70]
+  mov r10d, 70
+  jmp DwmapiDispatch
 f70 endp
 f71 proc
-  jmp mProcs[8*71]
+  mov r10d, 71
+  jmp DwmapiDispatch
 f71 endp
 f72 proc
-  jmp mProcs[8*72]
+  mov r10d, 72
+  jmp DwmapiDispatch
 f72 endp
 f73 proc
-  jmp mProcs[8*73]
+  mov r10d, 73
+  jmp DwmapiDispatch
 f73 endp
 f74 proc
-  jmp mProcs[8*74]
+  mov r10d, 74
+  jmp DwmapiDispatch
 f74 endp
 f75 proc
-  jmp mProcs[8*75]
+  mov r10d, 75
+  jmp DwmapiDispatch
 f75 endp
 f76 proc
-  jmp mProcs[8*76]
+  mov r10d, 76
+  jmp DwmapiDispatch
 f76 endp
 f77 proc
-  jmp mProcs[8*77]
+  mov r10d, 77
+  jmp DwmapiDispatch
 f77 endp
 f78 proc
-  jmp mProcs[8*78]
+  mov r10d, 78
+  jmp DwmapiDispatch
 f78 endp
 f79 proc
-  jmp mProcs[8*79]
+  mov r10d, 79
+  jmp DwmapiDispatch
 f79 endp
 f80 proc
-  jmp mProcs[8*80]
+  mov r10d, 80
+  jmp DwmapiDispatch
 f80 endp
 f81 proc
-  jmp mProcs[8*81]
+  mov r10d, 81
+  jmp DwmapiDispatch
 f81 endp
 f82 proc
-  jmp mProcs[8*82]
+  mov r10d, 82
+  jmp DwmapiDispatch
 f82 endp
 f83 proc
-  jmp mProcs[8*83]
+  mov r10d, 83
+  jmp DwmapiDispatch
 f83 endp
 f84 proc
-  jmp mProcs[8*84]
+  mov r10d, 84
+  jmp DwmapiDispatch
 f84 endp
 f85 proc
-  jmp mProcs[8*85]
+  mov r10d, 85
+  jmp DwmapiDispatch
 f85 endp
 f86 proc
-  jmp mProcs[8*86]
+  mov r10d, 86
+  jmp DwmapiDispatch
 f86 endp
 f87 proc
-  jmp mProcs[8*87]
+  mov r10d, 87
+  jmp DwmapiDispatch
 f87 endp
 f88 proc
-  jmp mProcs[8*88]
+  mov r10d, 88
+  jmp DwmapiDispatch
 f88 endp
 f89 proc
-  jmp mProcs[8*89]
+  mov r10d, 89
+  jmp DwmapiDispatch
 f89 endp
 f90 proc
-  jmp mProcs[8*90]
+  mov r10d, 90
+  jmp DwmapiDispatch
 f90 endp
 f91 proc
-  jmp mProcs[8*91]
+  mov r10d, 91
+  jmp DwmapiDispatch
 f91 endp
 f92 proc
-  jmp mProcs[8*92]
+  mov r10d, 92
+  jmp DwmapiDispatch
 f92 endp
 f93 proc
-  jmp mProcs[8*93]
+  mov r10d, 93
+  jmp DwmapiDispatch
 f93 endp
 f94 proc
-  jmp mProcs[8*94]
+  mov r10d, 94
+  jmp DwmapiDispatch
 f94 endp
 f95 proc
-  jmp mProcs[8*95]
+  mov r10d, 95
+  jmp DwmapiDispatch
 f95 endp
 f96 proc
-  jmp mProcs[8*96]
+  mov r10d, 96
+  jmp DwmapiDispatch
 f96 endp
 f97 proc
-  jmp mProcs[8*97]
+  mov r10d, 97
+  jmp DwmapiDispatch
 f97 endp
 f98 proc
-  jmp mProcs[8*98]
+  mov r10d, 98
+  jmp DwmapiDispatch
 f98 endp
 f99 proc
-  jmp mProcs[8*99]
+  mov r10d, 99
+  jmp DwmapiDispatch
 f99 endp
 f100 proc
-  jmp mProcs[8*100]
+  mov r10d, 100
+  jmp DwmapiDispatch
 f100 endp
 f101 proc
-  jmp mProcs[8*101]
+  mov r10d, 101
+  jmp DwmapiDispatch
 f101 endp
 f102 proc
-  jmp mProcs[8*102]
+  mov r10d, 102
+  jmp DwmapiDispatch
 f102 endp
 f103 proc
-  jmp mProcs[8*103]
+  mov r10d, 103
+  jmp DwmapiDispatch
 f103 endp
 f104 proc
-  jmp mProcs[8*104]
+  mov r10d, 104
+  jmp DwmapiDispatch
 f104 endp
 f105 proc
-  jmp mProcs[8*105]
+  mov r10d, 105
+  jmp DwmapiDispatch
 f105 endp
 f106 proc
-  jmp mProcs[8*106]
+  mov r10d, 106
+  jmp DwmapiDispatch
 f106 endp
 f107 proc
-  jmp mProcs[8*107]
+  mov r10d, 107
+  jmp DwmapiDispatch
 f107 endp
 f108 proc
-  jmp mProcs[8*108]
+  mov r10d, 108
+  jmp DwmapiDispatch
 f108 endp
 f109 proc
-  jmp mProcs[8*109]
+  mov r10d, 109
+  jmp DwmapiDispatch
 f109 endp
 f110 proc
-  jmp mProcs[8*110]
+  mov r10d, 110
+  jmp DwmapiDispatch
 f110 endp
 f111 proc
-  jmp mProcs[8*111]
+  mov r10d, 111
+  jmp DwmapiDispatch
 f111 endp
 f112 proc
-  jmp mProcs[8*112]
+  mov r10d, 112
+  jmp DwmapiDispatch
 f112 endp
 f113 proc
-  jmp mProcs[8*113]
+  mov r10d, 113
+  jmp DwmapiDispatch
 f113 endp
 f114 proc
-  jmp mProcs[8*114]
+  mov r10d, 114
+  jmp DwmapiDispatch
 f114 endp
 f115 proc
-  jmp mProcs[8*115]
+  mov r10d, 115
+  jmp DwmapiDispatch
 f115 endp
 f116 proc
-  jmp mProcs[8*116]
+  mov r10d, 116
+  jmp DwmapiDispatch
 f116 endp
 f117 proc
-  jmp mProcs[8*117]
+  mov r10d, 117
+  jmp DwmapiDispatch
 f117 endp
 f118 proc
-  jmp mProcs[8*118]
+  mov r10d, 118
+  jmp DwmapiDispatch
 f118 endp
 f119 proc
-  jmp mProcs[8*119]
+  mov r10d, 119
+  jmp DwmapiDispatch
 f119 endp
 f120 proc
-  jmp mProcs[8*120]
+  mov r10d, 120
+  jmp DwmapiDispatch
 f120 endp
 f121 proc
-  jmp mProcs[8*121]
+  mov r10d, 121
+  jmp DwmapiDispatch
 f121 endp
 f122 proc
-  jmp mProcs[8*122]
+  mov r10d, 122
+  jmp DwmapiDispatch
 f122 endp
 f123 proc
-  jmp mProcs[8*123]
+  mov r10d, 123
+  jmp DwmapiDispatch
 f123 endp
 f124 proc
-  jmp mProcs[8*124]
+  mov r10d, 124
+  jmp DwmapiDispatch
 f124 endp
 f125 proc
-  jmp mProcs[8*125]
+  mov r10d, 125
+  jmp DwmapiDispatch
 f125 endp
 f126 proc
-  jmp mProcs[8*126]
+  mov r10d, 126
+  jmp DwmapiDispatch
 f126 endp
 f127 proc
-  jmp mProcs[8*127]
+  mov r10d, 127
+  jmp DwmapiDispatch
 f127 endp
 f128 proc
-  jmp mProcs[8*128]
+  mov r10d, 128
+  jmp DwmapiDispatch
 f128 endp
 f129 proc
-  jmp mProcs[8*129]
+  mov r10d, 129
+  jmp DwmapiDispatch
 f129 endp
 f130 proc
-  jmp mProcs[8*130]
+  mov r10d, 130
+  jmp DwmapiDispatch
 f130 endp
 f131 proc
-  jmp mProcs[8*131]
+  mov r10d, 131
+  jmp DwmapiDispatch
 f131 endp
 f132 proc
-  jmp mProcs[8*132]
+  mov r10d, 132
+  jmp DwmapiDispatch
 f132 endp
 f133 proc
-  jmp mProcs[8*133]
+  mov r10d, 133
+  jmp DwmapiDispatch
 f133 endp
 f134 proc
-  jmp mProcs[8*134]
+  mov r10d, 134
+  jmp DwmapiDispatch
 f134 endp
 f135 proc
-  jmp mProcs[8*135]
+  mov r10d, 135
+  jmp DwmapiDispatch
 f135 endp
 f136 proc
-  jmp mProcs[8*136]
+  mov r10d, 136
+  jmp DwmapiDispatch
 f136 endp
 f137 proc
-  jmp mProcs[8*137]
+  mov r10d, 137
+  jmp DwmapiDispatch
 f137 endp
 f138 proc
-  jmp mProcs[8*138]
+  mov r10d, 138
+  jmp DwmapiDispatch
 f138 endp
 f139 proc
-  jmp mProcs[8*139]
+  mov r10d, 139
+  jmp DwmapiDispatch
 f139 endp
 f140 proc
-  jmp mProcs[8*140]
+  mov r10d, 140
+  jmp DwmapiDispatch
 f140 endp
 f141 proc
-  jmp mProcs[8*141]
+  mov r10d, 141
+  jmp DwmapiDispatch
 f141 endp
 f142 proc
-  jmp mProcs[8*142]
+  mov r10d, 142
+  jmp DwmapiDispatch
 f142 endp
 end

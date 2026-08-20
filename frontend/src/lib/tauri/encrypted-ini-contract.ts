@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
@@ -6,6 +7,19 @@ import {
 
 export const ENCRYPTED_INI_CONTRACT_VERSION = 1;
 export const ENCRYPTED_INI_KEYS = ["global", "china"] as const;
+
+const {
+  boolean: flag,
+  decimalString: decimal,
+  integer,
+  nonNegativeInteger,
+  nullableBoundedString: optionalText,
+  positiveInteger,
+  record: object,
+  string: text,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type EncryptedIniKey = (typeof ENCRYPTED_INI_KEYS)[number];
 export type EncryptedIniCommandError = TechnicalCommandError;
@@ -104,70 +118,6 @@ export function parseSaveEncryptedIniResult(
 
 export function encryptedIniError(error: unknown): EncryptedIniCommandError {
   return parseTechnicalCommandError(error);
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    throw new TechnicalContractError(`${field} must be a string`);
-  }
-  return value;
-}
-
-function optionalText(
-  value: unknown,
-  field: string,
-  maxLength: number,
-): string | null {
-  if (value === null) return null;
-  const parsed = text(value, field);
-  if (parsed.length === 0 || parsed.length > maxLength) {
-    throw new TechnicalContractError(`${field} has an invalid length`);
-  }
-  return parsed;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0) {
-    throw new TechnicalContractError(`${field} must be non-negative`);
-  }
-  return parsed;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed <= 0) {
-    throw new TechnicalContractError(`${field} must be positive`);
-  }
-  return parsed;
-}
-
-function flag(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  }
-  return value;
-}
-
-function decimal(value: unknown, field: string): string {
-  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) {
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  }
-  return value;
 }
 
 function encryptedIniKey(value: unknown): EncryptedIniKey {

@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { parseMainDpsDetailSnapshot } from "./main-dps-detail-contract";
+import {
+  MAIN_DPS_DETAIL_CONTRACT_VERSION,
+  MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
+  parseMainDpsDetailSnapshot,
+} from "./main-dps-detail-contract";
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   return {
-    contractVersion: 4,
+    contractVersion: MAIN_DPS_DETAIL_CONTRACT_VERSION,
     generation: "12",
     kind: "character",
     abyssHalf: "first",
@@ -73,6 +77,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     ],
     skillTotalCount: 1,
     skillsTruncated: false,
+    textTruncated: false,
     totalHits: 1,
     totalDamage: 123,
     maxRowDamage: 123,
@@ -154,5 +159,20 @@ describe("main DPS detail contract", () => {
     expect(() =>
       parseMainDpsDetailSnapshot(snapshot({ filter: "future" })),
     ).toThrow(/filter/);
+  });
+
+  it("validates dynamic strings by UTF-8 bytes", () => {
+    expect(() =>
+      parseMainDpsDetailSnapshot(
+        snapshot({
+          characterName: "界".repeat(MAIN_DPS_DETAIL_MAX_TEXT_BYTES),
+        }),
+      ),
+    ).toThrow(/UTF-8 bytes/);
+    expect(
+      parseMainDpsDetailSnapshot(
+        snapshot({ characterName: "x".repeat(MAIN_DPS_DETAIL_MAX_TEXT_BYTES) }),
+      ).characterName,
+    ).toHaveLength(MAIN_DPS_DETAIL_MAX_TEXT_BYTES);
   });
 });

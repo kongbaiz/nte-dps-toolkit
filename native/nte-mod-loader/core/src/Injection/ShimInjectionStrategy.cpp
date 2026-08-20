@@ -25,7 +25,8 @@ namespace nte::loader {
 //   - NTEBrowser.exe 只是 CEF 界面, 不创建游戏进程, 无需注入。
 // 监控循环与 dry-run 都使用该集合, 保证“游戏启动器打开后”能被发现并注入 shim。
 inline constexpr const wchar_t* kLauncherProcessNames[] = {
-    L"NTEGlobalLauncher.exe", L"NTELauncher.exe", L"NTEGame.exe", L"NTEGlobalGame.exe"
+    //L"NTEGlobalLauncher.exe", L"NTELauncher.exe",
+	L"NTEGame.exe", L"NTEGlobalGame.exe"
 };
 
 namespace {

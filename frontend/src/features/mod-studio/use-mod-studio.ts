@@ -336,6 +336,9 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
         setRuntimeState((current) => ({
           ...current,
           connection: "probeFailed",
+          bootstrapErrorCode: null,
+          probeErrorCode: "RUNTIME_SUBSCRIPTION_FAILED",
+          probeOsErrorCode: null,
           error,
         }));
       },
@@ -740,7 +743,7 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
           loaderState.status === "ready" &&
           loaderState.snapshot.phase === "running"
         ) {
-          const loaderSnapshot = await client.setLoaderRunning(false);
+          const loaderSnapshot = await client.setLoaderRunning(false, false);
           setLoaderState({
             status: "ready",
             snapshot: loaderSnapshot,
@@ -765,7 +768,7 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
   );
 
   const setLoaderRunning = useCallback(
-    async (running: boolean) => {
+    async (running: boolean, terminateProcesses: boolean) => {
       loaderRequest.current += 1;
       setLoaderState((current) =>
         current.status === "ready"
@@ -791,7 +794,10 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
             });
           }
         }
-        const snapshot = await client.setLoaderRunning(running);
+        const snapshot = await client.setLoaderRunning(
+          running,
+          terminateProcesses,
+        );
         setLoaderState({ status: "ready", snapshot, operation: "idle" });
         if (running) {
           await refresh();
@@ -805,6 +811,31 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
     },
     [client, deploymentState, manualDirectories, refresh, selectedRegion],
   );
+
+  const checkLoaderGameRunning = useCallback(async (): Promise<
+    boolean | null
+  > => {
+    setLoaderState((current) =>
+      current.status === "ready"
+        ? { ...current, operation: "updating" }
+        : current,
+    );
+    try {
+      const gameRunning = await client.getLoaderGameRunning();
+      setLoaderState((current) =>
+        current.status === "ready"
+          ? { ...current, operation: "idle" }
+          : current,
+      );
+      return gameRunning;
+    } catch (error) {
+      setLoaderState({
+        status: "error",
+        error: parseModStudioCommandError(error),
+      });
+      return null;
+    }
+  }, [client]);
 
   const retryLoader = useCallback(async () => {
     setLoaderState((current) =>
@@ -865,6 +896,7 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
     loaderState,
     retryLoader,
     setLoaderRunning,
+    checkLoaderGameRunning,
     openLoaderDirectory,
     loaderDirectoryState,
     runtimeState,

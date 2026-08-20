@@ -4,6 +4,15 @@ import { flushSync } from "react-dom";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogBackdrop,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogPortal,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { CharacterDataPage } from "@/features/character-data/character-data-page";
 import { DiagnosticsPage } from "@/features/diagnostics/diagnostics-page";
@@ -17,6 +26,7 @@ import { SettingsPage } from "@/features/settings/settings-page";
 import { SkillsPage } from "@/features/skills/skills-page";
 import { TimelinePage } from "@/features/timeline/timeline-page";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
+import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { t, useTranslationRevision } from "@/lib/i18n";
 import { startMotionViewTransition } from "@/lib/motion";
 import { applySettingsPresentation } from "@/lib/settings-presentation";
@@ -397,37 +407,34 @@ export function ConsolePage() {
         open={commandPaletteOpen}
       />
       {replayConfirmation !== null && (
-        <div className="ui-motion-overlay fixed inset-0 z-[80] grid place-items-center bg-black/45 p-4">
-          <section
-            aria-labelledby="console-replay-confirm-title"
-            aria-modal="true"
-            className="ui-motion-dialog w-full max-w-md rounded-xl border bg-background p-5 shadow-2xl"
-            role="dialog"
-          >
-            <h2
-              id="console-replay-confirm-title"
-              className="text-base font-semibold"
-            >
-              {t("Confirm Import")}
-            </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t(
-                "Importing a replay stops the current task and clears existing stats.",
-              )}
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button
-                onClick={() => setReplayConfirmation(null)}
-                variant="outline"
-              >
-                {t("Cancel")}
-              </Button>
-              <Button onClick={() => void confirmReplayImport()}>
-                {t("Import")}
-              </Button>
-            </div>
-          </section>
-        </div>
+        <AlertDialog
+          open
+          onOpenChange={(open) =>
+            dismissLayerWhenClosed(open, () => setReplayConfirmation(null))
+          }
+        >
+          <AlertDialogPortal>
+            <AlertDialogBackdrop className="z-[80] bg-black/45" />
+            <AlertDialogPopup className="ui-motion-dialog top-1/2 left-1/2 z-[81] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-background p-5 shadow-2xl">
+              <AlertDialogTitle className="text-base">
+                {t("Confirm Import")}
+              </AlertDialogTitle>
+              <AlertDialogDescription className="mt-2">
+                {t(
+                  "Importing a replay stops the current task and clears existing stats.",
+                )}
+              </AlertDialogDescription>
+              <div className="mt-5 flex justify-end gap-2">
+                <AlertDialogClose render={<Button variant="outline" />}>
+                  {t("Cancel")}
+                </AlertDialogClose>
+                <Button onClick={() => void confirmReplayImport()}>
+                  {t("Import")}
+                </Button>
+              </div>
+            </AlertDialogPopup>
+          </AlertDialogPortal>
+        </AlertDialog>
       )}
     </div>
   );

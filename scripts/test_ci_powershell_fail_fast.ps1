@@ -1,0 +1,219 @@
+[CmdletBinding()]
+param(
+    [string]$WorkflowPath
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$requiredErrorPreference = '$ErrorActionPreference = "Stop"'
+$requiredNativePreference = '$PSNativeCommandUseErrorActionPreference = $true'
+
+function Test-FailFastPrologue {
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string[]]$BodyLines
+    )
+
+    $statements = @(
+        $BodyLines |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    return $statements.Count -ge 2 -and
+        $statements[0] -ceq $script:requiredErrorPreference -and
+        $statements[1] -ceq $script:requiredNativePreference
+}
+
+function Get-MultilinePwshSteps {
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string[]]$Lines
+    )
+
+    $steps = [Collections.Generic.List[object]]::new()
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -notmatch '^(?<indent>\s*)- name:\s*(?<name>.+?)\s*$') {
+            continue
+        }
+
+        $stepIndent = $Matches.indent.Length
+        $stepName = $Matches.name
+        $stepEnd = $Lines.Count
+        for ($candidate = $index + 1; $candidate -lt $Lines.Count; $candidate++) {
+            if ($Lines[$candidate] -match '^(?<indent>\s*)- (?:name|uses):' -and
+                $Matches.indent.Length -eq $stepIndent) {
+                $stepEnd = $candidate
+                break
+            }
+        }
+
+        $hasPwshShell = $false
+        $runIndex = -1
+        $runIndent = -1
+        for ($candidate = $index + 1; $candidate -lt $stepEnd; $candidate++) {
+            if ($Lines[$candidate] -match '^\s*shell:\s*pwsh\s*$') {
+                $hasPwshShell = $true
+            }
+            if ($Lines[$candidate] -match '^(?<indent>\s*)run:\s*[|>]\s*$') {
+                $runIndex = $candidate
+                $runIndent = $Matches.indent.Length
+            }
+        }
+        if (-not $hasPwshShell -or $runIndex -lt 0) {
+            continue
+        }
+
+        $body = [Collections.Generic.List[string]]::new()
+        for ($candidate = $runIndex + 1; $candidate -lt $stepEnd; $candidate++) {
+            $line = $Lines[$candidate]
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                $contentIndent = $line.Length - $line.TrimStart().Length
+                if ($contentIndent -le $runIndent) {
+                    break
+                }
+            }
+            $body.Add($line)
+        }
+        $steps.Add([pscustomobject]@{
+                Name = $stepName
+                RunLine = $runIndex + 1
+                BodyLines = $body.ToArray()
+            })
+        $index = $stepEnd - 1
+    }
+    return $steps.ToArray()
+}
+
+function Test-NativeFailureTerminatesPwsh {
+    $probe = @'
+$ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $true
+& $env:ComSpec /d /c exit 37
+[Console]::WriteLine("FAIL_FAST_PROBE_REACHED_UNEXPECTEDLY")
+'@
+
+    $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $pwsh
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.ArgumentList.Add('-NoLogo')
+    $startInfo.ArgumentList.Add('-NoProfile')
+    $startInfo.ArgumentList.Add('-NonInteractive')
+    $startInfo.ArgumentList.Add('-Command')
+    $startInfo.ArgumentList.Add($probe)
+
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) {
+        throw 'PowerShell fail-fast probe could not start.'
+    }
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -eq 0) {
+        throw "PowerShell fail-fast probe accepted a failing native command.`n$stdout`n$stderr"
+    }
+    if (($stdout + $stderr).Contains('FAIL_FAST_PROBE_REACHED_UNEXPECTEDLY')) {
+        throw 'PowerShell fail-fast probe continued after a failing native command.'
+    }
+}
+
+$unsafeFixture = @(
+    'cargo check',
+    'cargo test'
+)
+$safeFixture = @(
+    $requiredErrorPreference,
+    $requiredNativePreference,
+    'cargo check',
+    'cargo test'
+)
+if (Test-FailFastPrologue -BodyLines $unsafeFixture) {
+    throw 'PowerShell fail-fast policy self-test accepted an unsafe block.'
+}
+if (-not (Test-FailFastPrologue -BodyLines $safeFixture)) {
+    throw 'PowerShell fail-fast policy self-test rejected a protected block.'
+}
+
+$parserFixture = @(
+    'jobs:',
+    '  fixture:',
+    '    steps:',
+    '      - name: protected',
+    '        shell: pwsh',
+    '        run: |',
+    '          $ErrorActionPreference = "Stop"',
+    '          $PSNativeCommandUseErrorActionPreference = $true',
+    '          cargo check',
+    '      - name: unprotected folded block',
+    '        shell: pwsh',
+    '        run: >',
+    '          cargo check; cargo test'
+)
+$parserFixtureSteps = @(Get-MultilinePwshSteps -Lines $parserFixture)
+if ($parserFixtureSteps.Count -ne 2 -or
+    -not (Test-FailFastPrologue -BodyLines $parserFixtureSteps[0].BodyLines) -or
+    (Test-FailFastPrologue -BodyLines $parserFixtureSteps[1].BodyLines)) {
+    throw 'PowerShell fail-fast policy parser self-test did not distinguish protected and unprotected blocks.'
+}
+Test-NativeFailureTerminatesPwsh
+
+$repositoryRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($WorkflowPath)) {
+    $WorkflowPath = Join-Path $repositoryRoot '.github\workflows\build.yml'
+}
+elseif (-not [IO.Path]::IsPathRooted($WorkflowPath)) {
+    $WorkflowPath = Join-Path $repositoryRoot $WorkflowPath
+}
+$resolvedWorkflow = [IO.Path]::GetFullPath($WorkflowPath)
+$workflowLines = [IO.File]::ReadAllLines($resolvedWorkflow)
+$workflowText = $workflowLines -join "`n"
+$requiredSingleFileGates = @(
+    'scripts/test_ci_powershell_fail_fast.ps1',
+    'scripts/test_i18n_source_coverage.ps1'
+)
+foreach ($gate in $requiredSingleFileGates) {
+    $escapedGate = [regex]::Escape($gate)
+    $gateInvocations = @(
+        [regex]::Matches(
+            $workflowText,
+            "(?m)^\s*run:\s*pwsh\s+-NoProfile\s+-File\s+$escapedGate\s*$"
+        )
+    )
+    if ($gateInvocations.Count -ne 1) {
+        throw "PowerShell policy gate must invoke $gate exactly once in $resolvedWorkflow."
+    }
+}
+$disabledNativePreference = @(
+    $workflowLines |
+        Select-String -Pattern '^\s*\$PSNativeCommandUseErrorActionPreference\s*=\s*\$false\s*$'
+)
+if ($disabledNativePreference.Count -gt 0) {
+    $lines = $disabledNativePreference | ForEach-Object { $_.LineNumber }
+    throw "PowerShell native fail-fast is disabled at workflow line(s): $($lines -join ', ')."
+}
+$steps = @(Get-MultilinePwshSteps -Lines $workflowLines)
+if ($steps.Count -eq 0) {
+    throw "PowerShell fail-fast policy found no multiline pwsh steps in $resolvedWorkflow."
+}
+
+$unprotected = @(
+    $steps |
+        Where-Object { -not (Test-FailFastPrologue -BodyLines $_.BodyLines) }
+)
+if ($unprotected.Count -gt 0) {
+    $details = $unprotected |
+        ForEach-Object { "- $($_.Name) (run line $($_.RunLine))" }
+    throw "PowerShell fail-fast policy found unprotected multiline pwsh steps:`n$($details -join "`n")"
+}
+
+Write-Output ((
+        "PowerShell CI fail-fast policy passed: {0} multiline pwsh steps; " +
+        "unsafeFixtureRejected=true; parserFixtureRejected=true; " +
+        "nativeFailureRejected=true; gateInvocations=2."
+    ) -f $steps.Count)

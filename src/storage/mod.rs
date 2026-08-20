@@ -3,6 +3,8 @@
 //! resource reads and UI localization.
 
 pub mod ability_names;
+#[cfg(feature = "desktop")]
+pub mod abyss_remote;
 pub mod capture_logs;
 pub mod config;
 pub mod history;

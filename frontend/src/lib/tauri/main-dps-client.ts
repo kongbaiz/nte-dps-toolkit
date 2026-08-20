@@ -1,4 +1,4 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import {
@@ -10,6 +10,10 @@ import {
   type MainDpsSnapshot,
 } from "@/lib/tauri/main-dps-contract";
 import type { MainDpsDetailFilter } from "@/lib/tauri/main-dps-detail-contract";
+import {
+  subscribeStream,
+  tauriStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const command = (name: string, arguments_?: Record<string, unknown>) =>
   invoke<unknown>(name, arguments_);
@@ -102,34 +106,20 @@ export const mainDpsClient = {
     onError: (error: MainDpsCommandError) => void,
   ): () => void {
     const subscriptionId = crypto.randomUUID();
-    let closed = false;
-    const channel = new Channel<unknown>();
-    channel.onmessage = (message) => {
-      if (closed) return;
-      try {
-        onSnapshot(parseMainDpsEvent(message));
-      } catch (error) {
-        onError(parseMainDpsCommandError(error));
-      }
-    };
-    const receipt = command("subscribe_main_dps", {
+    const close = subscribeStream({
+      transport: tauriStreamTransport,
+      streamKind: "mainDps",
       subscriptionId,
-      onEvent: channel,
-    })
-      .then(() => subscriptionId)
-      .catch((error: unknown) => {
-        if (!closed) onError(parseMainDpsCommandError(error));
-        return undefined;
-      });
+      subscribeCommand: "subscribe_main_dps",
+      unsubscribeCommand: "unsubscribe_main_dps",
+      parseEvent: parseMainDpsEvent,
+      onEvent: onSnapshot,
+      onError: (error) => onError(parseMainDpsCommandError(error)),
+    });
     return () => {
-      if (closed) return;
-      closed = true;
-      void receipt.then((activeId) => {
-        if (activeId === undefined) return;
-        void command("unsubscribe_main_dps", {
-          subscriptionId: activeId,
-        }).catch((error: unknown) => onError(parseMainDpsCommandError(error)));
-      });
+      void close().catch((error: unknown) =>
+        onError(parseMainDpsCommandError(error)),
+      );
     };
   },
 };

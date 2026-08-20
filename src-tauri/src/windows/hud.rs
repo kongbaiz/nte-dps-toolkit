@@ -14,7 +14,7 @@ use tauri::{
 
 use nte_dps_tool::storage::config::{HUD_WIDTH_MAX, HUD_WIDTH_MIN};
 
-use crate::{contract::CommandError, state::AppState};
+use crate::{contract::CommandError, settings_service::SettingsServiceError, state::AppState};
 
 pub(crate) const HUD_WINDOW_LABEL: &str = "hud-spike";
 // Keep native edge-resize persistence aligned with the shared config debounce.
@@ -396,7 +396,9 @@ pub(crate) fn set_passthrough(
     state: &AppState,
     enabled: bool,
 ) -> Result<(), CommandError> {
-    let _transaction = state.lock_passthrough_transaction();
+    let _transaction = state
+        .lock_passthrough_transaction()
+        .map_err(passthrough_transaction_error)?;
     set_passthrough_locked(window, state, enabled)
 }
 
@@ -404,7 +406,9 @@ pub(crate) fn toggle_passthrough(
     window: &WebviewWindow,
     state: &AppState,
 ) -> Result<(), CommandError> {
-    let _transaction = state.lock_passthrough_transaction();
+    let _transaction = state
+        .lock_passthrough_transaction()
+        .map_err(passthrough_transaction_error)?;
     set_passthrough_locked(window, state, !state.passthrough())
 }
 
@@ -431,6 +435,10 @@ fn set_passthrough_locked(
         log::warn!("native HUD height refresh failed while changing passthrough");
     }
     Ok(())
+}
+
+fn passthrough_transaction_error(_error: SettingsServiceError) -> CommandError {
+    CommandError::passthrough_state_unavailable()
 }
 
 pub(crate) fn set_always_on_top(

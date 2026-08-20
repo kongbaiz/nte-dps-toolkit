@@ -7,14 +7,25 @@ use std::path::Path;
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Networking::WinHttp::{
-    URL_COMPONENTS, WINHTTP_ACCESS_TYPE, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_ADDREQ_FLAG_ADD,
-    WINHTTP_ADDREQ_FLAG_REPLACE, WINHTTP_FLAG_SECURE, WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2,
-    WINHTTP_INTERNET_SCHEME_HTTPS, WINHTTP_OPTION_SECURE_PROTOCOLS, WINHTTP_QUERY_FLAG_NUMBER,
-    WINHTTP_QUERY_STATUS_CODE, WinHttpAddRequestHeaders, WinHttpCloseHandle, WinHttpConnect,
-    WinHttpCrackUrl, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
-    WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
-    WinHttpSetOption, WinHttpSetTimeouts,
+    ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR, ERROR_WINHTTP_AUTODETECTION_FAILED,
+    ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT, ERROR_WINHTTP_CANNOT_CONNECT,
+    ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED, ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED_PROXY,
+    ERROR_WINHTTP_CLIENT_CERT_NO_ACCESS_PRIVATE_KEY, ERROR_WINHTTP_CLIENT_CERT_NO_PRIVATE_KEY,
+    ERROR_WINHTTP_CONNECTION_ERROR, ERROR_WINHTTP_LOGIN_FAILURE, ERROR_WINHTTP_NAME_NOT_RESOLVED,
+    ERROR_WINHTTP_SCRIPT_EXECUTION_ERROR, ERROR_WINHTTP_SECURE_CERT_CN_INVALID,
+    ERROR_WINHTTP_SECURE_CERT_DATE_INVALID, ERROR_WINHTTP_SECURE_CERT_REV_FAILED,
+    ERROR_WINHTTP_SECURE_CERT_REVOKED, ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE,
+    ERROR_WINHTTP_SECURE_CHANNEL_ERROR, ERROR_WINHTTP_SECURE_FAILURE,
+    ERROR_WINHTTP_SECURE_FAILURE_PROXY, ERROR_WINHTTP_SECURE_INVALID_CA,
+    ERROR_WINHTTP_SECURE_INVALID_CERT, ERROR_WINHTTP_TIMEOUT,
+    ERROR_WINHTTP_UNABLE_TO_DOWNLOAD_SCRIPT, ERROR_WINHTTP_UNHANDLED_SCRIPT_TYPE, URL_COMPONENTS,
+    WINHTTP_ACCESS_TYPE, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_ADDREQ_FLAG_ADD, WINHTTP_ADDREQ_FLAG_REPLACE,
+    WINHTTP_FLAG_SECURE, WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2, WINHTTP_INTERNET_SCHEME_HTTPS,
+    WINHTTP_OPTION_SECURE_PROTOCOLS, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
+    WinHttpAddRequestHeaders, WinHttpCloseHandle, WinHttpConnect, WinHttpCrackUrl, WinHttpOpen,
+    WinHttpOpenRequest, WinHttpQueryDataAvailable, WinHttpQueryHeaders, WinHttpReadData,
+    WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption, WinHttpSetTimeouts,
 };
 
 const USER_AGENT: &str = concat!("NTE-DPS-Tool-Updater/", env!("CARGO_PKG_VERSION"));
@@ -23,6 +34,8 @@ const CONNECT_TIMEOUT_MS: i32 = 15_000;
 const SEND_TIMEOUT_MS: i32 = 30_000;
 const RECEIVE_TIMEOUT_MS: i32 = 30_000;
 const READ_BUFFER_SIZE: usize = 64 * 1024;
+// Retryable gateway failures get two additional attempts without changing route.
+const SAME_ROUTE_RETRY_LIMIT: usize = 2;
 
 #[derive(Clone, Copy, Debug)]
 enum ProxyMode {
@@ -109,15 +122,7 @@ impl std::error::Error for HttpError {}
 
 pub fn get_bytes(url: &str, maximum_size: usize) -> Result<Vec<u8>, HttpError> {
     let parsed = ParsedHttpsUrl::parse(url)?;
-    let mut last_route_error = None;
-    for mode in ProxyMode::ALL {
-        match get_bytes_once(&parsed, mode, maximum_size) {
-            Ok(bytes) => return Ok(bytes),
-            Err(error) if is_route_error(&error) => last_route_error = Some(error),
-            Err(error) => return Err(error),
-        }
-    }
-    Err(last_route_error.expect("proxy mode list is not empty"))
+    execute_with_proxy_routes(|mode| get_bytes_once(&parsed, mode, maximum_size))
 }
 
 pub fn download_file(
@@ -130,19 +135,125 @@ pub fn download_file(
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(HttpError::File)?;
     }
-    let mut last_route_error = None;
-    for mode in ProxyMode::ALL {
-        match download_file_once(&parsed, mode, destination, expected_size, &mut progress) {
-            Ok(()) => return Ok(()),
-            Err(error) if is_route_error(&error) => last_route_error = Some(error),
-            Err(error) => return Err(error),
-        }
-    }
-    Err(last_route_error.expect("proxy mode list is not empty"))
+    execute_with_proxy_routes(|mode| {
+        download_file_once(&parsed, mode, destination, expected_size, &mut progress)
+    })
 }
 
-fn is_route_error(error: &HttpError) -> bool {
-    matches!(error, HttpError::Transport { .. } | HttpError::Status(_))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RetryDecision {
+    RetrySameRoute,
+    SwitchRoute,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransportFailureKind {
+    ProxyDiscovery,
+    NameResolution,
+    Connection,
+    Timeout,
+    Security,
+    Authentication,
+    Other,
+}
+
+impl TransportFailureKind {
+    fn allows_route_switch(self) -> bool {
+        matches!(
+            self,
+            Self::ProxyDiscovery | Self::NameResolution | Self::Connection | Self::Timeout
+        )
+    }
+}
+
+fn classify_transport_failure(source: &io::Error) -> TransportFailureKind {
+    match source.raw_os_error().map(|code| code as u32) {
+        Some(
+            ERROR_WINHTTP_AUTODETECTION_FAILED
+            | ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR
+            | ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT
+            | ERROR_WINHTTP_SCRIPT_EXECUTION_ERROR
+            | ERROR_WINHTTP_UNABLE_TO_DOWNLOAD_SCRIPT
+            | ERROR_WINHTTP_UNHANDLED_SCRIPT_TYPE,
+        ) => TransportFailureKind::ProxyDiscovery,
+        Some(ERROR_WINHTTP_NAME_NOT_RESOLVED) => TransportFailureKind::NameResolution,
+        Some(ERROR_WINHTTP_CANNOT_CONNECT | ERROR_WINHTTP_CONNECTION_ERROR) => {
+            TransportFailureKind::Connection
+        }
+        Some(ERROR_WINHTTP_TIMEOUT) => TransportFailureKind::Timeout,
+        Some(
+            ERROR_WINHTTP_CLIENT_CERT_NO_ACCESS_PRIVATE_KEY
+            | ERROR_WINHTTP_CLIENT_CERT_NO_PRIVATE_KEY
+            | ERROR_WINHTTP_SECURE_CERT_CN_INVALID
+            | ERROR_WINHTTP_SECURE_CERT_DATE_INVALID
+            | ERROR_WINHTTP_SECURE_CERT_REV_FAILED
+            | ERROR_WINHTTP_SECURE_CERT_REVOKED
+            | ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE
+            | ERROR_WINHTTP_SECURE_CHANNEL_ERROR
+            | ERROR_WINHTTP_SECURE_FAILURE
+            | ERROR_WINHTTP_SECURE_FAILURE_PROXY
+            | ERROR_WINHTTP_SECURE_INVALID_CA
+            | ERROR_WINHTTP_SECURE_INVALID_CERT,
+        ) => TransportFailureKind::Security,
+        Some(
+            ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED
+            | ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED_PROXY
+            | ERROR_WINHTTP_LOGIN_FAILURE,
+        ) => TransportFailureKind::Authentication,
+        _ if source.kind() == io::ErrorKind::TimedOut => TransportFailureKind::Timeout,
+        _ => TransportFailureKind::Other,
+    }
+}
+
+fn classify_retry(error: &HttpError) -> RetryDecision {
+    match error {
+        HttpError::Transport { source, .. }
+            if classify_transport_failure(source).allows_route_switch() =>
+        {
+            RetryDecision::SwitchRoute
+        }
+        // Proxy authentication is terminal on the current route. Even WinHTTP's default-proxy
+        // mode may resolve to DIRECT or a bypass entry, so a 407 must not advance the route list.
+        HttpError::Status(407) => RetryDecision::Terminal,
+        HttpError::Status(502..=504) => RetryDecision::RetrySameRoute,
+        HttpError::InvalidUrl(_)
+        | HttpError::Transport { .. }
+        | HttpError::Status(_)
+        | HttpError::ResponseTooLarge { .. }
+        | HttpError::PackageLargerThanManifest { .. }
+        | HttpError::SizeMismatch { .. }
+        | HttpError::File(_) => RetryDecision::Terminal,
+    }
+}
+
+fn execute_with_proxy_routes<T>(
+    mut request: impl FnMut(ProxyMode) -> Result<T, HttpError>,
+) -> Result<T, HttpError> {
+    for mode in ProxyMode::ALL {
+        let mut same_route_retries = 0;
+        loop {
+            match request(mode) {
+                Ok(value) => return Ok(value),
+                Err(error) => match classify_retry(&error) {
+                    RetryDecision::RetrySameRoute
+                        if same_route_retries < SAME_ROUTE_RETRY_LIMIT =>
+                    {
+                        same_route_retries += 1;
+                    }
+                    RetryDecision::SwitchRoute if !matches!(mode, ProxyMode::Direct) => break,
+                    RetryDecision::RetrySameRoute
+                    | RetryDecision::SwitchRoute
+                    | RetryDecision::Terminal => return Err(error),
+                },
+            }
+        }
+    }
+
+    Err(HttpError::Transport {
+        mode: "proxy route selection",
+        source: io::Error::other("no WinHTTP proxy route was attempted"),
+    })
 }
 
 fn get_bytes_once(
@@ -507,6 +618,20 @@ fn transport_error(mode: ProxyMode) -> HttpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::Networking::WinHttp::{
+        ERROR_WINHTTP_AUTODETECTION_FAILED, ERROR_WINHTTP_CANNOT_CONNECT,
+        ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED, ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED_PROXY,
+        ERROR_WINHTTP_LOGIN_FAILURE, ERROR_WINHTTP_NAME_NOT_RESOLVED,
+        ERROR_WINHTTP_SECURE_CERT_CN_INVALID, ERROR_WINHTTP_SECURE_FAILURE_PROXY,
+        ERROR_WINHTTP_TIMEOUT,
+    };
+
+    fn winhttp_transport_error(mode: ProxyMode, code: u32) -> HttpError {
+        HttpError::Transport {
+            mode: mode.label(),
+            source: io::Error::from_raw_os_error(code as i32),
+        }
+    }
 
     #[test]
     fn parses_https_url_with_query() {
@@ -558,12 +683,201 @@ mod tests {
     }
 
     #[test]
-    fn http_status_uses_the_next_proxy_route() {
-        assert!(is_route_error(&HttpError::Status(407)));
-        assert!(is_route_error(&HttpError::Status(502)));
-        assert!(!is_route_error(&HttpError::ResponseTooLarge {
-            maximum: 1024,
-            received_at_least: 2048,
-        }));
+    fn transport_failure_can_switch_to_the_next_route() {
+        let mut attempts = Vec::new();
+
+        let result = execute_with_proxy_routes(|mode| {
+            attempts.push(mode.label());
+            if attempts.len() == 1 {
+                Err(HttpError::Transport {
+                    mode: mode.label(),
+                    source: io::Error::new(io::ErrorKind::TimedOut, "timed out"),
+                })
+            } else {
+                Ok("downloaded")
+            }
+        });
+
+        assert_eq!(result.unwrap(), "downloaded");
+        assert_eq!(
+            attempts,
+            vec!["Windows automatic proxy", "WinHTTP default proxy"]
+        );
+    }
+
+    #[test]
+    fn explicitly_route_recoverable_transport_failures_can_switch_routes() {
+        for code in [
+            ERROR_WINHTTP_AUTODETECTION_FAILED,
+            ERROR_WINHTTP_NAME_NOT_RESOLVED,
+            ERROR_WINHTTP_CANNOT_CONNECT,
+            ERROR_WINHTTP_TIMEOUT,
+        ] {
+            let mut attempts = Vec::new();
+
+            let result = execute_with_proxy_routes(|mode| {
+                attempts.push(mode.label());
+                if attempts.len() == 1 {
+                    Err(winhttp_transport_error(mode, code))
+                } else {
+                    Ok("downloaded")
+                }
+            });
+
+            assert_eq!(result.unwrap(), "downloaded");
+            assert_eq!(
+                attempts,
+                vec!["Windows automatic proxy", "WinHTTP default proxy"]
+            );
+        }
+    }
+
+    #[test]
+    fn enterprise_proxy_certificate_and_authentication_transport_failures_are_terminal() {
+        for code in [
+            ERROR_WINHTTP_SECURE_FAILURE_PROXY,
+            ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED_PROXY,
+            ERROR_WINHTTP_SECURE_CERT_CN_INVALID,
+            ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED,
+            ERROR_WINHTTP_LOGIN_FAILURE,
+        ] {
+            let mut attempts = Vec::new();
+
+            let error = execute_with_proxy_routes::<()>(|mode| {
+                attempts.push(mode.label());
+                Err(winhttp_transport_error(mode, code))
+            })
+            .unwrap_err();
+
+            assert!(matches!(error, HttpError::Transport { .. }));
+            assert_eq!(attempts, vec!["Windows automatic proxy"]);
+        }
+    }
+
+    #[test]
+    fn unclassified_transport_failure_is_terminal() {
+        let mut attempts = Vec::new();
+
+        let error = execute_with_proxy_routes::<()>(|mode| {
+            attempts.push(mode.label());
+            Err(winhttp_transport_error(mode, 12_345))
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, HttpError::Transport { .. }));
+        assert_eq!(attempts, vec!["Windows automatic proxy"]);
+    }
+
+    #[test]
+    fn application_4xx_statuses_are_terminal() {
+        for status in [401, 403, 404] {
+            let mut attempts = Vec::new();
+
+            let error = execute_with_proxy_routes::<()>(|mode| {
+                attempts.push(mode.label());
+                Err(HttpError::Status(status))
+            })
+            .unwrap_err();
+
+            assert!(matches!(error, HttpError::Status(actual) if actual == status));
+            assert_eq!(attempts, vec!["Windows automatic proxy"]);
+        }
+    }
+
+    #[test]
+    fn proxy_authentication_status_is_terminal_on_the_first_route() {
+        let mut attempts = Vec::new();
+
+        let error = execute_with_proxy_routes::<()>(|mode| {
+            attempts.push(mode.label());
+            Err(HttpError::Status(407))
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, HttpError::Status(407)));
+        assert_eq!(attempts, vec!["Windows automatic proxy"]);
+    }
+
+    #[test]
+    fn retryable_gateway_statuses_retry_only_the_same_route() {
+        for status in [502, 503, 504] {
+            let mut attempts = Vec::new();
+
+            let error = execute_with_proxy_routes::<()>(|mode| {
+                attempts.push(mode.label());
+                Err(HttpError::Status(status))
+            })
+            .unwrap_err();
+
+            assert!(matches!(error, HttpError::Status(actual) if actual == status));
+            assert_eq!(
+                attempts,
+                vec![
+                    "Windows automatic proxy",
+                    "Windows automatic proxy",
+                    "Windows automatic proxy"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn gateway_502_can_succeed_on_the_second_same_route_attempt() {
+        let mut attempts = Vec::new();
+
+        let result = execute_with_proxy_routes(|mode| {
+            attempts.push(mode.label());
+            if attempts.len() == 1 {
+                Err(HttpError::Status(502))
+            } else {
+                Ok("downloaded")
+            }
+        });
+
+        assert_eq!(result.unwrap(), "downloaded");
+        assert_eq!(
+            attempts,
+            vec!["Windows automatic proxy", "Windows automatic proxy"]
+        );
+    }
+
+    #[test]
+    fn gateway_502_can_succeed_on_the_third_same_route_attempt() {
+        let mut attempts = Vec::new();
+
+        let result = execute_with_proxy_routes(|mode| {
+            attempts.push(mode.label());
+            if attempts.len() < 3 {
+                Err(HttpError::Status(502))
+            } else {
+                Ok("downloaded")
+            }
+        });
+
+        assert_eq!(result.unwrap(), "downloaded");
+        assert_eq!(
+            attempts,
+            vec![
+                "Windows automatic proxy",
+                "Windows automatic proxy",
+                "Windows automatic proxy"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_whitelisted_5xx_statuses_are_retried() {
+        for status in [500, 501, 505] {
+            let mut attempts = Vec::new();
+
+            let error = execute_with_proxy_routes::<()>(|mode| {
+                attempts.push(mode.label());
+                Err(HttpError::Status(status))
+            })
+            .unwrap_err();
+
+            assert!(matches!(error, HttpError::Status(actual) if actual == status));
+            assert_eq!(attempts, vec!["Windows automatic proxy"]);
+        }
     }
 }

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::engine::model::{CharacterInfo, Hit, is_unbalance_damage_hit, reaction_damage_for_hit};
+use crate::engine::model::{
+    CharacterInfo, Hit, IndexedCombatDetailFilter, is_unbalance_damage_hit, reaction_damage_for_hit,
+};
 
 /// Stable, frontend-neutral filtering for combat hit detail projections.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -46,6 +48,20 @@ impl CombatDetailFilter {
                     && (hit.attack_type.as_deref() == Some(attack_type)
                         || hit.follow_up_attack_type.as_deref() == Some(attack_type))
             }
+        }
+    }
+
+    pub fn indexed(&self) -> IndexedCombatDetailFilter {
+        match self {
+            Self::All => IndexedCombatDetailFilter::All,
+            Self::Outgoing => IndexedCombatDetailFilter::Outgoing,
+            Self::Incoming => IndexedCombatDetailFilter::Incoming,
+            Self::CharacterAttributed => IndexedCombatDetailFilter::CharacterAttributed,
+            Self::CharacterDirect => IndexedCombatDetailFilter::CharacterDirect,
+            Self::ReactionDamage => IndexedCombatDetailFilter::ReactionDamage,
+            Self::SharedMechanics => IndexedCombatDetailFilter::SharedMechanics,
+            Self::Unattributed => IndexedCombatDetailFilter::Unattributed,
+            Self::QteType(value) => IndexedCombatDetailFilter::QteType(value.clone()),
         }
     }
 }

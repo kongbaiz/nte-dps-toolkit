@@ -46,7 +46,6 @@ const CATEGORY_LABELS: Record<ResourceCategory, string> = {
   character: "Character",
   skill: "Skill",
   gameplayEffect: "GE",
-  abyss: "Abyss",
   reaction: "Reaction",
   file: "File",
 };
@@ -211,8 +210,8 @@ function ResourceSummary({ snapshot }: { snapshot: ResourcesSnapshot }) {
       tone: "text-foreground",
     },
     {
-      label: "Abyss/Reactions",
-      value: `${snapshot.counts.abyssMonsters.toLocaleString()} / ${snapshot.counts.reactions.toLocaleString()}`,
+      label: "Reaction",
+      value: snapshot.counts.reactions.toLocaleString(),
       tone: "text-foreground",
     },
   ];

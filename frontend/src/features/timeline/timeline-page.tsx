@@ -128,6 +128,44 @@ export function TimelinePage() {
             </Alert>
           )}
 
+          {snapshot &&
+          snapshot.effectiveBucketSeconds > snapshot.bucketSeconds + 0.0001 ? (
+            <Alert>
+              <AlertTitle>{t("Timeline display was coarsened")}</AlertTitle>
+              <AlertDescription>
+                {t(
+                  "Long combat uses wider chart buckets while every authoritative hit remains retained.",
+                )}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {snapshot && snapshot.omittedRoleHits !== "0" ? (
+            <Alert>
+              <AlertTitle>
+                {t("Timeline role series reached its display limit")}
+              </AlertTitle>
+              <AlertDescription>
+                {t(
+                  "Team totals and hit counts remain complete; only excess per-character chart rows are omitted.",
+                )}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {snapshot && snapshot.compactedTimeStopIntervals !== "0" ? (
+            <Alert>
+              <AlertTitle>
+                {t("Older time-stop intervals were compacted")}
+              </AlertTitle>
+              <AlertDescription>
+                {t(
+                  "The whole-battle time-stop duration remains exact; a partial timeline scope may show an approximate compacted prefix.",
+                )}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-y border-border/70 bg-background/25 px-2 py-2.5">
             <label className="flex min-w-[16rem] flex-1 items-center gap-3 text-sm">
               <span className="whitespace-nowrap text-muted-foreground">
@@ -300,7 +338,7 @@ export function TimelinePage() {
               <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-1 pt-0.5 pb-2 text-xs text-muted-foreground">
                 <span>
                   {t("Retained window")} · {snapshot.duration.toFixed(1)}s ·{" "}
-                  {snapshot.bucketSeconds.toFixed(1)}s{" "}
+                  {snapshot.effectiveBucketSeconds.toFixed(1)}s{" "}
                   {t("Bucket Interval").toLowerCase()}
                 </span>
                 <span>

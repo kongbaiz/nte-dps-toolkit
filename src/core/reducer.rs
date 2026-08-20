@@ -12,6 +12,9 @@ use crate::engine::model::{
 /// event forwarding) key off this instead of re-matching the event.
 #[derive(Debug, PartialEq)]
 pub enum CoreSignal {
+    /// The event was valid but did not match or alter retained authoritative
+    /// state. Callers must not advance combat revisions for this outcome.
+    Unchanged,
     /// Combat state changed (hit, follow-up, correction, abyss, time stop).
     StateChanged,
     /// The equipment snapshot was replaced wholesale.
@@ -23,6 +26,8 @@ pub enum CoreSignal {
     /// A lightweight packet observation updated quality counters without
     /// retaining debug payload fields.
     PacketObserved,
+    /// The game-side combat-clock provider changed availability/degradation.
+    CombatClockHealthChanged,
     /// A typed script bridge message for frontend pre/post-processing.
     /// `state_changed` is set only when the applied event actually mutated a
     /// combat projection; revision bumps must key off that outcome, never off
@@ -48,16 +53,32 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             CoreSignal::StateChanged
         }
         EngineEvent::HitFollowUp(follow_up) => {
-            state.apply_follow_up(follow_up);
-            CoreSignal::StateChanged
+            if state.apply_follow_up(follow_up) {
+                CoreSignal::StateChanged
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::HitDamageCorrection(correction) => {
-            state.apply_damage_correction(correction);
-            CoreSignal::StateChanged
+            if state.apply_damage_correction(correction) {
+                CoreSignal::StateChanged
+            } else {
+                CoreSignal::Unchanged
+            }
+        }
+        EngineEvent::UnattributedServerDamage(observation) => {
+            if state.observe_unattributed_server_damage(observation) {
+                CoreSignal::StateChanged
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::Packet(packet) => {
-            state.push_packet(*packet);
-            CoreSignal::DebugPacket
+            if state.push_packet(*packet) {
+                CoreSignal::DebugPacket
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::PacketObservation(observation) => {
             state.observe_packet(observation);
@@ -77,13 +98,26 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             state.apply_time_stop_event(event);
             CoreSignal::StateChanged
         }
+        EngineEvent::CombatClockHealth(health) => {
+            if state.set_combat_clock_health(health) {
+                CoreSignal::CombatClockHealthChanged
+            } else {
+                CoreSignal::Unchanged
+            }
+        }
         EngineEvent::EmptyCurtain(items) => {
-            state.replace_empty_curtain(items);
-            CoreSignal::InventoryReplaced
+            if state.replace_empty_curtain(items) {
+                CoreSignal::InventoryReplaced
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::EmptyCurtainCharacters(characters) => {
-            state.replace_empty_curtain_characters(characters);
-            CoreSignal::InventoryCharactersReplaced
+            if state.replace_empty_curtain_characters(characters) {
+                CoreSignal::InventoryCharactersReplaced
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::ModScript(event) => {
             let outcome = state.apply_mod_script_event(&event);
@@ -103,9 +137,10 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
 mod tests {
     use super::*;
     use crate::engine::model::{
-        AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, EnemyIdentity, Hit,
-        HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId,
-        ModScriptEventPhase, PacketDebug, PacketObservation, TimeStopEvent,
+        AbyssEvent, CombatClockRuntimeHealth, EmptyCurtainCharacter, EmptyCurtainItem,
+        EnemyIdentity, Hit, HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp,
+        HtItemNetId, ModScriptEventPhase, PacketDebug, PacketObservation, TimeStopEvent,
+        UnattributedServerDamage,
     };
 
     const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
@@ -700,12 +735,113 @@ mod tests {
     }
 
     #[test]
+    fn unattributed_server_damage_is_explicit_but_does_not_pollute_totals_or_roles() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
+        );
+
+        let signal = apply_engine_event(
+            &mut state,
+            EngineEvent::UnattributedServerDamage(UnattributedServerDamage {
+                timestamp: 1.1,
+                damage: 250.0,
+                candidate_hits: 0,
+            }),
+        );
+
+        assert_eq!(signal, CoreSignal::StateChanged);
+        assert_eq!(state.unattributed_server_damage_events, 1);
+        assert_eq!(state.unattributed_server_damage, 250.0);
+        assert_eq!(state.total_damage, 100.0);
+        assert_eq!(state.stats.get(&7).map(|row| row.damage), Some(100.0));
+
+        let invalid = apply_engine_event(
+            &mut state,
+            EngineEvent::UnattributedServerDamage(UnattributedServerDamage {
+                timestamp: f64::NAN,
+                damage: 1.0,
+                candidate_hits: 0,
+            }),
+        );
+        assert_eq!(invalid, CoreSignal::Unchanged);
+        assert_eq!(state.unattributed_server_damage_events, 1);
+    }
+
+    #[test]
+    fn unmatched_or_identical_hit_mutations_do_not_advance_combat_state() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
+        );
+        let generation = state.hits_generation;
+        let total_damage = state.total_damage;
+
+        let unmatched = apply_engine_event(
+            &mut state,
+            EngineEvent::HitFollowUp(HitFollowUp {
+                source_timestamp: 99.0,
+                source_char_id: 7,
+                source_damage: 100.0,
+                source_target_hp_before: 0.0,
+                source_target_hp_after: 0.0,
+                source_target_max_hp: 0.0,
+                source_gameplay_effect_index: None,
+                timestamp: 99.1,
+                damage: 25.0,
+                target_hp_after: 0.0,
+                target_hp_percent: 0.0,
+                damage_name: None,
+                attack_type: None,
+                damage_attribute: None,
+            }),
+        );
+        assert_eq!(unmatched, CoreSignal::Unchanged);
+
+        let identical = apply_engine_event(
+            &mut state,
+            EngineEvent::HitDamageCorrection(HitDamageCorrection {
+                source_timestamp: 1.0,
+                source_char_id: 7,
+                source_damage: 100.0,
+                source_target_hp_before: 0.0,
+                source_target_hp_after: 0.0,
+                source_target_max_hp: 0.0,
+                source_gameplay_effect_index: None,
+                damage: 100.0,
+                target_hp_before: 0.0,
+                target_hp_after: 0.0,
+                target_hp_percent: 0.0,
+            }),
+        );
+        assert_eq!(identical, CoreSignal::Unchanged);
+        assert_eq!(state.hits_generation, generation);
+        assert_eq!(state.total_damage, total_damage);
+        assert_eq!(state.damage_correction_count, 0);
+    }
+
+    #[test]
     fn packet_lands_in_debug_ring() {
         let mut state = CombatState::default();
         let signal = apply_engine_event(&mut state, EngineEvent::Packet(Box::new(test_packet())));
         assert_eq!(signal, CoreSignal::DebugPacket);
         assert_eq!(state.packets.len(), 1);
         assert_eq!(state.packet_count, 0);
+    }
+
+    #[test]
+    fn oversized_debug_packet_is_a_noop_instead_of_breaking_the_byte_budget() {
+        let mut state = CombatState::default();
+        let mut packet = test_packet();
+        packet.payload_hex = String::with_capacity(17 * 1024 * 1024);
+
+        let signal = apply_engine_event(&mut state, EngineEvent::Packet(Box::new(packet)));
+
+        assert_eq!(signal, CoreSignal::Unchanged);
+        assert!(state.packets.is_empty());
+        assert_eq!(state.packets_generation, 0);
     }
 
     #[test]
@@ -842,6 +978,11 @@ mod tests {
             state.empty_curtain_generation,
             generation_before.wrapping_add(1)
         );
+        let generation = state.empty_curtain_generation;
+        let duplicate_items = state.empty_curtain.clone();
+        let duplicate = apply_engine_event(&mut state, EngineEvent::EmptyCurtain(duplicate_items));
+        assert_eq!(duplicate, CoreSignal::Unchanged);
+        assert_eq!(state.empty_curtain_generation, generation);
     }
 
     #[test]
@@ -857,6 +998,13 @@ mod tests {
         );
         assert_eq!(signal, CoreSignal::InventoryCharactersReplaced);
         assert_eq!(state.empty_curtain_characters, vec![character]);
+        let generation = state.empty_curtain_characters_generation;
+        let duplicate = apply_engine_event(
+            &mut state,
+            EngineEvent::EmptyCurtainCharacters(vec![character]),
+        );
+        assert_eq!(duplicate, CoreSignal::Unchanged);
+        assert_eq!(state.empty_curtain_characters_generation, generation);
     }
 
     #[test]
@@ -880,5 +1028,24 @@ mod tests {
         );
         assert_eq!(state.hits.len(), 0);
         assert_eq!(state.packets.len(), 0);
+    }
+
+    #[test]
+    fn combat_clock_health_only_changes_revision_effect_on_transition() {
+        let mut state = CombatState::default();
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::ProviderUnavailable),
+            ),
+            CoreSignal::CombatClockHealthChanged
+        );
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::ProviderUnavailable),
+            ),
+            CoreSignal::Unchanged
+        );
     }
 }

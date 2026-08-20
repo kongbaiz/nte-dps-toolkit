@@ -1,5 +1,15 @@
+import {
+  createContractPrimitives,
+  isCanonicalSemver,
+} from "@/lib/tauri/contract-primitives";
+import {
+  parseStreamSubscriptionReceipt,
+  type StreamSubscriptionReceipt,
+} from "@/lib/tauri/stream-contract";
+
 export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
-export const MOD_STUDIO_CONTRACT_VERSION = 10;
+export const MOD_STUDIO_CONTRACT_VERSION = 13;
+export const MOD_MARKET_CONTRACT_VERSION = 11;
 export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;
 export const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION = 1;
 export const MOD_LOADER_RUNTIME_CONTRACT_VERSION = 1;
@@ -10,7 +20,30 @@ export const MOD_STUDIO_MAX_SDK_SYMBOLS = 128;
 export const MOD_STUDIO_MAX_RUNTIME_BATCH_ENTRIES = 36;
 export const MOD_STUDIO_MAX_RUNTIME_ENTRIES = 256;
 const MOD_ID_PATTERN = /^[a-z0-9._-]{1,31}$/;
-const U64_MAX_DECIMAL = "18446744073709551615";
+
+export class ModStudioContractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModStudioContractError";
+  }
+}
+
+const {
+  array,
+  boolean,
+  boundedString,
+  exactFields,
+  enumValue,
+  isRecord,
+  nonNegativeInteger,
+  nullableEnumValue,
+  positiveInteger,
+  record,
+  string,
+  u64DecimalString,
+} = createContractPrimitives((message) => {
+  throw new ModStudioContractError(message);
+});
 
 export interface ModStudioDocumentSummary {
   id: string;
@@ -95,10 +128,27 @@ export interface ModMarketItem {
   author: string;
   capabilities: string[];
   packageSize: number;
-  installed: boolean;
-  enabled: boolean;
-  current: boolean;
+  localState: ModMarketLocalState;
 }
+
+const MOD_MARKET_UNREADABLE_MESSAGE_KEY_BY_CODE = {
+  mod_workspace_invalid: "The Mod workspace data is invalid.",
+  mod_workspace_read_failed: "Failed to read the Mod workspace.",
+} as const;
+
+export type ModMarketUnreadableCode =
+  keyof typeof MOD_MARKET_UNREADABLE_MESSAGE_KEY_BY_CODE;
+export type ModMarketUnreadableMessageKey =
+  (typeof MOD_MARKET_UNREADABLE_MESSAGE_KEY_BY_CODE)[ModMarketUnreadableCode];
+
+export type ModMarketLocalState =
+  | { status: "notInstalled" }
+  | { status: "installed"; enabled: boolean; current: boolean }
+  | {
+      status: "unreadable";
+      code: ModMarketUnreadableCode;
+      messageKey: ModMarketUnreadableMessageKey;
+    };
 
 export interface ModMarketLocalizedText {
   name: string;
@@ -168,11 +218,61 @@ export interface ModStudioRuntimeConnectionEvent {
     contractVersion: number;
     generation: string;
     status: ModStudioRuntimeConnectionStatus;
+    bootstrapErrorCode: ModStudioBootstrapErrorCode | null;
+    probeErrorCode: ModStudioRuntimeProbeErrorCode | null;
+    probeOsErrorCode: number | null;
   };
 }
 
+const MOD_STUDIO_RUNTIME_PROBE_ERROR_CODES = [
+  "RUNTIME_EVENT_ACCESS_DENIED",
+  "RUNTIME_EVENT_OPEN_FAILED",
+  "IPC_CLIENT_UNAVAILABLE",
+  "IPC_PIPE_ACCESS_DENIED",
+  "IPC_PIPE_OPEN_FAILED",
+  "POLL_WORKER_FAILED",
+  "RUNTIME_SUBSCRIPTION_FAILED",
+] as const;
+
+export type ModStudioRuntimeProbeErrorCode =
+  (typeof MOD_STUDIO_RUNTIME_PROBE_ERROR_CODES)[number];
+
 export type ModStudioRuntimeConnectionStatus =
-  "connected" | "loaderPresent" | "waiting" | "probeFailed";
+  | "connected"
+  | "loaderPresent"
+  | "waiting"
+  | "acknowledgementRequired"
+  | "probeFailed"
+  | "bootstrapFailed";
+
+const MOD_STUDIO_BOOTSTRAP_ERROR_CODES = [
+  "INVALID_REQUEST",
+  "FILE_SYSTEM",
+  "INVALID_PLUGIN_IMAGE",
+  "PROCESS_OPEN_FAILED",
+  "PROCESS_IDENTITY_FAILED",
+  "PROCESS_SNAPSHOT_FAILED",
+  "PROCESS_ENUMERATION_FAILED",
+  "PROCESS_AMBIGUOUS",
+  "TARGET_MISMATCH",
+  "MODULE_SNAPSHOT_FAILED",
+  "MODULE_ENUMERATION_FAILED",
+  "MODULE_NOT_LOADED",
+  "MODULE_PATH_MISMATCH",
+  "MODULE_AMBIGUOUS",
+  "MODULE_IMAGE_MISMATCH",
+  "REMOTE_THREAD_FAILED",
+  "REMOTE_THREAD_TIMED_OUT",
+  "REMOTE_THREAD_WAIT_FAILED",
+  "REMOTE_THREAD_EXIT_FAILED",
+  "NOT_GAME_HOST",
+  "INITIALIZATION_IN_PROGRESS",
+  "INITIALIZATION_FAILED",
+  "UNEXPECTED_STATUS",
+] as const;
+
+export type ModStudioBootstrapErrorCode =
+  (typeof MOD_STUDIO_BOOTSTRAP_ERROR_CODES)[number];
 
 export interface ModStudioRuntimeBatchEvent {
   event: "batch";
@@ -186,10 +286,7 @@ export interface ModStudioRuntimeBatchEvent {
 export type ModStudioRuntimeEvent =
   ModStudioRuntimeConnectionEvent | ModStudioRuntimeBatchEvent;
 
-export interface ModStudioSubscriptionReceipt {
-  subscriptionId: string;
-  streamIntervalMs: number;
-}
+export type ModStudioSubscriptionReceipt = StreamSubscriptionReceipt;
 
 export function parseModStudioWorkspace(
   value: unknown,
@@ -386,7 +483,10 @@ export function parseModMarketCatalog(
   value: unknown,
 ): ModMarketCatalogSnapshot {
   const catalog = record(value, "Mod Market catalog");
-  const contractVersion = contractVersionOf(catalog);
+  const contractVersion = contractVersionOf(
+    catalog,
+    MOD_MARKET_CONTRACT_VERSION,
+  );
   const privacyMode = string(catalog.privacyMode, "privacyMode");
   if (privacyMode !== "anonymous-read-only") {
     throw new ModStudioContractError("privacyMode is invalid");
@@ -440,21 +540,15 @@ export function parseModMarketCatalog(
         item.packageSize,
         `mods[${index}].packageSize`,
       ),
-      installed: boolean(item.installed, `mods[${index}].installed`),
-      enabled: boolean(item.enabled, `mods[${index}].enabled`),
-      current: boolean(item.current, `mods[${index}].current`),
+      localState: parseModMarketLocalState(
+        item.localState,
+        `mods[${index}].localState`,
+      ),
     };
   });
   const ids = new Set(parsedMods.map((item) => item.id));
   if (ids.size !== parsedMods.length) {
     throw new ModStudioContractError("mods contains duplicate Mod IDs");
-  }
-  if (
-    parsedMods.some((item) => (item.current || item.enabled) && !item.installed)
-  ) {
-    throw new ModStudioContractError(
-      "current or enabled market Mods must be installed",
-    );
   }
   return {
     contractVersion,
@@ -462,6 +556,64 @@ export function parseModMarketCatalog(
     privacyMode,
     mods: parsedMods,
   };
+}
+
+function parseModMarketLocalState(
+  value: unknown,
+  field: string,
+): ModMarketLocalState {
+  const state = record(value, field);
+  const status = string(state.status, `${field}.status`);
+  switch (status) {
+    case "notInstalled":
+      exactFields(state, field, ["status"]);
+      return { status };
+    case "installed":
+      exactFields(state, field, ["status", "enabled", "current"]);
+      return {
+        status,
+        enabled: boolean(state.enabled, `${field}.enabled`),
+        current: boolean(state.current, `${field}.current`),
+      };
+    case "unreadable":
+      exactFields(state, field, ["status", "code", "messageKey"]);
+      const code = modMarketUnreadableCode(state.code, `${field}.code`);
+      const messageKey = boundedString(
+        state.messageKey,
+        `${field}.messageKey`,
+        256,
+      );
+      const expectedMessageKey =
+        MOD_MARKET_UNREADABLE_MESSAGE_KEY_BY_CODE[code];
+      if (messageKey !== expectedMessageKey) {
+        throw new ModStudioContractError(
+          `${field}.messageKey does not match ${field}.code`,
+        );
+      }
+      return {
+        status,
+        code,
+        messageKey: expectedMessageKey,
+      };
+    default:
+      throw new ModStudioContractError(`${field}.status is invalid`);
+  }
+}
+
+function modMarketUnreadableCode(
+  value: unknown,
+  field: string,
+): ModMarketUnreadableCode {
+  const code = identifier(value, field, 64);
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      MOD_MARKET_UNREADABLE_MESSAGE_KEY_BY_CODE,
+      code,
+    )
+  ) {
+    throw new ModStudioContractError(`${field} is invalid`);
+  }
+  return code as ModMarketUnreadableCode;
 }
 
 function parseModMarketLocalizations(
@@ -563,14 +715,49 @@ export function parseModStudioRuntimeEvent(
     true,
   );
   if (event.event === "connection") {
-    const status = payload.status;
-    if (
-      status !== "connected" &&
-      status !== "loaderPresent" &&
-      status !== "waiting" &&
-      status !== "probeFailed"
-    ) {
-      throw new ModStudioContractError("payload.status is invalid");
+    const status = enumValue(
+      payload.status,
+      [
+        "connected",
+        "loaderPresent",
+        "waiting",
+        "acknowledgementRequired",
+        "probeFailed",
+        "bootstrapFailed",
+      ] as const,
+      "payload.status",
+    );
+    const bootstrapErrorCode = nullableEnumValue(
+      payload.bootstrapErrorCode,
+      MOD_STUDIO_BOOTSTRAP_ERROR_CODES,
+      "payload.bootstrapErrorCode",
+    );
+    const probeErrorCode = nullableEnumValue(
+      payload.probeErrorCode,
+      MOD_STUDIO_RUNTIME_PROBE_ERROR_CODES,
+      "payload.probeErrorCode",
+    );
+    const probeOsErrorCode =
+      payload.probeOsErrorCode === null
+        ? null
+        : nonNegativeInteger(
+            payload.probeOsErrorCode,
+            "payload.probeOsErrorCode",
+          );
+    if ((status === "bootstrapFailed") !== (bootstrapErrorCode !== null)) {
+      throw new ModStudioContractError(
+        "payload.bootstrapErrorCode must be present only for bootstrapFailed",
+      );
+    }
+    if ((status === "probeFailed") !== (probeErrorCode !== null)) {
+      throw new ModStudioContractError(
+        "payload.probeErrorCode must be present only for probeFailed",
+      );
+    }
+    if (status !== "probeFailed" && probeOsErrorCode !== null) {
+      throw new ModStudioContractError(
+        "payload.probeOsErrorCode must be present only for probeFailed",
+      );
     }
     return {
       event: "connection",
@@ -578,6 +765,9 @@ export function parseModStudioRuntimeEvent(
         contractVersion,
         generation,
         status,
+        bootstrapErrorCode,
+        probeErrorCode,
+        probeOsErrorCode,
       },
     };
   }
@@ -614,14 +804,15 @@ export function parseModStudioRuntimeEvent(
 export function parseModStudioSubscriptionReceipt(
   value: unknown,
 ): ModStudioSubscriptionReceipt {
-  const receipt = record(value, "Mod runtime subscription receipt");
-  return {
-    subscriptionId: string(receipt.subscriptionId, "subscriptionId"),
-    streamIntervalMs: positiveInteger(
-      receipt.streamIntervalMs,
-      "streamIntervalMs",
-    ),
-  };
+  try {
+    return parseStreamSubscriptionReceipt(value);
+  } catch (error) {
+    throw new ModStudioContractError(
+      error instanceof Error
+        ? error.message
+        : "Invalid Mod runtime subscription receipt",
+    );
+  }
 }
 
 export function compareModStudioSequence(left: string, right: string): number {
@@ -629,13 +820,6 @@ export function compareModStudioSequence(left: string, right: string): number {
     return left.length - right.length;
   }
   return left === right ? 0 : left < right ? -1 : 1;
-}
-
-export class ModStudioContractError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ModStudioContractError";
-  }
 }
 
 function parseSdkSymbol(value: unknown, field: string): ModStudioSdkSymbol {
@@ -781,11 +965,7 @@ function modEventName(value: unknown, field: string): string {
 
 function semver(value: unknown, field: string): string {
   const parsed = string(value, field);
-  if (
-    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(
-      parsed,
-    )
-  ) {
+  if (!isCanonicalSemver(parsed)) {
     throw new ModStudioContractError(`${field} must be a semantic version`);
   }
   return parsed;
@@ -809,88 +989,4 @@ function gameRegion(value: unknown, field: string): ModStudioGameRegion {
     throw new ModStudioContractError(`${field} is invalid`);
   }
   return parsed;
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new ModStudioContractError(`${field} must be an object`);
-  }
-  return value;
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new ModStudioContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    throw new ModStudioContractError(`${field} must be a string`);
-  }
-  return value;
-}
-
-function boundedString(
-  value: unknown,
-  field: string,
-  maxLength: number,
-): string {
-  const parsed = string(value, field);
-  if (parsed.length === 0 || parsed.length > maxLength) {
-    throw new ModStudioContractError(
-      `${field} must contain 1-${maxLength} characters`,
-    );
-  }
-  return parsed;
-}
-
-function boolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new ModStudioContractError(`${field} must be a boolean`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new ModStudioContractError(
-      `${field} must be a non-negative safe integer`,
-    );
-  }
-  return value;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  const parsed = nonNegativeInteger(value, field);
-  if (parsed === 0) {
-    throw new ModStudioContractError(`${field} must be positive`);
-  }
-  return parsed;
-}
-
-function u64DecimalString(
-  value: unknown,
-  field: string,
-  positive: boolean,
-): string {
-  const parsed = string(value, field);
-  if (!/^(0|[1-9]\d*)$/.test(parsed)) {
-    throw new ModStudioContractError(`${field} must be a decimal string`);
-  }
-  if (
-    parsed.length > U64_MAX_DECIMAL.length ||
-    (parsed.length === U64_MAX_DECIMAL.length && parsed > U64_MAX_DECIMAL)
-  ) {
-    throw new ModStudioContractError(`${field} exceeds u64`);
-  }
-  if (positive && parsed === "0") {
-    throw new ModStudioContractError(`${field} must be positive`);
-  }
-  return parsed;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

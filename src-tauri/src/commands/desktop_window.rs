@@ -28,12 +28,29 @@ pub(crate) fn set_window_always_on_top(
     window
         .set_always_on_top(enabled)
         .map_err(|_| CommandError::window_operation_failed())?;
+    reassert_main_dps_opacity(window, state, kind, "always-on-top change");
     if let Err(error) = state.set_window_always_on_top(kind, enabled) {
         log::error!("save per-window always-on-top preference failed: {error}");
         let _ = window.set_always_on_top(previous);
+        reassert_main_dps_opacity(window, state, kind, "always-on-top rollback");
         return Err(CommandError::hud_config_save_failed());
     }
     Ok(())
+}
+
+fn reassert_main_dps_opacity(
+    window: &WebviewWindow,
+    state: &AppState,
+    kind: DesktopWindowKind,
+    reason: &str,
+) {
+    if should_reassert_main_dps_opacity(kind) {
+        main_dps::reassert_opacity(window, state, reason);
+    }
+}
+
+const fn should_reassert_main_dps_opacity(kind: DesktopWindowKind) -> bool {
+    matches!(kind, DesktopWindowKind::MainDps)
 }
 
 fn window_kind(label: &str) -> Result<DesktopWindowKind, CommandError> {
@@ -64,5 +81,23 @@ mod tests {
         );
         assert!(window_kind("notification-island").is_err());
         assert!(window_kind("../console").is_err());
+    }
+
+    #[test]
+    fn opacity_is_reasserted_only_for_main_dps_always_on_top_changes() {
+        assert!(should_reassert_main_dps_opacity(
+            window_kind(main_dps::MAIN_DPS_WINDOW_LABEL).expect("main DPS")
+        ));
+        for label in [
+            hud::HUD_WINDOW_LABEL,
+            console::CONSOLE_WINDOW_LABEL,
+            abyss_values::ABYSS_VALUES_WINDOW_LABEL,
+            combat_details::CHARACTER_DETAILS_WINDOW_LABEL,
+            combat_details::TEAM_DETAILS_WINDOW_LABEL,
+        ] {
+            assert!(!should_reassert_main_dps_opacity(
+                window_kind(label).expect("secondary desktop window")
+            ));
+        }
     }
 }

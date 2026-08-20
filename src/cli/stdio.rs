@@ -56,6 +56,14 @@ use crate::platform::mods_plugin::{
 const MAX_LINE_BYTES: usize = 1024 * 1024;
 const COMMAND_QUEUE_CAPACITY: usize = 128;
 const OUTBOUND_QUEUE_CAPACITY: usize = 1024;
+/// CLI EngineEvent queue policy:
+/// - capacity: 16,384 events;
+/// - ordering: FIFO for the single capture/replay producer lane;
+/// - full: reliable semantic events backpressure the producer rather than drop;
+/// - disconnect: producer send fails and its capture task terminates;
+/// - debug: CLI capture uses SummaryOnly, so no large FullDebug event lane is
+///   accumulated while stdout is backpressured.
+const ENGINE_EVENT_QUEUE_CAPACITY: usize = 16_384;
 const BATTLE_SUMMARY_INTERVAL: Duration = Duration::from_millis(250);
 
 enum ReaderEvent {
@@ -90,6 +98,22 @@ struct LatestMessageReceiver {
     _wake_guard: Sender<()>,
 }
 
+/// The coalescing slot is ephemeral. A panic can leave an arbitrary partial
+/// JSON value in it, so reset to empty and clear poison before reuse.
+fn lock_latest_message_slot(
+    slot: &Mutex<Option<Value>>,
+) -> std::sync::MutexGuard<'_, Option<Value>> {
+    match slot.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = None;
+            slot.clear_poison();
+            guard
+        }
+    }
+}
+
 fn latest_message_channel() -> (LatestMessageSender, LatestMessageReceiver) {
     let slot = Arc::new(Mutex::new(None));
     let (wake, wake_receiver) = bounded(1);
@@ -108,27 +132,18 @@ fn latest_message_channel() -> (LatestMessageSender, LatestMessageReceiver) {
 
 impl LatestMessageSender {
     fn publish(&self, message: Value) {
-        *self
-            .slot
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner()) = Some(message);
+        *lock_latest_message_slot(&self.slot) = Some(message);
         let _ = self.wake.try_send(());
     }
 
     fn clear(&self) {
-        *self
-            .slot
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner()) = None;
+        *lock_latest_message_slot(&self.slot) = None;
     }
 }
 
 impl LatestMessageReceiver {
     fn take(&self) -> Option<Value> {
-        self.slot
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .take()
+        lock_latest_message_slot(&self.slot).take()
     }
 }
 
@@ -422,7 +437,10 @@ impl Runtime {
         Ok(operation_id)
     }
 
-    fn stop_capture(&mut self) -> Result<(String, CaptureProfile), CoreError> {
+    fn stop_capture_with_drain(
+        &mut self,
+        engine_receiver: &Receiver<EngineEvent>,
+    ) -> Result<(String, CaptureProfile), CoreError> {
         if !self.capture.is_running() {
             return Err(CoreError::new(
                 CoreErrorCode::CaptureNotRunning,
@@ -437,7 +455,21 @@ impl Runtime {
             .active_operation_id
             .take()
             .expect("running capture must have an operation id");
-        self.capture.stop()?;
+        // Move the controller out so the drain callback can keep reducing
+        // authoritative events into the rest of `self` while join waits. A
+        // disconnected sink preserves reducer semantics but makes every
+        // presentation notification an immediate no-op: stdout backpressure
+        // must never prevent the reliable engine lane from being drained.
+        let mut controller = std::mem::take(&mut self.capture);
+        let (discard_outbound, discard_receiver) = bounded(0);
+        drop(discard_receiver);
+        let stop_result = controller.stop_with_drain(|| {
+            while let Ok(event) = engine_receiver.try_recv() {
+                self.process_engine_event(event, &discard_outbound);
+            }
+        });
+        self.capture = controller;
+        stop_result?;
         self.running_notified = false;
         Ok((operation_id, profile))
     }
@@ -465,6 +497,7 @@ impl Runtime {
             0
         };
         match signal {
+            CoreSignal::Unchanged => {}
             CoreSignal::StateChanged => {
                 let battle_projection_changed = self.state.hits_generation
                     != previous_hits_generation
@@ -477,6 +510,7 @@ impl Runtime {
             }
             CoreSignal::DebugPacket => {}
             CoreSignal::PacketObserved => self.mark_battle_changed(0),
+            CoreSignal::CombatClockHealthChanged => self.mark_battle_changed(0),
             CoreSignal::ModScript { state_changed, .. } => {
                 if state_changed {
                     self.mark_battle_changed(0);
@@ -744,7 +778,7 @@ where
     let (command_tx, command_rx) = bounded(COMMAND_QUEUE_CAPACITY);
     let (outbound_tx, outbound_rx) = bounded(OUTBOUND_QUEUE_CAPACITY);
     let (writer_event_tx, writer_event_rx) = unbounded();
-    let (engine_sender, engine_receiver) = unbounded();
+    let (engine_sender, engine_receiver) = bounded(ENGINE_EVENT_QUEUE_CAPACITY);
     let (latest_battle_sender, latest_battle_receiver) = latest_message_channel();
     let runtime = Runtime::new(resources, engine_sender, latest_battle_sender, data_dir);
 
@@ -903,7 +937,7 @@ fn core_loop(
     loop {
         select! {
             recv(writer_event_rx) -> _ => {
-                runtime.capture.stop_if_running();
+                stop_for_exit(&mut runtime, &engine_receiver, outbound_tx);
                 return;
             },
             recv(engine_receiver) -> event => {
@@ -990,7 +1024,7 @@ fn handle_request(
         }
         Request::Shutdown => {
             stop_for_exit(runtime, engine_receiver, outbound);
-            let _ = outbound.send(success(
+            let _ = outbound.try_send(success(
                 id,
                 ShutdownResult {
                     shutting_down: true,
@@ -1033,7 +1067,7 @@ fn handle_request(
             Err(error) => send(outbound, failure(id, core_error(error.code))),
         },
         Request::CaptureStop => {
-            let result = runtime.stop_capture();
+            let result = runtime.stop_capture_with_drain(engine_receiver);
             drain_engine_events(runtime, engine_receiver, outbound);
             match result {
                 Ok((operation_id, profile)) => {
@@ -1255,12 +1289,19 @@ fn stop_for_exit(
 ) {
     if runtime.capture.is_running() {
         let (operation_id, profile) = runtime
-            .stop_capture()
+            .stop_capture_with_drain(engine_receiver)
             .expect("capture checked as running must stop");
-        drain_engine_events(runtime, engine_receiver, outbound);
         runtime.finalize_current_battle_record(Some(&operation_id));
-        runtime.send_final_battle_summary(outbound);
-        runtime.send_capture_status_for(outbound, operation_id, profile, "stopped");
+        // Exit cleanup is best-effort and must finish even when stdout's
+        // bounded queue is full. Build at most two terminal notifications in a
+        // local bounded lane, then forward them without waiting.
+        let (terminal_sender, terminal_receiver) = bounded(2);
+        runtime.send_final_battle_summary(&terminal_sender);
+        runtime.send_capture_status_for(&terminal_sender, operation_id, profile, "stopped");
+        drop(terminal_sender);
+        for message in terminal_receiver.try_iter() {
+            let _ = outbound.try_send(message);
+        }
     }
 }
 
@@ -1301,6 +1342,10 @@ fn core_error(code: CoreErrorCode) -> RpcError {
         CoreErrorCode::CaptureNotRunning => {
             RpcError::domain("CAPTURE_NOT_RUNNING", "No capture is running")
         }
+        CoreErrorCode::CaptureStateUnavailable => RpcError::domain(
+            "CAPTURE_STATE_UNAVAILABLE",
+            "The live capture state is unavailable",
+        ),
     }
 }
 
@@ -1337,11 +1382,163 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::engine::model::{
         EmptyCurtainCharacter, EmptyCurtainItem, EmptyCurtainPlacement, Hit, HitCharacterSource,
         HitDirection, HitFollowUp, HtItemNetId, PacketDebug, TimeStopEvent,
     };
+
+    #[test]
+    fn engine_event_queue_is_bounded_fifo_and_disconnects_producers() {
+        let (sender, receiver) = bounded(ENGINE_EVENT_QUEUE_CAPACITY);
+        assert_eq!(sender.capacity(), Some(ENGINE_EVENT_QUEUE_CAPACITY));
+        for index in 0..ENGINE_EVENT_QUEUE_CAPACITY {
+            sender
+                .try_send(EngineEvent::Status(index.to_string()))
+                .expect("queue has declared capacity");
+        }
+        assert!(matches!(
+            sender.try_send(EngineEvent::CaptureStopped),
+            Err(crossbeam_channel::TrySendError::Full(_))
+        ));
+        assert!(matches!(
+            receiver.recv().expect("first queued event"),
+            EngineEvent::Status(status) if status == "0"
+        ));
+        sender
+            .try_send(EngineEvent::CaptureStopped)
+            .expect("released capacity accepts the next reliable event");
+        drop(receiver);
+        assert!(matches!(
+            sender.try_send(EngineEvent::CaptureStopped),
+            Err(crossbeam_channel::TrySendError::Disconnected(_))
+        ));
+    }
+
+    #[test]
+    fn capture_stop_drains_a_full_engine_queue_before_join_without_outbound_io() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, engine_receiver) = bounded(1);
+        engine_sender
+            .send(EngineEvent::Hit(Box::new(test_hit(1.0, 100.0))))
+            .expect("prefill engine queue");
+        let stop = Arc::new(AtomicBool::new(false));
+        let producer_stop = Arc::clone(&stop);
+        let sink = crate::engine::capture::EngineEventSink::reliable(engine_sender.clone());
+        let producer = thread::spawn(move || {
+            while !producer_stop.load(Ordering::Relaxed) {
+                thread::yield_now();
+            }
+            if sink
+                .send(EngineEvent::Hit(Box::new(test_hit(2.0, 200.0))))
+                .is_ok()
+            {
+                let _ = sink.send(EngineEvent::CaptureStopped);
+            }
+        });
+        let capture = crate::engine::capture::CaptureHandle::from_test_thread(stop, producer);
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime
+            .capture
+            .install_test_capture(capture, CaptureProfile::Combat);
+        runtime.active_operation_id = Some("capture-test".to_owned());
+        runtime.latest_operation_id = runtime.active_operation_id.clone();
+
+        let (completed_sender, completed_receiver) = bounded(1);
+        thread::spawn(move || {
+            let result = runtime.stop_capture_with_drain(&engine_receiver);
+            let _ = completed_sender.send((
+                result.is_ok(),
+                runtime.state.total_damage,
+                runtime.capture.is_running(),
+            ));
+        });
+        let (stopped, total_damage, still_running) = completed_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("full engine queue stop must finish within its cancellation bound");
+        assert!(stopped);
+        assert_eq!(
+            total_damage, 300.0,
+            "FIFO semantic events must not be dropped"
+        );
+        assert!(!still_running);
+    }
+
+    #[test]
+    fn shutdown_finishes_with_full_engine_and_outbound_queues() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, engine_receiver) = bounded(1);
+        engine_sender
+            .send(EngineEvent::Hit(Box::new(test_hit(1.0, 100.0))))
+            .expect("prefill engine queue");
+        let stop = Arc::new(AtomicBool::new(false));
+        let producer_stop = Arc::clone(&stop);
+        let sink = crate::engine::capture::EngineEventSink::reliable(engine_sender.clone());
+        let producer = thread::spawn(move || {
+            while !producer_stop.load(Ordering::Relaxed) {
+                thread::yield_now();
+            }
+            if sink
+                .send(EngineEvent::Hit(Box::new(test_hit(2.0, 200.0))))
+                .is_ok()
+            {
+                let _ = sink.send(EngineEvent::CaptureStopped);
+            }
+        });
+        let capture = crate::engine::capture::CaptureHandle::from_test_thread(stop, producer);
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime.handshaken = true;
+        runtime
+            .capture
+            .install_test_capture(capture, CaptureProfile::Combat);
+        runtime.active_operation_id = Some("capture-shutdown".to_owned());
+        runtime.latest_operation_id = runtime.active_operation_id.clone();
+
+        let (command_sender, command_receiver) = bounded(1);
+        command_sender
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(1),
+                request: Request::Shutdown,
+            }))
+            .expect("queue shutdown request");
+        let (outbound_sender, outbound_receiver) = bounded(1);
+        outbound_sender
+            .send(serde_json::json!({"blocked": true}))
+            .expect("prefill stdout queue");
+        let (_writer_event_sender, writer_event_receiver) = unbounded();
+        let (completed_sender, completed_receiver) = bounded(1);
+        thread::spawn(move || {
+            core_loop(
+                command_receiver,
+                &outbound_sender,
+                writer_event_receiver,
+                engine_receiver,
+                runtime,
+            );
+            let _ = completed_sender.send(());
+        });
+
+        completed_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("shutdown must not wait on full engine/stdout queues");
+        assert_eq!(
+            outbound_receiver.try_recv().expect("prefilled stdout item"),
+            serde_json::json!({"blocked": true})
+        );
+    }
 
     #[test]
     fn bounded_reader_accepts_limit_and_rejects_larger_lines() {
@@ -2044,6 +2241,26 @@ mod tests {
         assert_eq!(lines, vec![serde_json::json!({"generation": 2})]);
     }
 
+    #[test]
+    fn poisoned_latest_message_slot_drops_partial_value_and_recovers_empty() {
+        let slot = Mutex::new(Some(serde_json::json!({"partial": true})));
+        let _ = std::panic::catch_unwind(|| {
+            let mut guard = slot.lock().expect("test latest-message slot");
+            *guard = Some(serde_json::json!({"leaked": true}));
+            panic!("poison test latest-message slot");
+        });
+
+        let mut guard = lock_latest_message_slot(&slot);
+        assert!(guard.is_none());
+        *guard = Some(serde_json::json!({"generation": 2}));
+        drop(guard);
+        assert!(!slot.is_poisoned());
+        assert_eq!(
+            lock_latest_message_slot(&slot).take(),
+            Some(serde_json::json!({"generation": 2}))
+        );
+    }
+
     fn test_hit(timestamp: f64, damage: f64) -> Hit {
         Hit {
             timestamp,
@@ -2099,4 +2316,15 @@ mod tests {
             Ok(())
         }
     }
+}
+#[test]
+fn capture_state_unavailable_has_a_stable_private_detail_free_rpc_error() {
+    let error = core_error(CoreErrorCode::CaptureStateUnavailable);
+
+    assert_eq!(error.message, "Core error");
+    let data = error.data.expect("domain error data");
+    assert_eq!(data.domain_code, "CAPTURE_STATE_UNAVAILABLE");
+    assert_eq!(data.detail, "The live capture state is unavailable");
+    assert!(!data.detail.contains("poison"));
+    assert!(!data.detail.contains("mutex"));
 }

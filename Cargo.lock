@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "nte-dps-tool"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "aes",
  "anyhow",
@@ -504,6 +504,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "ed25519-dalek",
+ "flate2",
  "hex",
  "image",
  "libloading",

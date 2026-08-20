@@ -34,7 +34,20 @@ export interface ModStudioSourceBuffer {
 export interface ModStudioRuntimeState {
   generation: string | null;
   connection:
-    "connecting" | "connected" | "loaderPresent" | "waiting" | "probeFailed";
+    | "connecting"
+    | "connected"
+    | "loaderPresent"
+    | "waiting"
+    | "acknowledgementRequired"
+    | "probeFailed"
+    | "bootstrapFailed";
+  bootstrapErrorCode:
+    | import("@/lib/tauri/mod-studio-contract").ModStudioBootstrapErrorCode
+    | null;
+  probeErrorCode:
+    | import("@/lib/tauri/mod-studio-contract").ModStudioRuntimeProbeErrorCode
+    | null;
+  probeOsErrorCode: number | null;
   entries: ModStudioRuntimeEntry[];
   error: ModStudioCommandError | null;
 }
@@ -42,6 +55,9 @@ export interface ModStudioRuntimeState {
 export const INITIAL_MOD_STUDIO_RUNTIME_STATE: ModStudioRuntimeState = {
   generation: null,
   connection: "connecting",
+  bootstrapErrorCode: null,
+  probeErrorCode: null,
+  probeOsErrorCode: null,
   entries: [],
   error: null,
 };
@@ -225,6 +241,9 @@ export function acceptRuntimeEvent(
     return {
       generation: event.payload.generation,
       connection: event.payload.status,
+      bootstrapErrorCode: event.payload.bootstrapErrorCode,
+      probeErrorCode: event.payload.probeErrorCode,
+      probeOsErrorCode: event.payload.probeOsErrorCode,
       entries: reset ? [] : state.entries,
       error: null,
     };
@@ -246,6 +265,9 @@ export function acceptRuntimeEvent(
   return {
     generation: event.payload.generation,
     connection: "connected",
+    bootstrapErrorCode: null,
+    probeErrorCode: null,
+    probeOsErrorCode: null,
     entries,
     error: null,
   };

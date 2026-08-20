@@ -31,17 +31,6 @@ export function formatDecimalString(value: string): string {
   }
 }
 
-export function formatByteCount(value: string): string {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric < 0) return value;
-  if (numeric < 1_024) return `${numeric.toLocaleString()} B`;
-  if (numeric < 1_048_576) return `${(numeric / 1_024).toFixed(1)} KiB`;
-  if (numeric < 1_073_741_824) {
-    return `${(numeric / 1_048_576).toFixed(1)} MiB`;
-  }
-  return `${(numeric / 1_073_741_824).toFixed(1)} GiB`;
-}
-
 export function buildRedactedDiagnosticsReport(
   snapshot: DiagnosticsSnapshot,
   translate: (key: string) => string,

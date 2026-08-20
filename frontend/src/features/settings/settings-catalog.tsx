@@ -32,6 +32,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Markdown } from "@/components/ui/markdown";
 import { Switch } from "@/components/ui/switch";
 import { t, tf } from "@/lib/i18n";
 import {
@@ -44,6 +45,12 @@ import {
   type SettingsSnapshot,
   type UpdateComponentId,
 } from "@/lib/tauri/settings-contract";
+import {
+  formatByteCount,
+  formatUpdateByteProgress,
+  updateComponentLabelKey,
+  updateProgressPercent,
+} from "@/lib/update-presentation";
 import { cn } from "@/lib/utils";
 
 import { settingsSectionPending } from "./settings-view-model";
@@ -208,6 +215,7 @@ function captureInput(snapshot: SettingsSnapshot): CaptureSettingsInput {
     devices: _devices,
     autoRoundIdleSecondsMin: _minimum,
     autoRoundIdleSecondsMax: _maximum,
+    dpsTimeRuntime: _runtime,
     ...settings
   } = snapshot.capture;
   return settings;
@@ -410,9 +418,9 @@ function SoftwareUpdateCard({
               </span>
             </div>
             {available.notes.trim() ? (
-              <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+              <Markdown className="text-xs leading-relaxed text-muted-foreground">
                 {available.notes}
-              </p>
+              </Markdown>
             ) : null}
             <div>
               <Button
@@ -437,8 +445,10 @@ function SoftwareUpdateCard({
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>{t(update.messageKey)}</span>
               <span>
-                {formatByteCount(update.downloadedBytes)} /{" "}
-                {formatByteCount(update.totalBytes)}
+                {formatUpdateByteProgress(
+                  update.downloadedBytes,
+                  update.totalBytes,
+                )}
               </span>
             </div>
             <div
@@ -447,11 +457,18 @@ function SoftwareUpdateCard({
               aria-label={t(update.messageKey)}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={progress}
+              aria-valuenow={progress ?? undefined}
+              aria-valuetext={formatUpdateByteProgress(
+                update.downloadedBytes,
+                update.totalBytes,
+              )}
             >
               <div
-                className="h-full rounded-full bg-primary transition-[width]"
-                style={{ width: `${progress}%` }}
+                className={cn(
+                  "h-full rounded-full bg-primary transition-[width]",
+                  progress === null && "animate-pulse",
+                )}
+                style={{ width: progress === null ? "35%" : `${progress}%` }}
               />
             </div>
           </section>
@@ -515,29 +532,6 @@ function SoftwareUpdateCard({
   );
 }
 
-function updateComponentLabelKey(component: UpdateComponentId): string {
-  return component === "app" ? "Application" : "Mod loader";
-}
-
-function updateProgressPercent(downloaded: string, total: string): number {
-  const totalBytes = BigInt(total);
-  if (totalBytes === 0n) return 0;
-  return Number((BigInt(downloaded) * 100n) / totalBytes);
-}
-
-function formatByteCount(value: string): string {
-  const bytes = BigInt(value);
-  const units = [
-    { size: 1024n * 1024n * 1024n, suffix: "GB" },
-    { size: 1024n * 1024n, suffix: "MB" },
-    { size: 1024n, suffix: "KB" },
-  ];
-  const unit = units.find((candidate) => bytes >= candidate.size);
-  if (!unit) return `${bytes} B`;
-  const tenths = (bytes * 10n) / unit.size;
-  return `${tenths / 10n}.${tenths % 10n} ${unit.suffix}`;
-}
-
 function ParseSettingsCard({
   snapshot,
   pending,
@@ -562,7 +556,7 @@ function ParseSettingsCard({
   const dpsTimeDescription =
     settings.dpsTimeMode === "real-time"
       ? "Output time accrues over the capture time span"
-      : "Output time is not counted during the authoritative game pause";
+      : "Uses authoritative game pause intervals when the combat-clock provider is available";
 
   return (
     <SettingsCard icon={SlidersHorizontal} titleKey="Parse Settings">
@@ -590,7 +584,11 @@ function ParseSettingsCard({
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex min-w-0 flex-wrap gap-2">
             <NativeSelect
-              disabled={pending || snapshot.capture.devices.length === 0}
+              disabled={
+                pending ||
+                !snapshot.capture.devicesAvailable ||
+                snapshot.capture.devices.length === 0
+              }
               className="min-w-52 flex-1"
               ariaLabel={t("Capture NIC")}
               value={
@@ -609,7 +607,8 @@ function ParseSettingsCard({
                 { value: "manual", label: t("Pin capture NIC") },
               ]}
             />
-            {settings.manualCaptureDevice !== null &&
+            {snapshot.capture.devicesAvailable &&
+            settings.manualCaptureDevice !== null &&
             snapshot.capture.devices.length > 0 ? (
               <NativeSelect
                 disabled={pending}
@@ -647,7 +646,11 @@ function ParseSettingsCard({
               {t("Refresh NIC List")}
             </Button>
           </div>
-          {snapshot.capture.devices.length === 0 ? (
+          {!snapshot.capture.devicesAvailable ? (
+            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+              {t("Capture devices are unavailable.")}
+            </p>
+          ) : snapshot.capture.devices.length === 0 ? (
             <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
               {t(
                 "No usable NIC found; confirm Npcap is installed, then click refresh",
@@ -667,7 +670,7 @@ function ParseSettingsCard({
       </SettingsRow>
       <SettingsRow
         labelKey="Damage Source"
-        descriptionKey="Takes effect after re-capturing or re-importing; only overrides damage when a server HP sync can be unambiguously paired to a single hit"
+        descriptionKey="When enabled, a server HP delta may replace the only recent candidate hit; leave this disabled for mechanism or environment damage. Disabled mode reports unexplained residuals without changing DPS totals."
       >
         <LabeledSwitch
           disabled={pending}
@@ -729,20 +732,31 @@ function ParseSettingsCard({
         </div>
       </SettingsRow>
       <SettingsRow labelKey="DPS Time" descriptionKey={dpsTimeDescription}>
-        <NativeSelect
-          disabled={pending}
-          ariaLabel={t("DPS Time")}
-          value={settings.dpsTimeMode}
-          onChange={(dpsTimeMode) =>
-            void save({
-              dpsTimeMode: dpsTimeMode as CaptureSettingsInput["dpsTimeMode"],
-            })
-          }
-          options={DPS_TIME_OPTIONS.map((option) => ({
-            value: option.value,
-            label: t(option.labelKey),
-          }))}
-        />
+        <div className="flex min-w-0 flex-col gap-2">
+          <NativeSelect
+            disabled={pending}
+            ariaLabel={t("DPS Time")}
+            value={settings.dpsTimeMode}
+            onChange={(dpsTimeMode) =>
+              void save({
+                dpsTimeMode: dpsTimeMode as CaptureSettingsInput["dpsTimeMode"],
+              })
+            }
+            options={DPS_TIME_OPTIONS.map((option) => ({
+              value: option.value,
+              label: t(option.labelKey),
+            }))}
+          />
+          {settings.dpsTimeMode === "time-stop-adjusted" &&
+          snapshot.capture.dpsTimeRuntime.warningMessageKey ? (
+            <p
+              className="text-xs leading-relaxed text-amber-600 dark:text-amber-300"
+              role="status"
+            >
+              {t(snapshot.capture.dpsTimeRuntime.warningMessageKey)}
+            </p>
+          ) : null}
+        </div>
       </SettingsRow>
       <SettingsRow
         labelKey="Passthrough Hotkey"
@@ -935,7 +949,7 @@ function TeamDataCard({
         <Button
           type="button"
           variant="outline"
-          disabled={pending}
+          disabled={pending || !snapshot.teamData.available}
           onClick={() => void actions.importTeamDataFile()}
         >
           <Upload aria-hidden="true" />
@@ -944,7 +958,7 @@ function TeamDataCard({
         <Button
           type="button"
           variant="outline"
-          disabled={pending}
+          disabled={pending || !snapshot.teamData.available}
           onClick={() => void exportTeamData()}
         >
           {exported ? (
@@ -965,9 +979,11 @@ function TeamDataCard({
         </span>
       </CardContent>
       <CardFooter className="text-xs text-muted-foreground">
-        {t(
-          "Import/export is scene-independent; works in both open world and abyss",
-        )}
+        {snapshot.teamData.available
+          ? t(
+              "Import/export is scene-independent; works in both open world and abyss",
+            )
+          : t("Imported team data is unavailable.")}
       </CardFooter>
     </Card>
   );

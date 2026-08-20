@@ -12,7 +12,7 @@ use nte_dps_tool::{
         },
     },
     engine::model::HtItemNetId,
-    platform::mods_plugin::{ModsPluginOperation, ModsPluginPlacement, ModsPluginSubmitError},
+    platform::mods_plugin::{ModsPluginOperation, ModsPluginPlacement},
     storage::{i18n, io_util::atomic_write_text},
 };
 use serde::Deserialize;
@@ -25,7 +25,9 @@ use crate::{
             EmptyCurtainFileResult, EmptyCurtainPositionSnapshot, EmptyCurtainSnapshot,
         },
     },
-    state::AppState,
+    equipment_operation_service::{EmptyCurtainOperationState, EquipmentOperationError},
+    file_dialog::{self, DialogOutcome},
+    state::{AppState, EmptyCurtainRuntimeError},
     windows::console,
 };
 
@@ -51,7 +53,7 @@ pub(crate) fn get_empty_curtain_snapshot(
     window: WebviewWindow,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -64,7 +66,9 @@ pub(crate) fn get_empty_curtain_positions(
     console::validate_window(&window)?;
     let item_id = HtItemNetId::from(item);
     let character_id = HtItemNetId::from(character);
-    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let (items, characters, catalog) = state
+        .empty_curtain_data_snapshot()
+        .map_err(CommandError::from_core)?;
     let item = items
         .iter()
         .find(|item| item.id == item_id)
@@ -103,7 +107,9 @@ pub(crate) fn manage_empty_curtain_item(
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
     let item_id = HtItemNetId::from(item);
-    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let (items, characters, catalog) = state
+        .empty_curtain_data_snapshot()
+        .map_err(CommandError::from_core)?;
     let operation = {
         let item = items
             .iter()
@@ -207,7 +213,7 @@ pub(crate) fn manage_empty_curtain_item(
         }
     }?;
     submit(state.inner(), operation.0, operation.1)?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -219,7 +225,9 @@ pub(crate) fn apply_empty_curtain_character_action(
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
     let character_uid = HtItemNetId::from(character);
-    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let (items, characters, catalog) = state
+        .empty_curtain_data_snapshot()
+        .map_err(CommandError::from_core)?;
     let operation = {
         let character = characters
             .iter()
@@ -250,7 +258,7 @@ pub(crate) fn apply_empty_curtain_character_action(
         }
     }?;
     submit(state.inner(), character_uid, operation)?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -259,7 +267,9 @@ pub(crate) async fn export_empty_curtain_inventory(
     window: WebviewWindow,
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
-    let (items, _, catalog) = state.empty_curtain_data_snapshot();
+    let (items, _, catalog) = state
+        .empty_curtain_data_snapshot()
+        .map_err(CommandError::from_core)?;
     if items.is_empty() {
         return Err(CommandError::empty_curtain(
             "empty_curtain_inventory_empty",
@@ -285,7 +295,7 @@ pub(crate) async fn export_empty_curtain_inventory(
     .await?;
     Ok(EmptyCurtainFileResult {
         completed,
-        snapshot: snapshot(state.inner()),
+        snapshot: snapshot(state.inner())?,
     })
 }
 
@@ -297,7 +307,9 @@ pub(crate) async fn export_empty_curtain_loadout(
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
     let character_uid = HtItemNetId::from(character);
-    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let (items, characters, catalog) = state
+        .empty_curtain_data_snapshot()
+        .map_err(CommandError::from_core)?;
     let character = characters
         .iter()
         .copied()
@@ -315,7 +327,7 @@ pub(crate) async fn export_empty_curtain_loadout(
     .await?;
     Ok(EmptyCurtainFileResult {
         completed,
-        snapshot: snapshot(state.inner()),
+        snapshot: snapshot(state.inner())?,
     })
 }
 
@@ -328,10 +340,12 @@ pub(crate) async fn import_empty_curtain_loadout(
     let Some(json) = open_json(&window, i18n::t("Console character loadout")).await? else {
         return Ok(EmptyCurtainFileResult {
             completed: false,
-            snapshot: snapshot(state.inner()),
+            snapshot: snapshot(state.inner())?,
         });
     };
-    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let (items, characters, catalog) = state
+        .empty_curtain_data_snapshot()
+        .map_err(CommandError::from_core)?;
     let file = parse_character_loadout_json(&json).map_err(character_loadout_error)?;
     let loadout = validate_character_loadout(&file, &characters, &items, &catalog)
         .map_err(character_loadout_error)?;
@@ -353,21 +367,33 @@ pub(crate) async fn import_empty_curtain_loadout(
     submit(state.inner(), operation.0, operation.1)?;
     Ok(EmptyCurtainFileResult {
         completed: true,
-        snapshot: snapshot(state.inner()),
+        snapshot: snapshot(state.inner())?,
     })
 }
 
-pub(crate) fn snapshot(state: &AppState) -> EmptyCurtainSnapshot {
-    state.refresh_empty_curtain_operation();
-    let inventory = state.empty_curtain_snapshot();
+pub(crate) fn snapshot(state: &AppState) -> Result<EmptyCurtainSnapshot, CommandError> {
+    let operation = state
+        .empty_curtain_operation_snapshot()
+        .map_err(equipment_operation_error)?
+        .operation;
+    snapshot_with_operation(state, operation)
+}
+
+pub(crate) fn snapshot_with_operation(
+    state: &AppState,
+    operation: EmptyCurtainOperationState,
+) -> Result<EmptyCurtainSnapshot, CommandError> {
+    let inventory = state
+        .empty_curtain_snapshot()
+        .map_err(CommandError::from_core)?;
     let catalog = state.equipment_catalog();
     let resources = state.live_capture_resources();
-    EmptyCurtainSnapshot::from_inventory(
+    Ok(EmptyCurtainSnapshot::from_inventory(
         inventory,
         &catalog,
         &resources.characters,
-        state.empty_curtain_operation(),
-    )
+        operation,
+    ))
 }
 
 fn submit(
@@ -386,18 +412,34 @@ fn submit(
     state
         .submit_empty_curtain_operation(character, operation)
         .map(|_| ())
-        .map_err(|error| match error {
-            ModsPluginSubmitError::Busy => CommandError::empty_curtain(
-                "empty_curtain_operation_busy",
-                "Mod loader is busy; try again shortly",
-                Vec::new(),
-            ),
-            ModsPluginSubmitError::Disconnected => CommandError::empty_curtain(
-                "empty_curtain_operation_unavailable",
-                "Mod loader is unavailable; restart the Mod loader and try again",
-                Vec::new(),
-            ),
-        })
+        .map_err(equipment_operation_error)
+}
+
+pub(crate) fn empty_curtain_runtime_error(error: EmptyCurtainRuntimeError) -> CommandError {
+    match error {
+        EmptyCurtainRuntimeError::Capture(error) => CommandError::from_core(error),
+        EmptyCurtainRuntimeError::Operation(error) => equipment_operation_error(error),
+    }
+}
+
+fn equipment_operation_error(error: EquipmentOperationError) -> CommandError {
+    match error {
+        EquipmentOperationError::Busy => CommandError::empty_curtain(
+            "empty_curtain_operation_busy",
+            "Mod loader is busy; try again shortly",
+            Vec::new(),
+        ),
+        EquipmentOperationError::Disconnected => CommandError::empty_curtain(
+            "empty_curtain_operation_unavailable",
+            "Mod loader is unavailable; restart the Mod loader and try again",
+            Vec::new(),
+        ),
+        EquipmentOperationError::Unavailable => CommandError::empty_curtain(
+            "empty_curtain_operation_state_unavailable",
+            "Equipment operation state is unavailable",
+            Vec::new(),
+        ),
+    }
 }
 
 async fn save_json(
@@ -408,23 +450,22 @@ async fn save_json(
 ) -> Result<bool, CommandError> {
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{SaveFileDialogOutcome, choose_json_save_path};
-        let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
         let default_file_name = default_file_name.to_owned();
-        tauri::async_runtime::spawn_blocking(move || {
-            match choose_json_save_path(owner, &title, &default_file_name) {
-                Ok(SaveFileDialogOutcome::Selected(path)) => atomic_write_text(&path, &json)
+        match file_dialog::choose_json_save_path(window, title, default_file_name)
+            .await
+            .map_err(|error| {
+                log::error!("native Console equipment save dialog failed: {error}");
+                file_dialog_error()
+            })? {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
+                atomic_write_text(&path, &json)
                     .map(|_| true)
-                    .map_err(|_| file_write_error()),
-                Ok(SaveFileDialogOutcome::Cancelled) => Ok(false),
-                Err(code) => {
-                    log::error!("native Console equipment save dialog failed: {code:#010x}");
-                    Err(file_dialog_error())
-                }
-            }
-        })
-        .await
-        .map_err(|_| file_dialog_error())?
+                    .map_err(|_| file_write_error())
+            })
+            .await
+            .map_err(|_| file_dialog_error())?,
+            DialogOutcome::Cancelled => Ok(false),
+        }
     }
     #[cfg(not(windows))]
     {
@@ -436,10 +477,13 @@ async fn save_json(
 async fn open_json(window: &WebviewWindow, title: String) -> Result<Option<String>, CommandError> {
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{OpenFileDialogOutcome, choose_json_open_path};
-        let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
-        tauri::async_runtime::spawn_blocking(move || match choose_json_open_path(owner, &title) {
-            Ok(OpenFileDialogOutcome::Selected(path)) => {
+        match file_dialog::choose_json_open_path(window, title)
+            .await
+            .map_err(|error| {
+                log::error!("native Console equipment open dialog failed: {error}");
+                file_dialog_error()
+            })? {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
                 let metadata = fs::metadata(&path).map_err(|_| file_read_error())?;
                 if metadata.len() > CHARACTER_LOADOUT_MAX_JSON_BYTES as u64 {
                     return Err(character_loadout_error(CharacterLoadoutError::JsonTooLarge));
@@ -447,15 +491,11 @@ async fn open_json(window: &WebviewWindow, title: String) -> Result<Option<Strin
                 fs::read_to_string(path)
                     .map(Some)
                     .map_err(|_| file_read_error())
-            }
-            Ok(OpenFileDialogOutcome::Cancelled) => Ok(None),
-            Err(code) => {
-                log::error!("native Console equipment open dialog failed: {code:#010x}");
-                Err(file_dialog_error())
-            }
-        })
-        .await
-        .map_err(|_| file_dialog_error())?
+            })
+            .await
+            .map_err(|_| file_dialog_error())?,
+            DialogOutcome::Cancelled => Ok(None),
+        }
     }
     #[cfg(not(windows))]
     {
@@ -622,5 +662,24 @@ mod tests {
             character_loadout_error(CharacterLoadoutError::InvalidJson).code,
             "empty_curtain_loadout_invalid"
         );
+    }
+
+    #[test]
+    fn operation_errors_keep_stable_codes_without_details() {
+        let busy = equipment_operation_error(EquipmentOperationError::Busy);
+        let disconnected = equipment_operation_error(EquipmentOperationError::Disconnected);
+        let unavailable = equipment_operation_error(EquipmentOperationError::Unavailable);
+        assert_eq!(busy.code, "empty_curtain_operation_busy");
+        assert_eq!(disconnected.code, "empty_curtain_operation_unavailable");
+        assert_eq!(
+            unavailable.code,
+            "empty_curtain_operation_state_unavailable"
+        );
+        assert!(busy.message_arguments.is_empty());
+        assert!(disconnected.message_arguments.is_empty());
+        assert!(unavailable.message_arguments.is_empty());
+        assert!(busy.diagnostic_line.is_none());
+        assert!(disconnected.diagnostic_line.is_none());
+        assert!(unavailable.diagnostic_line.is_none());
     }
 }

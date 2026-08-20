@@ -1,15 +1,36 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   TechnicalContractError,
   parseTechnicalCommandError,
   type TechnicalCommandError,
 } from "./technical-contract";
 
-export const ABYSS_VALUES_CONTRACT_VERSION = 2;
+export const ABYSS_VALUES_CONTRACT_VERSION = 3;
+
+const {
+  array,
+  boolean,
+  finiteNumber,
+  nonNegativeInteger: integer,
+  nullable,
+  nullableNonNegativeInteger: nullableInteger,
+  nullableNumber,
+  nullableString,
+  positiveNumber,
+  record,
+  string,
+  stringArray,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type AbyssHalfId = "upper" | "lower";
 
 export interface AbyssValuesSnapshot {
   contractVersion: number;
+  dataVersion: string;
+  dataUpdatedAt: string;
+  dataStale: boolean;
   seasonCount: number;
   floorCount: number;
   monsterCount: number;
@@ -90,6 +111,16 @@ export function parseAbyssValuesSnapshot(value: unknown): AbyssValuesSnapshot {
     );
   }
   const seasons = array(snapshot.seasons, "seasons").map(parseSeason);
+  const dataVersion = string(snapshot.dataVersion, "dataVersion");
+  const dataUpdatedAt = string(snapshot.dataUpdatedAt, "dataUpdatedAt");
+  if (
+    dataVersion.length === 0 ||
+    dataVersion.length > 128 ||
+    dataUpdatedAt.length > 64 ||
+    !Number.isFinite(Date.parse(dataUpdatedAt))
+  ) {
+    throw new TechnicalContractError("abyss data metadata is invalid");
+  }
   const seasonCount = integer(snapshot.seasonCount, "seasonCount");
   const floorCount = integer(snapshot.floorCount, "floorCount");
   const monsterCount = integer(snapshot.monsterCount, "monsterCount");
@@ -108,6 +139,9 @@ export function parseAbyssValuesSnapshot(value: unknown): AbyssValuesSnapshot {
   }
   return {
     contractVersion,
+    dataVersion,
+    dataUpdatedAt,
+    dataStale: boolean(snapshot.dataStale, "dataStale"),
     seasonCount,
     floorCount,
     monsterCount,
@@ -214,77 +248,4 @@ function parseTeam(value: unknown): AbyssTeam {
       };
     }),
   };
-}
-
-function record(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${label} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function array(value: unknown, label: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${label} must be an array`);
-  }
-  return value;
-}
-
-function string(value: unknown, label: string): string {
-  if (typeof value !== "string") {
-    throw new TechnicalContractError(`${label} must be a string`);
-  }
-  return value;
-}
-
-function stringArray(value: unknown, label: string): string[] {
-  return array(value, label).map((item) => string(item, label));
-}
-
-function boolean(value: unknown, label: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${label} must be a boolean`);
-  }
-  return value;
-}
-
-function finiteNumber(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new TechnicalContractError(`${label} must be a finite number`);
-  }
-  return value;
-}
-
-function positiveNumber(value: unknown, label: string): number {
-  const result = finiteNumber(value, label);
-  if (result <= 0) {
-    throw new TechnicalContractError(`${label} must be positive`);
-  }
-  return result;
-}
-
-function integer(value: unknown, label: string): number {
-  const result = finiteNumber(value, label);
-  if (!Number.isSafeInteger(result) || result < 0) {
-    throw new TechnicalContractError(
-      `${label} must be a non-negative safe integer`,
-    );
-  }
-  return result;
-}
-
-function nullableInteger(value: unknown, label: string): number | null {
-  return value === null ? null : integer(value, label);
-}
-
-function nullableNumber(value: unknown, label: string): number | null {
-  return value === null ? null : finiteNumber(value, label);
-}
-
-function nullableString(value: unknown, label: string): string | null {
-  return value === null ? null : string(value, label);
-}
-
-function nullable<T>(value: unknown, parser: (value: unknown) => T): T | null {
-  return value === null ? null : parser(value);
 }

@@ -21,4 +21,14 @@ describe("compareDecimalStrings", () => {
     expect(shouldAcceptDecimalVersion("10", "10", true)).toBe(true);
     expect(shouldAcceptDecimalVersion("10", "11")).toBe(true);
   });
+
+  it("fails loudly for non-canonical versions instead of accepting corruption", () => {
+    expect(() => shouldAcceptDecimalVersion("1", "invalid")).toThrow(
+      /incoming must be a canonical decimal string/,
+    );
+    expect(() => shouldAcceptDecimalVersion("01", "2")).toThrow(
+      /accepted must be a canonical decimal string/,
+    );
+    expect(() => compareDecimalStrings("01", "1")).toThrow(TypeError);
+  });
 });

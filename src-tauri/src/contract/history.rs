@@ -11,7 +11,8 @@ use nte_dps_tool::{
         ability_names,
         history::{
             HistoryCharacterDelta, HistoryComparison, HistoryLoadResult, HistoryRecord,
-            HistorySkillDelta, MAX_HISTORY_IMPORT_BYTES,
+            HistorySkillDelta, MAX_HISTORY_IMPORT_BYTES, MAX_HISTORY_RECORDS,
+            MAX_HISTORY_SUMMARY_TEXT_BYTES,
         },
         i18n::{self, Language},
     },
@@ -32,6 +33,7 @@ pub(crate) struct HistorySnapshot {
 
 impl HistorySnapshot {
     pub(crate) fn from_load(value: HistoryLoadResult, revision: u64) -> Self {
+        let value = bounded_history_load(value);
         Self {
             contract_version: HISTORY_CONTRACT_VERSION,
             revision: revision.to_string(),
@@ -40,21 +42,44 @@ impl HistorySnapshot {
             records: value
                 .records
                 .iter()
+                .take(MAX_HISTORY_RECORDS)
                 .map(HistoryRecordSnapshot::from)
                 .collect(),
         }
     }
 
     pub(crate) fn from_localized_load(
-        mut value: HistoryLoadResult,
+        value: HistoryLoadResult,
         revision: u64,
         characters: &HashMap<u32, CharacterInfo>,
     ) -> Self {
+        Self::from_localized_load_for_language(
+            value,
+            revision,
+            characters,
+            i18n::current_language(),
+        )
+    }
+
+    pub(crate) fn from_localized_load_for_language(
+        value: HistoryLoadResult,
+        revision: u64,
+        characters: &HashMap<u32, CharacterInfo>,
+        language: Language,
+    ) -> Self {
+        let mut value = bounded_history_load(value);
         for record in &mut value.records {
-            localize_summary(&mut record.summary, characters);
+            localize_summary(&mut record.summary, characters, language);
         }
         Self::from_load(value, revision)
     }
+}
+
+fn bounded_history_load(mut value: HistoryLoadResult) -> HistoryLoadResult {
+    let overflow = value.records.len().saturating_sub(MAX_HISTORY_RECORDS);
+    value.records.truncate(MAX_HISTORY_RECORDS);
+    value.skipped_files = value.skipped_files.saturating_add(overflow);
+    value
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -101,9 +126,9 @@ pub(crate) struct HistoryRecordSnapshot {
 impl From<&HistoryRecord> for HistoryRecordSnapshot {
     fn from(record: &HistoryRecord) -> Self {
         Self {
-            id: record.id.clone(),
-            display_time: record.display_time(),
-            recorded_at: record.effective_timestamp().to_rfc3339(),
+            id: bounded_history_text(&record.id),
+            display_time: bounded_history_text(&record.display_time()),
+            recorded_at: bounded_history_text(&record.effective_timestamp().to_rfc3339()),
             has_details: record.details.is_some(),
             party_label: history_party_label(record),
             can_set_upper_prediction: record.upper_team_dps().is_some(),
@@ -199,7 +224,7 @@ impl From<&CombatSessionCharacterSummary> for HistoryCharacterSnapshot {
     fn from(row: &CombatSessionCharacterSummary) -> Self {
         Self {
             char_id: row.char_id,
-            name: row.name.clone(),
+            name: bounded_history_text(&row.name),
             hits: row.hits.to_string(),
             damage: row.damage,
             dps: row.dps,
@@ -227,9 +252,9 @@ impl From<&CombatSessionSkillSummary> for HistorySkillSnapshot {
     fn from(row: &CombatSessionSkillSummary) -> Self {
         Self {
             char_id: row.char_id,
-            char_name: row.char_name.clone(),
-            name: row.name.clone(),
-            category: row.category.clone(),
+            char_name: bounded_history_text(&row.char_name),
+            name: bounded_history_text(&row.name),
+            category: bounded_history_text(&row.category),
             hits: row.hits.to_string(),
             damage: row.damage,
             damage_share_percent: row.damage_share_percent,
@@ -319,8 +344,8 @@ impl HistoryComparisonSnapshot {
         characters: &HashMap<u32, CharacterInfo>,
     ) -> Self {
         Self {
-            left_id: comparison.left_id,
-            right_id: comparison.right_id,
+            left_id: bounded_history_text(&comparison.left_id),
+            right_id: bounded_history_text(&comparison.right_id),
             total_dps_delta: comparison.total_dps_delta,
             total_damage_delta: comparison.total_damage_delta,
             duration_delta: comparison.duration_delta,
@@ -358,7 +383,7 @@ impl From<&HistoryCharacterDelta> for HistoryCharacterDeltaSnapshot {
     fn from(row: &HistoryCharacterDelta) -> Self {
         Self {
             char_id: row.char_id,
-            name: row.name.clone(),
+            name: bounded_history_text(&row.name),
             left_dps: row.left_dps,
             right_dps: row.right_dps,
             delta_dps: row.delta_dps,
@@ -372,7 +397,12 @@ impl From<&HistoryCharacterDelta> for HistoryCharacterDeltaSnapshot {
 impl HistoryCharacterDeltaSnapshot {
     fn localized(row: &HistoryCharacterDelta, characters: &HashMap<u32, CharacterInfo>) -> Self {
         let mut snapshot = Self::from(row);
-        snapshot.name = localized_character_name(characters, row.char_id, &row.name);
+        snapshot.name = bounded_history_text(&localized_character_name(
+            characters,
+            row.char_id,
+            &row.name,
+            i18n::current_language(),
+        ));
         snapshot
     }
 }
@@ -390,8 +420,8 @@ pub(crate) struct HistorySkillDeltaSnapshot {
 impl From<&HistorySkillDelta> for HistorySkillDeltaSnapshot {
     fn from(row: &HistorySkillDelta) -> Self {
         Self {
-            name: row.name.clone(),
-            category: row.category.clone(),
+            name: bounded_history_text(&row.name),
+            category: bounded_history_text(&row.category),
             left_damage: row.left_damage,
             right_damage: row.right_damage,
             delta_damage: row.delta_damage,
@@ -402,12 +432,12 @@ impl From<&HistorySkillDelta> for HistorySkillDeltaSnapshot {
 impl HistorySkillDeltaSnapshot {
     fn localized(row: &HistorySkillDelta) -> Self {
         let mut snapshot = Self::from(row);
-        snapshot.name = localized_skill_name(
+        snapshot.name = bounded_history_text(&localized_skill_name(
             &row.name,
             row.ability_name.as_deref(),
             row.gameplay_effect_name.as_deref(),
             None,
-        );
+        ));
         snapshot
     }
 }
@@ -439,12 +469,30 @@ fn hidden_count(len: usize) -> u32 {
     len.saturating_sub(DISPLAY_ROW_LIMIT).min(u32::MAX as usize) as u32
 }
 
-fn localize_summary(summary: &mut CombatSessionSummary, characters: &HashMap<u32, CharacterInfo>) {
+fn bounded_history_text(value: &str) -> String {
+    if value.len() <= MAX_HISTORY_SUMMARY_TEXT_BYTES {
+        return value.to_owned();
+    }
+    let suffix = "…";
+    let mut end = MAX_HISTORY_SUMMARY_TEXT_BYTES.saturating_sub(suffix.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    let mut bounded = value[..end].to_owned();
+    bounded.push_str(suffix);
+    bounded
+}
+
+fn localize_summary(
+    summary: &mut CombatSessionSummary,
+    characters: &HashMap<u32, CharacterInfo>,
+    language: Language,
+) {
     for row in &mut summary.characters {
-        row.name = localized_character_name(characters, row.char_id, &row.name);
+        row.name = localized_character_name(characters, row.char_id, &row.name, language);
     }
     for row in &mut summary.skills {
-        row.char_name = localized_character_name(characters, row.char_id, &row.char_name);
+        row.char_name = localized_character_name(characters, row.char_id, &row.char_name, language);
         row.name = localized_skill_name(
             &row.name,
             row.ability_name.as_deref(),
@@ -460,10 +508,11 @@ fn localize_summary(summary: &mut CombatSessionSummary, characters: &HashMap<u32
     .flatten()
     {
         for row in &mut half.characters {
-            row.name = localized_character_name(characters, row.char_id, &row.name);
+            row.name = localized_character_name(characters, row.char_id, &row.name, language);
         }
         for row in &mut half.skills {
-            row.char_name = localized_character_name(characters, row.char_id, &row.char_name);
+            row.char_name =
+                localized_character_name(characters, row.char_id, &row.char_name, language);
             row.name = localized_skill_name(
                 &row.name,
                 row.ability_name.as_deref(),
@@ -478,11 +527,12 @@ fn localized_character_name(
     characters: &HashMap<u32, CharacterInfo>,
     char_id: u32,
     fallback: &str,
+    language: Language,
 ) -> String {
     let Some(info) = characters.get(&char_id) else {
         return fallback.to_owned();
     };
-    let candidate = if i18n::current_language() == Language::SimplifiedChinese {
+    let candidate = if language == Language::SimplifiedChinese {
         info.name_zh.trim()
     } else {
         info.name_en.trim()
@@ -513,20 +563,49 @@ fn localized_skill_name(
 fn history_party_label(record: &HistoryRecord) -> String {
     let mut names = Vec::new();
     for row in &record.summary.characters {
-        if !names.contains(&row.name) {
-            names.push(row.name.clone());
+        let name = bounded_history_text(&row.name);
+        if !names.contains(&name) {
+            names.push(name);
         }
         if names.len() == 4 {
             break;
         }
     }
-    names.join(" / ")
+    bounded_history_text(&names.join(" / "))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nte_dps_tool::engine::model::DpsTimeBasis;
+    use crate::{
+        channels::stream_runtime::serialize_stream_events,
+        contract::stream::MAX_STREAM_DELIVERY_BYTES,
+    };
+    use nte_dps_tool::engine::model::{CombatSessionAbyssSummary, DpsTimeBasis};
+
+    #[test]
+    fn history_snapshot_never_projects_more_than_the_rust_record_limit() {
+        let records = (0..=nte_dps_tool::storage::history::MAX_HISTORY_RECORDS)
+            .map(|index| HistoryRecord {
+                id: format!("record-{index}"),
+                ..Default::default()
+            })
+            .collect();
+
+        let snapshot = HistorySnapshot::from_load(
+            HistoryLoadResult {
+                records,
+                skipped_files: 2,
+            },
+            9,
+        );
+
+        assert_eq!(
+            snapshot.records.len(),
+            nte_dps_tool::storage::history::MAX_HISTORY_RECORDS
+        );
+        assert_eq!(snapshot.skipped_files, 3);
+    }
 
     #[test]
     fn record_projection_uses_stable_codes_and_string_counters() {
@@ -567,5 +646,69 @@ mod tests {
         assert_eq!(value["performed"], true);
         assert_eq!(value["importedRecordId"], "record-1");
         assert!(value.get("path").is_none());
+    }
+
+    #[test]
+    fn contract_truncates_localized_text_on_utf8_boundaries() {
+        let row = CombatSessionCharacterSummary {
+            name: "界".repeat(MAX_HISTORY_SUMMARY_TEXT_BYTES),
+            ..Default::default()
+        };
+
+        let projected = HistoryCharacterSnapshot::from(&row);
+
+        assert!(projected.name.len() <= MAX_HISTORY_SUMMARY_TEXT_BYTES);
+        assert!(projected.name.ends_with('…'));
+        assert!(projected.name.is_char_boundary(projected.name.len()));
+    }
+
+    #[test]
+    fn worst_case_retained_history_stream_stays_below_channel_budget() {
+        let text = "x".repeat(MAX_HISTORY_SUMMARY_TEXT_BYTES * 4);
+        let character = CombatSessionCharacterSummary {
+            name: text.clone(),
+            ..Default::default()
+        };
+        let skill = CombatSessionSkillSummary {
+            char_name: text.clone(),
+            name: text.clone(),
+            category: text,
+            ..Default::default()
+        };
+        let half = CombatSessionAbyssHalfSummary {
+            characters: vec![character.clone(); DISPLAY_ROW_LIMIT],
+            skills: vec![skill.clone(); DISPLAY_ROW_LIMIT],
+            ..Default::default()
+        };
+        let summary = CombatSessionSummary {
+            characters: vec![character; DISPLAY_ROW_LIMIT],
+            skills: vec![skill; DISPLAY_ROW_LIMIT],
+            abyss: CombatSessionAbyssSummary {
+                first_half: Some(half.clone()),
+                second_half: Some(half),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let records = (0..MAX_HISTORY_RECORDS)
+            .map(|index| HistoryRecord {
+                id: format!("record-{index}"),
+                summary: summary.clone(),
+                ..Default::default()
+            })
+            .collect();
+        let snapshot = HistorySnapshot::from_load(
+            HistoryLoadResult {
+                records,
+                skipped_files: 0,
+            },
+            u64::MAX,
+        );
+
+        let delivery = serialize_stream_events(vec![HistoryEvent::Snapshot(snapshot)])
+            .expect("bounded History stream must serialize");
+
+        assert!(delivery.len() < MAX_STREAM_DELIVERY_BYTES);
+        assert!(delivery.len() <= 12 * 1024 * 1024);
     }
 }

@@ -14,7 +14,7 @@ pub(crate) fn get_timeline_snapshot(
     window: WebviewWindow,
 ) -> Result<TimelineSnapshot, CommandError> {
     console::validate_window(&window)?;
-    Ok(snapshot(state.inner(), parse_scope(&scope)?))
+    snapshot(state.inner(), parse_scope(&scope)?)
 }
 
 #[tauri::command]
@@ -37,17 +37,23 @@ pub(crate) fn set_timeline_preferences(
                 "Timeline preferences could not be saved.",
             )
         })?;
-    Ok(snapshot(state.inner(), scope))
+    snapshot(state.inner(), scope)
 }
 
-pub(crate) fn snapshot(state: &AppState, scope: TimelineScope) -> TimelineSnapshot {
+pub(crate) fn snapshot(
+    state: &AppState,
+    scope: TimelineScope,
+) -> Result<TimelineSnapshot, CommandError> {
     let (_, view_mode) = state.timeline_preferences();
-    TimelineSnapshot::from_projection(
-        state.timeline_projection(scope),
+    let projection = state
+        .timeline_projection(scope)
+        .map_err(CommandError::from_core)?;
+    Ok(TimelineSnapshot::from_projection(
+        projection.as_ref(),
         state.next_sequence(),
         scope,
         view_mode,
-    )
+    ))
 }
 
 pub(crate) fn parse_scope(value: &str) -> Result<TimelineScope, CommandError> {

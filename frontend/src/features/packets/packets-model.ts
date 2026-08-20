@@ -42,8 +42,14 @@ export function mergePacketsEvent(
   );
   for (const packet of incoming.packets) packets.set(packet.sequence, packet);
   const merged = [...packets.values()]
-    .sort((left, right) => compareDecimal(left.sequence, right.sequence))
-    .slice(-incoming.displayLimit);
+    .filter(
+      (packet) =>
+        compareDecimal(packet.sequence, incoming.firstDisplaySequence) >= 0,
+    )
+    .sort((left, right) => compareDecimal(left.sequence, right.sequence));
+  if (merged.length > incoming.displayLimit) {
+    throw new Error("Packets server window exceeds its declared display limit");
+  }
   return { ...incoming, packets: merged };
 }
 

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use nte_dps_tool::{
     core::{
+        CoreError,
         diagnostics::{
             DiagnosticCheck, DiagnosticEnvironment, DiagnosticMessage, DiagnosticReport,
         },
@@ -13,7 +14,7 @@ use serde::Serialize;
 
 use crate::state::AppState;
 
-pub(crate) const DIAGNOSTICS_CONTRACT_VERSION: u32 = 2;
+pub(crate) const DIAGNOSTICS_CONTRACT_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +115,8 @@ pub(crate) struct DiagnosticsQualitySnapshot {
     pub time_stop_interval_count: usize,
     pub abyss_event_count: String,
     pub server_damage_corrections: String,
+    pub unattributed_server_damage_events: String,
+    pub unattributed_server_damage: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -138,12 +141,12 @@ pub(crate) enum DiagnosticsEvent {
 }
 
 impl DiagnosticsSnapshot {
-    pub(crate) fn from_state(state: &AppState) -> Self {
-        let (capture_generation, quality_generation, report_generation) =
-            state.diagnostics_revision();
-        let capture_input = state.diagnostics_input();
+    pub(crate) fn from_state(state: &AppState) -> Result<Self, CoreError> {
+        let (capture_generation, quality_generation, _) = state.diagnostics_revision()?;
+        let (report_generation, diagnostic_run) = state.diagnostics_report_snapshot();
+        let capture_input = state.diagnostics_input()?;
         let phase = state.capture_phase();
-        let raw_capture = state.diagnostics_raw_capture();
+        let raw_capture = state.diagnostics_raw_capture()?;
         let inactive = matches!(
             phase,
             LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed
@@ -152,7 +155,13 @@ impl DiagnosticsSnapshot {
             && raw_capture.as_ref().is_some_and(|raw| {
                 raw.packet_count > 0 && !raw.write_error && !raw.writing && raw.path.is_some()
             });
-        Self {
+        let (environment, report) = diagnostic_run.map_or((None, None), |run| {
+            (
+                Some(DiagnosticsEnvironmentSnapshot::from(run.environment)),
+                Some(DiagnosticsReportSnapshot::from(run.report)),
+            )
+        });
+        Ok(Self {
             contract_version: DIAGNOSTICS_CONTRACT_VERSION,
             capture_generation: capture_generation.to_string(),
             quality_generation: quality_generation.to_string(),
@@ -165,19 +174,15 @@ impl DiagnosticsSnapshot {
                 dropped_history_archives: capture_input.dropped_history_archives.to_string(),
                 raw_capture: raw_capture.map(DiagnosticsRawCaptureSnapshot::from),
             },
-            environment: state
-                .diagnostics_report()
-                .map(|run| DiagnosticsEnvironmentSnapshot::from(run.environment)),
-            report: state
-                .diagnostics_report()
-                .map(|run| DiagnosticsReportSnapshot::from(run.report)),
-            quality: DiagnosticsQualitySnapshot::from(state.diagnostics_quality()),
+            environment,
+            report,
+            quality: DiagnosticsQualitySnapshot::from(state.diagnostics_quality()?),
             actions: DiagnosticsActionsSnapshot {
                 can_import: inactive,
-                can_export_parsed: inactive && state.diagnostics_has_exportable_state(),
+                can_export_parsed: inactive && state.diagnostics_has_exportable_state()?,
                 can_export_raw,
             },
-        }
+        })
     }
 }
 
@@ -272,6 +277,10 @@ impl From<CaptureQualitySummary> for DiagnosticsQualitySnapshot {
             time_stop_interval_count: quality.time_stop_interval_count,
             abyss_event_count: quality.abyss_event_count.to_string(),
             server_damage_corrections: quality.server_damage_corrections.to_string(),
+            unattributed_server_damage_events: quality
+                .unattributed_server_damage_events
+                .to_string(),
+            unattributed_server_damage: quality.unattributed_server_damage,
         }
     }
 }
@@ -331,7 +340,8 @@ mod tests {
         let state = AppState::default();
         let result = DiagnosticsActionResult {
             performed: false,
-            snapshot: DiagnosticsSnapshot::from_state(&state),
+            snapshot: DiagnosticsSnapshot::from_state(&state)
+                .expect("healthy live-capture diagnostics snapshot"),
         };
         let value = serde_json::to_value(result).expect("action result serializes");
 
@@ -341,5 +351,21 @@ mod tests {
             DIAGNOSTICS_CONTRACT_VERSION
         );
         assert!(value["snapshot"]["qualityGeneration"].is_string());
+    }
+
+    #[test]
+    fn quality_contract_exposes_unattributed_server_damage_without_rounding_event_count() {
+        let snapshot = DiagnosticsQualitySnapshot::from(CaptureQualitySummary {
+            unattributed_server_damage_events: u64::MAX,
+            unattributed_server_damage: 26_955.5,
+            ..CaptureQualitySummary::default()
+        });
+        let value = serde_json::to_value(snapshot).expect("diagnostics quality serializes");
+
+        assert_eq!(
+            value["unattributedServerDamageEvents"],
+            u64::MAX.to_string()
+        );
+        assert_eq!(value["unattributedServerDamage"], 26_955.5);
     }
 }

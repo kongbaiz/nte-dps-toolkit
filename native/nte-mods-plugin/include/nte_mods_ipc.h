@@ -20,6 +20,8 @@
 #define NTE_MODS_IPC_MAGIC 0x5145544Eu
 #define NTE_MODS_IPC_REQUEST_SIZE 1080u
 #define NTE_MODS_IPC_RESPONSE_SIZE 2072u
+#define NTE_MODS_IPC_DELIVERY_ACK_MAGIC 0x4145544Eu
+#define NTE_MODS_IPC_DELIVERY_ACK_SIZE 16u
 #define NTE_COMBAT_CLOCK_PAUSE_VALID 0x1u
 
 typedef enum NteModsStatus
@@ -104,6 +106,14 @@ typedef struct NteModsIpcRequest
     NteEquipmentPlacement placements[NTE_EQUIPMENT_MAX_PLACEMENTS];
 } NteModsIpcRequest;
 
+typedef struct NteModsIpcDeliveryAck
+{
+    uint32_t magic;
+    uint16_t version;
+    uint16_t reserved;
+    uint64_t request_id;
+} NteModsIpcDeliveryAck;
+
 typedef struct NteCombatClockTransition
 {
     uint64_t sequence;
@@ -182,4 +192,5 @@ static_assert(sizeof(NteCharacterEffect) == 48);
 static_assert(sizeof(NteModsIpcPayload) == 2048);
 static_assert(sizeof(NteModsIpcRequest) == NTE_MODS_IPC_REQUEST_SIZE);
 static_assert(sizeof(NteModsIpcResponse) == NTE_MODS_IPC_RESPONSE_SIZE);
+static_assert(sizeof(NteModsIpcDeliveryAck) == NTE_MODS_IPC_DELIVERY_ACK_SIZE);
 #endif

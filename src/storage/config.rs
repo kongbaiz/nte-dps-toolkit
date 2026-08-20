@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,7 @@ use super::i18n::Language;
 /// migration, never written.
 const LEGACY_CONFIG_DIRECTORY: &str = "NTE DPS Tool";
 const CONFIG_FILENAME: &str = "config.json";
+const UI_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
 /// Smallest inner size (logical points) each window may be dragged down to. Enforced both when
 /// sanitizing a persisted size and at runtime via `with_min_inner_size`, so free resize can never
 /// collapse a window below a usable layout. Roughly 0.6–0.7× of each window's base size.
@@ -1051,10 +1053,12 @@ pub fn load() -> (UiConfig, Option<String>) {
 }
 
 fn load_with_paths(path: &Path, legacy_path: Option<&Path>) -> (UiConfig, Option<String>) {
-    if path.is_file() {
+    if config_path_requires_load_attempt(path) {
         return read_config_file(path);
     }
-    if let Some(legacy_path) = legacy_path.filter(|legacy_path| legacy_path.is_file()) {
+    if let Some(legacy_path) =
+        legacy_path.filter(|legacy_path| config_path_requires_load_attempt(legacy_path))
+    {
         let (config, warning) = read_config_file(legacy_path);
         if warning.is_some() {
             return (config, warning);
@@ -1083,19 +1087,101 @@ fn load_with_paths(path: &Path, legacy_path: Option<&Path>) -> (UiConfig, Option
     (config, warning)
 }
 
-fn read_config_file(path: &Path) -> (UiConfig, Option<String>) {
-    match fs::read_to_string(path)
-        .map_err(|error| error.to_string())
-        .and_then(|text| serde_json::from_str::<UiConfig>(&text).map_err(|error| error.to_string()))
+fn config_path_requires_load_attempt(path: &Path) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
+#[derive(Debug)]
+enum ConfigFileLoadError {
+    NotAFile,
+    TooLarge,
+    Io(std::io::Error),
+    InvalidUtf8,
+    InvalidJson(serde_json::Error),
+}
+
+impl std::fmt::Display for ConfigFileLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAFile => formatter.write_str("UI config path is not a regular file"),
+            Self::TooLarge => write!(
+                formatter,
+                "UI config exceeds the {UI_CONFIG_MAX_BYTES}-byte limit"
+            ),
+            Self::Io(error) => write!(formatter, "UI config I/O failed: {error}"),
+            Self::InvalidUtf8 => formatter.write_str("UI config is not valid UTF-8"),
+            Self::InvalidJson(error) => write!(formatter, "UI config JSON is invalid: {error}"),
+        }
+    }
+}
+
+fn read_config_text(path: &Path) -> Result<String, ConfigFileLoadError> {
+    // Classify directories before opening so Windows and Unix produce the same
+    // typed result. The authoritative type and byte budget checks below still
+    // use metadata from the opened handle, closing the path-swap gap.
+    let path_metadata = fs::metadata(path).map_err(ConfigFileLoadError::Io)?;
+    if !path_metadata.is_file() {
+        return Err(ConfigFileLoadError::NotAFile);
+    }
+
+    let file = fs::File::open(path).map_err(ConfigFileLoadError::Io)?;
+    let metadata = file.metadata().map_err(ConfigFileLoadError::Io)?;
+    if !metadata.is_file() {
+        return Err(ConfigFileLoadError::NotAFile);
+    }
+    read_config_text_from_open_file(file, metadata.len())
+}
+
+fn read_config_text_from_open_file(
+    mut file: fs::File,
+    opened_size: u64,
+) -> Result<String, ConfigFileLoadError> {
+    if opened_size > UI_CONFIG_MAX_BYTES {
+        return Err(ConfigFileLoadError::TooLarge);
+    }
+
+    let mut bytes = Vec::with_capacity(opened_size as usize);
     {
+        let mut bounded = (&mut file).take(UI_CONFIG_MAX_BYTES);
+        bounded
+            .read_to_end(&mut bytes)
+            .map_err(ConfigFileLoadError::Io)?;
+    }
+
+    // `take(limit)` alone cannot distinguish an exact-limit file from a file
+    // that grew after metadata was sampled. Probe the same handle once more.
+    if bytes.len() as u64 == UI_CONFIG_MAX_BYTES {
+        let mut growth_probe = [0_u8; 1];
+        if file
+            .read(&mut growth_probe)
+            .map_err(ConfigFileLoadError::Io)?
+            != 0
+        {
+            return Err(ConfigFileLoadError::TooLarge);
+        }
+    }
+
+    String::from_utf8(bytes).map_err(|_| ConfigFileLoadError::InvalidUtf8)
+}
+
+fn read_config_file(path: &Path) -> (UiConfig, Option<String>) {
+    match read_config_text(path).and_then(|text| {
+        serde_json::from_str::<UiConfig>(&text).map_err(ConfigFileLoadError::InvalidJson)
+    }) {
         Ok(config) => (config.sanitized(), None),
-        Err(error) => (
-            UiConfig::default(),
-            Some(crate::storage::i18n::tf(
-                "Failed to load UI config ({}): {}",
-                &[&path.display().to_string(), &error],
-            )),
-        ),
+        Err(error) => {
+            let error = error.to_string();
+            (
+                UiConfig::default(),
+                Some(crate::storage::i18n::tf(
+                    "Failed to load UI config ({}): {}",
+                    &[&path.display().to_string(), &error],
+                )),
+            )
+        }
     }
 }
 
@@ -1130,6 +1216,71 @@ mod tests {
             ..UiConfig::default()
         };
         fs::write(path, serde_json::to_string(&config).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn config_reader_accepts_the_exact_byte_limit() {
+        let dir = temp_config_dir("exact_limit");
+        let path = dir.join(CONFIG_FILENAME);
+        fs::write(&path, vec![b' '; UI_CONFIG_MAX_BYTES as usize]).unwrap();
+
+        let text = read_config_text(&path).expect("exact-limit config should be readable");
+
+        assert_eq!(text.len() as u64, UI_CONFIG_MAX_BYTES);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn config_reader_rejects_one_byte_over_the_limit() {
+        let dir = temp_config_dir("over_limit");
+        let path = dir.join(CONFIG_FILENAME);
+        fs::write(
+            &path,
+            vec![b' '; UI_CONFIG_MAX_BYTES.saturating_add(1) as usize],
+        )
+        .unwrap();
+
+        let error = read_config_text(&path).expect_err("oversized config must be rejected");
+
+        assert!(matches!(&error, ConfigFileLoadError::TooLarge));
+        assert_eq!(
+            error.to_string(),
+            format!("UI config exceeds the {UI_CONFIG_MAX_BYTES}-byte limit")
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn config_reader_rejects_a_directory_with_a_typed_error() {
+        let dir = temp_config_dir("directory");
+        let path = dir.join(CONFIG_FILENAME);
+        fs::create_dir(&path).unwrap();
+
+        let error = read_config_text(&path).expect_err("directory must not be read as config");
+
+        assert!(matches!(error, ConfigFileLoadError::NotAFile));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn config_reader_detects_growth_after_open_handle_metadata() {
+        use std::io::Write as _;
+
+        let dir = temp_config_dir("growth_after_open");
+        let path = dir.join(CONFIG_FILENAME);
+        fs::write(&path, vec![b' '; UI_CONFIG_MAX_BYTES as usize]).unwrap();
+        let file = fs::File::open(&path).unwrap();
+        let opened_size = file.metadata().unwrap().len();
+        let mut writer = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writer.write_all(b"x").unwrap();
+        writer.flush().unwrap();
+
+        let error = read_config_text_from_open_file(file, opened_size)
+            .expect_err("post-metadata growth must be rejected");
+
+        assert!(matches!(error, ConfigFileLoadError::TooLarge));
+        drop(writer);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

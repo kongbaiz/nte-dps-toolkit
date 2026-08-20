@@ -27,6 +27,15 @@ import { ActionNotice } from "@/components/nte/action-notice";
 import { AnimatedNumber } from "@/components/nte/animated-number";
 import { useWindowMotion } from "@/components/nte/window-motion-context";
 import { Switch } from "@/components/ui/switch";
+import {
+  Popover,
+  PopoverClose,
+  PopoverPopup,
+  PopoverPortal,
+  PopoverPositioner,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import {
   Tooltip,
@@ -36,7 +45,6 @@ import {
 import { t, tf } from "@/lib/i18n";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { characterAccent } from "@/lib/character-color";
-import { useDismissibleLayer } from "@/hooks/use-dismissible-layer";
 import { useHudModulePointerReorder } from "@/hooks/use-hud-module-pointer-reorder";
 import { useLayoutFlip } from "@/hooks/use-layout-flip";
 import {
@@ -394,8 +402,6 @@ function HudModuleControls({
   onWidthChange: (width: number) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const [pendingModule, setPendingModule] = useState<HudModuleId | null>(null);
   const [movePending, setMovePending] = useState(false);
   const [widthPending, setWidthPending] = useState(false);
@@ -408,12 +414,14 @@ function HudModuleControls({
   } | null>(null);
   const modules = hudModulesInOrder(hud.config);
   const pending = pendingModule !== null || movePending || widthPending;
-  useDismissibleLayer({
-    open,
-    layerRef: menuRef,
-    triggerRef,
-    onDismiss: () => setOpen(false),
-  });
+  useEffect(() => {
+    if (!open) return;
+    const closeModulesOnWindowBlur = () => setOpen(false);
+    window.addEventListener("blur", closeModulesOnWindowBlur);
+    return () => {
+      window.removeEventListener("blur", closeModulesOnWindowBlur);
+    };
+  }, [open]);
 
   const setVisibility = async (module: HudModuleId, visible: boolean) => {
     setPendingModule(module);
@@ -554,120 +562,129 @@ function HudModuleControls({
 
   return (
     <div className="relative">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              ref={triggerRef}
-              variant="ghost"
-              size="icon-xs"
-              className={cn(
-                "text-white/75 hover:bg-white/10 hover:text-white",
-                open && "bg-white/10 text-cyan-100",
-              )}
-              aria-label={t("HUD modules")}
-              aria-expanded={open}
-              aria-haspopup="menu"
-              onClick={() => setOpen((current) => !current)}
-            />
-          }
-        >
-          <Settings2 aria-hidden="true" />
-        </TooltipTrigger>
-        <TooltipContent>{t("HUD modules")}</TooltipContent>
-      </Tooltip>
-
-      {open ? (
-        <div
-          ref={menuRef}
-          role="menu"
-          aria-label={t("HUD modules")}
-          className="motion-popover absolute top-full right-0 z-30 mt-1 w-48 rounded-md bg-slate-950/90 p-2 text-white shadow-lg ring-1 ring-white/15"
-        >
-          <p className="mb-1.5 text-[10px] font-semibold tracking-wide text-cyan-100/80">
-            {t("HUD modules")}
-          </p>
-          <div className="flex flex-col gap-1">
-            {modules.map((module) => {
-              const visible = hudModuleConfiguredVisible(hud.config, module);
-              const label = t(hudModuleLabelKey(module));
-              const isDropTarget = dropTarget?.module === module;
-              return (
-                <div
-                  key={module}
-                  ref={(row) => {
-                    if (row === null) {
-                      moduleRows.current.delete(module);
-                    } else {
-                      moduleRows.current.set(module, row);
-                    }
-                  }}
-                  className={cn(
-                    "relative flex h-6 items-center gap-1 rounded px-1 text-[11px] hover:bg-white/5",
-                    draggedModule === module && "opacity-45",
-                  )}
-                >
-                  {isDropTarget ? (
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "motion-drop-indicator pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-cyan-300",
-                        dropTarget.insertAfter ? "-bottom-0.5" : "-top-0.5",
-                      )}
-                    />
-                  ) : null}
-                  <button
-                    type="button"
+      <Popover modal="trap-focus" open={open} onOpenChange={setOpen}>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     className={cn(
-                      "grid size-5 shrink-0 touch-none cursor-grab place-items-center rounded text-white/45 hover:bg-white/10 hover:text-white/85 active:cursor-grabbing disabled:cursor-default disabled:opacity-35",
-                      draggedModule === module && "cursor-grabbing",
+                      "text-white/75 hover:bg-white/10 hover:text-white",
+                      open && "bg-white/10 text-cyan-100",
                     )}
-                    disabled={pending}
-                    aria-label={`${t(
-                      "Drag to reorder; use Up and Down arrow keys to move",
-                    )}: ${label}`}
-                    title={t(
-                      "Drag to reorder; use Up and Down arrow keys to move",
-                    )}
-                    onPointerDown={(event) => startPointerDrag(event, module)}
-                    onPointerMove={movePointerDrag}
-                    onPointerUp={finishPointerDrag}
-                    onPointerCancel={resetDrag}
-                    onLostPointerCapture={() => {
-                      if (draggedModuleRef.current !== null) {
-                        resetDrag();
-                      }
-                    }}
-                    onKeyDown={(event) => moveWithKeyboard(event, module)}
+                    aria-label={t("HUD modules")}
                   >
-                    <GripVertical className="size-3.5" aria-hidden="true" />
-                  </button>
-                  <label
-                    htmlFor={`hud-module-${module}`}
-                    className="min-w-0 flex-1 truncate"
-                  >
-                    {label}
-                  </label>
-                  <Switch
-                    id={`hud-module-${module}`}
-                    aria-label={t(visible ? "Hide module" : "Restore module")}
-                    checked={visible}
-                    disabled={pending}
-                    onCheckedChange={(enabled) =>
-                      void setVisibility(module, enabled)
-                    }
-                  />
-                </div>
-              );
-            })}
-          </div>
-          <HudWidthControl
-            width={hud.config.width}
-            disabled={pending}
-            onWidthChange={setWidth}
+                    <Settings2 aria-hidden="true" />
+                  </Button>
+                }
+              />
+            }
           />
-        </div>
-      ) : null}
+          <TooltipContent>{t("HUD modules")}</TooltipContent>
+        </Tooltip>
+        <PopoverPortal>
+          <PopoverPositioner align="end" className="z-30" side="bottom">
+            <PopoverPopup
+              aria-label={t("HUD modules")}
+              className="motion-popover w-48 rounded-md border-0 bg-slate-950/90 p-2 text-white shadow-lg ring-1 ring-white/15"
+            >
+              <PopoverTitle className="mb-1.5 text-[10px] font-semibold tracking-wide text-cyan-100/80">
+                {t("HUD modules")}
+              </PopoverTitle>
+              <div className="flex flex-col gap-1">
+                {modules.map((module) => {
+                  const visible = hudModuleConfiguredVisible(
+                    hud.config,
+                    module,
+                  );
+                  const label = t(hudModuleLabelKey(module));
+                  const isDropTarget = dropTarget?.module === module;
+                  return (
+                    <div
+                      key={module}
+                      ref={(row) => {
+                        if (row === null) {
+                          moduleRows.current.delete(module);
+                        } else {
+                          moduleRows.current.set(module, row);
+                        }
+                      }}
+                      className={cn(
+                        "relative flex h-6 items-center gap-1 rounded px-1 text-[11px] hover:bg-white/5",
+                        draggedModule === module && "opacity-45",
+                      )}
+                    >
+                      {isDropTarget ? (
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "motion-drop-indicator pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-cyan-300",
+                            dropTarget.insertAfter ? "-bottom-0.5" : "-top-0.5",
+                          )}
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        className={cn(
+                          "grid size-5 shrink-0 touch-none cursor-grab place-items-center rounded text-white/45 hover:bg-white/10 hover:text-white/85 active:cursor-grabbing disabled:cursor-default disabled:opacity-35",
+                          draggedModule === module && "cursor-grabbing",
+                        )}
+                        disabled={pending}
+                        aria-label={`${t(
+                          "Drag to reorder; use Up and Down arrow keys to move",
+                        )}: ${label}`}
+                        title={t(
+                          "Drag to reorder; use Up and Down arrow keys to move",
+                        )}
+                        onPointerDown={(event) =>
+                          startPointerDrag(event, module)
+                        }
+                        onPointerMove={movePointerDrag}
+                        onPointerUp={finishPointerDrag}
+                        onPointerCancel={resetDrag}
+                        onLostPointerCapture={() => {
+                          if (draggedModuleRef.current !== null) {
+                            resetDrag();
+                          }
+                        }}
+                        onKeyDown={(event) => moveWithKeyboard(event, module)}
+                      >
+                        <GripVertical className="size-3.5" aria-hidden="true" />
+                      </button>
+                      <label
+                        htmlFor={`hud-module-${module}`}
+                        className="min-w-0 flex-1 truncate"
+                      >
+                        {label}
+                      </label>
+                      <Switch
+                        id={`hud-module-${module}`}
+                        aria-label={t(
+                          visible ? "Hide module" : "Restore module",
+                        )}
+                        checked={visible}
+                        disabled={pending}
+                        onCheckedChange={(enabled) =>
+                          void setVisibility(module, enabled)
+                        }
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <HudWidthControl
+                width={hud.config.width}
+                disabled={pending}
+                onWidthChange={setWidth}
+              />
+              <PopoverClose className="sr-only">{t("Close")}</PopoverClose>
+            </PopoverPopup>
+          </PopoverPositioner>
+        </PopoverPortal>
+      </Popover>
     </div>
   );
 }

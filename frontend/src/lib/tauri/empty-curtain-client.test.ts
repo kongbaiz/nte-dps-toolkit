@@ -3,12 +3,23 @@ import { describe, expect, it, vi } from "vitest";
 import { createEmptyCurtainClient } from "@/lib/tauri/empty-curtain-client";
 import { EMPTY_CURTAIN_FIXTURE } from "@/lib/tauri/empty-curtain-contract.test";
 
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
+
 describe("Console equipment client", () => {
-  it("releases the acknowledged coalesced stream", async () => {
+  it("releases the direct coalesced stream", async () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_empty_curtain") {
-        return { subscriptionId: "empty-curtain-test", streamIntervalMs: 100 };
+        return {
+          subscriptionId: "empty-curtain-test",
+          streamKind: "emptyCurtain",
+          streamIntervalMs: 100,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+        };
       }
       return undefined;
     });
@@ -24,7 +35,12 @@ describe("Console equipment client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
-    onMessage?.({ event: "snapshot", payload: EMPTY_CURTAIN_FIXTURE });
+    onMessage?.(
+      encodeDelivery([
+        { event: "snapshot", payload: EMPTY_CURTAIN_FIXTURE },
+      ]),
+    );
+    await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
     expect(received).toHaveBeenCalledWith(

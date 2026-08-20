@@ -4,6 +4,11 @@ import type {
   ModStudioSdkSymbolKind,
 } from "@/lib/tauri/mod-studio-contract";
 
+import {
+  cppParenthesizedContent,
+  stripCppLineComment,
+} from "./mod-source-lexical";
+
 export type ModSourceCompletionKind = ModStudioSdkSymbolKind | "variable";
 
 export interface ModSourceCompletionItem {
@@ -316,7 +321,7 @@ export function modSourceDocumentSymbols(
 ): ModSourceCompletionItem[] {
   const items: ModSourceCompletionItem[] = [];
   for (const originalLine of source.split("\n")) {
-    const line = (originalLine.split("//")[0] ?? "").trim();
+    const line = stripCppLineComment(originalLine).trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith("NTE_")) {
       continue;
     }
@@ -329,7 +334,7 @@ export function modSourceDocumentSymbols(
       ) {
         const declared = splitDeclaredSymbol(prefix);
         if (declared !== null) {
-          const parameters = (line.slice(open + 1).split(")")[0] ?? "").trim();
+          const parameters = (cppParenthesizedContent(line, open) ?? "").trim();
           items.push({
             label: `${declared.name}(${parameters})`,
             insertText: `${declared.name}(`,

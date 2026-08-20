@@ -31,6 +31,7 @@ export interface TimelinePreviewMarker {
 export interface TimelinePreviewSnapshot {
   duration: number;
   bucketSeconds: number;
+  effectiveBucketSeconds: number;
   totalDamage: number;
   peakDps: number;
   timeStopIntervals: Array<{ start: number; end: number }>;

@@ -31,13 +31,26 @@ namespace nte::mods
 		Processed = 1,
 	};
 
+	enum class IpcCloseResult : uint8_t
+	{
+		Closed,
+		DrainFailed,
+	};
+
+	enum class RuntimePresenceCloseResult : uint8_t
+	{
+		Closed,
+		CloseFailed,
+	};
+
 	IpcPumpResult PumpLiveIpc(const PluginContext* context);
 	bool OpenRuntimePresence();
-	void CloseRuntimePresence();
+	RuntimePresenceCloseResult CloseRuntimePresence();
 	NteModsStatus InvokeIpcKernelService(
 		IpcKernelService service,
 		const PluginContext* context,
 		const NteModsIpcRequest& request,
 		NteModsIpcResponse& response);
-	void CloseIpc();
+	void SetIpcStopping(bool stopping);
+	IpcCloseResult CloseIpc();
 } // namespace nte::mods

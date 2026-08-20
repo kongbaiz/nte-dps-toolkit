@@ -3,6 +3,7 @@
 #include "nte/loader/Platform/ProcessLocator.h"
 #include "nte/loader/Injection/ShimInjectionStrategy.h"
 #include "shim/ProcessTarget.h"
+#include "nte_mods_plugin_manual_map.hpp"
 
 #include <Windows.h>
 
@@ -271,6 +272,41 @@ void TestValidateInternalDll() {
     std::wcout << L"done: ValidateInternalDll\n";
 }
 
+void TestManualMapPluginAttachProtocol() {
+	const std::uint8_t ordinary[]{1, 2, 3, 4};
+	CHECK(!nte::mods::manual_map::HasImageSignature(
+		ordinary, sizeof(ordinary)));
+	CHECK(nte::mods::manual_map::SelectReservedParameter(
+		ordinary, sizeof(ordinary), nullptr) == nullptr);
+
+	int shimParams = 0;
+	CHECK(nte::mods::manual_map::SelectReservedParameter(
+		ordinary, sizeof(ordinary), &shimParams) == &shimParams);
+
+	auto plugin = GetExeDir() / L"plugins" / L"dwmapi.dll";
+	if (!std::filesystem::exists(plugin)) {
+		// Repository builds stage the plugin at <repo>/plugins, while packaged
+		// loader layouts place it beside the executable.
+		plugin = GetExeDir() / L".." / L".." / L".." / L".." /
+			L"plugins" / L"dwmapi.dll";
+	}
+	if (std::filesystem::exists(plugin)) {
+		const auto bytes = ReadFileBytes(plugin);
+		CHECK(nte::mods::manual_map::HasImageSignature(
+			bytes.data(), bytes.size()));
+		void* selected = nte::mods::manual_map::SelectReservedParameter(
+			bytes.data(), bytes.size(), nullptr);
+		CHECK(selected == nte::mods::manual_map::AttachSentinel());
+		CHECK(nte::mods::manual_map::IsExplicitAttach(selected));
+		CHECK(nte::mods::manual_map::SelectReservedParameter(
+			bytes.data(), bytes.size(), &shimParams) == &shimParams);
+	} else {
+		std::wcout << L"SKIP manual-map plugin attach protocol "
+			L"(packaged dwmapi.dll not present)\n";
+	}
+	std::wcout << L"done: manual-map plugin attach protocol\n";
+}
+
 void TestExactProcessTargetMatching() {
     using nte::shim::InjectionMode;
     CHECK(nte::shim::DetectMode(L"C:\\Game\\HTGame.exe", nullptr) == InjectionMode::Internal);
@@ -346,6 +382,7 @@ int wmain(int, wchar_t*[]) {
 
     TestReadFileBytes();
     TestValidateInternalDll();
+	TestManualMapPluginAttachProtocol();
     TestExactProcessTargetMatching();
     TestInjectedLauncherCleanupSelection();
     TestShimReadyHandshake();

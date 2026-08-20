@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createDiagnosticsClient } from "@/lib/tauri/diagnostics-client";
 
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
+
 const SNAPSHOT = {
-  contractVersion: 2,
+  contractVersion: 3,
   captureGeneration: "4",
   qualityGeneration: "5",
   reportGeneration: "2",
@@ -37,6 +42,8 @@ const SNAPSHOT = {
     timeStopIntervalCount: 0,
     abyssEventCount: "0",
     serverDamageCorrections: "0",
+    unattributedServerDamageEvents: "0",
+    unattributedServerDamage: 0,
   },
   actions: {
     canImport: true,
@@ -74,7 +81,13 @@ describe("Diagnostics client", () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_diagnostics") {
-        return { subscriptionId: "diagnostics-test", streamIntervalMs: 500 };
+        return {
+          subscriptionId: "diagnostics-test",
+          streamKind: "diagnostics",
+          streamIntervalMs: 500,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+        };
       }
       return undefined;
     });
@@ -90,7 +103,10 @@ describe("Diagnostics client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
-    onMessage?.({ event: "snapshot", payload: SNAPSHOT });
+    onMessage?.(
+      encodeDelivery([{ event: "snapshot", payload: SNAPSHOT }]),
+    );
+    await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
     expect(received).toHaveBeenCalledWith(

@@ -2,7 +2,7 @@ use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
     contract::{CommandError, island::IslandSnapshot},
-    state::{AppState, SessionUndoError},
+    state::AppState,
     windows::island,
 };
 
@@ -52,19 +52,7 @@ pub(crate) fn undo_island_notice(
     })?;
     state
         .undo_session_reset(&token)
-        .map_err(|error| match error {
-            SessionUndoError::Expired => {
-                CommandError::main_dps("session_undo_expired", "The reset undo window has expired")
-            }
-            SessionUndoError::Busy | SessionUndoError::NewData => CommandError::main_dps(
-                "session_undo_unavailable",
-                "The previous session cannot be restored after new activity",
-            ),
-            SessionUndoError::Missing => CommandError::main_dps(
-                "session_undo_missing",
-                "The previous session is no longer available",
-            ),
-        })?;
+        .map_err(super::main_dps::session_undo_error)?;
     state.dismiss_island_notice(&notice_id);
     state.publish_island_notice("success", "Previous session restored", Vec::new(), None);
     island::show_notice(&app, state.inner())?;

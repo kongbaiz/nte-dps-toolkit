@@ -9,6 +9,7 @@
 #include "shim/ShimGlobals.h"
 
 #include "injector.h" // Simple-Manual-Map-Injector (MIT, vendored at third_party/manualmap)
+#include "nte_mods_plugin_manual_map.hpp"
 
 #include <cwchar>
 #include <memory>
@@ -42,10 +43,12 @@ bool InjectByManualMap(HANDLE childProcess, const std::vector<std::uint8_t>& dll
         if (!remoteParams) return false;
     }
 
+	void* reservedParameter = nte::mods::manual_map::SelectReservedParameter(
+		dllBytes.data(), dllBytes.size(), remoteParams);
 	const ManualMapResult result = ManualMapDll(
         childProcess, const_cast<BYTE*>(dllBytes.data()), dllBytes.size(),
         /*ClearHeader*/ true, /*ClearNonNeededSections*/ true, /*AdjustProtections*/ true,
-        /*SEHExceptionSupport*/ true, DLL_PROCESS_ATTACH, remoteParams);
+        /*SEHExceptionSupport*/ true, DLL_PROCESS_ATTACH, reservedParameter);
 
 	if (remoteParams && result != ManualMapResult::TimedOut)
 		VirtualFreeEx(childProcess, remoteParams, 0, MEM_RELEASE);

@@ -1,4 +1,5 @@
 /target/
+/node_modules/
 /logs/
 /data/
 /NTE_Assets/
@@ -19,6 +20,10 @@ __pycache__/
 /plugins/*.dll
 /plugins/mods-plugin.state.json
 /plugins/equipment-plugin.state.json
+/site/assets/
+
+# Office creates transient lock files beside documents.
+~$*.docx
 
 # Local environment and secrets
 .env

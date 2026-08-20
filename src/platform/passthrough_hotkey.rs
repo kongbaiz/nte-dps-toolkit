@@ -47,6 +47,66 @@ static CONFIGURED_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 static GLOBAL_KEY_DOWN: AtomicU32 = AtomicU32::new(0);
 static GLOBAL_HOTKEYS: OnceLock<Mutex<GlobalHotkeys>> = OnceLock::new();
 
+fn reset_pressed_key_state() {
+    CONFIGURED_KEY_DOWN.store(false, Ordering::Release);
+    GLOBAL_KEY_DOWN.store(0, Ordering::Release);
+}
+
+fn disabled_global_hotkeys() -> GlobalHotkeys {
+    GlobalHotkeys {
+        enabled: false,
+        capture: None,
+        reset: None,
+        hud: None,
+    }
+}
+
+/// Callback routing is ephemeral OS state. Discard the complete value after
+/// poison and report recovery so the triggering callback can be dropped.
+fn lock_hotkey_state(state: &Mutex<HookState>) -> (std::sync::MutexGuard<'_, HookState>, bool) {
+    match state.lock() {
+        Ok(guard) => (guard, false),
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = HookState::default();
+            state.clear_poison();
+            reset_pressed_key_state();
+            (guard, true)
+        }
+    }
+}
+
+fn lock_or_reset_hotkey_state(state: &Mutex<HookState>) -> std::sync::MutexGuard<'_, HookState> {
+    lock_hotkey_state(state).0
+}
+
+fn hook_sender_for_event(state: &Mutex<HookState>) -> Option<Sender<PassthroughHotkeyEvent>> {
+    let (guard, recovered) = lock_hotkey_state(state);
+    (!recovered).then(|| guard.sender.clone()).flatten()
+}
+
+/// User-configured bindings are not reconstructable from `Default`, because
+/// the default enables actions. Poison installs an explicitly disabled set.
+fn lock_global_hotkeys(
+    hotkeys: &Mutex<GlobalHotkeys>,
+) -> (std::sync::MutexGuard<'_, GlobalHotkeys>, bool) {
+    match hotkeys.lock() {
+        Ok(guard) => (guard, false),
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = disabled_global_hotkeys();
+            hotkeys.clear_poison();
+            reset_pressed_key_state();
+            (guard, true)
+        }
+    }
+}
+
+fn global_hotkeys_for_event(hotkeys: &Mutex<GlobalHotkeys>) -> Option<GlobalHotkeys> {
+    let (guard, recovered) = lock_global_hotkeys(hotkeys);
+    (!recovered).then_some(*guard)
+}
+
 fn virtual_key(hotkey: PassthroughHotkey) -> u32 {
     match hotkey {
         PassthroughHotkey::Home => VK_HOME as u32,
@@ -98,13 +158,9 @@ fn binding_matches(binding: HotkeyBinding, virtual_key: u32) -> bool {
 }
 
 fn matching_global_action(virtual_key: u32) -> Option<GlobalHotkeyAction> {
-    let hotkeys = *match GLOBAL_HOTKEYS
-        .get_or_init(|| Mutex::new(GlobalHotkeys::default()))
-        .lock()
-    {
-        Ok(hotkeys) => hotkeys,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let hotkeys = global_hotkeys_for_event(
+        GLOBAL_HOTKEYS.get_or_init(|| Mutex::new(GlobalHotkeys::default())),
+    )?;
     hotkeys.enabled.then_some(())?;
     GlobalHotkeyAction::all().iter().copied().find(|action| {
         hotkeys
@@ -118,10 +174,7 @@ fn matches_unmodified_press(configured_key: u32, virtual_key: u32, has_modifiers
 }
 
 fn send_event(event: PassthroughHotkeyEvent) {
-    let sender = HOOK_STATE.get().and_then(|state| match state.lock() {
-        Ok(state) => state.sender.clone(),
-        Err(poisoned) => poisoned.into_inner().sender.clone(),
-    });
+    let sender = HOOK_STATE.get().and_then(hook_sender_for_event);
     if let Some(sender) = sender {
         let _ = sender.send(event);
     }
@@ -190,10 +243,7 @@ impl PassthroughHotkeyHandle {
         Self::set_configuration(hotkey, global_hotkeys);
         {
             let state = HOOK_STATE.get_or_init(|| Mutex::new(HookState::default()));
-            let mut state = match state.lock() {
-                Ok(state) => state,
-                Err(poisoned) => poisoned.into_inner(),
-            };
+            let mut state = lock_or_reset_hotkey_state(state);
             state.sender = Some(sender);
             state.instance_id = instance_id;
         }
@@ -253,16 +303,11 @@ impl PassthroughHotkeyHandle {
 
     pub fn set_configuration(hotkey: PassthroughHotkey, global_hotkeys: GlobalHotkeys) {
         CONFIGURED_KEY.store(virtual_key(hotkey), Ordering::Release);
-        let mut configured = match GLOBAL_HOTKEYS
-            .get_or_init(|| Mutex::new(GlobalHotkeys::default()))
-            .lock()
-        {
-            Ok(configured) => configured,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let (mut configured, _) = lock_global_hotkeys(
+            GLOBAL_HOTKEYS.get_or_init(|| Mutex::new(GlobalHotkeys::default())),
+        );
         *configured = global_hotkeys.sanitized();
-        CONFIGURED_KEY_DOWN.store(false, Ordering::Release);
-        GLOBAL_KEY_DOWN.store(0, Ordering::Release);
+        reset_pressed_key_state();
     }
 }
 
@@ -282,10 +327,7 @@ fn clear_sender(instance_id: u64) {
     let Some(state) = HOOK_STATE.get() else {
         return;
     };
-    let mut state = match state.lock() {
-        Ok(state) => state,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let mut state = lock_or_reset_hotkey_state(state);
     if state.instance_id == instance_id {
         state.sender = None;
     }
@@ -328,5 +370,62 @@ mod tests {
             VK_HOME as u32,
             true
         ));
+    }
+
+    #[test]
+    fn poisoned_hotkey_state_is_reset_before_reuse() {
+        let state = Mutex::new(HookState {
+            sender: None,
+            instance_id: 41,
+        });
+        let _ = std::panic::catch_unwind(|| {
+            let mut guard = state.lock().expect("test hook state");
+            guard.instance_id = 99;
+            panic!("poison test hook state");
+        });
+
+        let guard = lock_or_reset_hotkey_state(&state);
+        assert_eq!(guard.instance_id, 0);
+        assert!(guard.sender.is_none());
+        drop(guard);
+        assert!(!state.is_poisoned());
+    }
+
+    #[test]
+    fn poisoned_global_hotkeys_disable_bindings_and_drop_triggering_event() {
+        let hotkeys = Mutex::new(GlobalHotkeys::default());
+        let _ = std::panic::catch_unwind(|| {
+            let mut guard = hotkeys.lock().expect("test global hotkeys");
+            guard.enabled = true;
+            panic!("poison test global hotkeys");
+        });
+
+        assert!(global_hotkeys_for_event(&hotkeys).is_none());
+        let recovered = global_hotkeys_for_event(&hotkeys).expect("recovered disabled snapshot");
+        assert!(!recovered.enabled);
+        assert!(recovered.capture.is_none());
+        assert!(recovered.reset.is_none());
+        assert!(recovered.hud.is_none());
+        assert!(!hotkeys.is_poisoned());
+    }
+
+    #[test]
+    fn poisoned_hook_state_drops_triggering_event_and_sender() {
+        let (sender, _receiver) = mpsc::channel();
+        let state = Mutex::new(HookState {
+            sender: Some(sender),
+            instance_id: 7,
+        });
+        let _ = std::panic::catch_unwind(|| {
+            let mut guard = state.lock().expect("test hook state");
+            guard.instance_id = 8;
+            panic!("poison test hook sender");
+        });
+
+        assert!(hook_sender_for_event(&state).is_none());
+        let recovered = lock_or_reset_hotkey_state(&state);
+        assert!(recovered.sender.is_none());
+        assert_eq!(recovered.instance_id, 0);
+        assert!(!state.is_poisoned());
     }
 }
