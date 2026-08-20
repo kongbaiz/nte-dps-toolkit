@@ -1,0 +1,96 @@
+HISTORY STREAM EXPORT BUFFERING VERIFICATION
+============================================
+
+BRANCH
+codex/review-priority-optimizations
+
+CHANGED BRANCH / FIELD
+- src/storage/history.rs::read_history_export_chunk
+- Reader stack changed from HistoryChecksumReader<Take<File>> to BufReader<HistoryChecksumReader<Take<File>>>.
+- Checksum and byte-count verification are recovered from reader.into_inner(); one decoded chunk remains the maximum hydrated export working set.
+- Large-test JSON verification readers are buffered as test-performance hygiene.
+
+FOUR REQUIRED ARTIFACTS
+MODIFIED_FILE=D:\NTE_DPS_TOOL\.codex-fixtures\history-export-buffer-2026-08-20\MODIFIED_FILE
+DIFF_FILE=D:\NTE_DPS_TOOL\.codex-fixtures\history-export-buffer-2026-08-20\DIFF_FILE
+VERIFICATION.txt=D:\NTE_DPS_TOOL\.codex-fixtures\history-export-buffer-2026-08-20\VERIFICATION.txt
+ROLLBACK.sh=D:\NTE_DPS_TOOL\.codex-fixtures\history-export-buffer-2026-08-20\ROLLBACK.sh
+
+HASHES
+ORIGINAL_AT_TASK_START_SHA256=95ff6fa3e34d4a901f5324102e877bdac6c94bb281ff9367ed157b82d9a4c996
+FOCUSED_ROLLBACK_BASELINE_SHA256=4fbd0e026bbcf81b9ca80fe5dd7dfb74380cf306bd23a264fe55995c499bafab
+MODIFIED_SHA256=861bc329ec4f32cb6e39aef6f1e3c996796f36ae07d763d911a759a6a3fad800
+NOTE: The focused rollback baseline retains the concurrently completed bulk CombatState rebuild change and removes only this buffered-export change. The original task-start source is preserved at original/history.rs with the original hash above.
+
+BASELINE
+COMMAND:
+cargo test --locked chunked_history_file_export_is_complete_and_self_contained -- --nocapture
+INPUT:
+20,001 History hits, split across two chunks; unbuffered HistoryChecksumReader<Take<File>> production parse and unbuffered test verification parse.
+LITERAL OUTPUT / RESULT:
+test storage::history::tests::chunked_history_file_export_is_complete_and_self_contained ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 714 filtered out; finished in 22.36s
+WALL_SECONDS=22.558
+EXIT_STATUS=0
+
+BASELINE COMPARISON
+COMMAND:
+cargo test --locked chunked_history_round_trips_without_inline_truncation_and_rejects_external_manifests -- --nocapture
+INPUT:
+20,001 History hits using the normal read-to-string/from-str chunk hydration path, without streamed export.
+LITERAL OUTPUT / RESULT:
+test storage::history::tests::chunked_history_round_trips_without_inline_truncation_and_rejects_external_manifests ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 714 filtered out; finished in 0.67s
+WALL_SECONDS=5.963 (included 5.16s compilation)
+EXIT_STATUS=0
+
+MODIFIED
+COMMAND:
+cargo test --locked chunked_history_file_export_is_complete_and_self_contained -- --nocapture
+INPUT:
+The same 20,001-hit/two-chunk fixture with buffered checksum reader and buffered test reparse.
+LITERAL OUTPUT / RESULT:
+test storage::history::tests::chunked_history_file_export_is_complete_and_self_contained ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 716 filtered out; finished in 2.06s
+EXIT_STATUS=0
+RESTORED BEHAVIOR:
+The self-contained export reload retained all 20,001 hits, details_chunks remained absent, checksum/order/lane/count checks remained active, and structural assertions proved one-chunk-at-a-time decoding with no Vec collection of chunks.
+
+FOCUSED CORRECTNESS
+COMMANDS:
+cargo test --locked corrupted_chunk_export_fails_closed_without_replacing_destination -- --nocapture
+cargo test --locked delete_race_is_typed_and_cannot_commit_a_partial_export -- --nocapture
+cargo test --locked concurrent_delete_yields_a_complete_export_or_typed_atomic_abort -- --nocapture
+INPUT:
+Corrupted chunk, prepared-descriptor delete/restore race, and concurrent delete during streamed export.
+LITERAL RESULT:
+PASS: 3 passed; 0 failed. Corrupt input remained fail-closed; delete race remained typed/atomic; concurrent delete produced either a complete export or typed atomic abort.
+EXIT_STATUS=0 for every command
+
+STRICT VALIDATION
+COMMANDS:
+cargo fmt --check
+cargo clippy --locked --all-targets --features desktop -- -D warnings
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+INPUT:
+Current shared working tree after export buffering and concurrent bulk rebuild completion.
+LITERAL OUTPUT / RESULT:
+root cargo fmt: no diagnostics; EXIT_STATUS=0
+root strict clippy: Finished `dev` profile [unoptimized + debuginfo]; EXIT_STATUS=0
+Tauri strict clippy: Finished `dev` profile [unoptimized + debuginfo]; EXIT_STATUS=0
+
+ROLLBACK
+COMMAND:
+wsl bash /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-export-buffer-2026-08-20/ROLLBACK.sh /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-export-buffer-2026-08-20/rollback-copy/history.rs /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-export-buffer-2026-08-20/baseline/history.rs
+INPUT:
+rollback-copy/history.rs SHA256=861bc329ec4f32cb6e39aef6f1e3c996796f36ae07d763d911a759a6a3fad800
+baseline/history.rs SHA256=4fbd0e026bbcf81b9ca80fe5dd7dfb74380cf306bd23a264fe55995c499bafab
+LITERAL OUTPUT / RESULT:
+RESTORED_SHA256=4fbd0e026bbcf81b9ca80fe5dd7dfb74380cf306bd23a264fe55995c499bafab
+RESTORED:buffered_export=False
+RESTORED:bulk_rebuild_preserved=True
+RESULT=ROLLBACK_OK
+EXIT_STATUS=0
+
+FINAL STATUS
+MODIFIED_FILE remains changed and matches current src/storage/history.rs. Rollback was exercised only against rollback-copy/history.rs.

@@ -1,0 +1,82 @@
+HISTORY MAIN-MANIFEST TEST FIX VERIFICATION
+==========================================
+
+BRANCH
+codex/review-priority-optimizations
+
+CHANGED BRANCH / FIELD
+- src/storage/history.rs::tests::detailed_record_uses_earliest_hit_time_for_display_file_and_sorting
+- Directory assertion now selects the main `.json` manifest and separately proves that a chunk sidecar exists; directory enumeration order is no longer treated as a storage naming invariant.
+
+FOUR REQUIRED ARTIFACTS
+MODIFIED_FILE=D:\NTE_DPS_TOOL\.codex-fixtures\history-manifest-test-2026-08-20\MODIFIED_FILE
+DIFF_FILE=D:\NTE_DPS_TOOL\.codex-fixtures\history-manifest-test-2026-08-20\DIFF_FILE
+VERIFICATION.txt=D:\NTE_DPS_TOOL\.codex-fixtures\history-manifest-test-2026-08-20\VERIFICATION.txt
+ROLLBACK.sh=D:\NTE_DPS_TOOL\.codex-fixtures\history-manifest-test-2026-08-20\ROLLBACK.sh
+
+HASHES
+ORIGINAL_SHA256=861bc329ec4f32cb6e39aef6f1e3c996796f36ae07d763d911a759a6a3fad800
+MODIFIED_SHA256=8744701228c22558c32b84deb1fa964fc2663cd9cda7ec8b8608a5137a58fb61
+
+BASELINE
+COMMAND:
+Extract the body of detailed_record_uses_earliest_hit_time_for_display_file_and_sorting from baseline/history.rs and test for `.next()`, `let main_files = fs::read_dir`, and `Some("nte-history-chunk")`.
+INPUT:
+D:\NTE_DPS_TOOL\.codex-fixtures\history-manifest-test-2026-08-20\baseline\history.rs
+LITERAL OUTPUT / RESULT:
+BASELINE:first_entry_assumption=True
+BASELINE:main_manifest_filter=False
+BASELINE:sidecar_presence_assertion=False
+EXIT_STATUS=0
+RESTORED BASELINE FAILURE:
+The full-suite failure selected `1226e545.global.000000.nte-history-chunk` as the first directory entry while the assertion expected `20231115_061320_1226e545.json`; filesystem enumeration order is unspecified.
+
+MODIFIED
+COMMAND:
+cargo test --locked detailed_record_uses_earliest_hit_time_for_display_file_and_sorting -- --nocapture
+INPUT:
+One detailed record that persists one main JSON manifest plus at least one `.nte-history-chunk` sidecar.
+LITERAL OUTPUT / RESULT:
+test storage::history::tests::detailed_record_uses_earliest_hit_time_for_display_file_and_sorting ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 718 filtered out; finished in 0.01s
+FOCUSED_EXIT_STATUS=0
+RESTORED BEHAVIOR:
+recorded_at/effective timestamp and sort assertions remain unchanged; exactly one `.json` main manifest is matched by the expected timestamp+record ID filename, and a sidecar is independently required.
+
+MODIFIED STRUCTURAL PROBE
+INPUT:
+D:\NTE_DPS_TOOL\src\storage\history.rs
+LITERAL OUTPUT / RESULT:
+MODIFIED:first_entry_assumption=False
+MODIFIED:main_manifest_filter=True
+MODIFIED:sidecar_presence_assertion=True
+EXIT_STATUS=0
+
+STRICT VALIDATION
+COMMANDS:
+cargo fmt --check
+cargo check --locked
+cargo clippy --locked --all-targets --features desktop -- -D warnings
+INPUT:
+Current shared working tree.
+LITERAL OUTPUT / RESULT:
+root fmt: no diagnostics; EXIT_STATUS=0
+root check: Finished `dev` profile [unoptimized + debuginfo]; EXIT_STATUS=0
+root strict clippy: Finished `dev` profile [unoptimized + debuginfo]; EXIT_STATUS=0
+
+ROLLBACK
+COMMAND:
+wsl bash /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-manifest-test-2026-08-20/ROLLBACK.sh /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-manifest-test-2026-08-20/rollback-copy/history.rs /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-manifest-test-2026-08-20/baseline/history.rs
+INPUT:
+rollback-copy/history.rs SHA256=8744701228c22558c32b84deb1fa964fc2663cd9cda7ec8b8608a5137a58fb61
+baseline/history.rs SHA256=861bc329ec4f32cb6e39aef6f1e3c996796f36ae07d763d911a759a6a3fad800
+LITERAL OUTPUT / RESULT:
+RESTORED_SHA256=861bc329ec4f32cb6e39aef6f1e3c996796f36ae07d763d911a759a6a3fad800
+BASELINE_SHA256=861bc329ec4f32cb6e39aef6f1e3c996796f36ae07d763d911a759a6a3fad800
+RESTORED:first_entry_assumption=True
+RESTORED:main_manifest_filter=False
+RESULT=ROLLBACK_OK
+EXIT_STATUS=0
+
+FINAL STATUS
+MODIFIED_FILE remains changed and matches current src/storage/history.rs. Rollback was exercised only on rollback-copy/history.rs.

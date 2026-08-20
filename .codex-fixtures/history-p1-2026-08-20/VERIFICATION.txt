@@ -1,0 +1,124 @@
+HISTORY P1 5-8 VERIFICATION
+===========================
+
+BRANCH
+codex/review-priority-optimizations
+
+CHANGED BRANCH / FIELDS
+- src/storage/history.rs :: HistoryDirectoryLimits.max_entries + max_main_manifests
+- src/storage/history.rs :: MAX_HISTORY_INTERACTIVE_DETAIL_BYTES + MAX_HISTORY_INTERACTIVE_DETAIL_HITS
+- src-tauri/src/history_runtime.rs :: revision-keyed, lock-free History summary scan with stale-result discard
+- src-tauri/src/contract/history.rs :: MAX_HISTORY_SUMMARY_TEXT_BYTES bounded Rust projection
+
+FOUR REQUIRED ARTIFACTS
+MODIFIED_FILE=D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\MODIFIED_FILE
+DIFF_FILE=D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\DIFF_FILE
+VERIFICATION.txt=D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\VERIFICATION.txt
+ROLLBACK.sh=D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\ROLLBACK.sh
+
+HASHES
+ORIGINAL_SHA256(src/storage/history.rs)=fbf38389768bee39fa1d0ba04ab46b718635f4b89b6dee82cd5680e363f2adb2
+MODIFIED_SHA256(src/storage/history.rs)=95ff6fa3e34d4a901f5324102e877bdac6c94bb281ff9367ed157b82d9a4c996
+MODIFIED_FILE_SHA256=95ff6fa3e34d4a901f5324102e877bdac6c94bb281ff9367ed157b82d9a4c996
+DIFF_FILE represents ORIGINAL -> current src/storage/history.rs; git diff --no-index result status was 1 (differences found).
+
+BASELINE
+COMMAND:
+$storagePath=(Resolve-Path '.codex-fixtures\history-p1-2026-08-20\baseline\src\storage\history.rs').Path; $runtimePath=(Resolve-Path '.codex-fixtures\history-p1-2026-08-20\baseline\src-tauri\src\history_runtime.rs').Path; $storage=Get-Content -LiteralPath $storagePath -Raw; $runtime=Get-Content -LiteralPath $runtimePath -Raw; Write-Output "INPUT_STORAGE=$storagePath"; Write-Output "INPUT_RUNTIME=$runtimePath"; Write-Output ('BASELINE:absolute_candidate_split=' + $storage.Contains('max_main_manifests')); Write-Output ('BASELINE:interactive_hit_budget=' + $storage.Contains('MAX_HISTORY_INTERACTIVE_DETAIL_HITS')); Write-Output ('BASELINE:summary_scan_inside_transaction=' + $runtime.Contains('let (key, loaded, characters) = state.with_history_transaction(|| {')); Write-Output 'EXIT_STATUS=0'
+INPUT:
+D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\baseline\src\storage\history.rs
+D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\baseline\src-tauri\src\history_runtime.rs
+LITERAL OUTPUT / RESULT:
+INPUT_STORAGE=D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\baseline\src\storage\history.rs
+INPUT_RUNTIME=D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\baseline\src-tauri\src\history_runtime.rs
+BASELINE:absolute_candidate_split=False
+BASELINE:interactive_hit_budget=False
+BASELINE:summary_scan_inside_transaction=True
+EXIT_STATUS=0
+
+MODIFIED STRUCTURAL PROBE
+COMMAND:
+$storagePath=(Resolve-Path 'src\storage\history.rs').Path; $runtimePath=(Resolve-Path 'src-tauri\src\history_runtime.rs').Path; $storage=Get-Content -LiteralPath $storagePath -Raw; $runtime=Get-Content -LiteralPath $runtimePath -Raw; Write-Output "INPUT_STORAGE=$storagePath"; Write-Output "INPUT_RUNTIME=$runtimePath"; Write-Output ('MODIFIED:absolute_candidate_split=' + ($storage.Contains('max_main_manifests') -and $storage.Contains('MAX_HISTORY_DIRECTORY_ENTRIES'))); Write-Output ('MODIFIED:interactive_hit_budget=' + ($storage.Contains('MAX_HISTORY_INTERACTIVE_DETAIL_HITS') -and $storage.Contains('DetailHitsTooLarge'))); Write-Output ('MODIFIED:revision_guarded_lock_free_scan=' + ($runtime.Contains('let loaded = load();') -and $runtime.Contains('if state.with_history_transaction(|| history_projection_key(state))? != key'))); Write-Output 'EXIT_STATUS=0'
+INPUT:
+D:\NTE_DPS_TOOL\src\storage\history.rs
+D:\NTE_DPS_TOOL\src-tauri\src\history_runtime.rs
+LITERAL OUTPUT / RESULT:
+INPUT_STORAGE=D:\NTE_DPS_TOOL\src\storage\history.rs
+INPUT_RUNTIME=D:\NTE_DPS_TOOL\src-tauri\src\history_runtime.rs
+MODIFIED:absolute_candidate_split=True
+MODIFIED:interactive_hit_budget=True
+MODIFIED:revision_guarded_lock_free_scan=True
+EXIT_STATUS=0
+
+MODIFIED BEHAVIORAL VERIFICATION
+1) COMMAND:
+cargo test --locked chunked_history_round_trips_more_than_external_hit_budget -- --ignored --nocapture
+INPUT:
+A generated chunked History archive containing 500001 hits (26 sidecar chunks plus its main manifest).
+LITERAL RESULT:
+PASS: 1 passed; 0 failed; elapsed=1579.88s; persisted_bytes=344008593; self_contained_export_bytes=344002043; exported record reloaded with all 500001 hits; interactive selection accepted the record.
+EXIT_STATUS=0
+
+2) COMMANDS:
+cargo test --locked maximum_legal_sidecar_count_does_not_consume_main_manifest_budget -- --nocapture
+cargo test --locked main_manifest_candidate_budget_is_independent_and_mutations_fail_closed -- --nocapture
+cargo test --locked interactive_hit_preflight_rejects_budget_plus_one_before_opening_chunks -- --nocapture
+cargo test --locked external_summary_enforces_global_half_string_finite_and_nested_budgets -- --nocapture
+cargo test --locked chunked_history_file_export_is_complete_and_self_contained -- --nocapture
+cargo test --locked delete_race_is_typed_and_cannot_commit_a_partial_export -- --nocapture
+INPUT:
+Synthetic exact-boundary/over-budget directories and manifests, bounded summaries, complete multi-chunk exports, corrupted/racing sources.
+LITERAL RESULT:
+PASS: each focused test reported ok; 0 failed. File-export test elapsed=22.22s; delete-race test elapsed=22.47s.
+EXIT_STATUS=0 for every command
+
+3) COMMAND:
+cargo test --manifest-path src-tauri/Cargo.toml --locked history -- --test-threads=1
+INPUT:
+Tauri History command/runtime/state/contract tests.
+LITERAL RESULT:
+PASS: 47 passed; 0 failed.
+EXIT_STATUS=0
+
+4) COMMANDS:
+rustfmt --edition 2024 --check src/storage/history.rs src-tauri/src/history_runtime.rs src-tauri/src/commands/history.rs src-tauri/src/state.rs src-tauri/src/contract/history.rs src-tauri/src/commands/main_dps.rs
+cargo clippy --locked --all-targets --features desktop -- -D warnings
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+pwsh -NoProfile -File scripts/test_i18n_source_coverage.ps1
+INPUT:
+Current shared working tree.
+LITERAL OUTPUT / RESULT:
+rustfmt: no output; EXIT_STATUS=0
+root strict clippy: no diagnostics; EXIT_STATUS=0
+Tauri strict clippy: no diagnostics; EXIT_STATUS=0
+I18N source coverage passed: sourceKeys=655 localeKeys=1942 parity=true duplicateKeysRejected=true.
+i18n EXIT_STATUS=0
+
+ROLLBACK
+COMMAND:
+wsl bash /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-p1-2026-08-20/ROLLBACK.sh /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-p1-2026-08-20/rollback-copy/history.rs /mnt/d/NTE_DPS_TOOL/.codex-fixtures/history-p1-2026-08-20/baseline/src/storage/history.rs
+INPUT:
+rollback-copy/history.rs SHA256=95ff6fa3e34d4a901f5324102e877bdac6c94bb281ff9367ed157b82d9a4c996
+baseline/src/storage/history.rs SHA256=fbf38389768bee39fa1d0ba04ab46b718635f4b89b6dee82cd5680e363f2adb2
+LITERAL OUTPUT / RESULT:
+RESTORED_SHA256=fbf38389768bee39fa1d0ba04ab46b718635f4b89b6dee82cd5680e363f2adb2
+BASELINE_SHA256=fbf38389768bee39fa1d0ba04ab46b718635f4b89b6dee82cd5680e363f2adb2
+RESULT=ROLLBACK_OK
+EXIT_STATUS=0
+
+RESTORED BEHAVIOR / STATUS
+COMMAND:
+$targetPath=(Resolve-Path '.codex-fixtures\history-p1-2026-08-20\rollback-copy\history.rs').Path; $target=Get-Content -LiteralPath $targetPath -Raw; Write-Output "INPUT=$targetPath"; Write-Output ('RESTORED:absolute_candidate_split=' + $target.Contains('max_main_manifests')); Write-Output ('RESTORED:interactive_hit_budget=' + $target.Contains('MAX_HISTORY_INTERACTIVE_DETAIL_HITS')); $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant(); Write-Output "RESTORED_SHA256=$hash"; Write-Output 'RESULT=RESTORED_BASELINE_BEHAVIOR'; Write-Output 'EXIT_STATUS=0'
+INPUT:
+D:\NTE_DPS_TOOL\.codex-fixtures\history-p1-2026-08-20\rollback-copy\history.rs
+LITERAL OUTPUT / RESULT:
+RESTORED:absolute_candidate_split=False
+RESTORED:interactive_hit_budget=False
+RESTORED_SHA256=fbf38389768bee39fa1d0ba04ab46b718635f4b89b6dee82cd5680e363f2adb2
+RESULT=RESTORED_BASELINE_BEHAVIOR
+EXIT_STATUS=0
+
+FINAL STATUS
+- MODIFIED_FILE remains changed and matches current src/storage/history.rs.
+- Rollback was exercised only on rollback-copy/history.rs; the shared working tree remains modified.
+- Directory, selection, summary, streaming export, revision-stale and contract-channel bounds are covered by focused tests.

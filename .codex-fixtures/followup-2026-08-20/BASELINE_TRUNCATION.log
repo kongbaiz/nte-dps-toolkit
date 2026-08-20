@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src\lib.rs (target\debug\deps\nte_dps_tool-3370dc5bf4dbf579.exe)
+
+running 2 tests
+test engine::model::tests::party_combat_totals_follow_trimmed_hits ... ok
+test engine::model::tests::combat_totals_follow_trimmed_hits ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 643 filtered out; finished in 0.06s
+

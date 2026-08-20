@@ -1,0 +1,32 @@
+root fmt	EXIT=0	SECONDS=0.67
+root check	EXIT=0	SECONDS=0.11
+root test	EXIT=0	SECONDS=8.38
+root clippy desktop	EXIT=0	SECONDS=0.2
+CLI check	EXIT=0	SECONDS=1.25
+CLI test	EXIT=0	SECONDS=12.42
+CLI clippy	EXIT=0	SECONDS=3.24
+Tauri fmt	EXIT=0	SECONDS=0.32
+Tauri check	EXIT=0	SECONDS=2.66
+Tauri test	EXIT=0	SECONDS=11.13
+Tauri clippy	EXIT=0	SECONDS=2.79
+frontend lint	EXIT=0	SECONDS=0.31
+frontend typecheck	EXIT=0	SECONDS=4.43
+frontend test	EXIT=0	SECONDS=2.23
+frontend build	EXIT=0	SECONDS=5.63
+architecture gate	EXIT=0	SECONDS=1.01
+runtime safety gate	EXIT=0	SECONDS=19.6
+site build gate	EXIT=0	SECONDS=0.51
+runtime schema gate	EXIT=0	SECONDS=0.46
+contract version parity	EXIT=0	SECONDS=0.47
+i18n source coverage	EXIT=0	SECONDS=0.49
+CI PowerShell fail-fast	EXIT=0	SECONDS=0.75
+native Release clean	EXIT=0	SECONDS=0.89
+native Release build	EXIT=0	SECONDS=11.03
+native lifecycle source	EXIT=0	SECONDS=0.4
+native IPC source	EXIT=0	SECONDS=0.35
+native signature policy	EXIT=0	SECONDS=0.88
+native shadow vtable	EXIT=0	SECONDS=1.05
+native proxy forwarding	EXIT=0	SECONDS=0.72
+native remote bootstrap	EXIT=0	SECONDS=0.21
+long combat retention	EXIT=0	SECONDS=1.05
+root object hygiene	EXIT=0	SECONDS=0.04

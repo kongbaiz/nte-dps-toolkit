@@ -1,0 +1,853 @@
+diff --git "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\history-p1-2026-08-20\\baseline\\src\\storage\\history.rs" "b/D:\\NTE_DPS_TOOL\\src\\storage\\history.rs"
+index 6a4b2b2..810d39e 100644
+--- "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\history-p1-2026-08-20\\baseline\\src\\storage\\history.rs"
++++ "b/D:\\NTE_DPS_TOOL\\src\\storage\\history.rs"
+@@ -14,8 +14,9 @@ use chrono::{DateTime, Local, Utc};
+ use serde::{Deserialize, Serialize, de::IgnoredAny};
+ 
+ use crate::engine::model::{
+-    AbyssHalf, CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatSessionSummary,
+-    CombatState, Hit, TeamDps, TeamDpsMember, TimeStopEvent,
++    AbyssHalf, CaptureQualitySummary, CombatSessionAbyssHalfSummary, CombatSessionCharacterSummary,
++    CombatSessionSkillSummary, CombatSessionSummary, CombatState, DamageAttributionSummary, Hit,
++    TeamDps, TeamDpsMember, TimeStopEvent,
+ };
+ use crate::storage::io_util::{atomic_write_file, atomic_write_text};
+ use crate::storage::paths::software_dir;
+@@ -25,6 +26,12 @@ pub const MAX_HISTORY_RECORDS: usize = 200;
+ const MAX_HISTORY_IMPORT_HITS: usize = 500_000;
+ const MAX_HISTORY_IMPORT_TIME_STOP_EVENTS: usize = 8_192;
+ pub const MAX_HISTORY_IMPORT_BYTES: u64 = 128 * 1024 * 1024;
++pub const MAX_HISTORY_INTERACTIVE_DETAIL_BYTES: u64 = 512 * 1024 * 1024;
++pub const MAX_HISTORY_INTERACTIVE_DETAIL_HITS: u64 = 1_000_000;
++pub const MAX_HISTORY_SUMMARY_CHARACTERS_PER_SCOPE: usize = 256;
++pub const MAX_HISTORY_SUMMARY_SKILLS_PER_SCOPE: usize = 4_096;
++pub const MAX_HISTORY_SUMMARY_TEXT_BYTES: usize = 256;
++const MAX_HISTORY_SUMMARY_SCOPES: usize = 3;
+ const HISTORY_DETAILS_CHUNK_VERSION: u32 = 1;
+ const MAX_HISTORY_HITS_PER_CHUNK: usize = 20_000;
+ const MAX_HISTORY_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
+@@ -32,7 +39,12 @@ const MAX_HISTORY_CHUNKS_PER_RECORD: usize = 4_096;
+ const MAX_HISTORY_TOMBSTONE_FILES_PER_RECORD: usize = MAX_HISTORY_CHUNKS_PER_RECORD + 2;
+ const MAX_HISTORY_DETAILS_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+ pub const MAX_HISTORY_DIRECTORY_BYTES: u64 = MAX_HISTORY_DETAILS_BYTES;
+-pub const MAX_HISTORY_DIRECTORY_ENTRIES: usize = 16_384;
++/// Absolute root-directory enumeration budget. A fully retained History set may
++/// legitimately contain one main manifest plus 4,096 detail sidecars per
++/// record, so sidecars must not consume the independent main-manifest budget.
++pub const MAX_HISTORY_DIRECTORY_ENTRIES: usize =
++    MAX_HISTORY_RECORDS * (MAX_HISTORY_CHUNKS_PER_RECORD + 1) + MAX_HISTORY_RECORDS + 64;
++pub const MAX_HISTORY_MAIN_MANIFEST_CANDIDATES: usize = 16_384;
+ const HISTORY_TOMBSTONE_OWNER_VERSION: u32 = 1;
+ const HISTORY_TOMBSTONE_OWNER_FILE: &str = ".owner.json";
+ const MAX_HISTORY_TOMBSTONE_OWNER_BYTES: u64 = 4 * 1024;
+@@ -41,6 +53,7 @@ const MAX_HISTORY_TOMBSTONE_AGE_MILLIS: i64 = 24 * 60 * 60 * 1_000;
+ #[derive(Clone, Copy)]
+ struct HistoryDirectoryLimits {
+     max_entries: usize,
++    max_main_manifests: usize,
+     max_records: usize,
+     max_total_bytes: u64,
+ }
+@@ -48,6 +61,7 @@ struct HistoryDirectoryLimits {
+ impl HistoryDirectoryLimits {
+     const PRODUCTION: Self = Self {
+         max_entries: MAX_HISTORY_DIRECTORY_ENTRIES,
++        max_main_manifests: MAX_HISTORY_MAIN_MANIFEST_CANDIDATES,
+         max_records: MAX_HISTORY_RECORDS,
+         max_total_bytes: MAX_HISTORY_DIRECTORY_BYTES,
+     };
+@@ -221,12 +235,12 @@ enum PreparedHistoryRecordExportStorage {
+     /// Legacy inline records and summary-only records are already self-contained.
+     /// Their source identity is rebound while the atomic destination is written.
+     SelfContained,
+-    Chunked(HistoryDetailsChunkManifest),
++    Chunked(Box<HistoryDetailsChunkManifest>),
+ }
+ 
+-/// A bounded, hit-free descriptor prepared while the desktop History
+-/// transaction is held. The potentially multi-gigabyte chunk stream is opened
+-/// only after that transaction has been released.
++/// A bounded, hit-free descriptor prepared without hydrating detail chunks.
++/// The potentially multi-gigabyte chunk stream is opened only by the later
++/// export step, which revalidates the main manifest identity.
+ pub struct PreparedHistoryRecordExport {
+     main_path: PathBuf,
+     main_bytes: u64,
+@@ -311,6 +325,7 @@ impl HistoryRecord {
+ /// a committed record.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum HistorySaveError {
++    InvalidSummary,
+     InvalidDetails,
+     PrepareDirectory,
+     Serialize,
+@@ -321,6 +336,7 @@ pub enum HistorySaveError {
+ impl fmt::Display for HistorySaveError {
+     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+         formatter.write_str(match self {
++            Self::InvalidSummary => "History summary failed validation.",
+             Self::InvalidDetails => "History details failed validation.",
+             Self::PrepareDirectory => "History storage directory could not be prepared.",
+             Self::Serialize => "History record could not be serialized.",
+@@ -721,6 +737,12 @@ impl HistoryCombatDetails {
+     }
+ }
+ 
++fn history_detail_hit_count(details: &HistoryCombatDetails) -> u64 {
++    (details.global_hits.len() as u64)
++        .saturating_add(details.first_half_hits.len() as u64)
++        .saturating_add(details.second_half_hits.len() as u64)
++}
++
+ fn history_hits_are_valid(hits: &[Hit]) -> bool {
+     !hits.iter().any(|hit| {
+         !hit.timestamp.is_finite()
+@@ -939,6 +961,7 @@ impl Default for HistorySummaryEnvelope {
+ pub enum HistoryRecordLoadError {
+     InvalidId,
+     DetailsTooLarge { size: u64, limit: u64 },
++    DetailHitsTooLarge { count: u64, limit: u64 },
+     LoadFailed,
+ }
+ 
+@@ -949,6 +972,9 @@ impl fmt::Display for HistoryRecordLoadError {
+             Self::DetailsTooLarge { .. } => {
+                 formatter.write_str("History record details exceed the requested load budget")
+             }
++            Self::DetailHitsTooLarge { .. } => {
++                formatter.write_str("History record hit count exceeds the requested load budget")
++            }
+             Self::LoadFailed => formatter.write_str("History record could not be loaded"),
+         }
+     }
+@@ -1123,7 +1149,8 @@ pub fn load_history() -> HistoryLoadResult {
+ 
+ /// Loads bounded History row metadata without opening or materializing detail
+ /// chunks. Use this for list/stream projections; hydrate one selected record
+-/// with [`load_history_record_from_path`] only when its details are requested.
++/// with [`load_history_record_by_id_for_interactive_selection`] only when its
++/// details are requested by the interactive presentation.
+ pub fn load_history_summaries() -> HistoryLoadResult {
+     load_history_summaries_from_dir(&history_dir())
+ }
+@@ -1170,15 +1197,66 @@ pub fn load_history_record_by_id_from_dir_with_max_detail_bytes(
+     else {
+         return Ok(None);
+     };
++    load_indexed_history_record_with_limits(&record, max_detail_bytes, None).map(Some)
++}
++
++/// Hydrates one user-selected round under a budget independent from external
++/// import and full streaming export. Chunked byte and hit totals are rejected
++/// from the lightweight main manifest before the first sidecar is opened.
++pub fn load_history_record_by_id_for_interactive_selection(
++    record_id: &str,
++) -> Result<Option<HistoryRecord>, HistoryRecordLoadError> {
++    load_history_record_by_id_from_dir_for_interactive_selection(&history_dir(), record_id)
++}
++
++pub fn load_history_record_by_id_from_dir_for_interactive_selection(
++    directory: &Path,
++    record_id: &str,
++) -> Result<Option<HistoryRecord>, HistoryRecordLoadError> {
++    if !valid_record_id(record_id) {
++        return Err(HistoryRecordLoadError::InvalidId);
++    }
++    let index = load_history_index_from_dir(directory);
++    let Some(record) = index
++        .records
++        .into_iter()
++        .find(|record| record.id == record_id)
++    else {
++        return Ok(None);
++    };
++    load_indexed_history_record_with_limits(
++        &record,
++        MAX_HISTORY_INTERACTIVE_DETAIL_BYTES,
++        Some(MAX_HISTORY_INTERACTIVE_DETAIL_HITS),
++    )
++    .map(Some)
++}
++
++fn load_indexed_history_record_with_limits(
++    record: &HistoryIndexRecord,
++    max_detail_bytes: u64,
++    max_detail_hits: Option<u64>,
++) -> Result<HistoryRecord, HistoryRecordLoadError> {
+     if record.stored_detail_bytes > max_detail_bytes {
+         return Err(HistoryRecordLoadError::DetailsTooLarge {
+             size: record.stored_detail_bytes,
+             limit: max_detail_bytes,
+         });
+     }
+-    load_history_record_from_path(&record.path)
+-        .map(Some)
+-        .map_err(|_| HistoryRecordLoadError::LoadFailed)
++    if let (Some(count), Some(limit)) = (record.total_detail_hits, max_detail_hits)
++        && count > limit
++    {
++        return Err(HistoryRecordLoadError::DetailHitsTooLarge { count, limit });
++    }
++    let loaded = load_history_record_from_path(&record.path)
++        .map_err(|_| HistoryRecordLoadError::LoadFailed)?;
++    if let (Some(details), Some(limit)) = (&loaded.details, max_detail_hits) {
++        let count = history_detail_hit_count(details);
++        if count > limit {
++            return Err(HistoryRecordLoadError::DetailHitsTooLarge { count, limit });
++        }
++    }
++    Ok(loaded)
+ }
+ 
+ /// Atomically writes a hydrated record as a self-contained JSON export without
+@@ -1208,9 +1286,8 @@ pub fn export_history_record_to_path(
+ }
+ 
+ /// Prepares a hit-free export descriptor from the local History index and main
+-/// manifest. Desktop callers should hold their short History transaction only
+-/// for this step, then call [`export_prepared_history_record_to_path`] after
+-/// releasing it.
++/// manifest. The descriptor and later stream are identity-bound, so read-only
++/// callers need not block History mutation/archive transactions.
+ pub fn prepare_history_record_export(
+     record_id: &str,
+ ) -> Result<PreparedHistoryRecordExport, HistoryRecordExportError> {
+@@ -1249,6 +1326,8 @@ pub fn prepare_history_record_export_from_dir(
+     if envelope.id != record_id || !valid_record_id(&envelope.id) {
+         return Err(HistoryRecordExportError::CorruptRecord);
+     }
++    validate_history_summary(&envelope.summary)
++        .map_err(|_| HistoryRecordExportError::CorruptRecord)?;
+     if envelope.details.is_some() && envelope.details_chunks.is_some() {
+         return Err(HistoryRecordExportError::CorruptRecord);
+     }
+@@ -1258,7 +1337,7 @@ pub fn prepare_history_record_export_from_dir(
+             {
+                 return Err(HistoryRecordExportError::CorruptRecord);
+             }
+-            PreparedHistoryRecordExportStorage::Chunked(manifest)
++            PreparedHistoryRecordExportStorage::Chunked(Box::new(manifest))
+         }
+         None => PreparedHistoryRecordExportStorage::SelfContained,
+     };
+@@ -1603,6 +1682,7 @@ fn load_history_index_from_dir_with_limits(
+         return result;
+     };
+     let mut total_bytes = 0u64;
++    let mut main_manifests = 0usize;
+     for (entry_count, entry) in entries.enumerate() {
+         if entry_count >= limits.max_entries {
+             mark_history_file_skipped(&mut result.skipped_files);
+@@ -1619,6 +1699,11 @@ fn load_history_index_from_dir_with_limits(
+         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+             continue;
+         }
++        if main_manifests >= limits.max_main_manifests {
++            mark_history_file_skipped(&mut result.skipped_files);
++            break;
++        }
++        main_manifests = main_manifests.saturating_add(1);
+         let Some(remaining_bytes) = limits.max_total_bytes.checked_sub(total_bytes) else {
+             mark_history_file_skipped(&mut result.skipped_files);
+             continue;
+@@ -1673,6 +1758,7 @@ fn load_history_summaries_from_dir_with_limits(
+         return result;
+     };
+     let mut total_bytes = 0_u64;
++    let mut main_manifests = 0usize;
+     for (entry_count, entry) in entries.enumerate() {
+         if entry_count >= limits.max_entries {
+             mark_history_file_skipped(&mut result.skipped_files);
+@@ -1689,6 +1775,11 @@ fn load_history_summaries_from_dir_with_limits(
+         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+             continue;
+         }
++        if main_manifests >= limits.max_main_manifests {
++            mark_history_file_skipped(&mut result.skipped_files);
++            break;
++        }
++        main_manifests = main_manifests.saturating_add(1);
+         let Some(remaining_bytes) = limits.max_total_bytes.checked_sub(total_bytes) else {
+             mark_history_file_skipped(&mut result.skipped_files);
+             continue;
+@@ -1723,6 +1814,7 @@ fn load_history_from_dir_with_limits(
+         return result;
+     };
+     let mut total_bytes = 0u64;
++    let mut main_manifests = 0usize;
+     for (entry_count, entry) in entries.enumerate() {
+         if entry_count >= limits.max_entries {
+             mark_history_file_skipped(&mut result.skipped_files);
+@@ -1739,6 +1831,11 @@ fn load_history_from_dir_with_limits(
+         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+             continue;
+         }
++        if main_manifests >= limits.max_main_manifests {
++            mark_history_file_skipped(&mut result.skipped_files);
++            break;
++        }
++        main_manifests = main_manifests.saturating_add(1);
+         let Some(remaining_bytes) = limits.max_total_bytes.checked_sub(total_bytes) else {
+             mark_history_file_skipped(&mut result.skipped_files);
+             continue;
+@@ -2202,6 +2299,7 @@ fn write_borrowed_record_to_dir_with_maintenance(
+     details: Option<&HistoryCombatDetails>,
+     maintain: impl FnOnce(&Path) -> Result<(), HistoryMaintenanceWarning>,
+ ) -> Result<Option<HistoryMaintenanceWarning>, HistorySaveError> {
++    validate_history_summary(summary).map_err(|_| HistorySaveError::InvalidSummary)?;
+     fs::create_dir_all(directory).map_err(|_| HistorySaveError::PrepareDirectory)?;
+     let (manifest, created_paths) = if let Some(details) = details {
+         let (manifest, paths) = write_history_details_chunks(directory, id, details)?;
+@@ -2314,6 +2412,7 @@ fn find_history_index_for_mutation(
+     }
+     let entries = fs::read_dir(directory).map_err(|_| HistoryDeleteError::ScanFailed)?;
+     let mut total_bytes = 0u64;
++    let mut main_manifests = 0usize;
+     let mut matched_record = None;
+     for (entry_count, entry) in entries.enumerate() {
+         if entry_count >= limits.max_entries {
+@@ -2323,6 +2422,10 @@ fn find_history_index_for_mutation(
+         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+             continue;
+         }
++        if main_manifests >= limits.max_main_manifests {
++            return Err(HistoryDeleteError::ScanBudgetExceeded);
++        }
++        main_manifests = main_manifests.saturating_add(1);
+         let remaining_bytes = limits
+             .max_total_bytes
+             .checked_sub(total_bytes)
+@@ -2856,6 +2959,146 @@ pub fn compare_records(left: &HistoryRecord, right: &HistoryRecord) -> HistoryCo
+     }
+ }
+ 
++fn validate_history_summary(summary: &CombatSessionSummary) -> Result<(), String> {
++    validate_history_summary_scope(
++        summary.duration_seconds,
++        summary.total_damage,
++        summary.total_dps,
++        &summary.damage_attribution,
++        &summary.characters,
++        &summary.skills,
++    )?;
++    validate_nonnegative_finite(summary.total_damage_taken, "total damage taken")?;
++    validate_capture_quality_summary(&summary.quality)?;
++
++    let mut character_rows = summary.characters.len();
++    let mut skill_rows = summary.skills.len();
++    for half in [
++        summary.abyss.first_half.as_ref(),
++        summary.abyss.second_half.as_ref(),
++    ]
++    .into_iter()
++    .flatten()
++    {
++        validate_history_half_summary(half)?;
++        character_rows = character_rows
++            .checked_add(half.characters.len())
++            .ok_or_else(|| "History summary character count overflow".to_owned())?;
++        skill_rows = skill_rows
++            .checked_add(half.skills.len())
++            .ok_or_else(|| "History summary skill count overflow".to_owned())?;
++    }
++    if character_rows
++        > MAX_HISTORY_SUMMARY_CHARACTERS_PER_SCOPE.saturating_mul(MAX_HISTORY_SUMMARY_SCOPES)
++        || skill_rows
++            > MAX_HISTORY_SUMMARY_SKILLS_PER_SCOPE.saturating_mul(MAX_HISTORY_SUMMARY_SCOPES)
++    {
++        return Err("History summary nested row count exceeds the storage limit".to_owned());
++    }
++    Ok(())
++}
++
++fn validate_history_half_summary(half: &CombatSessionAbyssHalfSummary) -> Result<(), String> {
++    validate_history_summary_scope(
++        half.duration_seconds,
++        half.total_damage,
++        half.total_dps,
++        &half.damage_attribution,
++        &half.characters,
++        &half.skills,
++    )
++}
++
++fn validate_history_summary_scope(
++    duration_seconds: f64,
++    total_damage: f64,
++    total_dps: f64,
++    attribution: &DamageAttributionSummary,
++    characters: &[CombatSessionCharacterSummary],
++    skills: &[CombatSessionSkillSummary],
++) -> Result<(), String> {
++    if characters.len() > MAX_HISTORY_SUMMARY_CHARACTERS_PER_SCOPE
++        || skills.len() > MAX_HISTORY_SUMMARY_SKILLS_PER_SCOPE
++    {
++        return Err("History summary row count exceeds the storage limit".to_owned());
++    }
++    validate_nonnegative_finite(duration_seconds, "duration")?;
++    validate_nonnegative_finite(total_damage, "total damage")?;
++    validate_nonnegative_finite(total_dps, "total DPS")?;
++    validate_damage_attribution_summary(attribution)?;
++    for row in characters {
++        validate_history_summary_text(&row.name)?;
++        validate_nonnegative_finite(row.damage, "character damage")?;
++        validate_nonnegative_finite(row.dps, "character DPS")?;
++        validate_percentage(row.damage_share_percent)?;
++        validate_nonnegative_finite(row.damage_taken, "character damage taken")?;
++    }
++    for row in skills {
++        for value in [
++            Some(row.char_name.as_str()),
++            Some(row.name.as_str()),
++            Some(row.category.as_str()),
++            row.ability_name.as_deref(),
++            row.gameplay_effect_name.as_deref(),
++            row.damage_name.as_deref(),
++        ]
++        .into_iter()
++        .flatten()
++        {
++            validate_history_summary_text(value)?;
++        }
++        validate_nonnegative_finite(row.damage, "skill damage")?;
++        validate_percentage(row.damage_share_percent)?;
++    }
++    Ok(())
++}
++
++fn validate_damage_attribution_summary(summary: &DamageAttributionSummary) -> Result<(), String> {
++    for value in [
++        summary.total_damage,
++        summary.character_direct_damage,
++        summary.character_reaction_damage,
++        summary.shared_damage,
++        summary.unattributed_damage,
++    ] {
++        validate_nonnegative_finite(value, "damage attribution")?;
++    }
++    Ok(())
++}
++
++fn validate_capture_quality_summary(summary: &CaptureQualitySummary) -> Result<(), String> {
++    for value in [
++        summary.outgoing_damage,
++        summary.unknown_direction_damage,
++        summary.incoming_damage,
++        summary.unattributed_server_damage,
++    ] {
++        validate_nonnegative_finite(value, "capture quality damage")?;
++    }
++    Ok(())
++}
++
++fn validate_history_summary_text(value: &str) -> Result<(), String> {
++    if value.len() > MAX_HISTORY_SUMMARY_TEXT_BYTES {
++        return Err("History summary text exceeds the storage limit".to_owned());
++    }
++    Ok(())
++}
++
++fn validate_nonnegative_finite(value: f64, field: &str) -> Result<(), String> {
++    if !value.is_finite() || value < 0.0 {
++        return Err(format!("History summary contains invalid {field}"));
++    }
++    Ok(())
++}
++
++fn validate_percentage(value: f64) -> Result<(), String> {
++    if !value.is_finite() || !(0.0..=100.000_001).contains(&value) {
++        return Err("History summary contains an invalid percentage".to_owned());
++    }
++    Ok(())
++}
++
+ fn parse_history_envelope(text: &str, path: &Path) -> Result<HistoryRecord, String> {
+     let mut record: HistoryRecord =
+         serde_json::from_str(text).map_err(|error| error.to_string())?;
+@@ -2872,6 +3115,7 @@ fn parse_history_envelope(text: &str, path: &Path) -> Result<HistoryRecord, Stri
+     if !valid_record_id(&record.id) {
+         return Err("Invalid history record ID".to_owned());
+     }
++    validate_history_summary(&record.summary)?;
+     Ok(record)
+ }
+ 
+@@ -3068,6 +3312,7 @@ fn parse_stored_history_summary(text: &str, path: &Path) -> Result<HistoryRecord
+     if !valid_record_id(&id) {
+         return Err("Invalid history record ID".to_owned());
+     }
++    validate_history_summary(&envelope.summary)?;
+     if envelope.details.is_some() && envelope.details_chunks.is_some() {
+         return Err("History record mixes inline and chunked details".to_owned());
+     }
+@@ -3159,17 +3404,24 @@ fn prune_history_dir(
+     directory: &Path,
+     max_records: usize,
+ ) -> Result<(), HistoryMaintenanceWarning> {
+-    prune_history_dir_with_entry_limit(directory, max_records, MAX_HISTORY_DIRECTORY_ENTRIES)
++    prune_history_dir_with_entry_limit(
++        directory,
++        max_records,
++        MAX_HISTORY_DIRECTORY_ENTRIES,
++        MAX_HISTORY_MAIN_MANIFEST_CANDIDATES,
++    )
+ }
+ 
+ fn prune_history_dir_with_entry_limit(
+     directory: &Path,
+     max_records: usize,
+     max_entries: usize,
++    max_main_manifests: usize,
+ ) -> Result<(), HistoryMaintenanceWarning> {
+     let entries =
+         fs::read_dir(directory).map_err(|_| HistoryMaintenanceWarning::RetentionPruneFailed)?;
+     let mut files = Vec::with_capacity(max_entries.min(max_records.saturating_add(1)));
++    let mut main_manifests = 0usize;
+     for (entry_count, entry) in entries.enumerate() {
+         if entry_count >= max_entries {
+             return Err(HistoryMaintenanceWarning::RetentionPruneFailed);
+@@ -3180,6 +3432,10 @@ fn prune_history_dir_with_entry_limit(
+         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+             continue;
+         }
++        if main_manifests >= max_main_manifests {
++            return Err(HistoryMaintenanceWarning::RetentionPruneFailed);
++        }
++        main_manifests = main_manifests.saturating_add(1);
+         let modified = fs::metadata(&path)
+             .and_then(|metadata| metadata.modified())
+             .map_err(|_| HistoryMaintenanceWarning::RetentionPruneFailed)?;
+@@ -3414,6 +3670,7 @@ mod tests {
+         }
+         let limits = HistoryDirectoryLimits {
+             max_entries: 3,
++            max_main_manifests: 3,
+             max_records: 2,
+             max_total_bytes: 512,
+         };
+@@ -3428,6 +3685,102 @@ mod tests {
+         let _ = fs::remove_dir_all(directory);
+     }
+ 
++    #[test]
++    fn maximum_legal_sidecar_count_does_not_consume_main_manifest_budget() {
++        let directory = temp_history_dir("sidecars_do_not_hide_main");
++        fs::create_dir_all(&directory).expect("create sidecar budget directory");
++        for index in 0..MAX_HISTORY_CHUNKS_PER_RECORD {
++            fs::File::create(directory.join(format!("sidecar-{index:04}.nte-history-chunk")))
++                .expect("create sidecar budget fixture");
++        }
++        fs::write(
++            directory.join("target.json"),
++            r#"{"version":1,"id":"target","saved_at":"2026-01-01T00:00:00Z","summary":{}}"#,
++        )
++        .expect("write visible main manifest");
++
++        let absolute_entry_budget = MAX_HISTORY_DIRECTORY_ENTRIES;
++        assert!(absolute_entry_budget > MAX_HISTORY_CHUNKS_PER_RECORD);
++        assert_eq!(
++            load_history_index_from_dir(&directory)
++                .records
++                .first()
++                .map(|record| record.id.as_str()),
++            Some("target")
++        );
++        assert_eq!(
++            load_history_summaries_from_dir(&directory)
++                .records
++                .first()
++                .map(|record| record.id.as_str()),
++            Some("target")
++        );
++        assert_eq!(
++            load_history_from_dir(&directory)
++                .records
++                .first()
++                .map(|record| record.id.as_str()),
++            Some("target")
++        );
++        assert_eq!(
++            find_history_index_for_mutation(
++                &directory,
++                "target",
++                HistoryDirectoryLimits::PRODUCTION,
++            )
++            .expect("find record after sidecars")
++            .map(|record| record.id),
++            Some("target".to_owned())
++        );
++        prune_history_dir(&directory, 1).expect("prune scan ignores sidecars for candidate budget");
++        assert!(directory.join("target.json").is_file());
++        let _ = fs::remove_dir_all(directory);
++    }
++
++    #[test]
++    fn main_manifest_candidate_budget_is_independent_and_mutations_fail_closed() {
++        let directory = temp_history_dir("main_manifest_budget");
++        fs::create_dir_all(&directory).expect("create main candidate budget directory");
++        for index in 0..4 {
++            fs::File::create(directory.join(format!("sidecar-{index}.nte-history-chunk")))
++                .expect("create sidecar fixture");
++        }
++        for index in 0..2 {
++            fs::write(
++                directory.join(format!("record-{index}.json")),
++                format!(
++                    r#"{{"version":1,"id":"record-{index}","saved_at":"2026-01-01T00:00:0{index}Z","summary":{{}}}}"#
++                ),
++            )
++            .expect("write main candidate fixture");
++        }
++        let limits = HistoryDirectoryLimits {
++            max_entries: 8,
++            max_main_manifests: 1,
++            max_records: MAX_HISTORY_RECORDS,
++            max_total_bytes: MAX_HISTORY_DIRECTORY_BYTES,
++        };
++
++        let index = load_history_index_from_dir_with_limits(&directory, limits);
++        assert_eq!(index.records.len(), 1);
++        assert_eq!(index.skipped_files, 1);
++        assert!(matches!(
++            find_history_index_for_mutation(&directory, "record-0", limits),
++            Err(HistoryDeleteError::ScanBudgetExceeded)
++        ));
++        assert_eq!(
++            prune_history_dir_with_entry_limit(&directory, 1, 8, 1),
++            Err(HistoryMaintenanceWarning::RetentionPruneFailed)
++        );
++        assert_eq!(
++            fs::read_dir(&directory)
++                .expect("read unchanged candidate fixtures")
++                .count(),
++            6
++        );
++        let _ = fs::remove_dir_all(directory);
++    }
++
+     #[test]
+     fn loads_legacy_version_record() {
+         let directory = temp_history_dir("legacy");
+@@ -3849,6 +4202,7 @@ mod tests {
+         }
+         let limits = HistoryDirectoryLimits {
+             max_entries: 2,
++            max_main_manifests: 2,
+             max_records: MAX_HISTORY_RECORDS,
+             max_total_bytes: MAX_HISTORY_DIRECTORY_BYTES,
+         };
+@@ -3876,6 +4230,7 @@ mod tests {
+             .expect("size oversized delete candidate");
+         let limits = HistoryDirectoryLimits {
+             max_entries: 8,
++            max_main_manifests: 8,
+             max_records: MAX_HISTORY_RECORDS,
+             max_total_bytes: 1_024,
+         };
+@@ -3923,7 +4278,7 @@ mod tests {
+                 .expect("write prune entry fixture");
+         }
+ 
+-        let error = prune_history_dir_with_entry_limit(&directory, 1, 2)
++        let error = prune_history_dir_with_entry_limit(&directory, 1, 2, 2)
+             .expect_err("incomplete prune scan must fail closed");
+ 
+         assert_eq!(error, HistoryMaintenanceWarning::RetentionPruneFailed);
+@@ -4179,6 +4534,18 @@ mod tests {
+             },
+         )
+         .expect("save every hit beyond external import budget");
++        let selected =
++            load_history_record_by_id_from_dir_for_interactive_selection(&directory, &saved.id)
++                .expect("load 500001-hit interactive selection")
++                .expect("500001-hit selection exists");
++        assert_eq!(
++            selected
++                .details
++                .as_ref()
++                .map(|details| details.global_hits.len()),
++            Some(expected_hits),
++            "interactive selection must retain the 500001-hit regression fixture"
++        );
+         export_history_record_by_id_from_dir_to_path(&directory, &saved.id, &export_path)
+             .expect("stream every hit beyond external import budget");
+         let exported: HistoryRecord = serde_json::from_reader(
+@@ -4509,6 +4876,158 @@ mod tests {
+         let _ = fs::remove_dir_all(directory);
+     }
+ 
++    #[test]
++    fn interactive_hit_preflight_rejects_budget_plus_one_before_opening_chunks() {
++        let directory = temp_history_dir("interactive_hit_preflight");
++        fs::create_dir_all(&directory).expect("create interactive preflight directory");
++        let mut remaining_hits = MAX_HISTORY_INTERACTIVE_DETAIL_HITS + 1;
++        let mut chunks = Vec::new();
++        while remaining_hits > 0 {
++            let hit_count = remaining_hits.min(MAX_HISTORY_HITS_PER_CHUNK as u64) as usize;
++            chunks.push(HistoryHitChunkRef {
++                lane: HistoryHitLane::Global,
++                index: chunks.len(),
++                hit_count,
++                bytes: 1,
++                checksum: 0,
++            });
++            remaining_hits = remaining_hits.saturating_sub(hit_count as u64);
++        }
++        let record = HistoryRecord {
++            id: "interactive-overflow".to_owned(),
++            details_chunks: Some(HistoryDetailsChunkManifest {
++                version: HISTORY_DETAILS_CHUNK_VERSION,
++                metadata: HistoryCombatDetails::default(),
++                total_hits: MAX_HISTORY_INTERACTIVE_DETAIL_HITS + 1,
++                total_bytes: chunks.len() as u64,
++                chunks,
++            }),
++            ..Default::default()
++        };
++        fs::write(
++            directory.join("interactive-overflow.json"),
++            serde_json::to_vec(&record).expect("serialize interactive overflow manifest"),
++        )
++        .expect("write interactive overflow manifest");
++        let mut byte_chunks = (0..32)
++            .map(|index| HistoryHitChunkRef {
++                lane: HistoryHitLane::Global,
++                index,
++                hit_count: 1,
++                bytes: MAX_HISTORY_CHUNK_BYTES,
++                checksum: 0,
++            })
++            .collect::<Vec<_>>();
++        byte_chunks.push(HistoryHitChunkRef {
++            lane: HistoryHitLane::Global,
++            index: byte_chunks.len(),
++            hit_count: 1,
++            bytes: 1,
++            checksum: 0,
++        });
++        let byte_record = HistoryRecord {
++            id: "interactive-byte-overflow".to_owned(),
++            details_chunks: Some(HistoryDetailsChunkManifest {
++                version: HISTORY_DETAILS_CHUNK_VERSION,
++                metadata: HistoryCombatDetails::default(),
++                total_hits: byte_chunks.len() as u64,
++                total_bytes: MAX_HISTORY_INTERACTIVE_DETAIL_BYTES + 1,
++                chunks: byte_chunks,
++            }),
++            ..Default::default()
++        };
++        fs::write(
++            directory.join("interactive-byte-overflow.json"),
++            serde_json::to_vec(&byte_record).expect("serialize interactive byte overflow manifest"),
++        )
++        .expect("write interactive byte overflow manifest");
++
++        assert_eq!(
++            load_history_record_by_id_from_dir_for_interactive_selection(
++                &directory,
++                "interactive-overflow",
++            )
++            .unwrap_err(),
++            HistoryRecordLoadError::DetailHitsTooLarge {
++                count: MAX_HISTORY_INTERACTIVE_DETAIL_HITS + 1,
++                limit: MAX_HISTORY_INTERACTIVE_DETAIL_HITS,
++            }
++        );
++        assert_eq!(
++            load_history_record_by_id_from_dir_for_interactive_selection(
++                &directory,
++                "interactive-byte-overflow",
++            )
++            .unwrap_err(),
++            HistoryRecordLoadError::DetailsTooLarge {
++                size: MAX_HISTORY_INTERACTIVE_DETAIL_BYTES + 1,
++                limit: MAX_HISTORY_INTERACTIVE_DETAIL_BYTES,
++            }
++        );
++        let _ = fs::remove_dir_all(directory);
++    }
++
++    #[test]
++    fn external_summary_enforces_global_half_string_finite_and_nested_budgets() {
++        let path = Path::new("external-summary.json");
++        let mut record = HistoryRecord {
++            id: "external-summary".to_owned(),
++            ..Default::default()
++        };
++
++        record.summary.characters = vec![
++            CombatSessionCharacterSummary::default();
++            MAX_HISTORY_SUMMARY_CHARACTERS_PER_SCOPE + 1
++        ];
++        let text = serde_json::to_string(&record).expect("serialize global row overflow");
++        assert!(parse_history_record(&text, path).is_err());
++
++        record.summary.characters.clear();
++        record.summary.abyss.first_half = Some(CombatSessionAbyssHalfSummary {
++            skills: vec![
++                CombatSessionSkillSummary::default();
++                MAX_HISTORY_SUMMARY_SKILLS_PER_SCOPE + 1
++            ],
++            ..Default::default()
++        });
++        let text = serde_json::to_string(&record).expect("serialize half row overflow");
++        assert!(parse_history_record(&text, path).is_err());
++
++        record.summary.abyss.first_half = None;
++        record.summary.abyss.second_half = Some(CombatSessionAbyssHalfSummary {
++            characters: vec![CombatSessionCharacterSummary {
++                name: "x".repeat(MAX_HISTORY_SUMMARY_TEXT_BYTES + 1),
++                ..Default::default()
++            }],
++            ..Default::default()
++        });
++        let text = serde_json::to_string(&record).expect("serialize half string overflow");
++        assert!(parse_history_record(&text, path).is_err());
++
++        record.summary.abyss.second_half = None;
++        record.summary.duration_seconds = f64::INFINITY;
++        assert!(validate_history_summary(&record.summary).is_err());
++
++        let character = CombatSessionCharacterSummary::default();
++        let skill = CombatSessionSkillSummary::default();
++        let half = CombatSessionAbyssHalfSummary {
++            characters: vec![character.clone(); MAX_HISTORY_SUMMARY_CHARACTERS_PER_SCOPE],
++            skills: vec![skill.clone(); MAX_HISTORY_SUMMARY_SKILLS_PER_SCOPE],
++            ..Default::default()
++        };
++        let exact_nested = CombatSessionSummary {
++            characters: vec![character; MAX_HISTORY_SUMMARY_CHARACTERS_PER_SCOPE],
++            skills: vec![skill; MAX_HISTORY_SUMMARY_SKILLS_PER_SCOPE],
++            abyss: crate::engine::model::CombatSessionAbyssSummary {
++                first_half: Some(half.clone()),
++                second_half: Some(half),
++                ..Default::default()
++            },
++            ..Default::default()
++        };
++        validate_history_summary(&exact_nested).expect("exact nested summary budget");
++    }
++
+     #[test]
+     fn chunk_save_path_does_not_clone_record_sized_hit_vectors() {
+         let source = include_str!("history.rs");
+@@ -4744,6 +5263,10 @@ mod tests {
+     #[test]
+     fn save_error_messages_are_stable_and_redacted() {
+         let cases = [
++            (
++                HistorySaveError::InvalidSummary,
++                "History summary failed validation.",
++            ),
+             (
+                 HistorySaveError::InvalidDetails,
+                 "History details failed validation.",
+@@ -4770,6 +5293,7 @@ mod tests {
+             assert_eq!(error.to_string(), expected);
+             assert!(!error.to_string().contains("private-history-path"));
+         }
++        assert!(!HistorySaveError::InvalidSummary.is_retryable());
+         assert!(!HistorySaveError::InvalidDetails.is_retryable());
+         assert!(!HistorySaveError::Serialize.is_retryable());
+         assert!(!HistorySaveError::TooLarge.is_retryable());
