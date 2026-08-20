@@ -9,8 +9,8 @@ import {
 } from "@/lib/tauri/timeline-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -42,7 +42,7 @@ export interface TimelineClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: TimelineTransport = tauriAckedStreamTransport;
+const tauriTransport: TimelineTransport = tauriStreamTransport;
 
 export function createTimelineClient(
   transport: TimelineTransport = tauriTransport,
@@ -65,7 +65,7 @@ export function createTimelineClient(
       run(COMMANDS.setPreferences, { scope, bucketSeconds, viewMode }),
     subscribe: (scope, onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "timeline",
         subscriptionId,

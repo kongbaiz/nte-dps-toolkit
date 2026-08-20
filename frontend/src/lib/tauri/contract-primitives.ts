@@ -11,11 +11,6 @@ export interface DecimalStringOptions {
   positive?: boolean;
 }
 
-export interface ContractPrimitiveOptions {
-  booleanArticle?: boolean;
-  decimalTypeFirst?: boolean;
-}
-
 const U64_MAX_DECIMAL = "18446744073709551615";
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
@@ -51,7 +46,6 @@ export function isCanonicalSemver(value: string, maxLength = 128): boolean {
 
 export function createContractPrimitives(
   fail: ContractFailure,
-  factoryOptions: ContractPrimitiveOptions = {},
 ) {
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === "object" && value !== null && !Array.isArray(value);
@@ -139,11 +133,7 @@ export function createContractPrimitives(
 
   const boolean = (value: unknown, field: string): boolean => {
     if (typeof value !== "boolean") {
-      fail(
-        factoryOptions.booleanArticle
-          ? `${field} must be a boolean`
-          : `${field} must be boolean`,
-      );
+      fail(`${field} must be a boolean`);
     }
     return value;
   };
@@ -315,24 +305,13 @@ export function createContractPrimitives(
   ): T[number] | null =>
     nullable(value, (candidate) => enumValue(candidate, allowed, field));
 
-  const optionalEnumValue = <const T extends readonly string[]>(
-    value: unknown,
-    allowed: T,
-    field: string,
-  ): T[number] | null =>
-    optional(value, (candidate) => enumValue(candidate, allowed, field));
-
   const decimalString = (
     value: unknown,
     field: string,
     options: DecimalStringOptions = {},
   ): string => {
     if (typeof value !== "string") {
-      fail(
-        factoryOptions.decimalTypeFirst
-          ? `${field} must be a string`
-          : `${field} must be a valid decimal string`,
-      );
+      fail(`${field} must be a valid decimal string`);
     }
     const parsed = value;
     const pattern = options.canonical === false ? /^\d+$/ : /^(0|[1-9]\d*)$/;
@@ -384,23 +363,13 @@ export function createContractPrimitives(
   const positiveU64DecimalString = (value: unknown, field: string): string =>
     u64DecimalString(value, field, true);
 
-  const cssHex = (
-    value: unknown,
-    field: string,
-    allowEmpty = false,
-  ): string => {
+  const cssHex = (value: unknown, field: string): string => {
     const parsed = string(value, field);
-    if (!(
-      (allowEmpty && parsed === "") ||
-      /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(parsed)
-    )) {
+    if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(parsed)) {
       fail(`${field} must be a CSS hex color`);
     }
     return parsed;
   };
-
-  const cssHexOrEmpty = (value: unknown, field: string): string =>
-    cssHex(value, field, true);
 
   const cssHex6OrEmpty = (value: unknown, field: string): string => {
     const parsed = string(value, field);
@@ -440,7 +409,6 @@ export function createContractPrimitives(
     canonicalDecimalString128,
     cssHex,
     cssHex6OrEmpty,
-    cssHexOrEmpty,
     decimalString,
     decimalString32,
     digitString,
@@ -463,7 +431,6 @@ export function createContractPrimitives(
     nullableString,
     nullableUnsigned32,
     optional,
-    optionalEnumValue,
     optionalNonNegativeInteger,
     optionalString,
     positiveNumber,

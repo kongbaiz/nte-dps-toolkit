@@ -1,9 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use nte_dps_tool::core::character_data::{
@@ -14,7 +11,6 @@ use nte_dps_tool::core::character_data::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CharacterDataServiceError {
     Busy,
-    Unavailable,
     Domain(CharacterDataError),
 }
 
@@ -24,30 +20,25 @@ impl From<CharacterDataError> for CharacterDataServiceError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum TransactionState {
-    #[default]
-    Ready,
-    Busy,
-    Unavailable,
-}
-
 pub(crate) struct CharacterDataService {
     path: PathBuf,
-    transaction: Mutex<TransactionState>,
+    busy: AtomicBool,
     revision: AtomicU64,
 }
 
-struct CharacterDataReservation<'a> {
-    service: &'a CharacterDataService,
-    active: bool,
+struct CharacterDataPermit<'a>(&'a AtomicBool);
+
+impl Drop for CharacterDataPermit<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 impl CharacterDataService {
     pub(crate) fn new(path: PathBuf) -> Self {
         Self {
             path,
-            transaction: Mutex::new(TransactionState::Ready),
+            busy: AtomicBool::new(false),
             revision: AtomicU64::new(0),
         }
     }
@@ -62,13 +53,9 @@ impl CharacterDataService {
         &self,
         load: impl FnOnce(&Path) -> Result<CharacterDataProjection, CharacterDataError>,
     ) -> Result<(CharacterDataProjection, u64), CharacterDataServiceError> {
-        let reservation = self.reserve()?;
-        // The transaction mutex records ownership only. File I/O and JSON
-        // parsing run after its guard has been released.
-        let projection = load(&self.path);
-        let revision = reservation.finish(|| self.revision.load(Ordering::Acquire))?;
-        let projection = projection.map_err(CharacterDataServiceError::Domain)?;
-        Ok((projection, revision))
+        let _permit = self.reserve()?;
+        let projection = load(&self.path).map_err(CharacterDataServiceError::Domain)?;
+        Ok((projection, self.revision.load(Ordering::Acquire)))
     }
 
     pub(crate) fn save_record(
@@ -89,94 +76,31 @@ impl CharacterDataService {
             CharacterDataError,
         >,
     ) -> Result<(CharacterDataProjection, u64), CharacterDataServiceError> {
-        let reservation = self.reserve()?;
-        // Reading, validation, serialization, and atomic persistence all run
-        // without holding the transaction mutex.
-        let result = save(&self.path, input);
-        let saved = matches!(result, Ok((_, CharacterDataSaveOutcome::Saved)));
-        let revision = reservation.finish(|| {
-            if saved {
-                self.revision.fetch_add(1, Ordering::AcqRel);
-            }
+        let _permit = self.reserve()?;
+        let (projection, outcome) =
+            save(&self.path, input).map_err(CharacterDataServiceError::Domain)?;
+        let revision = if outcome == CharacterDataSaveOutcome::Saved {
+            self.revision
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    Some(current.saturating_add(1))
+                })
+                .map_or(u64::MAX, |previous| previous.saturating_add(1))
+        } else {
             self.revision.load(Ordering::Acquire)
-        })?;
-        let (projection, _) = result.map_err(CharacterDataServiceError::Domain)?;
+        };
         Ok((projection, revision))
     }
 
-    fn reserve(&self) -> Result<CharacterDataReservation<'_>, CharacterDataServiceError> {
-        let mut transaction = match self.transaction.lock() {
-            Ok(transaction) => transaction,
-            Err(mut poison) => {
-                **poison.get_mut() = TransactionState::Unavailable;
-                self.transaction.clear_poison();
-                return Err(CharacterDataServiceError::Unavailable);
-            }
-        };
-        match *transaction {
-            TransactionState::Ready => *transaction = TransactionState::Busy,
-            TransactionState::Busy => return Err(CharacterDataServiceError::Busy),
-            TransactionState::Unavailable => {
-                return Err(CharacterDataServiceError::Unavailable);
-            }
-        }
-        Ok(CharacterDataReservation {
-            service: self,
-            active: true,
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn poison_for_test(&self) {
-        let _ = std::panic::catch_unwind(|| {
-            let _transaction = self.transaction.lock().expect("healthy transaction");
-            panic!("poison character-data transaction");
-        });
-    }
-}
-
-impl CharacterDataReservation<'_> {
-    fn finish<T>(mut self, publish: impl FnOnce() -> T) -> Result<T, CharacterDataServiceError> {
-        let mut transaction = match self.service.transaction.lock() {
-            Ok(transaction) => transaction,
-            Err(mut poison) => {
-                **poison.get_mut() = TransactionState::Unavailable;
-                self.service.transaction.clear_poison();
-                self.active = false;
-                return Err(CharacterDataServiceError::Unavailable);
-            }
-        };
-        if *transaction != TransactionState::Busy {
-            *transaction = TransactionState::Unavailable;
-            self.active = false;
-            return Err(CharacterDataServiceError::Unavailable);
-        }
-        let published = publish();
-        *transaction = TransactionState::Ready;
-        self.active = false;
-        Ok(published)
-    }
-}
-
-impl Drop for CharacterDataReservation<'_> {
-    fn drop(&mut self) {
-        if !self.active {
-            return;
-        }
-        match self.service.transaction.lock() {
-            Ok(mut transaction) => *transaction = TransactionState::Unavailable,
-            Err(mut poison) => {
-                **poison.get_mut() = TransactionState::Unavailable;
-                self.service.transaction.clear_poison();
-            }
-        }
+    fn reserve(&self) -> Result<CharacterDataPermit<'_>, CharacterDataServiceError> {
+        self.busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| CharacterDataServiceError::Busy)?;
+        Ok(CharacterDataPermit(&self.busy))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use super::*;
 
     fn input() -> CharacterDataRecordInput {
@@ -188,31 +112,29 @@ mod tests {
     }
 
     #[test]
-    fn file_work_runs_without_the_transaction_mutex() {
+    fn concurrent_operation_fails_fast_without_locking_file_work() {
         let service = CharacterDataService::new(PathBuf::from("private-character-path.json"));
-
         let (projection, revision) = service
             .snapshot_with(|_| {
-                let state = service
-                    .transaction
-                    .try_lock()
-                    .expect("transaction mutex free");
-                assert_eq!(*state, TransactionState::Busy);
+                assert!(service.busy.load(Ordering::Acquire));
+                assert_eq!(
+                    service.snapshot_with(|_| Ok(CharacterDataProjection::default())),
+                    Err(CharacterDataServiceError::Busy)
+                );
                 Ok(CharacterDataProjection::default())
             })
             .expect("load projection");
 
         assert!(projection.records.is_empty());
         assert_eq!(revision, 0);
+        assert!(!service.busy.load(Ordering::Acquire));
     }
 
     #[test]
     fn saved_changes_bump_once_and_noops_do_not_bump() {
         let service = CharacterDataService::new(PathBuf::from("private-character-path.json"));
-
         let (_, saved_revision) = service
             .save_record_with(input(), |_, _| {
-                assert!(service.transaction.try_lock().is_ok());
                 Ok((
                     CharacterDataProjection::default(),
                     CharacterDataSaveOutcome::Saved,
@@ -233,9 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn failed_save_does_not_bump_and_the_service_remains_usable() {
+    fn failed_save_does_not_bump_and_releases_the_gate() {
         let service = CharacterDataService::new(PathBuf::from("private-character-path.json"));
-
         let result = service.save_record_with(input(), |_, _| {
             Err(CharacterDataError::Write("private path detail".to_owned()))
         });
@@ -252,25 +173,5 @@ mod tests {
                 .snapshot_with(|_| Ok(CharacterDataProjection::default()))
                 .is_ok()
         );
-    }
-
-    #[test]
-    fn poisoned_transaction_is_sticky_and_blocks_file_work() {
-        let service = CharacterDataService::new(PathBuf::from("private-character-path.json"));
-        service.poison_for_test();
-        let called = AtomicBool::new(false);
-
-        let first = service.snapshot_with(|_| {
-            called.store(true, Ordering::Release);
-            Ok(CharacterDataProjection::default())
-        });
-        let second = service.snapshot_with(|_| {
-            called.store(true, Ordering::Release);
-            Ok(CharacterDataProjection::default())
-        });
-
-        assert_eq!(first, Err(CharacterDataServiceError::Unavailable));
-        assert_eq!(second, Err(CharacterDataServiceError::Unavailable));
-        assert!(!called.load(Ordering::Acquire));
     }
 }

@@ -100,8 +100,6 @@ pub(crate) struct SubscriptionReceipt {
     pub stream_kind: stream::StreamKind,
     pub stream_generation: String,
     pub stream_interval_ms: u32,
-    pub max_in_flight_deliveries: u32,
-    pub max_delivery_bytes: usize,
 }
 
 impl SubscriptionReceipt {
@@ -117,8 +115,6 @@ impl SubscriptionReceipt {
             stream_kind,
             stream_generation: stream_generation.to_string(),
             stream_interval_ms,
-            max_in_flight_deliveries: stream::MAX_IN_FLIGHT_STREAM_DELIVERIES,
-            max_delivery_bytes: stream::MAX_STREAM_DELIVERY_BYTES,
         }
     }
 }
@@ -248,24 +244,6 @@ impl CommandError {
     pub(crate) fn stream_runtime_unavailable() -> Self {
         Self {
             code: "stream_runtime_unavailable",
-            message_key: "The live view did not start.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn invalid_stream_delivery() -> Self {
-        Self {
-            code: "invalid_stream_delivery",
-            message_key: "The live view did not start.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn stream_delivery_too_large() -> Self {
-        Self {
-            code: "stream_delivery_too_large",
             message_key: "The live view did not start.",
             message_arguments: Vec::new(),
             diagnostic_line: None,

@@ -82,7 +82,6 @@
     "characters": "data/characters/characters.json",
     "ability_tips": "data/skills/ability_tips.json",
     "reactions": "data/reactions/reactions.json",
-    "abyss_monsters": "data/abyss/abyss_monsters.json",
     "abyss_floor_monster_summary": "data/abyss/abyss_floor_monster_summary.json",
     "abyss_season_names": "data/abyss/season_names_zh_cn.json",
     "coverage_report": "data/asset_report.json"

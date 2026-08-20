@@ -33,22 +33,22 @@ worker、也不执行停止/等待。真实 DWM API 通过
 `api-ms-win-dwmapi-l1-1-0.dll` 静态 anchor 由 Windows loader 预绑定；首次转发只解析
 已加载映像中的 export，不会把本插件永久 pin 到进程。
 
-代理部署方必须在目标进程完成模块/启动初始化后，从一个不持有 loader lock 的普通线程
-调用：
+代理部署由 `DllMain` 创建一个不等待的有限初始化线程。Windows 会在当前 DLL 初始化回调
+返回后才运行该线程，因此运行时初始化发生在 loader lock 之外。manual-map 部署继续由映射器
+拥有的专用 remote thread 直接调用：
 
 ```cpp
 uint32_t WINAPI NteModsPluginInitialize(void* reserved);
 ```
 
-`reserved` 必须传 `nullptr`。该签名与 `LPTHREAD_START_ROUTINE` ABI 一致，因此桌面端在
-校验本地映像、目标模块路径和导出 RVA 后，可直接以该导出地址调用
-`CreateRemoteThread`，无需远程分配或适配 thunk。
+`reserved` 必须传 `nullptr`。该导出保留给 manual-map 生命周期和显式测试；桌面端不再
+枚举受保护游戏进程的模块、读取远程 PE 映像或创建远程线程。
 
-桌面 proxy 监控由 Rust `platform::mods_plugin_bootstrap` 执行：监控 worker 在 IPC
-presence 缺失且加载方式为 proxy 时，有界枚举 `HTGame.exe`，使用同一文件句柄限量
-读取部署 DLL，并以 `ReadProcessMemory` 重新解析已加载映像的 PE header/export。
-只有本地/远端映像 identity、非 forwarded 可执行 RVA 与精确模块路径均一致后才创建
-远程线程；只有返回 `STARTED`/`ALREADY_RUNNING` 才投影为 loader ready。
+桌面监控通过 runtime presence event 与本机 named pipe 投影就绪状态。对象使用允许
+中完整性桌面客户端访问的本机 IPC 描述符，pipe 拒绝远程客户端并保留首实例约束；双方不再
+读取 Token、PID、进程路径或精确 owner/DACL。注入标记只能证明 loader 完成映射，pipe
+连接和后续有界协议校验用于确认 IPC 就绪；IPC 缺失时桌面保持等待，不回退到模块快照、
+远程内存读取或远程线程。探测失败继续返回稳定错误码和可用的 Win32 错误码。
 
 稳定返回码定义于 `include/nte_mods_plugin_lifecycle.h`：
 

@@ -9,7 +9,7 @@ use crate::{
     contract::{
         CommandError, SubscriptionReceipt,
         packets::PacketsEvent,
-        stream::{StreamKind, StreamReadySignal},
+        stream::{StreamDeliveryBody, StreamKind},
     },
     state::AppState,
     windows::console,
@@ -19,7 +19,7 @@ pub(crate) const PACKETS_STREAM_INTERVAL_MS: u32 = 100;
 #[tauri::command]
 pub(crate) fn subscribe_packets(
     subscription_id: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<PacketsEvent>>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -39,7 +39,7 @@ pub(crate) fn subscribe_packets(
     let mut last_revision = None;
     spawn_polling_stream(
         "nte-packets-stream",
-        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         PACKETS_STREAM_INTERVAL_MS,

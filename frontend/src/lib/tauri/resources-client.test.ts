@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createResourcesClient } from "@/lib/tauri/resources-client";
 
 const SNAPSHOT = {
-  contractVersion: 1,
+  contractVersion: 2,
   errorCount: 0,
   warningCount: 0,
   itemCount: 0,
@@ -13,7 +13,6 @@ const SNAPSHOT = {
     skillDamage: 0,
     mappedEffects: 0,
     semanticEffects: 0,
-    abyssMonsters: 0,
     reactions: 0,
   },
   items: [],

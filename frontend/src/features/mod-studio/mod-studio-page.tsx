@@ -124,6 +124,7 @@ export function ModStudioWorkspace() {
     loaderState,
     retryLoader,
     setLoaderRunning,
+    checkLoaderGameRunning,
     openLoaderDirectory,
     loaderDirectoryState,
   } = useModStudio();
@@ -153,6 +154,7 @@ export function ModStudioWorkspace() {
         loaderState={loaderState}
         onRetryLoader={retryLoader}
         onSetLoaderRunning={setLoaderRunning}
+        onCheckLoaderGameRunning={checkLoaderGameRunning}
         onOpenLoaderDirectory={openLoaderDirectory}
         loaderDirectoryState={loaderDirectoryState}
         dirty={dirtyDocumentIds.size > 0}
@@ -242,6 +244,7 @@ function ModStudioHeader({
   loaderState,
   onRetryLoader,
   onSetLoaderRunning,
+  onCheckLoaderGameRunning,
   onOpenLoaderDirectory,
   loaderDirectoryState,
   dirty,
@@ -265,13 +268,20 @@ function ModStudioHeader({
   onSetProxyEnabled: (enabled: boolean) => void | Promise<void>;
   loaderState: ModLoaderControlState;
   onRetryLoader: () => void | Promise<void>;
-  onSetLoaderRunning: (running: boolean) => void | Promise<void>;
+  onSetLoaderRunning: (
+    running: boolean,
+    terminateProcesses: boolean,
+  ) => void | Promise<void>;
+  onCheckLoaderGameRunning: () => Promise<boolean | null>;
   onOpenLoaderDirectory: () => void | Promise<void>;
   loaderDirectoryState: ModStudioActionState;
   dirty: boolean;
 }) {
   const runtimeConnected = runtimeState.connection === "connected";
   const [riskMethod, setRiskMethod] = useState<ModLoadingMethod | null>(null);
+  const [pendingLoaderRunning, setPendingLoaderRunning] = useState<
+    boolean | null
+  >(null);
   const preferencesReady = preferenceState.status === "ready";
   const preferenceBusy =
     preferenceState.status === "loading" ||
@@ -316,24 +326,34 @@ function ModStudioHeader({
           preferenceState.error.messageKey,
           preferenceState.error.messageArguments,
         )
-      : deploymentState.status === "error"
+      : loaderDirectoryState.status === "error"
         ? tf(
-            deploymentState.error.messageKey,
-            deploymentState.error.messageArguments,
+            loaderDirectoryState.error.messageKey,
+            loaderDirectoryState.error.messageArguments,
           )
-        : loaderState.status === "error"
-          ? tf(loaderState.error.messageKey, loaderState.error.messageArguments)
-          : loaderDirectoryState.status === "error"
-            ? tf(
-                loaderDirectoryState.error.messageKey,
-                loaderDirectoryState.error.messageArguments,
-              )
-            : folderState.status === "error"
-              ? tf(
-                  folderState.error.messageKey,
-                  folderState.error.messageArguments,
-                )
-              : null;
+        : folderState.status === "error"
+          ? tf(folderState.error.messageKey, folderState.error.messageArguments)
+          : null;
+  const proxyStatus =
+    deploymentState.status === "error"
+      ? tf(
+          deploymentState.error.messageKey,
+          deploymentState.error.messageArguments,
+        )
+      : t(proxyDeploymentStatusKey(deploymentState, selectedGame));
+  const loaderStatus =
+    loaderState.status === "error"
+      ? tf(loaderState.error.messageKey, loaderState.error.messageArguments)
+      : t(loaderRuntimeStatusKey(loaderState));
+  const requestLoaderStart = async () => {
+    const gameRunning = await onCheckLoaderGameRunning();
+    if (gameRunning === null) return;
+    if (gameRunning) {
+      setPendingLoaderRunning(true);
+    } else {
+      void onSetLoaderRunning(true, false);
+    }
+  };
   return (
     <header className="border bg-card px-3 py-2.5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -460,8 +480,14 @@ function ModStudioHeader({
                 }
               }}
             />
-            <span className="text-muted-foreground">
-              {t(proxyDeploymentStatusKey(deploymentState, selectedGame))}
+            <span
+              className={cn(
+                "text-muted-foreground",
+                deploymentState.status === "error" && "text-destructive",
+              )}
+              role={deploymentState.status === "error" ? "alert" : undefined}
+            >
+              {proxyStatus}
             </span>
             <Tooltip>
               <TooltipTrigger
@@ -512,17 +538,23 @@ function ModStudioHeader({
               onCheckedChange={(running) => {
                 if (running) {
                   if (riskAcknowledged) {
-                    void onSetLoaderRunning(true);
+                    void requestLoaderStart();
                   } else {
                     setRiskMethod("loader");
                   }
                 } else {
-                  void onSetLoaderRunning(false);
+                  setPendingLoaderRunning(false);
                 }
               }}
             />
-            <span className="text-muted-foreground">
-              {t(loaderRuntimeStatusKey(loaderState))}
+            <span
+              className={cn(
+                "text-muted-foreground",
+                loaderState.status === "error" && "text-destructive",
+              )}
+              role={loaderState.status === "error" ? "alert" : undefined}
+            >
+              {loaderStatus}
             </span>
             <Tooltip>
               <TooltipTrigger
@@ -573,9 +605,20 @@ function ModStudioHeader({
             if (method === "proxy") {
               void onSetProxyEnabled(true);
             } else {
-              void onSetLoaderRunning(true);
+              void requestLoaderStart();
             }
             return true;
+          }}
+        />
+      ) : null}
+      {pendingLoaderRunning !== null ? (
+        <ModLoaderProcessDialog
+          running={pendingLoaderRunning}
+          onCancel={() => setPendingLoaderRunning(null)}
+          onConfirm={() => {
+            const running = pendingLoaderRunning;
+            setPendingLoaderRunning(null);
+            void onSetLoaderRunning(running, true);
           }}
         />
       ) : null}
@@ -630,12 +673,33 @@ function runtimeConnectionMessage(
     case "acknowledgementRequired":
       return "Confirm the Mod risk warning before starting the game runtime.";
     case "probeFailed":
-      return "Unable to check the game Mod loader state";
+      return "The Mod loader status probe failed without a diagnostic code.";
     case "bootstrapFailed":
       return "Failed to initialize the game Mod runtime";
     case "connecting":
     case "waiting":
       return "Waiting for the game Mod loader";
+  }
+}
+
+function runtimeProbeFailureMessage(
+  code: NonNullable<ModStudioRuntimeState["probeErrorCode"]>,
+): string {
+  switch (code) {
+    case "RUNTIME_EVENT_ACCESS_DENIED":
+      return "Access to the Mod loader runtime event was denied ({0}{1}).";
+    case "RUNTIME_EVENT_OPEN_FAILED":
+      return "Failed to open the Mod loader runtime event ({0}{1}).";
+    case "IPC_CLIENT_UNAVAILABLE":
+      return "The Mod IPC client is unavailable on this platform ({0}{1}).";
+    case "IPC_PIPE_ACCESS_DENIED":
+      return "Access to the Mod IPC pipe was denied ({0}{1}).";
+    case "IPC_PIPE_OPEN_FAILED":
+      return "Failed to open the Mod IPC pipe ({0}{1}).";
+    case "POLL_WORKER_FAILED":
+      return "The Mod runtime status worker failed ({0}{1}).";
+    case "RUNTIME_SUBSCRIPTION_FAILED":
+      return "The Mod runtime event subscription failed ({0}{1}).";
   }
 }
 
@@ -703,6 +767,45 @@ function ModLoaderRiskDialog({
             >
               {t("Cancel")}
             </AlertDialogClose>
+          </div>
+        </AlertDialogPopup>
+      </AlertDialogPortal>
+    </AlertDialog>
+  );
+}
+
+function ModLoaderProcessDialog({
+  running,
+  onCancel,
+  onConfirm,
+}: {
+  running: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog
+      open
+      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
+    >
+      <AlertDialogPortal>
+        <AlertDialogBackdrop />
+        <AlertDialogPopup className="top-1/2 left-1/2 w-[calc(100vw-3rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card p-5 shadow-xl">
+          <AlertDialogTitle>{t("Close game processes?")}</AlertDialogTitle>
+          <AlertDialogDescription className="mt-3">
+            {t(
+              running
+                ? "The game is running. Enabling Mod Loader will close HTGame.exe and the launcher processes."
+                : "Disabling Mod Loader will close HTGame.exe and the launcher processes.",
+            )}
+          </AlertDialogDescription>
+          <div className="mt-4 flex gap-2">
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("Cancel")}
+            </AlertDialogClose>
+            <Button variant="destructive" onClick={onConfirm}>
+              {t("Close processes and continue")}
+            </Button>
           </div>
         </AlertDialogPopup>
       </AlertDialogPortal>
@@ -1296,7 +1399,15 @@ function RuntimeConsole({
         ? tf("Failed to initialize the game Mod runtime ({0}).", [
             runtimeState.bootstrapErrorCode,
           ])
-        : t(runtimeConnectionMessage(runtimeState.connection));
+        : runtimeState.connection === "probeFailed" &&
+            runtimeState.probeErrorCode !== null
+          ? tf(runtimeProbeFailureMessage(runtimeState.probeErrorCode), [
+              runtimeState.probeErrorCode,
+              runtimeState.probeOsErrorCode === null
+                ? ""
+                : ` / Win32 ${runtimeState.probeOsErrorCode}`,
+            ])
+          : t(runtimeConnectionMessage(runtimeState.connection));
   const entries = useMemo(
     () =>
       visibleRuntimeEntries(

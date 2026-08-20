@@ -21,8 +21,8 @@ import {
   type HudModuleId,
 } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -108,7 +108,7 @@ export interface SettingsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: SettingsTransport = tauriAckedStreamTransport;
+const tauriTransport: SettingsTransport = tauriStreamTransport;
 
 export function createSettingsClient(
   transport: SettingsTransport = tauriTransport,
@@ -202,7 +202,7 @@ export function createSettingsClient(
     openHudEditor: () => snapshotCommand(COMMANDS.openHudEditor),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "settings",
         subscriptionId,

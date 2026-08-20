@@ -32,6 +32,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Markdown } from "@/components/ui/markdown";
 import { Switch } from "@/components/ui/switch";
 import { t, tf } from "@/lib/i18n";
 import {
@@ -417,9 +418,9 @@ function SoftwareUpdateCard({
               </span>
             </div>
             {available.notes.trim() ? (
-              <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+              <Markdown className="text-xs leading-relaxed text-muted-foreground">
                 {available.notes}
-              </p>
+              </Markdown>
             ) : null}
             <div>
               <Button

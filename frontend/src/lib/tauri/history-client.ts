@@ -18,8 +18,8 @@ import {
 } from "@/lib/tauri/history-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -62,7 +62,7 @@ export interface HistoryClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: HistoryTransport = tauriAckedStreamTransport;
+const tauriTransport: HistoryTransport = tauriStreamTransport;
 
 export function createHistoryClient(
   transport: HistoryTransport = tauriTransport,
@@ -100,7 +100,7 @@ export function createHistoryClient(
       snapshot(COMMANDS.setPrediction, { recordId, line }),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "history",
         subscriptionId,

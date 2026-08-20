@@ -8,8 +8,8 @@ import {
 } from "@/lib/tauri/skills-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  subscribeAckedStream,
-  tauriAckedStreamTransport,
+  subscribeStream,
+  tauriStreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -35,7 +35,7 @@ export interface SkillsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: SkillsTransport = tauriAckedStreamTransport;
+const tauriTransport: SkillsTransport = tauriStreamTransport;
 
 export function createSkillsClient(
   transport: SkillsTransport = tauriTransport,
@@ -54,7 +54,7 @@ export function createSkillsClient(
     },
     subscribe: (scope, onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      return subscribeAckedStream({
+      return subscribeStream({
         transport,
         streamKind: "skills",
         subscriptionId,

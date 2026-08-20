@@ -1,4 +1,4 @@
-use nte_dps_tool::{core::team_data::parse_team_data, engine::abyss_data::AbyssMonsterDataset};
+use nte_dps_tool::{core::team_data::parse_team_data, storage::abyss_remote};
 use tauri::{State, WebviewWindow};
 
 use crate::{
@@ -21,18 +21,24 @@ pub(crate) async fn get_abyss_values_snapshot(
     let current_team_available = state
         .current_abyss_team_availability()
         .map_err(CommandError::from_core)?;
-    let dataset = tauri::async_runtime::spawn_blocking(AbyssMonsterDataset::load)
+    let loaded = tauri::async_runtime::spawn_blocking(abyss_remote::load_latest_abyss_dataset)
         .await
         .map_err(|error| {
             log::error!("abyss values loader worker failed: {error}");
             CommandError::abyss_values_unavailable()
         })?
         .map_err(|error| {
-            log::error!("load abyss values failed: {error}");
+            log::error!("load remote abyss values failed: {error}");
             CommandError::abyss_values_unavailable()
         })?;
+    if loaded.stale {
+        log::warn!(
+            "abyss data refresh failed; using verified cache version {}",
+            loaded.data_version
+        );
+    }
     Ok(AbyssValuesSnapshot::new(
-        dataset,
+        loaded,
         teams,
         current_team_available,
     ))

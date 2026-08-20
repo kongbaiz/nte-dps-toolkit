@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -30,8 +30,8 @@ use nte_dps_tool::{
             LiveCaptureStatus, ReplayStartError,
         },
         mod_studio::{
-            ModStudioError, ModStudioRuntimeSnapshot, ModStudioWorkspaceService,
-            poll_mod_studio_runtime,
+            ModStudioError, ModStudioRuntimeEvent, ModStudioRuntimeLog, ModStudioWorkspaceService,
+            poll_mod_studio_runtime_events, poll_mod_studio_runtime_logs,
         },
         packets::{
             PacketStreamRevision, PacketsProjection, project_packets_since, project_recent_packets,
@@ -96,7 +96,6 @@ use crate::{
         HudWindowSnapshot, TECHNICAL_CONTRACT_VERSION, TechnicalSnapshot,
         main_dps_detail::MainDpsDetailSnapshot,
         settings::{CaptureDeviceSnapshot, SettingsSnapshot, UpdateSettingsSnapshot},
-        stream::{MAX_STREAM_DELIVERY_BYTES, MAX_TOTAL_STREAM_DELIVERY_BYTES},
         timeline::{MAX_TIMELINE_BUCKETS, MAX_TIMELINE_CHARACTERS, MAX_TIMELINE_ROLES_PER_BUCKET},
     },
     desktop_runtime::DesktopRuntime,
@@ -286,12 +285,10 @@ struct StreamIdentity {
 struct StreamEntry {
     generation: u64,
     stop: Arc<AtomicBool>,
-    delivery: Arc<StreamDeliveryFlow>,
 }
 
 struct PendingStreamEntry {
     stop: Arc<AtomicBool>,
-    delivery: Arc<StreamDeliveryFlow>,
 }
 
 #[derive(Default)]
@@ -305,7 +302,6 @@ struct StreamSlot {
 struct StreamRegistry {
     next_generation: AtomicU64,
     entries: Mutex<HashMap<StreamIdentity, StreamSlot>>,
-    delivery_budget: Arc<StreamDeliveryBudget>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,179 +311,15 @@ pub(crate) enum StreamRegistryError {
     RuntimeUnavailable,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StreamDeliveryError {
-    InvalidRequest,
-    PayloadTooLarge,
-    RuntimeUnavailable,
-}
-
-#[derive(Default)]
-struct StreamDeliveryBudget {
-    used_bytes: AtomicUsize,
-}
-
-impl StreamDeliveryBudget {
-    fn reserve(self: &Arc<Self>, bytes: usize) -> Option<StreamDeliveryPermit> {
-        self.used_bytes
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes)
-                    .filter(|next| *next <= MAX_TOTAL_STREAM_DELIVERY_BYTES)
-            })
-            .ok()?;
-        Some(StreamDeliveryPermit {
-            budget: Arc::clone(self),
-            bytes,
-        })
-    }
-}
-
-struct StreamDeliveryPermit {
-    budget: Arc<StreamDeliveryBudget>,
-    bytes: usize,
-}
-
-impl StreamDeliveryPermit {
-    fn shrink_to(&mut self, bytes: usize) -> Result<(), StreamDeliveryError> {
-        if bytes > self.bytes {
-            return Err(StreamDeliveryError::PayloadTooLarge);
-        }
-        let released = self.bytes - bytes;
-        self.bytes = bytes;
-        if released != 0 {
-            self.budget.used_bytes.fetch_sub(released, Ordering::AcqRel);
-        }
-        Ok(())
-    }
-}
-
-impl Drop for StreamDeliveryPermit {
-    fn drop(&mut self) {
-        if self.bytes != 0 {
-            self.budget
-                .used_bytes
-                .fetch_sub(self.bytes, Ordering::AcqRel);
-            self.bytes = 0;
-        }
-    }
-}
-
-pub(crate) struct StreamDeliveryReservation {
-    permit: Option<StreamDeliveryPermit>,
-    flow: Arc<StreamDeliveryFlow>,
-    reservation_id: u64,
-    armed: bool,
-}
-
-impl Drop for StreamDeliveryReservation {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        match self.flow.state.lock() {
-            Ok(mut state) => {
-                if matches!(
-                    state.phase,
-                    StreamDeliveryPhase::Reserved { reservation_id }
-                        if reservation_id == self.reservation_id
-                ) {
-                    state.phase = StreamDeliveryPhase::Idle;
-                }
-            }
-            Err(mut poison) => {
-                poison.get_mut().phase = StreamDeliveryPhase::Idle;
-                self.flow.closed.store(true, Ordering::Release);
-                self.flow.state.clear_poison();
-            }
-        }
-    }
-}
-
-#[derive(Default)]
-struct StreamDeliveryState {
-    next_reservation_id: u64,
-    next_sequence: u64,
-    last_acknowledged_sequence: u64,
-    phase: StreamDeliveryPhase,
-}
-
-#[derive(Default)]
-enum StreamDeliveryPhase {
-    #[default]
-    Idle,
-    Reserved {
-        reservation_id: u64,
-    },
-    Ready {
-        sequence: u64,
-        bytes: Vec<u8>,
-        permit: StreamDeliveryPermit,
-    },
-    AwaitingAck {
-        sequence: u64,
-        _permit: StreamDeliveryPermit,
-    },
-}
-
-#[derive(Default)]
-struct StreamDeliveryFlow {
-    closed: AtomicBool,
-    state: Mutex<StreamDeliveryState>,
-}
-
-impl StreamDeliveryFlow {
-    fn close(&self) {
-        self.closed.store(true, Ordering::Release);
-        match self.state.lock() {
-            Ok(mut state) => state.phase = StreamDeliveryPhase::Idle,
-            Err(mut poison) => {
-                poison.get_mut().phase = StreamDeliveryPhase::Idle;
-                self.state.clear_poison();
-            }
-        }
-    }
-
-    fn lock(&self) -> Result<MutexGuard<'_, StreamDeliveryState>, StreamDeliveryError> {
-        if self.closed.load(Ordering::Acquire) {
-            return Err(StreamDeliveryError::RuntimeUnavailable);
-        }
-        match self.state.lock() {
-            Ok(state) => {
-                if self.closed.load(Ordering::Acquire) {
-                    drop(state);
-                    Err(StreamDeliveryError::RuntimeUnavailable)
-                } else {
-                    Ok(state)
-                }
-            }
-            Err(mut poison) => {
-                poison.get_mut().phase = StreamDeliveryPhase::Idle;
-                self.closed.store(true, Ordering::Release);
-                self.state.clear_poison();
-                Err(StreamDeliveryError::RuntimeUnavailable)
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct StreamRegistration {
     identity: StreamIdentity,
     generation: u64,
     stop: Arc<AtomicBool>,
     active: Arc<AtomicBool>,
-    delivery: Arc<StreamDeliveryFlow>,
 }
 
 impl StreamRegistration {
-    pub(crate) fn owner_window(&self) -> &str {
-        &self.identity.owner_window
-    }
-
-    pub(crate) fn stream_key(&self) -> &str {
-        &self.identity.subscription_key
-    }
-
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
@@ -502,7 +334,6 @@ impl StreamRegistration {
 
     pub(crate) fn cancel(&self) {
         self.stop.store(true, Ordering::Release);
-        self.delivery.close();
     }
 
     #[cfg(test)]
@@ -532,7 +363,6 @@ impl StreamRegistry {
             subscription_key: subscription_key.to_owned(),
         };
         let stop = Arc::new(AtomicBool::new(false));
-        let delivery = Arc::new(StreamDeliveryFlow::default());
         let mut entries = self.lock_entries()?;
         let pending_count = entries
             .values()
@@ -550,7 +380,6 @@ impl StreamRegistry {
             generation,
             PendingStreamEntry {
                 stop: Arc::clone(&stop),
-                delivery: Arc::clone(&delivery),
             },
         );
         drop(entries);
@@ -560,7 +389,6 @@ impl StreamRegistry {
             generation,
             stop,
             active: Arc::new(AtomicBool::new(false)),
-            delivery,
         })
     }
 
@@ -577,10 +405,7 @@ impl StreamRegistry {
                     && slot
                         .pending
                         .get(&registration.generation)
-                        .is_some_and(|pending| {
-                            Arc::ptr_eq(&pending.stop, &registration.stop)
-                                && Arc::ptr_eq(&pending.delivery, &registration.delivery)
-                        });
+                        .is_some_and(|pending| Arc::ptr_eq(&pending.stop, &registration.stop));
                 if !is_latest || registration.stop.load(Ordering::Acquire) {
                     slot.pending.remove(&registration.generation);
                     let remove_slot = slot.current.is_none() && slot.pending.is_empty();
@@ -594,13 +419,11 @@ impl StreamRegistry {
                         StreamEntry {
                             generation,
                             stop: pending.stop,
-                            delivery: pending.delivery,
                         }
                     }));
                     if let Some(previous) = slot.current.replace(StreamEntry {
                         generation: registration.generation,
                         stop: Arc::clone(&registration.stop),
-                        delivery: Arc::clone(&registration.delivery),
                     }) {
                         cancelled.push(previous);
                     }
@@ -640,7 +463,6 @@ impl StreamRegistry {
                 false
             }
         };
-        registration.delivery.close();
         Ok(removed)
     }
 
@@ -702,203 +524,6 @@ impl StreamRegistry {
         Ok(count)
     }
 
-    fn delivery_outstanding(
-        &self,
-        registration: &StreamRegistration,
-    ) -> Result<bool, StreamDeliveryError> {
-        let Some(flow) = self.delivery_flow_for_registration(registration)? else {
-            return Ok(false);
-        };
-        let state = flow.lock().inspect_err(|_| registration.cancel())?;
-        Ok(!matches!(state.phase, StreamDeliveryPhase::Idle))
-    }
-
-    fn reserve_delivery_capacity(
-        &self,
-        registration: &StreamRegistration,
-    ) -> Result<Option<StreamDeliveryReservation>, StreamDeliveryError> {
-        if registration.stop.load(Ordering::Acquire) || !registration.active.load(Ordering::Acquire)
-        {
-            return Ok(None);
-        }
-        let Some(flow) = self.delivery_flow_for_registration(registration)? else {
-            return Ok(None);
-        };
-        let mut state = flow.lock().inspect_err(|_| registration.cancel())?;
-        if !matches!(state.phase, StreamDeliveryPhase::Idle) {
-            return Ok(None);
-        }
-        let Some(reservation_id) = state.next_reservation_id.checked_add(1) else {
-            drop(state);
-            registration.cancel();
-            return Err(StreamDeliveryError::RuntimeUnavailable);
-        };
-        let Some(permit) = self.delivery_budget.reserve(MAX_STREAM_DELIVERY_BYTES) else {
-            return Ok(None);
-        };
-        state.next_reservation_id = reservation_id;
-        state.phase = StreamDeliveryPhase::Reserved { reservation_id };
-        drop(state);
-        Ok(Some(StreamDeliveryReservation {
-            permit: Some(permit),
-            flow,
-            reservation_id,
-            armed: true,
-        }))
-    }
-
-    fn stage_delivery(
-        &self,
-        registration: &StreamRegistration,
-        bytes: Vec<u8>,
-        mut reservation: StreamDeliveryReservation,
-    ) -> Result<Option<u64>, StreamDeliveryError> {
-        if bytes.is_empty() || bytes.len() > MAX_STREAM_DELIVERY_BYTES {
-            registration.cancel();
-            return Err(StreamDeliveryError::PayloadTooLarge);
-        }
-        let Some(mut permit) = reservation.permit.take() else {
-            registration.cancel();
-            return Err(StreamDeliveryError::InvalidRequest);
-        };
-        permit.shrink_to(bytes.len())?;
-        if registration.stop.load(Ordering::Acquire) {
-            return Ok(None);
-        }
-        let Some(flow) = self.delivery_flow_for_registration(registration)? else {
-            return Ok(None);
-        };
-        if !Arc::ptr_eq(&flow, &reservation.flow) {
-            registration.cancel();
-            return Err(StreamDeliveryError::InvalidRequest);
-        }
-        let mut state = flow.lock().inspect_err(|_| registration.cancel())?;
-        if !matches!(
-            state.phase,
-            StreamDeliveryPhase::Reserved { reservation_id }
-                if reservation_id == reservation.reservation_id
-        ) {
-            drop(state);
-            registration.cancel();
-            return Err(StreamDeliveryError::InvalidRequest);
-        }
-        let Some(sequence) = state.next_sequence.checked_add(1) else {
-            drop(state);
-            registration.cancel();
-            return Err(StreamDeliveryError::RuntimeUnavailable);
-        };
-        state.next_sequence = sequence;
-        state.phase = StreamDeliveryPhase::Ready {
-            sequence,
-            bytes,
-            permit,
-        };
-        reservation.armed = false;
-        Ok(Some(sequence))
-    }
-
-    fn take_delivery(
-        &self,
-        owner_window: &str,
-        subscription_key: &str,
-        generation: u64,
-        sequence: u64,
-    ) -> Result<Vec<u8>, StreamDeliveryError> {
-        let Some(flow) = self.delivery_flow(owner_window, subscription_key, generation)? else {
-            return Err(StreamDeliveryError::RuntimeUnavailable);
-        };
-        let mut state = flow.lock()?;
-        let phase = std::mem::take(&mut state.phase);
-        match phase {
-            StreamDeliveryPhase::Ready {
-                sequence: current,
-                bytes,
-                permit,
-            } if current == sequence => {
-                state.phase = StreamDeliveryPhase::AwaitingAck {
-                    sequence: current,
-                    _permit: permit,
-                };
-                Ok(bytes)
-            }
-            other => {
-                state.phase = other;
-                Err(StreamDeliveryError::InvalidRequest)
-            }
-        }
-    }
-
-    fn acknowledge_delivery(
-        &self,
-        owner_window: &str,
-        subscription_key: &str,
-        generation: u64,
-        sequence: u64,
-    ) -> Result<bool, StreamDeliveryError> {
-        let Some(flow) = self.delivery_flow(owner_window, subscription_key, generation)? else {
-            return Ok(false);
-        };
-        let mut state = flow.lock()?;
-        if sequence <= state.last_acknowledged_sequence {
-            return Ok(false);
-        }
-        let phase = std::mem::take(&mut state.phase);
-        match phase {
-            StreamDeliveryPhase::AwaitingAck {
-                sequence: current,
-                _permit: _,
-            } if current == sequence => {
-                state.last_acknowledged_sequence = sequence;
-                Ok(true)
-            }
-            other => {
-                state.phase = other;
-                Err(StreamDeliveryError::InvalidRequest)
-            }
-        }
-    }
-
-    fn delivery_flow_for_registration(
-        &self,
-        registration: &StreamRegistration,
-    ) -> Result<Option<Arc<StreamDeliveryFlow>>, StreamDeliveryError> {
-        let entries = self
-            .lock_entries()
-            .map_err(|_| StreamDeliveryError::RuntimeUnavailable)?;
-        Ok(entries
-            .get(&registration.identity)
-            .and_then(|slot| slot.current.as_ref())
-            .filter(|current| {
-                current.generation == registration.generation
-                    && Arc::ptr_eq(&current.stop, &registration.stop)
-                    && Arc::ptr_eq(&current.delivery, &registration.delivery)
-            })
-            .map(|current| Arc::clone(&current.delivery)))
-    }
-
-    fn delivery_flow(
-        &self,
-        owner_window: &str,
-        subscription_key: &str,
-        generation: u64,
-    ) -> Result<Option<Arc<StreamDeliveryFlow>>, StreamDeliveryError> {
-        if !valid_stream_identity(owner_window, subscription_key) || generation == 0 {
-            return Err(StreamDeliveryError::InvalidRequest);
-        }
-        let identity = StreamIdentity {
-            owner_window: owner_window.to_owned(),
-            subscription_key: subscription_key.to_owned(),
-        };
-        let entries = self
-            .lock_entries()
-            .map_err(|_| StreamDeliveryError::RuntimeUnavailable)?;
-        Ok(entries
-            .get(&identity)
-            .and_then(|slot| slot.current.as_ref())
-            .filter(|current| current.generation == generation)
-            .map(|current| Arc::clone(&current.delivery)))
-    }
-
     fn lock_entries(
         &self,
     ) -> Result<MutexGuard<'_, HashMap<StreamIdentity, StreamSlot>>, StreamRegistryError> {
@@ -930,14 +555,12 @@ fn cancel_stream_slot(slot: StreamSlot) {
         cancel_stream_entry(StreamEntry {
             generation,
             stop: pending.stop,
-            delivery: pending.delivery,
         });
     }
 }
 
 fn cancel_stream_entry(entry: StreamEntry) {
     entry.stop.store(true, Ordering::Release);
-    entry.delivery.close();
 }
 
 fn valid_stream_identity(owner_window: &str, subscription_key: &str) -> bool {
@@ -3384,10 +3007,16 @@ impl AppState {
         })?)
     }
 
-    pub(crate) fn poll_mod_studio_runtime(
+    pub(crate) fn poll_mod_studio_runtime_logs(
         &self,
-    ) -> Result<ModStudioRuntimeSnapshot, ModStudioError> {
-        poll_mod_studio_runtime()
+    ) -> Result<Vec<ModStudioRuntimeLog>, ModStudioError> {
+        poll_mod_studio_runtime_logs()
+    }
+
+    pub(crate) fn poll_mod_studio_runtime_events(
+        &self,
+    ) -> Result<Vec<ModStudioRuntimeEvent>, ModStudioError> {
+        poll_mod_studio_runtime_events()
     }
 
     pub(crate) fn set_hud_option(
@@ -4626,55 +4255,6 @@ impl AppState {
 
     pub(crate) fn shutdown_streams(&self) -> Result<usize, StreamRegistryError> {
         self.0.streams.shutdown()
-    }
-
-    pub(crate) fn stream_delivery_outstanding(
-        &self,
-        registration: &StreamRegistration,
-    ) -> Result<bool, StreamDeliveryError> {
-        self.0.streams.delivery_outstanding(registration)
-    }
-
-    pub(crate) fn reserve_stream_delivery_capacity(
-        &self,
-        registration: &StreamRegistration,
-    ) -> Result<Option<StreamDeliveryReservation>, StreamDeliveryError> {
-        self.0.streams.reserve_delivery_capacity(registration)
-    }
-
-    pub(crate) fn stage_stream_delivery(
-        &self,
-        registration: &StreamRegistration,
-        bytes: Vec<u8>,
-        reservation: StreamDeliveryReservation,
-    ) -> Result<Option<u64>, StreamDeliveryError> {
-        self.0
-            .streams
-            .stage_delivery(registration, bytes, reservation)
-    }
-
-    pub(crate) fn take_stream_delivery(
-        &self,
-        owner_window: &str,
-        subscription_key: &str,
-        generation: u64,
-        sequence: u64,
-    ) -> Result<Vec<u8>, StreamDeliveryError> {
-        self.0
-            .streams
-            .take_delivery(owner_window, subscription_key, generation, sequence)
-    }
-
-    pub(crate) fn ack_stream_delivery(
-        &self,
-        owner_window: &str,
-        subscription_key: &str,
-        generation: u64,
-        sequence: u64,
-    ) -> Result<bool, StreamDeliveryError> {
-        self.0
-            .streams
-            .acknowledge_delivery(owner_window, subscription_key, generation, sequence)
     }
 
     #[cfg(test)]
@@ -8175,31 +7755,6 @@ mod tests {
     }
 
     #[test]
-    fn history_owner_runs_bounded_orphan_cleanup_before_owning_undo() {
-        let source = include_str!("state.rs");
-        let default_body = source
-            .split_once("impl Default for HistoryService")
-            .and_then(|(_, tail)| tail.split_once("\n#[derive"))
-            .map(|(body, _)| body)
-            .expect("HistoryService default source");
-        assert!(default_body.contains("HISTORY_TOMBSTONE_STARTUP_CLEANUP.call_once"));
-        assert!(default_body.contains("cleanup_orphaned_history_tombstones_at_startup"));
-    }
-
-    #[test]
-    fn history_persistence_and_retry_paths_borrow_unbounded_archives() {
-        let source = include_str!("state.rs");
-        let body = source
-            .split_once("fn persist_history_archive(")
-            .and_then(|(_, tail)| tail.split_once("\n    fn restore_history_retry_queue"))
-            .map(|(body, _)| body)
-            .expect("History persistence source");
-        assert!(body.contains("save_borrowed_archive_outcome"));
-        assert!(!body.contains("archive.clone()"));
-        assert!(!body.contains("current.clone()"));
-    }
-
-    #[test]
     fn stale_island_dismiss_keeps_the_newer_notice() {
         let state = AppState::default();
         let stale_id = state.publish_island_notice("info", "First notice", Vec::new(), None);
@@ -8302,179 +7857,5 @@ mod tests {
         assert!(state.island_notice().is_none());
         assert!(!state.dismiss_island_notice(&notice_id));
         assert_eq!(state.0.island_notice.revision(), initial_revision + 2);
-    }
-
-    #[test]
-    fn stream_delivery_requires_read_and_exact_ack_before_the_next_projection() {
-        let state = AppState::default();
-        let registration = state
-            .reserve_stream("hud", "technical:ack")
-            .expect("reserve stream");
-        assert!(
-            state
-                .activate_stream(&registration)
-                .expect("activate stream")
-        );
-        let revision = state.stream_revision();
-        let reservation = state
-            .reserve_stream_delivery_capacity(&registration)
-            .expect("reserve delivery capacity")
-            .expect("delivery capacity available");
-        let sequence = state
-            .stage_stream_delivery(&registration, br#"{"events":[1]}"#.to_vec(), reservation)
-            .expect("stage delivery")
-            .expect("current stream delivery");
-
-        assert!(
-            state
-                .stream_delivery_outstanding(&registration)
-                .expect("read outstanding state")
-        );
-        assert_eq!(
-            state
-                .take_stream_delivery("hud", "technical:ack", registration.generation(), sequence,)
-                .expect("take exact delivery"),
-            br#"{"events":[1]}"#
-        );
-        assert!(
-            state
-                .ack_stream_delivery("hud", "technical:ack", registration.generation(), sequence,)
-                .expect("ack exact delivery")
-        );
-        assert!(
-            !state
-                .stream_delivery_outstanding(&registration)
-                .expect("idle after ack")
-        );
-        assert_eq!(state.stream_revision(), revision);
-    }
-
-    #[test]
-    fn stale_delivery_ack_cannot_unlock_a_replacement_generation() {
-        let state = AppState::default();
-        let previous = state
-            .reserve_stream("hud", "technical:ack")
-            .expect("reserve previous stream");
-        assert!(
-            state
-                .activate_stream(&previous)
-                .expect("activate previous stream")
-        );
-        let reservation = state
-            .reserve_stream_delivery_capacity(&previous)
-            .expect("reserve previous delivery")
-            .expect("previous delivery capacity");
-        let previous_sequence = state
-            .stage_stream_delivery(&previous, vec![1], reservation)
-            .expect("stage previous delivery")
-            .expect("previous current stream");
-
-        let current = state
-            .reserve_stream("hud", "technical:ack")
-            .expect("reserve replacement stream");
-        assert!(
-            state
-                .activate_stream(&current)
-                .expect("activate replacement")
-        );
-        let reservation = state
-            .reserve_stream_delivery_capacity(&current)
-            .expect("reserve replacement delivery")
-            .expect("replacement delivery capacity");
-        state
-            .stage_stream_delivery(&current, vec![2], reservation)
-            .expect("stage replacement delivery")
-            .expect("replacement current stream");
-
-        assert!(
-            !state
-                .ack_stream_delivery(
-                    "hud",
-                    "technical:ack",
-                    previous.generation(),
-                    previous_sequence,
-                )
-                .expect("stale ack is a no-op")
-        );
-        assert!(
-            state
-                .stream_delivery_outstanding(&current)
-                .expect("replacement remains blocked")
-        );
-    }
-
-    #[test]
-    fn stream_delivery_budget_is_global_and_bounded_before_projection() {
-        let state = AppState::default();
-        let mut reservations = Vec::new();
-        for index in 0..4 {
-            let registration = state
-                .reserve_stream("hud", &format!("budget:{index}"))
-                .expect("reserve budget stream");
-            assert!(
-                state
-                    .activate_stream(&registration)
-                    .expect("activate budget stream")
-            );
-            reservations.push((
-                registration.clone(),
-                state
-                    .reserve_stream_delivery_capacity(&registration)
-                    .expect("reserve bounded bytes")
-                    .expect("four maximum reservations fit"),
-            ));
-        }
-        let overflow = state
-            .reserve_stream("hud", "budget:overflow")
-            .expect("reserve overflow stream");
-        assert!(
-            state
-                .activate_stream(&overflow)
-                .expect("activate overflow stream")
-        );
-        assert!(
-            state
-                .reserve_stream_delivery_capacity(&overflow)
-                .expect("read full budget")
-                .is_none()
-        );
-        drop(reservations.pop());
-        assert!(
-            state
-                .reserve_stream_delivery_capacity(&overflow)
-                .expect("retry released budget")
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn one_stream_cannot_reserve_two_projection_budgets_concurrently() {
-        let state = AppState::default();
-        let registration = state
-            .reserve_stream("hud", "technical:reservation")
-            .expect("reserve stream");
-        assert!(
-            state
-                .activate_stream(&registration)
-                .expect("activate stream")
-        );
-        let first = state
-            .reserve_stream_delivery_capacity(&registration)
-            .expect("reserve first projection")
-            .expect("first capacity is available");
-
-        assert!(
-            state
-                .reserve_stream_delivery_capacity(&registration)
-                .expect("inspect duplicate projection")
-                .is_none()
-        );
-        drop(first);
-        assert!(
-            state
-                .reserve_stream_delivery_capacity(&registration)
-                .expect("retry released reservation")
-                .is_some()
-        );
     }
 }

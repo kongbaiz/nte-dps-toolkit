@@ -39,6 +39,10 @@ namespace nte::mods
 
 	PluginStartResult StartPluginRuntime(HMODULE module);
 	void RecordPluginModule(HMODULE module) noexcept;
+	// Proxy deployments call this from DllMain only to create one finite worker.
+	// Windows serializes DLL initialization, so the worker body cannot execute
+	// until the current loader-lock callback has returned.
+	bool ScheduleRecordedPluginRuntimeInitialization() noexcept;
 	PluginStartResult InitializeRecordedPluginRuntime();
 	PluginStopResult StopPluginRuntime();
 	constexpr bool PluginStopAllowsUnload(PluginStopResult result) noexcept

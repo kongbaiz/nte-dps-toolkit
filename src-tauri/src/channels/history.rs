@@ -7,7 +7,8 @@ use crate::{
     channels::stream_runtime::{stream_registry_error, validate_subscription_id},
     contract::{
         CommandError, SubscriptionReceipt,
-        stream::{StreamKind, StreamReadySignal},
+        history::HistoryEvent,
+        stream::{StreamDeliveryBody, StreamKind},
     },
     history_runtime::{
         HISTORY_STREAM_INTERVAL, HistoryRuntime, HistoryStreamRegistration,
@@ -22,7 +23,7 @@ pub(crate) const HISTORY_STREAM_INTERVAL_MS: u32 = HISTORY_STREAM_INTERVAL.as_mi
 #[tauri::command]
 pub(crate) fn subscribe_history(
     subscription_id: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<HistoryEvent>>,
     state: State<'_, AppState>,
     runtime: State<'_, HistoryRuntime>,
     window: WebviewWindow,
@@ -43,8 +44,7 @@ pub(crate) fn subscribe_history(
     if runtime
         .register_stream(HistoryStreamRegistration {
             registration: registration.clone(),
-            subscription_id: subscription_id.clone(),
-            on_ready: on_event,
+            on_event,
         })
         .is_err()
     {
@@ -52,16 +52,6 @@ pub(crate) fn subscribe_history(
         let _ = state.finish_stream(&registration);
         return Err(CommandError::stream_runtime_unavailable());
     }
-    if !state
-        .activate_stream(&registration)
-        .map_err(stream_registry_error)?
-    {
-        registration.cancel();
-        runtime.wake();
-        return Err(CommandError::stream_runtime_unavailable());
-    }
-    runtime.wake();
-
     Ok(SubscriptionReceipt::new(
         subscription_id,
         stream_kind,
@@ -111,7 +101,7 @@ pub(crate) fn run_history_stream_worker(
 pub(crate) fn unsubscribe_history(
     subscription_id: String,
     state: State<'_, AppState>,
-    runtime: State<'_, HistoryRuntime>,
+    _runtime: State<'_, HistoryRuntime>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
@@ -122,7 +112,6 @@ pub(crate) fn unsubscribe_history(
             &StreamKind::History.stream_key(&subscription_id),
         )
         .map_err(stream_registry_error)?;
-    runtime.wake();
     Ok(())
 }
 

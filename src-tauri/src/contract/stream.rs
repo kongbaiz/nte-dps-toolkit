@@ -2,9 +2,7 @@ use serde::Serialize;
 
 pub(crate) const STREAM_PROTOCOL_VERSION: u32 = 1;
 pub(crate) const MAX_EVENTS_PER_STREAM_DELIVERY: usize = 2;
-pub(crate) const MAX_IN_FLIGHT_STREAM_DELIVERIES: u32 = 1;
-pub(crate) const MAX_STREAM_DELIVERY_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MAX_TOTAL_STREAM_DELIVERY_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_STREAM_DELIVERY_BYTES: usize = 14 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +37,7 @@ impl StreamKind {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "technical" => Some(Self::Technical),
@@ -61,33 +60,6 @@ impl StreamKind {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct StreamReadySignal {
-    pub stream_protocol_version: u32,
-    pub stream_kind: StreamKind,
-    pub subscription_id: String,
-    pub stream_generation: String,
-    pub delivery_sequence: String,
-}
-
-impl StreamReadySignal {
-    pub(crate) fn new(
-        stream_kind: StreamKind,
-        subscription_id: String,
-        stream_generation: u64,
-        delivery_sequence: u64,
-    ) -> Self {
-        Self {
-            stream_protocol_version: STREAM_PROTOCOL_VERSION,
-            stream_kind,
-            subscription_id,
-            stream_generation: stream_generation.to_string(),
-            delivery_sequence: delivery_sequence.to_string(),
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StreamDeliveryBody<T> {
@@ -104,29 +76,9 @@ impl<T> StreamDeliveryBody<T> {
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct StreamAckReceipt {
-    pub accepted: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ready_signal_stays_below_tauri_large_channel_threshold() {
-        let signal = StreamReadySignal::new(
-            StreamKind::MainDpsDetail,
-            "s".repeat(64),
-            u64::MAX,
-            u64::MAX,
-        );
-        let encoded = serde_json::to_vec(&signal).expect("serialize bounded ready signal");
-
-        assert!(encoded.len() < 1_024);
-        assert!(encoded.len() < 8_192);
-    }
 
     #[test]
     fn stream_kind_round_trips_stable_protocol_codes_and_keys() {

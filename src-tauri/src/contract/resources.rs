@@ -5,7 +5,7 @@ use nte_dps_tool::core::resource_audit::{
     ResourceAuditSummary,
 };
 
-pub(crate) const RESOURCES_CONTRACT_VERSION: u32 = 1;
+pub(crate) const RESOURCES_CONTRACT_VERSION: u32 = 2;
 pub(crate) const RESOURCES_DISPLAY_LIMIT: usize = 20_000;
 
 #[derive(Clone, Debug, Serialize)]
@@ -52,7 +52,6 @@ pub(crate) struct ResourceCountsSnapshot {
     pub skill_damage: usize,
     pub mapped_effects: usize,
     pub semantic_effects: usize,
-    pub abyss_monsters: usize,
     pub reactions: usize,
 }
 
@@ -63,7 +62,6 @@ impl From<ResourceAuditCounts> for ResourceCountsSnapshot {
             skill_damage: counts.skill_damage,
             mapped_effects: counts.mapped_effects,
             semantic_effects: counts.semantic_effects,
-            abyss_monsters: counts.abyss_monsters,
             reactions: counts.reactions,
         }
     }
@@ -108,7 +106,6 @@ const fn category_code(category: ResourceAuditCategory) -> &'static str {
         ResourceAuditCategory::Character => "character",
         ResourceAuditCategory::Skill => "skill",
         ResourceAuditCategory::GameplayEffect => "gameplayEffect",
-        ResourceAuditCategory::Abyss => "abyss",
         ResourceAuditCategory::Reaction => "reaction",
         ResourceAuditCategory::File => "file",
     }
@@ -142,7 +139,6 @@ fn message_projection(message: &str) -> (String, Vec<String>) {
         "缺少技能分类或能力名" => "Skill is missing a category or ability name.",
         "GE 语义缺少技能表记录" => "GE semantics has no skill table record.",
         "GE 语义缺少 GE index 映射" => "GE semantics has no GE index mapping.",
-        "深渊怪物头像缺失" => "Abyss monster portrait is missing.",
         "反应表缺少该 ID" => "Reaction table has no entry for this ID.",
         "反应文字素材缺失" => "Reaction text asset is missing.",
         _ => message,
@@ -162,7 +158,6 @@ mod tests {
                 skill_damage: 4,
                 mapped_effects: 5,
                 semantic_effects: 6,
-                abyss_monsters: 7,
                 reactions: 8,
             },
             items: vec![ResourceAuditItem {

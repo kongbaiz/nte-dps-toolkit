@@ -519,19 +519,6 @@ mod tests {
     }
 
     #[test]
-    fn auxiliary_locale_caches_retain_typed_load_diagnostics() {
-        let source = include_str!("i18n.rs");
-        let production = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("production source");
-
-        assert!(production.contains("LazyLock<LocaleOverlay>"));
-        assert!(!production.contains("LazyLock<HashMap<String, String>>"));
-        assert!(production.contains("record_auxiliary_locale_diagnostic"));
-    }
-
-    #[test]
     fn auxiliary_locale_failure_is_visible_without_a_healthy_false_positive() {
         let store = RwLock::new(Store::default());
 

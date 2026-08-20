@@ -284,7 +284,7 @@ describe("settings contract", () => {
       formattedSize: "42 B",
     };
     expect(() => parseSettingsSnapshot(invalidBytes)).toThrow(
-      /must be a string/,
+      /must be a valid decimal string/,
     );
   });
 });

@@ -8,7 +8,7 @@ import {
 } from "@/lib/tauri/stream-contract";
 
 export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
-export const MOD_STUDIO_CONTRACT_VERSION = 11;
+export const MOD_STUDIO_CONTRACT_VERSION = 13;
 export const MOD_MARKET_CONTRACT_VERSION = 11;
 export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;
 export const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION = 1;
@@ -219,8 +219,23 @@ export interface ModStudioRuntimeConnectionEvent {
     generation: string;
     status: ModStudioRuntimeConnectionStatus;
     bootstrapErrorCode: ModStudioBootstrapErrorCode | null;
+    probeErrorCode: ModStudioRuntimeProbeErrorCode | null;
+    probeOsErrorCode: number | null;
   };
 }
+
+const MOD_STUDIO_RUNTIME_PROBE_ERROR_CODES = [
+  "RUNTIME_EVENT_ACCESS_DENIED",
+  "RUNTIME_EVENT_OPEN_FAILED",
+  "IPC_CLIENT_UNAVAILABLE",
+  "IPC_PIPE_ACCESS_DENIED",
+  "IPC_PIPE_OPEN_FAILED",
+  "POLL_WORKER_FAILED",
+  "RUNTIME_SUBSCRIPTION_FAILED",
+] as const;
+
+export type ModStudioRuntimeProbeErrorCode =
+  (typeof MOD_STUDIO_RUNTIME_PROBE_ERROR_CODES)[number];
 
 export type ModStudioRuntimeConnectionStatus =
   | "connected"
@@ -717,9 +732,31 @@ export function parseModStudioRuntimeEvent(
       MOD_STUDIO_BOOTSTRAP_ERROR_CODES,
       "payload.bootstrapErrorCode",
     );
+    const probeErrorCode = nullableEnumValue(
+      payload.probeErrorCode,
+      MOD_STUDIO_RUNTIME_PROBE_ERROR_CODES,
+      "payload.probeErrorCode",
+    );
+    const probeOsErrorCode =
+      payload.probeOsErrorCode === null
+        ? null
+        : nonNegativeInteger(
+            payload.probeOsErrorCode,
+            "payload.probeOsErrorCode",
+          );
     if ((status === "bootstrapFailed") !== (bootstrapErrorCode !== null)) {
       throw new ModStudioContractError(
         "payload.bootstrapErrorCode must be present only for bootstrapFailed",
+      );
+    }
+    if ((status === "probeFailed") !== (probeErrorCode !== null)) {
+      throw new ModStudioContractError(
+        "payload.probeErrorCode must be present only for probeFailed",
+      );
+    }
+    if (status !== "probeFailed" && probeOsErrorCode !== null) {
+      throw new ModStudioContractError(
+        "payload.probeOsErrorCode must be present only for probeFailed",
       );
     }
     return {
@@ -729,6 +766,8 @@ export function parseModStudioRuntimeEvent(
         generation,
         status,
         bootstrapErrorCode,
+        probeErrorCode,
+        probeOsErrorCode,
       },
     };
   }
