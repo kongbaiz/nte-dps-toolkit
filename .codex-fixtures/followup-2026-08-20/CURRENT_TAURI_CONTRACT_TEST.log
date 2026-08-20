@@ -1,5 +1,0 @@
-error: unexpected argument 'contract::diagnostics::tests' found
-
-Usage: cargo.exe test [OPTIONS] [TESTNAME] [-- [ARGS]...]
-
-For more information, try '--help'.

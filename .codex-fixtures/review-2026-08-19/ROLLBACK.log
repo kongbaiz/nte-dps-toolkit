@@ -1,3 +1,0 @@
-=== COMMAND: ROLLBACK.sh /d/NTE_DPS_TOOL/.codex-fixtures/review-2026-08-19/rollback-copy ===
-ROLLBACK_OK head=12ef5e865bbfb843f1814fd9c9d4b470034c5841 status=clean restored=packet_emission:PacketEmissionMode::FullDebug
-=== EXIT: 0 ===

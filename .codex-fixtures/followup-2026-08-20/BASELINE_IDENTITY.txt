@@ -1,3 +1,0 @@
-HEAD=86d21c622910f0007bb3ef9d02a98574d39708c0
-BRANCH=codex/review-priority-optimizations
-TRACKED_STATUS= M src-tauri/Cargo.toml
