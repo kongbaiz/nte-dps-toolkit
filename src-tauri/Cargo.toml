@@ -32,7 +32,7 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = { version = "2.7.2", default-features = false }
 tauri-plugin-log = "2"
 tokio = { version = "1", features = ["time"] }
-nte-dps-tool = { path = "..", default-features = false, features = ["desktop"] }
+nte-dps-tool = { path = "..", default-features = false, features = ["desktop", "tauri_frontend"] }
 
 [profile.release]
 panic = "abort"
