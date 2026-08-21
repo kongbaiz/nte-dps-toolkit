@@ -95,7 +95,9 @@ fn mods_plugin_supports_bundled_mods(plugin: &[u8]) -> bool {
 }
 
 pub(crate) fn resource_exists(path: &Path) -> bool {
-    resource_file_path(path).is_some() || bundled_resource_entry_for_path(path).is_some()
+    resource_file_path(path).is_some()
+        || bundled_resource_entry_for_path(path).is_some()
+        || bundled_frontend_resource_exists(path)
 }
 
 pub(crate) fn read_resource_text(path: &Path) -> Result<String> {
@@ -353,6 +355,10 @@ fn decode_embedded_resource(
 fn bundled_resource_entry_for_path(path: &Path) -> Option<EmbeddedResourceEntry> {
     let key = embedded_resource_key(path)?;
     embedded_resource(&key)
+}
+
+fn bundled_frontend_resource_exists(path: &Path) -> bool {
+    embedded_resource_key(path).is_some_and(|key| frontend_resource_exists(&key))
 }
 
 fn disk_resource_candidates(path: &Path) -> Vec<PathBuf> {
@@ -650,7 +656,11 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "desktop", not(feature = "external_resources")))]
+    #[cfg(all(
+        feature = "desktop",
+        not(feature = "external_resources"),
+        not(feature = "tauri_frontend")
+    ))]
     fn desktop_bundle_keeps_full_visual_resources() {
         assert!(bundled_resource("res/images/characters/player_003.png").is_some());
         assert!(bundled_resource("res/images/characters/player_canhong.png").is_some());
@@ -668,5 +678,33 @@ mod tests {
                 "remote abyss table must not be embedded: {remote_table}"
             );
         }
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "desktop",
+        feature = "tauri_frontend",
+        not(feature = "external_resources")
+    ))]
+    fn tauri_frontend_deduplicates_visual_resource_bytes() {
+        for path in [
+            "res/images/characters/player_003.png",
+            "res/images/attributes/UI_avatarbg_Icon_01.png",
+            "res/images/fangkuai/Equip01.png",
+            "res/images/font/tiaozi1/ling_0.png",
+            "res/images/kongmu/256/UI_YH_kongmuicon__01.png",
+            "res/images/monsters/Boss_05.png",
+        ] {
+            assert!(bundled_resource(path).is_none(), "duplicated image {path}");
+            assert!(
+                frontend_resource_exists(path),
+                "missing frontend image {path}"
+            );
+        }
+        let packaged_path = Path::new("missing-root/res/images/characters/player_003.png");
+        assert!(bundled_frontend_resource_exists(packaged_path));
+        assert!(resource_exists(packaged_path));
+        assert!(bundled_resource("res/icons/app-icon.png").is_some());
+        assert!(bundled_resource("res/data/abyss/monster_stat_names_zh_cn.json").is_some());
     }
 }

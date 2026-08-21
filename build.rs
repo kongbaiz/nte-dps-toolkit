@@ -33,6 +33,7 @@ fn main() {
     let output_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let desktop_enabled = env::var_os("CARGO_FEATURE_DESKTOP").is_some();
     let cli_enabled = env::var_os("CARGO_FEATURE_CLI").is_some();
+    let tauri_frontend_enabled = env::var_os("CARGO_FEATURE_TAURI_FRONTEND").is_some();
     let mode = if env::var_os("CARGO_FEATURE_EXTERNAL_RESOURCES").is_some() {
         ResourceMode::External
     } else if cli_enabled && !desktop_enabled {
@@ -44,6 +45,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_EXTERNAL_RESOURCES");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DESKTOP");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CLI");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_TAURI_FRONTEND");
     println!("cargo:rerun-if-env-changed=NTE_EMBEDDED_RESOURCE_REPORT");
     match mode {
         ResourceMode::Full => println!("cargo:rerun-if-changed={}", resource_dir.display()),
@@ -57,7 +59,13 @@ fn main() {
         println!("cargo:rerun-if-changed={}", icon_path.display());
     }
 
-    generate_embedded_resources(&manifest_dir, &resource_dir, &output_dir, mode);
+    generate_embedded_resources(
+        &manifest_dir,
+        &resource_dir,
+        &output_dir,
+        mode,
+        tauri_frontend_enabled,
+    );
 
     #[cfg(windows)]
     if desktop_enabled {
@@ -73,6 +81,7 @@ fn generate_embedded_resources(
     resource_dir: &Path,
     output_dir: &Path,
     mode: ResourceMode,
+    tauri_frontend_enabled: bool,
 ) {
     if matches!(mode, ResourceMode::External) {
         let generated = concat!(
@@ -88,6 +97,9 @@ fn generate_embedded_resources(
             "}\n",
             "fn embedded_resource(_path: &str) -> Option<EmbeddedResourceEntry> {\n",
             "    None\n",
+            "}\n",
+            "fn frontend_resource_exists(_path: &str) -> bool {\n",
+            "    false\n",
             "}\n",
         );
         let output_path = output_dir.join("embedded_resources.rs");
@@ -125,6 +137,12 @@ fn generate_embedded_resources(
         "  let normalized = path.replace('\\\\', \"/\");\n",
         "  match normalized.as_str() {\n",
     ));
+    let mut frontend_resources = String::from(concat!(
+        "#[allow(clippy::match_like_matches_macro)]\n",
+        "fn frontend_resource_exists(path: &str) -> bool {\n",
+        "  let normalized = path.replace('\\\\', \"/\");\n",
+        "  match normalized.as_str() {\n",
+    ));
 
     let mut original_bytes = 0_u64;
     let mut embedded_bytes = 0_u64;
@@ -134,6 +152,8 @@ fn generate_embedded_resources(
     let mut json_decoded_bytes = 0_u64;
     let mut json_compressed_bytes = 0_u64;
     let mut webp_images = 0_usize;
+    let mut frontend_images = 0_usize;
+    let mut frontend_image_bytes = 0_u64;
 
     for resource in resources {
         println!("cargo:rerun-if-changed={}", resource.display());
@@ -148,6 +168,12 @@ fn generate_embedded_resources(
         }
         let original = fs::read(&resource).expect("failed to read resource for embedding");
         original_bytes += original.len() as u64;
+        if tauri_frontend_enabled && is_frontend_image_resource(&relative) {
+            frontend_images += 1;
+            frontend_image_bytes += original.len() as u64;
+            frontend_resources.push_str(&format!("        {relative:?} => true,\n"));
+            continue;
+        }
         let processed = process_embedded_resource(&relative, &original);
         match processed.kind {
             EmbeddedResourceKind::ZlibJson => {
@@ -181,11 +207,13 @@ fn generate_embedded_resources(
     }
 
     generated.push_str("        _ => None,\n    }\n}\n");
+    frontend_resources.push_str("        _ => false,\n    }\n}\n");
+    generated.push_str(&frontend_resources);
     let output_path = output_dir.join("embedded_resources.rs");
     fs::write(output_path, generated).expect("failed to generate embedded resource map");
     if env::var_os("NTE_EMBEDDED_RESOURCE_REPORT").is_some() {
         println!(
-            "cargo:warning=embedded resources: skipped {skipped}, compressed_json {compressed_json}, webp_images {webp_images}, bytes {} -> {}",
+            "cargo:warning=embedded resources: skipped {skipped}, frontend_images {frontend_images} ({frontend_image_bytes} bytes), compressed_json {compressed_json}, webp_images {webp_images}, bytes {} -> {}",
             original_bytes, embedded_bytes
         );
         println!(
@@ -271,6 +299,10 @@ fn should_exclude_embedded_resource(relative: &str) -> bool {
         || EXCLUDED_EMBEDDED_RESOURCES
             .iter()
             .any(|excluded| relative.eq_ignore_ascii_case(excluded))
+}
+
+fn is_frontend_image_resource(relative: &str) -> bool {
+    relative.starts_with("res/images/") && relative.ends_with(".png")
 }
 
 struct EmbeddedResource {
