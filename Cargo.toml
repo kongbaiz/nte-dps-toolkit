@@ -17,6 +17,7 @@ desktop = [
 ]
 cli = []
 external_resources = []
+tauri_frontend = []
 
 [lib]
 name = "nte_dps_tool"

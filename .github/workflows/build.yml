@@ -362,7 +362,7 @@ jobs:
           }
 
           foreach ($executable in $executables) {
-            & $upx.FullName -9 $executable.FullName
+            & $upx.FullName --best --lzma $executable.FullName
             if ($LASTEXITCODE -ne 0) {
               throw "UPX compression failed for $($executable.FullName)"
             }
@@ -384,11 +384,11 @@ jobs:
           # NTE DPS Tool - Windows x64
 
           - Standard Tauri desktop release with F12, Packets, Resources, and Diagnostics available.
-          - Runtime resources are embedded in the executable.
+          - Runtime data resources are embedded in the executable; UI images are embedded once by the Tauri frontend bundle.
           - Includes nte-updater.exe for official-channel updates.
           - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
-          - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
-          - The executable is compressed with UPX -9 and integrity-tested before packaging.
+          - JSON resources are minified and compressed during embedding.
+          - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
           "@
             "nte-core-windows-x64" = @"
           # NTE Core - Windows x64
@@ -396,7 +396,7 @@ jobs:
           - Local JSON-RPC 2.0 over NDJSON stdio sidecar for third-party integrations.
           - Does not open a network port and does not include desktop UI images or windowing dependencies.
           - Read CLI_PROTOCOL.md or CLI_PROTOCOL_ZH.md before integrating.
-          - The executable is compressed with UPX -9 and integrity-tested before packaging.
+          - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
           "@
             "nte-dps-tool-windows-external-resources" = @"
           # NTE DPS Tool - Windows External Resources Variant
@@ -407,7 +407,7 @@ jobs:
           - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
-          - The executable is compressed with UPX -9 and integrity-tested before packaging.
+          - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
           "@
           }
 
