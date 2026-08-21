@@ -331,12 +331,12 @@ pub fn encrypt_encrypted_ini_records(
 }
 
 fn decrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    if data.len() % 16 != 0 {
+    if !data.len().is_multiple_of(16) {
         return Err("AES 密文长度不是 16 字节块的整数倍".to_owned());
     }
     let cipher = Aes256::new_from_slice(key).map_err(|error| error.to_string())?;
     let mut output = data.to_vec();
-    for block in output.chunks_exact_mut(16) {
+    for block in output.as_chunks_mut::<16>().0 {
         cipher.decrypt_block(block.into());
     }
     Ok(output)
@@ -344,12 +344,12 @@ fn decrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn encrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    if data.len() % 16 != 0 {
+    if !data.len().is_multiple_of(16) {
         return Err("AES 明文长度不是 16 字节块的整数倍".to_owned());
     }
     let cipher = Aes256::new_from_slice(key).map_err(|error| error.to_string())?;
     let mut output = data.to_vec();
-    for block in output.chunks_exact_mut(16) {
+    for block in output.as_chunks_mut::<16>().0 {
         cipher.encrypt_block(block.into());
     }
     Ok(output)

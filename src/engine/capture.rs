@@ -1245,8 +1245,10 @@ fn decode_mod_script_block(value: &[u8]) -> Option<ModScriptEvent> {
         return None;
     }
     let values = value[32..32 + value_count * 8]
-        .chunks_exact(8)
-        .map(|bytes| u64::from_le_bytes(bytes.try_into().expect("fixed ModScript value")))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| u64::from_le_bytes(*bytes))
         .collect();
     Some(ModScriptEvent {
         sequence: u64::from_le_bytes(value[8..16].try_into().expect("fixed ModScript sequence")),
@@ -5203,15 +5205,14 @@ impl PacketDecoder {
                         > bunch.data_bit_len
             })
             && let Some(pending_hit) = hits.pop()
-        {
-            if let Some(hit) = self.bool_enum_gameplay_effect_fragments.attach_hit(
+            && let Some(hit) = self.bool_enum_gameplay_effect_fragments.attach_hit(
                 (src, src_port),
                 (dst, dst_port),
                 bunch,
                 pending_hit,
-            ) {
-                hits.push(hit);
-            }
+            )
+        {
+            hits.push(hit);
         }
 
         if let Some(mut completed) = bool_enum_fragment_observation.completed.take() {

@@ -6,8 +6,11 @@ authors = ["NTE DPS TOOL contributors"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/kongbaiz/nte-dps-toolkit"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.98"
 autobins = false
+
+[lints.rust]
+linker_messages = "allow"
 
 [features]
 default = []
