@@ -1578,14 +1578,15 @@ impl<'a> InventoryBitReader<'a> {
             return None;
         }
         let bytes = self.read_bytes(unit_count.checked_mul(2)?)?;
-        let mut units = Vec::with_capacity(unit_count);
-        for pair in bytes.chunks_exact(2) {
-            units.push(u16::from_le_bytes([pair[0], pair[1]]));
-        }
-        if units.last() != Some(&0) || units[..unit_count - 1].contains(&0) {
+        if !bytes.ends_with(&[0, 0])
+            || bytes[..bytes.len() - 2]
+                .as_chunks::<2>()
+                .0
+                .contains(&[0, 0])
+        {
             return None;
         }
-        String::from_utf16(&units[..unit_count - 1]).ok()
+        String::from_utf16le(&bytes[..bytes.len() - 2]).ok()
     }
 
     fn read_dynamic_name(&mut self) -> Option<String> {

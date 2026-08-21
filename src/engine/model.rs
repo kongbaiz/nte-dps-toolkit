@@ -5503,12 +5503,11 @@ impl CombatState {
             };
             if result.direction_changed
                 && let Some((position, before)) = mutation
+                && let Some(after) = party.hits.get(position)
             {
-                if let Some(after) = party.hits.get(position) {
-                    party
-                        .combat_detail_index
-                        .replace_hit(position, &before, after);
-                }
+                party
+                    .combat_detail_index
+                    .replace_hit(position, &before, after);
             }
             party.apply_enemy_target_projection_result(result, hit_damage, promoted_hit);
             if outcome_of_projection(result) == ModScriptApplyOutcome::ProjectionChanged {

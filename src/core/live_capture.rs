@@ -1431,10 +1431,10 @@ impl Drop for LiveCaptureInner {
         if let Some(control) = runtime.control.take() {
             let _ = control.try_send(EventWorkerControl::Shutdown);
         }
-        if let Some(worker) = runtime.worker.take() {
-            if !dropping_on_event_worker {
-                let _ = worker.join();
-            }
+        if let Some(worker) = runtime.worker.take()
+            && !dropping_on_event_worker
+        {
+            let _ = worker.join();
         }
 
         let replay = match self.replay.get_mut() {

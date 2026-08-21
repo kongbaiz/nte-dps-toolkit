@@ -139,6 +139,7 @@ fn generate_embedded_resources(
     ));
     let mut frontend_resources = String::from(concat!(
         "#[allow(clippy::match_like_matches_macro)]\n",
+        "#[allow(clippy::match_single_binding)]\n",
         "fn frontend_resource_exists(path: &str) -> bool {\n",
         "  let normalized = path.replace('\\\\', \"/\");\n",
         "  match normalized.as_str() {\n",
