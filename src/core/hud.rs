@@ -572,6 +572,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 
@@ -778,6 +780,7 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_hp_percent: 0.0,
+            reconciled_overkill_damage: None,
         }));
         let corrected = state
             .compact_timeline(1.0, HUD_TIMELINE_MAX_BUCKETS)
