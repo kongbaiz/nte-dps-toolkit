@@ -132,6 +132,7 @@ function fakeSnapshot(ids: string[], totalHits: number): MainDpsDetailSnapshot {
       damage: 0,
       primaryDamage: 0,
       followUpDamage: 0,
+      overkillDamage: 0,
       skillId: "-",
       skill: "-",
       damageType: "-",
