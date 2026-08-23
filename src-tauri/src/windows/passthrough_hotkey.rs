@@ -13,6 +13,7 @@ use nte_dps_tool::{core::live_capture::LiveCapturePhase, storage::config::Global
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
+    commands::main_dps as main_dps_commands,
     state::AppState,
     windows::{hud, main_dps},
 };
@@ -203,6 +204,14 @@ fn dispatch_global_action(app: &AppHandle, state: &AppState, action: GlobalHotke
                 Err(error) => {
                     log::error!("query HUD visibility from global hotkey failed: {error}")
                 }
+            }
+        }
+        GlobalHotkeyAction::NewRound => {
+            if let Err(error) = main_dps_commands::start_main_dps_new_round_action(app, state) {
+                log::debug!(
+                    "start new round from global hotkey skipped: {:?}",
+                    error.code
+                );
             }
         }
     }

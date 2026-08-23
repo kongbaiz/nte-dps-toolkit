@@ -1,5 +1,6 @@
 export const CONSOLE_PAGE_IDS = [
   "settings",
+  "shortcuts",
   "history",
   "timeline",
   "skills",
@@ -8,7 +9,6 @@ export const CONSOLE_PAGE_IDS = [
   "character-data",
   "encrypted-ini",
   "packets",
-  "resources",
   "diagnostics",
 ] as const;
 
@@ -16,6 +16,11 @@ export type ConsolePageId = (typeof CONSOLE_PAGE_IDS)[number];
 
 export const DEFAULT_CONSOLE_PAGE: ConsolePageId = "settings";
 export const CONSOLE_SIDEBAR_STORAGE_KEY = "nte.console.sidebar-collapsed.v1";
+export const CONSOLE_FAVORITES_STORAGE_KEY = "nte.console.favorite-pages.v1";
+export const DEFAULT_CONSOLE_FAVORITES: readonly ConsolePageId[] = [
+  "settings",
+  "history",
+];
 
 interface ConsolePreferenceStorage {
   getItem(key: string): string | null;
@@ -98,6 +103,42 @@ export function writeConsoleSidebarCollapsed(
   if (storage === null) return;
   try {
     storage.setItem(CONSOLE_SIDEBAR_STORAGE_KEY, String(collapsed));
+  } catch {
+    // A blocked WebView storage area only disables this display preference.
+  }
+}
+
+export function readConsoleFavoritePages(
+  storage: ConsolePreferenceStorage | null = browserStorage(),
+): ConsolePageId[] {
+  if (storage === null) return [...DEFAULT_CONSOLE_FAVORITES];
+  try {
+    const raw = storage.getItem(CONSOLE_FAVORITES_STORAGE_KEY);
+    if (raw === null) return [...DEFAULT_CONSOLE_FAVORITES];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [...DEFAULT_CONSOLE_FAVORITES];
+    return parsed.reduce<ConsolePageId[]>((pages, value) => {
+      if (
+        typeof value === "string" &&
+        isConsolePageId(value) &&
+        !pages.includes(value)
+      ) {
+        pages.push(value);
+      }
+      return pages;
+    }, []);
+  } catch {
+    return [...DEFAULT_CONSOLE_FAVORITES];
+  }
+}
+
+export function writeConsoleFavoritePages(
+  pages: readonly ConsolePageId[],
+  storage: ConsolePreferenceStorage | null = browserStorage(),
+): void {
+  if (storage === null) return;
+  try {
+    storage.setItem(CONSOLE_FAVORITES_STORAGE_KEY, JSON.stringify(pages));
   } catch {
     // A blocked WebView storage area only disables this display preference.
   }

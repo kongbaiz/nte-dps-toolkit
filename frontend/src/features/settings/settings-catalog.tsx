@@ -7,9 +7,9 @@ import {
 } from "react";
 import {
   Check,
+  ChartNoAxesCombined,
   Download,
   HardDrive,
-  Keyboard,
   Languages,
   LayoutGrid,
   Palette,
@@ -36,12 +36,12 @@ import { Markdown } from "@/components/ui/markdown";
 import { Switch } from "@/components/ui/switch";
 import { t, tf } from "@/lib/i18n";
 import {
-  formatHotkeyBinding,
   type CaptureSettingsInput,
-  type GlobalHotkeyActionId,
-  type HotkeyBinding,
   type InterfaceSettingsInput,
   type LayoutProfileId,
+  type MainDpsAttributionId,
+  type MainDpsDisplayInput,
+  type MainDpsMetricId,
   type SettingsSnapshot,
   type UpdateComponentId,
 } from "@/lib/tauri/settings-contract";
@@ -84,12 +84,6 @@ const DPS_TIME_OPTIONS = [
   { value: "time-stop-adjusted", labelKey: "Exclude Time Stop" },
   { value: "real-time", labelKey: "Real Time (incl. time stop)" },
 ] as const;
-const PASSTHROUGH_HOTKEY_OPTIONS = [
-  { value: "home", label: "Home" },
-  { value: "insert", label: "Insert" },
-  { value: "f8", label: "F8" },
-  { value: "f9", label: "F9" },
-] as const;
 const LAYOUT_PROFILES = [
   {
     id: "combat",
@@ -108,12 +102,25 @@ const LAYOUT_PROFILES = [
     descriptionKey: "Console packets with team details for investigation",
   },
 ] as const;
-const HOTKEY_ACTIONS = [
-  { id: "capture", labelKey: "Start / Stop Capture" },
-  { id: "reset", labelKey: "Reset Session" },
-  { id: "hud", labelKey: "Toggle Combat HUD" },
-] as const;
-
+const MAIN_DPS_METRICS: ReadonlyArray<{
+  id: MainDpsMetricId;
+  labelKey: string;
+}> = [
+  { id: "team-dps", labelKey: "Team DPS" },
+  { id: "total-damage", labelKey: "Total Damage" },
+  { id: "total-damage-taken", labelKey: "Total Damage Taken" },
+  { id: "duration", labelKey: "Time" },
+];
+const MAIN_DPS_ATTRIBUTIONS: ReadonlyArray<{
+  id: MainDpsAttributionId;
+  labelKey: string;
+}> = [
+  { id: "character", labelKey: "Character attributed" },
+  { id: "reaction", labelKey: "Reaction Damage" },
+  { id: "shared", labelKey: "Shared mechanics" },
+  { id: "unattributed", labelKey: "Unattributed" },
+  { id: "max-hp-reduction", labelKey: "Life reduction" },
+];
 export interface SettingsCatalogActions {
   setInterface(settings: InterfaceSettingsInput): Promise<void>;
   setUpdatePreferences(
@@ -124,12 +131,8 @@ export interface SettingsCatalogActions {
   downloadUpdate(component: UpdateComponentId): Promise<void>;
   installUpdate(): Promise<void>;
   setCapture(settings: CaptureSettingsInput): Promise<void>;
+  setMainDpsDisplay(settings: MainDpsDisplayInput): Promise<void>;
   refreshCaptureDevices(): Promise<void>;
-  setHotkeysEnabled(enabled: boolean): Promise<void>;
-  setHotkeyBinding(
-    action: GlobalHotkeyActionId,
-    binding: HotkeyBinding | null,
-  ): Promise<void>;
   applyLayoutProfile(profile: LayoutProfileId): Promise<void>;
   importTeamDataFile(): Promise<boolean | null>;
   exportTeamData(): Promise<boolean | null>;
@@ -164,11 +167,6 @@ export function PrimarySettingsColumn({
         pending={settingsSectionPending(pendingAction, "capture")}
         actions={actions}
       />
-      <HotkeysCard
-        snapshot={snapshot}
-        pending={settingsSectionPending(pendingAction, "hotkeys")}
-        actions={actions}
-      />
     </div>
   );
 }
@@ -186,6 +184,11 @@ export function SecondarySettingsSections({
     <>
       <LayoutProfilesCard
         pending={settingsSectionPending(pendingAction, "layout")}
+        actions={actions}
+      />
+      <MainDpsDisplayCard
+        snapshot={snapshot}
+        pending={settingsSectionPending(pendingAction, "main-dps-display")}
         actions={actions}
       />
       <TeamDataCard
@@ -758,108 +761,7 @@ function ParseSettingsCard({
           ) : null}
         </div>
       </SettingsRow>
-      <SettingsRow
-        labelKey="Passthrough Hotkey"
-        descriptionKey="Toggle mouse passthrough while the combat HUD is active"
-      >
-        <NativeSelect
-          disabled={pending}
-          ariaLabel={t("Passthrough Hotkey")}
-          value={settings.passthroughHotkey}
-          onChange={(passthroughHotkey) =>
-            void save({
-              passthroughHotkey:
-                passthroughHotkey as CaptureSettingsInput["passthroughHotkey"],
-            })
-          }
-          options={PASSTHROUGH_HOTKEY_OPTIONS.map((option) => ({ ...option }))}
-        />
-      </SettingsRow>
     </SettingsCard>
-  );
-}
-
-function HotkeysCard({
-  snapshot,
-  pending,
-  actions,
-}: {
-  snapshot: SettingsSnapshot;
-  pending: boolean;
-  actions: SettingsCatalogActions;
-}) {
-  const [recording, setRecording] = useState<GlobalHotkeyActionId | null>(null);
-  const bindings = new Map(
-    snapshot.hotkeys.bindings.map((item) => [item.action, item.binding]),
-  );
-  useEffect(() => {
-    if (pending) setRecording(null);
-  }, [pending]);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Keyboard className="size-4" aria-hidden="true" />
-          {t("Hotkeys")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="divide-y">
-        <SettingsSwitchRow
-          disabled={pending}
-          labelKey="Enable global hotkeys"
-          checked={snapshot.hotkeys.enabled}
-          onCheckedChange={(enabled) => void actions.setHotkeysEnabled(enabled)}
-        />
-        {HOTKEY_ACTIONS.map((action) => {
-          const binding = bindings.get(action.id) ?? null;
-          return (
-            <div
-              className="grid gap-2 py-2.5 first:pt-0 last:pb-0 sm:grid-cols-[minmax(9rem,0.6fr)_minmax(0,1fr)_auto] sm:items-center"
-              key={action.id}
-            >
-              <span className="text-sm">{t(action.labelKey)}</span>
-              <Button
-                className="min-w-0 justify-start font-mono"
-                type="button"
-                variant="outline"
-                disabled={pending || !snapshot.hotkeys.enabled}
-                onClick={() => setRecording(action.id)}
-                onKeyDown={(event) => {
-                  if (recording !== action.id) return;
-                  const next = bindingFromKeyboardEvent(event);
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setRecording(null);
-                  } else if (next) {
-                    event.preventDefault();
-                    setRecording(null);
-                    void actions.setHotkeyBinding(action.id, next);
-                  }
-                }}
-              >
-                {recording === action.id
-                  ? t("Press shortcut...")
-                  : (formatHotkeyBinding(binding) ?? t("Disabled"))}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={
-                  pending || !snapshot.hotkeys.enabled || binding === null
-                }
-                onClick={() => void actions.setHotkeyBinding(action.id, null)}
-              >
-                {t("Disable")}
-              </Button>
-            </div>
-          );
-        })}
-      </CardContent>
-      <CardFooter className="justify-end text-xs text-muted-foreground">
-        {t("Click, then press Ctrl/Alt/Shift plus an F1-F12 key; Esc cancels")}
-      </CardFooter>
-    </Card>
   );
 }
 
@@ -894,6 +796,78 @@ function LayoutProfilesCard({
       ))}
     </SettingsCard>
   );
+}
+
+function MainDpsDisplayCard({
+  snapshot,
+  pending,
+  actions,
+}: {
+  snapshot: SettingsSnapshot;
+  pending: boolean;
+  actions: SettingsCatalogActions;
+}) {
+  const display = snapshot.mainDps;
+  return (
+    <SettingsCard icon={ChartNoAxesCombined} titleKey="Main DPS display">
+      <SettingsRow
+        labelKey="Value modules"
+        descriptionKey="Choose the statistics shown on the main DPS page"
+      >
+        <div className="grid gap-2 sm:grid-cols-2">
+          {MAIN_DPS_METRICS.map((metric) => (
+            <LabeledSwitch
+              key={metric.id}
+              disabled={pending}
+              labelKey={metric.labelKey}
+              checked={display.metrics.includes(metric.id)}
+              onCheckedChange={(checked) =>
+                void actions.setMainDpsDisplay({
+                  ...display,
+                  metrics: withSelection(display.metrics, metric.id, checked),
+                })
+              }
+            />
+          ))}
+        </div>
+      </SettingsRow>
+      <SettingsRow
+        labelKey="Damage attribution types"
+        descriptionKey="Choose the damage attribution chips shown on the main DPS page"
+      >
+        <div className="grid gap-2 sm:grid-cols-2">
+          {MAIN_DPS_ATTRIBUTIONS.map((attribution) => (
+            <LabeledSwitch
+              key={attribution.id}
+              disabled={pending}
+              labelKey={attribution.labelKey}
+              checked={display.attributions.includes(attribution.id)}
+              onCheckedChange={(checked) =>
+                void actions.setMainDpsDisplay({
+                  ...display,
+                  attributions: withSelection(
+                    display.attributions,
+                    attribution.id,
+                    checked,
+                  ),
+                })
+              }
+            />
+          ))}
+        </div>
+      </SettingsRow>
+    </SettingsCard>
+  );
+}
+
+function withSelection<T extends string>(
+  values: readonly T[],
+  value: T,
+  selected: boolean,
+): T[] {
+  if (selected)
+    return values.includes(value) ? [...values] : [...values, value];
+  return values.filter((candidate) => candidate !== value);
 }
 
 function TeamDataCard({
@@ -1200,20 +1174,6 @@ function NativeSelect({
       ))}
     </select>
   );
-}
-
-function bindingFromKeyboardEvent(
-  event: ReactKeyboardEvent<HTMLButtonElement>,
-): HotkeyBinding | null {
-  if (!/^F(?:[1-9]|1[0-2])$/.test(event.key)) return null;
-  if (!event.ctrlKey && !event.altKey && !event.shiftKey) return null;
-  if (event.altKey && event.key === "F4") return null;
-  return {
-    ctrl: event.ctrlKey,
-    alt: event.altKey,
-    shift: event.shiftKey,
-    key: event.key as HotkeyBinding["key"],
-  };
 }
 
 function submitOnEnter(

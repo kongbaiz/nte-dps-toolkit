@@ -890,6 +890,14 @@ function HitRow({
                 {t("Overkill")} +{formatMainMetric(row.overkillDamage)}
               </span>
             )}
+            {row.maxHpReduction > 0 && (
+              <span
+                className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-violet-700 dark:text-violet-300"
+                title={`${t("Max HP reduction")}: ${formatMainMetric(row.maxHpReduction)}`}
+              >
+                {t("Max HP reduction")} -{formatMainMetric(row.maxHpReduction)}
+              </span>
+            )}
           </span>
         </td>
       )}

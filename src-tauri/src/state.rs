@@ -64,9 +64,9 @@ use nte_dps_tool::{
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
         config::{
-            self, AccentColor, DpsTimeMode, GlobalHotkeys, HudConfig, HudModule,
-            ModStudioLoadingMethod, PassthroughHotkey, ThemePreset, TimelineDpsViewMode, UiConfig,
-            UiDensity, sanitize_timeline_bucket_seconds,
+            self, AccentColor, DpsTimeMode, GlobalHotkeys, HotkeyBinding, HudConfig, HudModule,
+            MainDpsDisplayConfig, ModStudioLoadingMethod, ThemePreset, TimelineDpsViewMode,
+            UiConfig, UiDensity, sanitize_timeline_bucket_seconds,
         },
         history::{
             BorrowedHistorySaveOutcome, HistoryCombatDetails, HistoryDeleteTombstone,
@@ -2418,7 +2418,7 @@ impl AppState {
         }
     }
 
-    pub(crate) fn passthrough_hotkey(&self) -> PassthroughHotkey {
+    pub(crate) fn passthrough_hotkey(&self) -> HotkeyBinding {
         self.ui_config().passthrough_hotkey
     }
 
@@ -2727,7 +2727,7 @@ impl AppState {
         auto_round_after_idle: bool,
         auto_round_idle_seconds: u32,
         dps_time_mode: DpsTimeMode,
-        passthrough_hotkey: PassthroughHotkey,
+        passthrough_hotkey: HotkeyBinding,
     ) -> Result<bool, SettingsServiceError> {
         let changed = self.update_ui_config(|config| {
             config.capture_filter = filter;
@@ -2755,6 +2755,15 @@ impl AppState {
     ) -> Result<bool, SettingsServiceError> {
         self.update_ui_config_with_effects(SettingsMutationEffects::SETTINGS, |config| {
             config.global_hotkeys = global_hotkeys;
+        })
+    }
+
+    pub(crate) fn update_main_dps_display(
+        &self,
+        display: MainDpsDisplayConfig,
+    ) -> Result<bool, SettingsServiceError> {
+        self.update_ui_config_with_effects(SettingsMutationEffects::SETTINGS_AND_MAIN, |config| {
+            config.main_dps_display = display
         })
     }
 
@@ -4327,6 +4336,7 @@ mod tests {
             target_hp_before: 1_000.0,
             target_hp_after: 1_000.0 - damage,
             target_max_hp: 1_000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 50.0,
             target_id: None,
             target_name: None,
@@ -6261,7 +6271,7 @@ mod tests {
     fn initial_window_and_hud_projection_follow_loaded_config() {
         let mut config = UiConfig {
             always_on_top: false,
-            passthrough_hotkey: PassthroughHotkey::F8,
+            passthrough_hotkey: HotkeyBinding::new(false, false, false, config::HotkeyKey::F8),
             ..UiConfig::default()
         };
         config.hud.width = 512;
@@ -6274,7 +6284,10 @@ mod tests {
         let snapshot = state.snapshot().expect("healthy live-capture snapshot");
 
         assert!(!state.always_on_top());
-        assert_eq!(state.passthrough_hotkey(), PassthroughHotkey::F8);
+        assert_eq!(
+            state.passthrough_hotkey(),
+            HotkeyBinding::new(false, false, false, config::HotkeyKey::F8)
+        );
         assert!(!state.passthrough_hotkey_ready());
         assert_eq!(state.hud_width(), 512);
         assert_eq!(
@@ -7154,7 +7167,7 @@ mod tests {
                     true,
                     45,
                     DpsTimeMode::RealTime,
-                    PassthroughHotkey::Insert,
+                    HotkeyBinding::new(false, false, false, config::HotkeyKey::Insert),
                 )
                 .expect("capture settings save")
         );
@@ -7171,6 +7184,27 @@ mod tests {
         state
             .update_global_hotkeys(hotkeys)
             .expect("global hotkeys save");
+        let settings_revision = state.settings_revision();
+        let main_revision = state.0.presentation.main_revision.load(Ordering::Acquire);
+        assert!(
+            state
+                .update_main_dps_display(MainDpsDisplayConfig {
+                    metrics: vec![
+                        config::MainDpsMetric::TeamDps,
+                        config::MainDpsMetric::Duration,
+                    ],
+                    attributions: vec![
+                        config::MainDpsAttribution::Character,
+                        config::MainDpsAttribution::MaxHpReduction,
+                    ],
+                })
+                .expect("main DPS display settings save")
+        );
+        assert_eq!(state.settings_revision(), settings_revision + 1);
+        assert_eq!(
+            state.0.presentation.main_revision.load(Ordering::Acquire),
+            main_revision + 1
+        );
 
         let snapshot = state.settings_snapshot();
         assert_eq!(snapshot.interface.language, "ja");
@@ -7198,6 +7232,11 @@ mod tests {
                 .map(|binding| binding.key.as_str()),
             Some("F8")
         );
+        assert_eq!(snapshot.main_dps.metrics, ["team-dps", "duration"]);
+        assert_eq!(
+            snapshot.main_dps.attributions,
+            ["character", "max-hp-reduction"]
+        );
 
         let saved: UiConfig =
             serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
@@ -7212,6 +7251,20 @@ mod tests {
             Some("capture-device")
         );
         assert_eq!(saved.dps_time_mode, DpsTimeMode::RealTime);
+        assert_eq!(
+            saved.main_dps_display.metrics,
+            [
+                config::MainDpsMetric::TeamDps,
+                config::MainDpsMetric::Duration,
+            ]
+        );
+        assert_eq!(
+            saved.main_dps_display.attributions,
+            [
+                config::MainDpsAttribution::Character,
+                config::MainDpsAttribution::MaxHpReduction,
+            ]
+        );
 
         let restored = AppState::new_with_config_path(
             saved,
@@ -7221,6 +7274,10 @@ mod tests {
         assert_eq!(
             restored.settings_snapshot().capture.bpf_filter,
             "udp port 30196"
+        );
+        assert_eq!(
+            restored.settings_snapshot().main_dps.metrics,
+            ["team-dps", "duration"]
         );
         assert_eq!(
             restored.0.live_capture.history_archive_policy(),

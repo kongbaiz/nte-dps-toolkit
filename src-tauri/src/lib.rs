@@ -282,6 +282,7 @@ pub fn run() {
             commands::settings::set_settings_hotkey_binding,
             commands::settings::set_settings_hotkeys_enabled,
             commands::settings::set_settings_interface,
+            commands::settings::set_settings_main_dps_display,
             commands::settings::set_settings_update_preferences,
             commands::skills::get_skills_snapshot,
             commands::timeline::get_timeline_snapshot,
