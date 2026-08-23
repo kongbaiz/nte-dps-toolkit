@@ -93,6 +93,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         primaryDamage: 100,
         followUpDamage: 23,
         overkillDamage: 0,
+        maxHpReduction: 200,
         skillId: "Skill",
         skill: "Skill",
         damageType: "Basic Attack",
@@ -120,6 +121,7 @@ describe("main DPS detail contract", () => {
     expect(parsed.rows[0]?.targetHpPercent).toBe(87.7);
     expect(parsed.rows[0]?.typeLabel).toBe("Basic Attack·Skill");
     expect(parsed.rows[0]?.overkillDamage).toBe(0);
+    expect(parsed.rows[0]?.maxHpReduction).toBe(200);
     expect(parsed.columns.typeWidth).toBe(250);
   });
 

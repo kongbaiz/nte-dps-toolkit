@@ -10,8 +10,14 @@ import {
   parseDpsTimeRuntime,
   type DpsTimeRuntime,
 } from "@/lib/tauri/dps-time-contract";
+import {
+  MAIN_DPS_ATTRIBUTION_IDS,
+  MAIN_DPS_METRIC_IDS,
+  type MainDpsAttributionId,
+  type MainDpsMetricId,
+} from "@/lib/tauri/settings-contract";
 
-export const MAIN_DPS_CONTRACT_VERSION = 6;
+export const MAIN_DPS_CONTRACT_VERSION = 7;
 export const MAIN_DPS_MAX_HISTORY_RECORDS = 200;
 export const MAIN_DPS_MAX_ROUNDS = MAIN_DPS_MAX_HISTORY_RECORDS + 1;
 export const MAIN_DPS_MAX_CHARACTERS = 4;
@@ -50,6 +56,7 @@ export interface MainDpsSnapshot {
   alwaysOnTop: boolean;
   passthrough: boolean;
   appearance: MainDpsAppearance;
+  display: MainDpsDisplay;
   rounds: MainDpsRound[];
   selectedRoundId: string | null;
   readout: MainDpsReadout;
@@ -71,6 +78,11 @@ export interface MainDpsAppearance {
   density: "compact" | "cozy" | "comfortable";
   reduceMotion: boolean;
   opacity: number;
+}
+
+export interface MainDpsDisplay {
+  metrics: MainDpsMetricId[];
+  attributions: MainDpsAttributionId[];
 }
 
 export interface MainDpsOnboarding {
@@ -126,6 +138,7 @@ export interface MainDpsCharacter {
 
 export interface MainDpsDamageAttribution {
   totalDamage: number;
+  maxHpReduction: number;
   characterDirectDamage: number;
   characterReactionDamage: number;
   sharedDamage: number;
@@ -171,6 +184,7 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
     "readout.damageAttribution",
   );
   const appearance = object(source.appearance, "appearance");
+  const display = object(source.display, "display");
   const actions = object(source.actions, "actions");
   const onboarding = object(source.onboarding, "onboarding");
   const dataState = oneOf(
@@ -235,6 +249,18 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
       reduceMotion: boolean(appearance.reduceMotion, "appearance.reduceMotion"),
       opacity: finite(appearance.opacity, "appearance.opacity"),
     },
+    display: {
+      metrics: parseUniqueIds(
+        display.metrics,
+        MAIN_DPS_METRIC_IDS,
+        "display.metrics",
+      ),
+      attributions: parseUniqueIds(
+        display.attributions,
+        MAIN_DPS_ATTRIBUTION_IDS,
+        "display.attributions",
+      ),
+    },
     rounds,
     selectedRoundId: nullableBoundedText(
       source.selectedRoundId,
@@ -264,6 +290,10 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
         totalDamage: finite(
           damageAttribution.totalDamage,
           "damageAttribution.totalDamage",
+        ),
+        maxHpReduction: finite(
+          damageAttribution.maxHpReduction,
+          "damageAttribution.maxHpReduction",
         ),
         characterDirectDamage: finite(
           damageAttribution.characterDirectDamage,
@@ -375,6 +405,22 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
   };
   validateProjectedTextBudget(snapshot);
   return snapshot;
+}
+
+function parseUniqueIds<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  field: string,
+): T[number][] {
+  const ids = list(value, field).map((item, index) =>
+    oneOf(item, allowed, `${field}[${index}]`),
+  );
+  if (ids.length > allowed.length || new Set(ids).size !== ids.length) {
+    throw new TechnicalContractError(
+      `${field} must contain unique identifiers`,
+    );
+  }
+  return ids;
 }
 
 export function parseMainDpsResetResult(value: unknown): MainDpsResetResult {

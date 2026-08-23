@@ -3,13 +3,14 @@ import {
   Backpack,
   ChevronLeft,
   ChevronsLeft,
-  Folder,
   History,
+  Keyboard,
   LockKeyhole,
   Puzzle,
   Radio,
   Settings,
   Sparkles,
+  Star,
   Timeline,
   UserRound,
   type LucideIcon,
@@ -34,49 +35,64 @@ import {
 interface ConsoleNavItem {
   labelKey: string;
   icon: LucideIcon;
-  pageId?: ConsolePageId;
+  pageId: ConsolePageId;
 }
+
+const CONSOLE_NAV_ITEMS: Record<ConsolePageId, ConsoleNavItem> = {
+  settings: { labelKey: "Settings", icon: Settings, pageId: "settings" },
+  shortcuts: {
+    labelKey: "Shortcuts",
+    icon: Keyboard,
+    pageId: "shortcuts",
+  },
+  history: { labelKey: "History", icon: History, pageId: "history" },
+  timeline: { labelKey: "Timeline", icon: Timeline, pageId: "timeline" },
+  skills: { labelKey: "Skills", icon: Sparkles, pageId: "skills" },
+  "empty-curtain": {
+    labelKey: "Console Loadout",
+    icon: Backpack,
+    pageId: "empty-curtain",
+  },
+  "mod-studio": {
+    labelKey: "Mod Studio",
+    icon: Puzzle,
+    pageId: "mod-studio",
+  },
+  "character-data": {
+    labelKey: "Character Data",
+    icon: UserRound,
+    pageId: "character-data",
+  },
+  "encrypted-ini": {
+    labelKey: "Encrypted INI",
+    icon: LockKeyhole,
+    pageId: "encrypted-ini",
+  },
+  packets: { labelKey: "Packets", icon: Radio, pageId: "packets" },
+  diagnostics: {
+    labelKey: "Diagnostics",
+    icon: Activity,
+    pageId: "diagnostics",
+  },
+};
 
 const CONSOLE_NAV_GROUPS: Array<{
   labelKey: string;
-  items: ConsoleNavItem[];
+  pages: ConsolePageId[];
 }> = [
   {
-    labelKey: "Common",
-    items: [
-      { labelKey: "Settings", icon: Settings, pageId: "settings" },
-      { labelKey: "History", icon: History, pageId: "history" },
-    ],
-  },
-  {
     labelKey: "Review",
-    items: [
-      { labelKey: "Timeline", icon: Timeline, pageId: "timeline" },
-      { labelKey: "Skills", icon: Sparkles, pageId: "skills" },
-      {
-        labelKey: "Console Loadout",
-        icon: Backpack,
-        pageId: "empty-curtain",
-      },
-      { labelKey: "Mod Studio", icon: Puzzle, pageId: "mod-studio" },
-    ],
+    pages: ["history", "timeline", "skills", "empty-curtain", "mod-studio"],
   },
   {
     labelKey: "Advanced",
-    items: [
-      {
-        labelKey: "Character Data",
-        icon: UserRound,
-        pageId: "character-data",
-      },
-      {
-        labelKey: "Encrypted INI",
-        icon: LockKeyhole,
-        pageId: "encrypted-ini",
-      },
-      { labelKey: "Packets", icon: Radio, pageId: "packets" },
-      { labelKey: "Resources", icon: Folder, pageId: "resources" },
-      { labelKey: "Diagnostics", icon: Activity, pageId: "diagnostics" },
+    pages: [
+      "settings",
+      "shortcuts",
+      "character-data",
+      "encrypted-ini",
+      "packets",
+      "diagnostics",
     ],
   },
 ];
@@ -84,6 +100,8 @@ const CONSOLE_NAV_GROUPS: Array<{
 interface ConsoleSidebarProps {
   activePage: ConsolePageId;
   collapsed: boolean;
+  favoritePages: readonly ConsolePageId[];
+  onFavoriteChange: (page: ConsolePageId, favorite: boolean) => void;
   onNavigate: (page: ConsolePageId) => void;
   onToggle: () => void;
 }
@@ -91,6 +109,8 @@ interface ConsoleSidebarProps {
 export function ConsoleSidebar({
   activePage,
   collapsed,
+  favoritePages,
+  onFavoriteChange,
   onNavigate,
   onToggle,
 }: ConsoleSidebarProps) {
@@ -140,6 +160,34 @@ export function ConsoleSidebar({
       )}
 
       <nav className="console-sidebar-scroll min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="mb-3">
+          <p
+            className={cn(
+              "mb-1 px-2 text-[11px] text-muted-foreground",
+              presentation.collapsed && "sr-only",
+            )}
+          >
+            {t("Common")}
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {favoritePages.length === 0 && !presentation.collapsed ? (
+              <p className="px-2 py-1 text-xs leading-relaxed text-muted-foreground">
+                {t("No favorites yet")}
+              </p>
+            ) : null}
+            {favoritePages.map((page) => (
+              <ConsoleNavRow
+                active={page === activePage}
+                favorite
+                item={CONSOLE_NAV_ITEMS[page]}
+                key={page}
+                labelHidden={presentation.collapsed}
+                onFavoriteChange={onFavoriteChange}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
+        </div>
         {CONSOLE_NAV_GROUPS.map((group) => (
           <div className="mb-3" key={group.labelKey}>
             <p
@@ -151,15 +199,19 @@ export function ConsoleSidebar({
               {t(group.labelKey)}
             </p>
             <div className="flex flex-col gap-0.5">
-              {group.items.map((item) => (
-                <ConsoleNavRow
-                  active={item.pageId === activePage}
-                  item={item}
-                  key={item.labelKey}
-                  labelHidden={presentation.collapsed}
-                  onNavigate={onNavigate}
-                />
-              ))}
+              {group.pages
+                .filter((page) => !favoritePages.includes(page))
+                .map((page) => (
+                  <ConsoleNavRow
+                    active={page === activePage}
+                    favorite={false}
+                    item={CONSOLE_NAV_ITEMS[page]}
+                    key={page}
+                    labelHidden={presentation.collapsed}
+                    onFavoriteChange={onFavoriteChange}
+                    onNavigate={onNavigate}
+                  />
+                ))}
             </div>
           </div>
         ))}
@@ -170,31 +222,30 @@ export function ConsoleSidebar({
 
 function ConsoleNavRow({
   active,
+  favorite,
   item,
   labelHidden,
+  onFavoriteChange,
   onNavigate,
 }: {
   active: boolean;
+  favorite: boolean;
   item: ConsoleNavItem;
   labelHidden: boolean;
+  onFavoriteChange: (page: ConsolePageId, favorite: boolean) => void;
   onNavigate: (page: ConsolePageId) => void;
 }) {
   const Icon = item.icon;
-  const row = (
+  const navigationButton = (
     <button
       type="button"
       className={cn(
         "console-nav-row group/nav-row flex h-9 w-full items-center gap-3 rounded-md px-2 text-sm",
         labelHidden && "justify-center px-0",
-        consoleSidebarRowClasses(active, item.pageId === undefined),
+        consoleSidebarRowClasses(active, false),
       )}
       aria-current={active ? "page" : undefined}
-      disabled={item.pageId === undefined}
-      onClick={() => {
-        if (item.pageId !== undefined) {
-          onNavigate(item.pageId);
-        }
-      }}
+      onClick={() => onNavigate(item.pageId)}
     >
       <span className="grid size-[18px] shrink-0 place-items-center transition-transform duration-200 ease-out group-hover/nav-row:scale-110 group-active/nav-row:scale-95">
         <Icon className="size-[18px]" aria-hidden="true" />
@@ -205,14 +256,40 @@ function ConsoleNavRow({
     </button>
   );
 
-  if (!labelHidden) {
-    return row;
+  if (labelHidden) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={navigationButton} />
+        <TooltipContent side="right">{t(item.labelKey)}</TooltipContent>
+      </Tooltip>
+    );
   }
   return (
-    <Tooltip>
-      <TooltipTrigger render={row} />
-      <TooltipContent side="right">{t(item.labelKey)}</TooltipContent>
-    </Tooltip>
+    <div className="group/favorite-row flex items-center gap-1">
+      <div className="min-w-0 flex-1">{navigationButton}</div>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className={cn(
+                "grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition-[opacity,color,background-color] hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/favorite-row:opacity-100",
+                favorite && "text-amber-500 opacity-100",
+              )}
+              aria-label={t(
+                favorite ? "Remove from favorites" : "Add to favorites",
+              )}
+              onClick={() => onFavoriteChange(item.pageId, !favorite)}
+            />
+          }
+        >
+          <Star className={cn("size-4", favorite && "fill-current")} />
+        </TooltipTrigger>
+        <TooltipContent>
+          {t(favorite ? "Remove from favorites" : "Add to favorites")}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
 

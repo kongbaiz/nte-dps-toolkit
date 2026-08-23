@@ -21,8 +21,8 @@ import { EncryptedIniPage } from "@/features/encrypted-ini/encrypted-ini-page";
 import { HistoryPage } from "@/features/history/history-page";
 import { ModStudioWorkspace } from "@/features/mod-studio/mod-studio-page";
 import { PacketsPage } from "@/features/packets/packets-page";
-import { ResourcesPage } from "@/features/resources/resources-page";
 import { SettingsPage } from "@/features/settings/settings-page";
+import { ShortcutsPage } from "@/features/shortcuts/shortcuts-page";
 import { SkillsPage } from "@/features/skills/skills-page";
 import { TimelinePage } from "@/features/timeline/timeline-page";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
@@ -48,10 +48,12 @@ import {
   consolePageActivityMode,
   isEditableKeyboardTarget,
   isConsolePageId,
+  readConsoleFavoritePages,
   readConsoleSidebarCollapsed,
   resolveConsoleShortcut,
   type ConsolePageId,
   writeConsoleSidebarCollapsed,
+  writeConsoleFavoritePages,
 } from "./console-navigation";
 import { ConsoleSidebar } from "./console-sidebar";
 
@@ -62,6 +64,7 @@ export function ConsolePage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     readConsoleSidebarCollapsed,
   );
+  const [favoritePages, setFavoritePages] = useState(readConsoleFavoritePages);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -146,6 +149,21 @@ export function ConsolePage() {
       return next;
     });
   };
+
+  const updateFavoritePage = useCallback(
+    (page: ConsolePageId, favorite: boolean) => {
+      setFavoritePages((current) => {
+        const next = favorite
+          ? current.includes(page)
+            ? current
+            : [...current, page]
+          : current.filter((candidate) => candidate !== page);
+        writeConsoleFavoritePages(next);
+        return next;
+      });
+    },
+    [],
+  );
 
   const executeCommand = useCallback(
     async (action: ConsoleCommandAction) => {
@@ -260,6 +278,8 @@ export function ConsolePage() {
         <ConsoleSidebar
           activePage={activePage}
           collapsed={sidebarCollapsed}
+          favoritePages={favoritePages}
+          onFavoriteChange={updateFavoritePage}
           onNavigate={navigateTo}
           onToggle={toggleSidebar}
         />
@@ -368,14 +388,14 @@ export function ConsolePage() {
           </div>
         </Activity>
         <Activity
-          name="console-resources"
-          mode={consolePageActivityMode(activePage, "resources")}
+          name="console-shortcuts"
+          mode={consolePageActivityMode(activePage, "shortcuts")}
         >
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
-            data-active={activePage === "resources"}
+            data-active={activePage === "shortcuts"}
           >
-            <ResourcesPage />
+            <ShortcutsPage />
           </div>
         </Activity>
         <Activity

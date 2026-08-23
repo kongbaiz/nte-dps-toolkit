@@ -173,6 +173,7 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
@@ -739,6 +740,7 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_hp_percent: 0.0,
+            max_hp_reduction: None,
             reconciled_overkill_damage: Some(50.0),
         };
         let signal = apply_engine_event(&mut state, EngineEvent::HitDamageCorrection(correction));
@@ -796,6 +798,7 @@ mod tests {
             target_hp_before: 100.0,
             target_hp_after: 0.0,
             target_hp_percent: 0.0,
+            max_hp_reduction: None,
             reconciled_overkill_damage: Some(0.0),
         };
         assert_eq!(
@@ -808,6 +811,85 @@ mod tests {
             .map(|hit| hit.damage - hit.overkill_damage())
             .sum::<f64>();
         assert_eq!(effective, 99.0);
+    }
+
+    #[test]
+    fn replayed_server_residual_remains_an_ordinary_hit() {
+        let mut state = CombatState::default();
+        let mut represented = test_hit(1.0, 7, 80.0);
+        represented.target_id = Some("enemy-wire:test".to_owned());
+        represented.target_hp_before = 100.0;
+        represented.target_hp_after = 20.0;
+        represented.target_max_hp = 100.0;
+        represented.reconciled_overkill_damage = Some(0.0);
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(represented)));
+
+        let mut residual = test_hit(1.1, 0, 19.0);
+        residual.char_name = "Unattributed".to_owned();
+        residual.char_known = false;
+        residual.char_source = HitCharacterSource::ExportJson;
+        residual.target_id = Some("enemy-wire:test".to_owned());
+        residual.target_hp_before = 19.0;
+        residual.target_hp_after = 0.0;
+        residual.target_max_hp = 100.0;
+        residual.damage_name = Some("Server settlement residual".to_owned());
+        residual.reconciled_overkill_damage = Some(0.0);
+
+        assert_eq!(
+            apply_engine_event(&mut state, EngineEvent::Hit(Box::new(residual))),
+            CoreSignal::StateChanged
+        );
+        assert_eq!(state.hits.len(), 2);
+        assert_eq!(state.total_damage, 99.0);
+        assert_eq!(state.hits[0].overkill_damage(), 0.0);
+    }
+
+    #[test]
+    fn delayed_server_residual_keeps_the_target_hit_abyss_half() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: Some(1),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        let mut represented = test_hit(1.0, 7, 80.0);
+        represented.target_id = Some("enemy-wire:test".to_owned());
+        represented.target_hp_before = 100.0;
+        represented.target_hp_after = 20.0;
+        represented.target_max_hp = 100.0;
+        represented.reconciled_overkill_damage = Some(0.0);
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(represented)));
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 1.1,
+                cycle: Some(1),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::Second,
+                allow_late_backfill: false,
+            }),
+        );
+
+        let mut marker = test_hit(1.05, 0, 0.0);
+        marker.char_name = "Unattributed".to_owned();
+        marker.char_known = false;
+        marker.target_id = Some("enemy-wire:test".to_owned());
+        marker.target_hp_before = 99.0;
+        marker.target_hp_after = 0.0;
+        marker.target_max_hp = 100.0;
+        marker.damage_name = Some("Server settlement residual".to_owned());
+        marker.reconciled_overkill_damage = Some(0.0);
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(marker)));
+
+        assert_eq!(state.abyss.first_half.total_damage, 99.0);
+        assert_eq!(state.abyss.first_half.hits.len(), 2);
+        assert_eq!(state.abyss.second_half.total_damage, 0.0);
+        assert!(state.abyss.second_half.hits.is_empty());
     }
 
     #[test]
@@ -890,6 +972,7 @@ mod tests {
                 target_hp_before: 0.0,
                 target_hp_after: 0.0,
                 target_hp_percent: 0.0,
+                max_hp_reduction: None,
                 reconciled_overkill_damage: None,
             }),
         );

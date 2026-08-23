@@ -27,6 +27,7 @@ export type SettingsPendingSection =
   | "capture"
   | "hotkeys"
   | "layout"
+  | "main-dps-display"
   | "team-data"
   | "capture-files"
   | "abyss-values"

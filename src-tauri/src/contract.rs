@@ -322,6 +322,15 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn hotkey_conflict() -> Self {
+        Self {
+            code: "hotkey_conflict",
+            message_key: "This shortcut is already assigned",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn settings_config_save_failed() -> Self {
         Self {
             code: "settings_config_save_failed",

@@ -178,6 +178,7 @@ mod tests {
             target_hp_before: 1000.0,
             target_hp_after: 900.0,
             target_max_hp: 1000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 90.0,
             target_id: None,
             target_name: None,

@@ -995,11 +995,6 @@ html[data-window-route="notification-island"] .motion-skeleton {
       padding: 0.375rem 0.5rem;
     }
 
-    .main-dps-metrics {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 0.25rem;
-    }
-
     .main-dps-toolbar {
       flex-wrap: nowrap;
       justify-content: flex-start;
@@ -1013,12 +1008,25 @@ html[data-window-route="notification-island"] .motion-skeleton {
     }
 
     .main-dps-metric {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 0.25rem;
       padding-block: 0.125rem;
     }
 
     .main-dps-metric > div:first-child {
       font-size: 1rem;
       line-height: 1.25rem;
+    }
+
+    .main-dps-metric > div:last-child {
+      font-size: 0.625rem;
+      line-height: 1rem;
+    }
+
+    .main-dps-team-hint {
+      display: none;
     }
 
     .main-dps-team-section {

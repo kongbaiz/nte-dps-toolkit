@@ -1,7 +1,7 @@
 import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 
-export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 6;
+export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 7;
 export const MAIN_DPS_DETAIL_MAX_QTE_SUMMARIES = 32;
 export const MAIN_DPS_DETAIL_MAX_SKILLS = 250;
 export const MAIN_DPS_DETAIL_MAX_ROWS = 250;
@@ -146,6 +146,7 @@ export interface MainDpsHit {
   primaryDamage: number;
   followUpDamage: number;
   overkillDamage: number;
+  maxHpReduction: number;
   skillId: string;
   skill: string;
   damageType: string;
@@ -420,6 +421,7 @@ function parseHit(value: unknown): MainDpsHit {
     primaryDamage: finite(source.primaryDamage, "hit.primaryDamage"),
     followUpDamage: finite(source.followUpDamage, "hit.followUpDamage"),
     overkillDamage: finite(source.overkillDamage, "hit.overkillDamage"),
+    maxHpReduction: finite(source.maxHpReduction, "hit.maxHpReduction"),
     skillId: boundedText(
       source.skillId,
       "hit.skillId",

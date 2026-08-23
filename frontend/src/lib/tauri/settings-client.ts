@@ -9,6 +9,7 @@ import {
   type HudSettingOptionId,
   type InterfaceSettingsInput,
   type LayoutProfileId,
+  type MainDpsDisplayInput,
   type SettingsCommandError,
   type SettingsSnapshot,
   type TeamDataImportFileResult,
@@ -49,6 +50,7 @@ const COMMANDS = {
   setHotkeyBinding: "set_settings_hotkey_binding",
   setHotkeysEnabled: "set_settings_hotkeys_enabled",
   setInterface: "set_settings_interface",
+  setMainDpsDisplay: "set_settings_main_dps_display",
   setUpdatePreferences: "set_settings_update_preferences",
   subscribe: "subscribe_settings",
   unsubscribe: "unsubscribe_settings",
@@ -78,6 +80,7 @@ export interface SettingsClient {
     action: GlobalHotkeyActionId,
     binding: HotkeyBinding | null,
   ): Promise<SettingsSnapshot>;
+  setMainDpsDisplay(settings: MainDpsDisplayInput): Promise<SettingsSnapshot>;
   applyLayoutProfile(profile: LayoutProfileId): Promise<SettingsSnapshot>;
   openAbyssValues(): Promise<SettingsSnapshot>;
   importTeamData(json: string): Promise<SettingsSnapshot>;
@@ -146,6 +149,8 @@ export function createSettingsClient(
       snapshotCommand(COMMANDS.setHotkeysEnabled, { enabled }),
     setHotkeyBinding: (action, binding) =>
       snapshotCommand(COMMANDS.setHotkeyBinding, { action, binding }),
+    setMainDpsDisplay: (settings) =>
+      snapshotCommand(COMMANDS.setMainDpsDisplay, { settings }),
     applyLayoutProfile: (profile) =>
       snapshotCommand(COMMANDS.applyLayoutProfile, { profile }),
     openAbyssValues: () => snapshotCommand(COMMANDS.openAbyssValues),

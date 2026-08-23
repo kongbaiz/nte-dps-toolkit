@@ -16,6 +16,9 @@
       "damage_name_zh": "复制创生花",
       "damage_name_ja": "複製創生花"
     },
+    "GE_Player_Daffodill_ExtraUnbalance_Damage": {
+      "attack_type": "倾陷伤害"
+    },
     "GE_Nanally010_Lv1_Damage": {
       "owner_character_id": 1010,
       "ability": "GA_Nanally_Passive_2",
@@ -118,6 +121,7 @@
       "attack_type": "Special Damage",
       "show_parent_ability": false,
       "owner_character_id": 1004,
+      "use_server_damage": true,
       "damage_name_zh": "噩梦",
       "damage_name_en": "噩梦",
       "damage_name_ja": "噩梦"
@@ -127,6 +131,8 @@
       "attack_type": "Special Damage",
       "show_parent_ability": false,
       "owner_character_id": 1004,
+      "use_server_damage": true,
+      "max_hp_reduction_percent": 200,
       "damage_name_zh": "「噩梦」",
       "damage_name_en": "「噩梦」",
       "damage_name_ja": "「噩梦」"
