@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 /// corrections can still find a hit after an earlier correction changed its
 /// damage/HP fields.
 const RECENT_HIT_MUTATION_WINDOW: usize = 512;
+const OVERKILL_INTERVAL_WINDOW_SECONDS: f64 = 0.5;
 const RECENT_HIT_SOURCE_ALIASES: usize = 4;
 const MAX_DEBUG_PACKETS: usize = 10_000;
 /// Debug packets are an optional diagnostic read model; raw PCAPNG is the
@@ -224,6 +225,29 @@ pub struct Hit {
     pub follow_up_attack_type: Option<String>,
     #[serde(default)]
     pub follow_up_damage_attribute: Option<String>,
+    /// Overkill reconciled across damage records that share the same target
+    /// HP snapshot. `None` preserves the legacy per-hit derivation for older
+    /// History/JSON records that predate interval reconciliation.
+    #[serde(default)]
+    pub reconciled_overkill_damage: Option<f64>,
+    /// Parser-only identity of the SDK damage record. Capture reconciliation
+    /// uses this to collapse the same wire event even when two attribution
+    /// paths derive different target handles. It is intentionally not part of
+    /// History or the external battle contract.
+    #[serde(skip)]
+    pub wire_event: Option<DamageWireEvent>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DamageWireEvent {
+    pub damage: f32,
+    pub target_hp_before: f32,
+    pub target_max_hp: f32,
+    pub damage_time: f64,
+    pub world_time: f32,
+    pub repeated_damage: f32,
+    pub state_flags: [i32; 3],
+    pub trailing_value: f32,
 }
 
 impl Hit {
@@ -232,6 +256,12 @@ impl Hit {
     }
 
     pub fn overkill_damage(&self) -> f64 {
+        if let Some(overkill) = self
+            .reconciled_overkill_damage
+            .filter(|value| value.is_finite())
+        {
+            return overkill.clamp(0.0, self.damage.max(0.0));
+        }
         if self.target_max_hp <= 0.0
             || !self.damage.is_finite()
             || !self.target_hp_before.is_finite()
@@ -239,6 +269,68 @@ impl Hit {
             return 0.0;
         }
         (self.damage - self.target_hp_before).max(0.0)
+    }
+
+    pub fn is_server_damage_reconciliation(&self) -> bool {
+        self.char_id == 0
+            && self.direction.is_outgoing()
+            && self.damage_name.as_deref() == Some("Server settlement residual")
+            && self.target_id.is_some()
+    }
+}
+
+fn reconcile_latest_overkill_interval(hits: &mut VecDeque<Hit>) {
+    let Some(latest) = hits.back() else {
+        return;
+    };
+    let Some(latest_wire) = latest.wire_event else {
+        return;
+    };
+    let Some(target_id) = latest.target_id.clone() else {
+        return;
+    };
+    if !latest.direction.is_outgoing()
+        || !latest_wire.target_hp_before.is_finite()
+        || latest_wire.target_hp_before <= 0.0
+        || !latest_wire.target_max_hp.is_finite()
+        || latest_wire.target_max_hp <= 0.0
+        || !latest_wire.damage_time.is_finite()
+    {
+        return;
+    }
+
+    let latest_damage_time = latest_wire.damage_time;
+    let mut interval = hits
+        .iter()
+        .enumerate()
+        .rev()
+        .take(RECENT_HIT_MUTATION_WINDOW)
+        .filter_map(|(index, candidate)| {
+            let wire = candidate.wire_event?;
+            (candidate.direction.is_outgoing()
+                && candidate.target_id.as_deref() == Some(target_id.as_str())
+                && (wire.target_hp_before - latest_wire.target_hp_before).abs() <= 0.5
+                && (wire.target_max_hp - latest_wire.target_max_hp).abs() <= 0.5
+                && wire.damage_time.is_finite()
+                && (wire.damage_time - latest_damage_time).abs()
+                    <= OVERKILL_INTERVAL_WINDOW_SECONDS)
+                .then_some((index, wire.damage_time))
+        })
+        .collect::<Vec<_>>();
+    interval.sort_by(|(left_index, left_time), (right_index, right_time)| {
+        left_time
+            .total_cmp(right_time)
+            .then_with(|| left_index.cmp(right_index))
+    });
+
+    let mut remaining_hp = f64::from(latest_wire.target_hp_before);
+    for (index, _) in interval {
+        let Some(hit) = hits.get_mut(index) else {
+            continue;
+        };
+        let damage = hit.damage.max(0.0);
+        hit.reconciled_overkill_damage = Some((damage - remaining_hp).max(0.0));
+        remaining_hp = (remaining_hp - damage).max(0.0);
     }
 }
 
@@ -278,6 +370,10 @@ pub struct HitDamageCorrection {
     pub target_hp_before: f64,
     pub target_hp_after: f64,
     pub target_hp_percent: f64,
+    /// `Some` is an authoritative server settlement; `None` leaves any
+    /// previously reconciled overkill label unchanged.
+    #[serde(default)]
+    pub reconciled_overkill_damage: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -4392,6 +4488,7 @@ impl PartyCombatState {
         }
         self.combat_detail_index.observe_hit(position, &hit);
         self.hits.push_back(hit);
+        reconcile_latest_overkill_interval(&mut self.hits);
         self.hits_generation = self.hits_generation.wrapping_add(1);
         self.sync_clock_with_time_stops();
     }
@@ -4886,6 +4983,8 @@ impl AbyssRunState {
 const ENEMY_TELEMETRY_MOD_ID: &str = "enemy-telemetry";
 const ENEMY_TELEMETRY_BACKFILL_HITS: usize = 32;
 const ENEMY_TELEMETRY_MAX_HIT_TARGETS: usize = 128;
+const MAX_SERVER_TARGET_DAMAGE_LIMITS: usize = 128;
+const SERVER_DAMAGE_RECONCILIATION_WINDOW_SECONDS: f64 = 2.0;
 const ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS: f64 = 0.35;
 const ENEMY_TELEMETRY_INSTANCE: &str = "target_name_resolution=enemy_telemetry_instance";
 const ENEMY_TELEMETRY_HIT_INSTANCE: &str = "target_name_resolution=enemy_telemetry_hit_instance";
@@ -5178,6 +5277,7 @@ pub struct CombatState {
     /// runtime-only state and is rebuilt naturally by the import/replay push
     /// path; it is never part of a persisted or cross-boundary contract.
     recent_hit_records: VecDeque<RecentHitRecord>,
+    server_target_damage_limits: HashMap<String, (Option<AbyssHalf>, Hit)>,
 }
 
 impl CombatState {
@@ -5218,7 +5318,129 @@ impl CombatState {
             enemy_telemetry: EnemyTelemetryTracker::default(),
             packet_debug_bytes: 0,
             recent_hit_records: VecDeque::new(),
+            server_target_damage_limits: HashMap::new(),
         }
+    }
+
+    pub fn reconcile_server_target_damage(&mut self, marker: Hit) -> bool {
+        if !marker.is_server_damage_reconciliation()
+            || !marker.target_hp_before.is_finite()
+            || marker.target_hp_before <= 0.0
+        {
+            return false;
+        }
+        let Some(target_id) = marker.target_id.clone() else {
+            return false;
+        };
+        let active_half = self.abyss.active_half;
+        if !self.server_target_damage_limits.contains_key(&target_id)
+            && self.server_target_damage_limits.len() >= MAX_SERVER_TARGET_DAMAGE_LIMITS
+            && let Some(oldest) = self
+                .server_target_damage_limits
+                .iter()
+                .min_by(|(left_id, (_, left)), (right_id, (_, right))| {
+                    left.timestamp
+                        .total_cmp(&right.timestamp)
+                        .then_with(|| left_id.cmp(right_id))
+                })
+                .map(|(target_id, _)| target_id.clone())
+        {
+            self.server_target_damage_limits.remove(&oldest);
+        }
+        self.server_target_damage_limits
+            .insert(target_id.clone(), (active_half, marker.clone()));
+        self.reconcile_server_target_limit(&target_id, active_half, marker)
+    }
+
+    pub fn reconcile_known_server_target_limits(&mut self, source_timestamp: f64) -> bool {
+        let limits = self
+            .server_target_damage_limits
+            .iter()
+            .filter(|(_, (_, marker))| {
+                marker.timestamp >= source_timestamp
+                    && marker.timestamp - source_timestamp
+                        <= SERVER_DAMAGE_RECONCILIATION_WINDOW_SECONDS
+            })
+            .map(|(target_id, (half, marker))| (target_id.clone(), *half, marker.clone()))
+            .collect::<Vec<_>>();
+        limits
+            .into_iter()
+            .fold(false, |changed, (target_id, half, marker)| {
+                self.reconcile_server_target_limit(&target_id, half, marker) || changed
+            })
+    }
+
+    fn reconcile_server_target_limit(
+        &mut self,
+        target_id: &str,
+        target_half: Option<AbyssHalf>,
+        mut marker: Hit,
+    ) -> bool {
+        let authoritative_damage = marker.target_hp_before.min(marker.target_max_hp);
+        let represented_damage = self
+            .hits
+            .iter()
+            .zip(&self.global_hit_abyss_halves)
+            .filter(|(hit, half)| {
+                **half == target_half
+                    && hit.direction.is_outgoing()
+                    && hit.target_id.as_deref() == Some(target_id)
+            })
+            .map(|(hit, _)| (hit.damage - hit.overkill_damage()).max(0.0))
+            .sum::<f64>();
+        let residual = authoritative_damage - represented_damage;
+        if residual >= 2.0 {
+            marker.damage = residual;
+            marker.target_hp_before = residual;
+            marker.reconciled_overkill_damage = Some(0.0);
+            self.push_hit(marker);
+            return true;
+        }
+        if residual > -2.0 {
+            return false;
+        }
+
+        let mut excess = -residual;
+        let sources = self
+            .hits
+            .iter()
+            .zip(&self.global_hit_abyss_halves)
+            .rev()
+            .filter(|(hit, half)| {
+                **half == target_half
+                    && hit.direction.is_outgoing()
+                    && hit.target_id.as_deref() == Some(target_id)
+                    && hit.damage - hit.overkill_damage() >= 2.0
+            })
+            .map(|(hit, _)| hit.clone())
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for source in sources {
+            if excess < 2.0 {
+                break;
+            }
+            let effective = (source.damage - source.overkill_damage()).max(0.0);
+            let adjustment = excess.min(effective);
+            let correction = HitDamageCorrection {
+                source_timestamp: source.timestamp,
+                source_char_id: source.char_id,
+                source_damage: source.damage,
+                source_target_hp_before: source.target_hp_before,
+                source_target_hp_after: source.target_hp_after,
+                source_target_max_hp: source.target_max_hp,
+                source_gameplay_effect_index: source.gameplay_effect_index,
+                damage: source.damage,
+                target_hp_before: source.target_hp_before,
+                target_hp_after: source.target_hp_after,
+                target_hp_percent: source.target_hp_percent,
+                reconciled_overkill_damage: Some(source.overkill_damage() + adjustment),
+            };
+            if self.apply_damage_correction(correction) {
+                changed = true;
+                excess -= adjustment;
+            }
+        }
+        changed
     }
 
     pub fn push_hit(&mut self, mut hit: Hit) {
@@ -5246,6 +5468,7 @@ impl CombatState {
         self.combat_detail_index.observe_hit(position, &hit);
         remember_recent_hit(&mut self.recent_hit_records, &hit, abyss_half);
         self.hits.push_back(hit);
+        reconcile_latest_overkill_interval(&mut self.hits);
         self.global_hit_abyss_halves.push_back(abyss_half);
         self.hits_generation = self.hits_generation.wrapping_add(1);
         self.sync_clock_with_time_stops();
@@ -6699,10 +6922,16 @@ fn apply_damage_correction_to_recent_hit(
     correction: &HitDamageCorrection,
 ) -> Option<HitAggregateMutation> {
     let hit = find_recent_hit_mut(hits, locator)?;
+    let overkill_changed = correction
+        .reconciled_overkill_damage
+        .is_some_and(|overkill| {
+            hit.reconciled_overkill_damage.map(f64::to_bits) != Some(overkill.to_bits())
+        });
     let changed = hit.damage.to_bits() != correction.damage.to_bits()
         || hit.target_hp_before.to_bits() != correction.target_hp_before.to_bits()
         || hit.target_hp_after.to_bits() != correction.target_hp_after.to_bits()
-        || hit.target_hp_percent.to_bits() != correction.target_hp_percent.to_bits();
+        || hit.target_hp_percent.to_bits() != correction.target_hp_percent.to_bits()
+        || overkill_changed;
     if !changed {
         return None;
     }
@@ -6711,6 +6940,9 @@ fn apply_damage_correction_to_recent_hit(
     hit.target_hp_before = correction.target_hp_before;
     hit.target_hp_after = correction.target_hp_after;
     hit.target_hp_percent = correction.target_hp_percent;
+    if correction.reconciled_overkill_damage.is_some() {
+        hit.reconciled_overkill_damage = correction.reconciled_overkill_damage;
+    }
     Some(HitAggregateMutation::new(before, hit))
 }
 
@@ -7009,6 +7241,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 
@@ -7026,6 +7260,52 @@ mod tests {
         hit.damage = 1_500.0;
         hit.target_max_hp = 0.0;
         assert_eq!(hit.overkill_damage(), 0.0);
+    }
+
+    #[test]
+    fn overkill_reconciles_hits_that_share_one_target_hp_interval() {
+        fn interval_hit(timestamp: f64, damage_time: f64, damage: f64) -> Hit {
+            let mut hit = test_hit(timestamp, 1010, "outgoing", damage);
+            hit.target_id = Some("enemy-wire:test".to_owned());
+            hit.target_hp_before = 72_727.0;
+            hit.target_hp_after = (72_727.0 - damage).max(0.0);
+            hit.target_max_hp = 398_200.0;
+            hit.target_hp_percent = hit.target_hp_after / hit.target_max_hp * 100.0;
+            hit.wire_event = Some(DamageWireEvent {
+                damage: damage as f32,
+                target_hp_before: 72_727.0,
+                target_max_hp: 398_200.0,
+                damage_time,
+                world_time: 100.0,
+                repeated_damage: damage as f32,
+                state_flags: [0, 1, 0],
+                trailing_value: 0.0,
+            });
+            hit
+        }
+
+        let mut state = CombatState::default();
+        // Capture delivery can be opposite to the exact wire order. The
+        // interval is re-sorted by damage_time whenever a late peer arrives.
+        state.push_hit(interval_hit(2.0, 20.002, 76_702.0));
+        state.push_hit(interval_hit(2.001, 20.001, 4_926.0));
+
+        let small = state
+            .hits
+            .iter()
+            .find(|hit| hit.damage == 4_926.0)
+            .expect("small hit should remain in the interval");
+        let lethal = state
+            .hits
+            .iter()
+            .find(|hit| hit.damage == 76_702.0)
+            .expect("lethal hit should remain in the interval");
+        assert_eq!(small.overkill_damage(), 0.0);
+        assert_eq!(lethal.overkill_damage(), 8_901.0);
+        assert_eq!(
+            state.hits.iter().map(Hit::overkill_damage).sum::<f64>(),
+            8_901.0
+        );
     }
 
     fn apply_test_pause(state: &mut CombatState, start: f64, end: f64) {
@@ -7673,6 +7953,7 @@ mod tests {
             target_hp_before: 1_050.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            reconciled_overkill_damage: None,
         }));
         assert!(state.apply_follow_up(HitFollowUp {
             source_timestamp: 12.0,
@@ -7990,6 +8271,7 @@ mod tests {
             target_hp_before: 1_025.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            reconciled_overkill_damage: None,
         }));
         assert!(state.apply_follow_up(HitFollowUp {
             source_timestamp: 1.0,
@@ -8596,6 +8878,7 @@ mod tests {
             target_hp_before: 10_250.0,
             target_hp_after: 9_000.0,
             target_hp_percent: 90.0,
+            reconciled_overkill_damage: None,
         });
 
         let corrected = state.hits.front().unwrap();
@@ -8654,6 +8937,7 @@ mod tests {
             target_hp_before: 1_050.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            reconciled_overkill_damage: None,
         }));
         // The follow-up still names the original hit. The bounded record keeps
         // that source alias even though the correction changed damage/HP.
@@ -8725,6 +9009,7 @@ mod tests {
             target_hp_before: 10_000.0,
             target_hp_after: 8_750.0,
             target_hp_percent: 87.5,
+            reconciled_overkill_damage: None,
         });
 
         let first_stored = state
@@ -9273,6 +9558,7 @@ mod tests {
             target_hp_before: 1_010.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            reconciled_overkill_damage: None,
         });
 
         assert_eq!(state.abyss.first_half.started_at, Some(4.0));

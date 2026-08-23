@@ -49,8 +49,16 @@ pub enum CoreSignal {
 pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSignal {
     match event {
         EngineEvent::Hit(hit) => {
-            state.push_hit(*hit);
-            CoreSignal::StateChanged
+            if hit.is_server_damage_reconciliation() {
+                if state.reconcile_server_target_damage(*hit) {
+                    CoreSignal::StateChanged
+                } else {
+                    CoreSignal::Unchanged
+                }
+            } else {
+                state.push_hit(*hit);
+                CoreSignal::StateChanged
+            }
         }
         EngineEvent::HitFollowUp(follow_up) => {
             if state.apply_follow_up(follow_up) {
@@ -60,7 +68,9 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             }
         }
         EngineEvent::HitDamageCorrection(correction) => {
+            let source_timestamp = correction.source_timestamp;
             if state.apply_damage_correction(correction) {
+                state.reconcile_known_server_target_limits(source_timestamp);
                 CoreSignal::StateChanged
             } else {
                 CoreSignal::Unchanged
@@ -182,6 +192,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 
@@ -727,11 +739,75 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_hp_percent: 0.0,
+            reconciled_overkill_damage: Some(50.0),
         };
         let signal = apply_engine_event(&mut state, EngineEvent::HitDamageCorrection(correction));
         assert_eq!(signal, CoreSignal::StateChanged);
         assert_eq!(state.damage_correction_count, 1);
         assert_eq!(state.total_damage, 150.0);
+        assert_eq!(state.hits[0].overkill_damage(), 50.0);
+    }
+
+    #[test]
+    fn server_target_reconciliation_caps_excess_and_repairs_late_corrections() {
+        fn targeted_hit(damage: f64) -> Hit {
+            let mut hit = test_hit(1.0, 7, damage);
+            hit.target_id = Some("enemy-wire:test".to_owned());
+            hit.target_hp_before = 100.0;
+            hit.target_hp_after = 0.0;
+            hit.target_max_hp = 100.0;
+            hit.reconciled_overkill_damage = Some(0.0);
+            hit
+        }
+
+        fn marker() -> Hit {
+            let mut hit = test_hit(1.1, 0, 0.0);
+            hit.char_name = "Unattributed".to_owned();
+            hit.char_known = false;
+            hit.target_id = Some("enemy-wire:test".to_owned());
+            hit.target_hp_before = 99.0;
+            hit.target_hp_after = 0.0;
+            hit.target_max_hp = 100.0;
+            hit.damage_name = Some("Server settlement residual".to_owned());
+            hit.reconciled_overkill_damage = Some(0.0);
+            hit
+        }
+
+        let mut excess = CombatState::default();
+        apply_engine_event(&mut excess, EngineEvent::Hit(Box::new(targeted_hit(105.0))));
+        assert_eq!(
+            apply_engine_event(&mut excess, EngineEvent::Hit(Box::new(marker()))),
+            CoreSignal::StateChanged
+        );
+        assert_eq!(excess.total_damage - excess.hits[0].overkill_damage(), 99.0);
+
+        let mut deficit = CombatState::default();
+        apply_engine_event(&mut deficit, EngineEvent::Hit(Box::new(targeted_hit(80.0))));
+        apply_engine_event(&mut deficit, EngineEvent::Hit(Box::new(marker())));
+        let correction = HitDamageCorrection {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 80.0,
+            source_target_hp_before: 100.0,
+            source_target_hp_after: 0.0,
+            source_target_max_hp: 100.0,
+            source_gameplay_effect_index: None,
+            damage: 70.0,
+            target_hp_before: 100.0,
+            target_hp_after: 0.0,
+            target_hp_percent: 0.0,
+            reconciled_overkill_damage: Some(0.0),
+        };
+        assert_eq!(
+            apply_engine_event(&mut deficit, EngineEvent::HitDamageCorrection(correction)),
+            CoreSignal::StateChanged
+        );
+        let effective = deficit
+            .hits
+            .iter()
+            .map(|hit| hit.damage - hit.overkill_damage())
+            .sum::<f64>();
+        assert_eq!(effective, 99.0);
     }
 
     #[test]
@@ -814,6 +890,7 @@ mod tests {
                 target_hp_before: 0.0,
                 target_hp_after: 0.0,
                 target_hp_percent: 0.0,
+                reconciled_overkill_damage: None,
             }),
         );
         assert_eq!(identical, CoreSignal::Unchanged);
