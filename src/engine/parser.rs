@@ -7,6 +7,7 @@ use crate::engine::model::{
     CharacterInfo, EmptyCurtainItem, EnemyIdentity, EquipmentStat, Hit, HitCharacterSource,
     HitDirection, HtItemNetId,
 };
+use crate::engine::protocol::{BunchPacket, SequencedPacket};
 use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists, resource_file_path};
 
@@ -28,6 +29,24 @@ const MAX_PLAUSIBLE_CURRENT_HP_UPDATE: f32 = 500_000.0;
 const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 const BOSS_HP_PREFIX_LENGTH: usize = 36;
 const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00];
+const CLIENT_FIGHT_TARGET_WIRE_BITS: usize = 227;
+const CLIENT_FIGHT_TARGET_WIRE_BYTES: usize = CLIENT_FIGHT_TARGET_WIRE_BITS.div_ceil(8);
+const COMPACT_CLIENT_FIGHT_IDENTITY_BYTES: usize = 28;
+const COMPACT_CLIENT_FIGHT_RECORD_BYTES: usize = 52;
+// Current SDK damage replication places the compact 28-byte
+// `FCharacterForNet` target exactly 160 bytes after the decoded damage value.
+const COMPACT_DAMAGE_RECORD_TARGET_WIRE_BIT_DELTA: usize = 1_280;
+// Older bit-packed SDK builds used the 227-bit serializer at this displacement.
+const BITPACKED_DAMAGE_RECORD_TARGET_WIRE_BIT_DELTA: usize = 1_277;
+const CLIENT_FIGHT_DATA_ARRAY_HEADER_BITS: usize = 61;
+const CLIENT_FIGHT_DATA_ELEMENT_BITS: usize = 531;
+const CLIENT_FIGHT_DATA_HP_BIT_OFFSET: usize = 288;
+const CLIENT_FIGHT_DATA_DEAD_STATE_BIT_OFFSET: usize = 320;
+const MAX_CLIENT_FIGHT_DATA_ELEMENTS: usize = 64;
+const CLIENT_DAMAGE_BOSS_PACKET_INFO_BITS: usize = 913;
+const CLIENT_DAMAGE_BOSS_PAYLOAD_BITS: usize = 1_053;
+const CLIENT_DAMAGE_BOSS_PREFIX_BYTE_OFFSET: usize = 29;
+const CLIENT_DAMAGE_BOSS_BIT_SHIFT: u8 = 2;
 const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
 const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
@@ -326,7 +345,10 @@ pub struct ParsedCurrentHpUpdate {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParsedBossHpUpdate {
-    pub target_handle: [u8; 16],
+    /// Exact 227-bit `FCharacterForNet::NetSerialize` value, zero-padded in the
+    /// high five bits of the final byte. Unlike the former 128-bit prefix this
+    /// retains the per-instance discriminator used by ordinary enemies.
+    pub target_handle: [u8; CLIENT_FIGHT_TARGET_WIRE_BYTES],
     pub current_hp: f32,
     pub byte_offset: usize,
     pub bit_shift: u8,
@@ -2379,36 +2401,381 @@ pub fn parse_current_hp_updates(data: &[u8]) -> Vec<ParsedCurrentHpUpdate> {
     updates
 }
 
-pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
+fn parse_boss_hp_update_at(
+    data: &[u8],
+    byte_offset: usize,
+    bit_shift: u8,
+    zero_prefix_handles: Option<&HashSet<[u8; CLIENT_FIGHT_TARGET_WIRE_BYTES]>>,
+) -> Option<ParsedBossHpUpdate> {
+    let mut decoded = [0; BOSS_HP_PREFIX_LENGTH + 4];
+    decode_shifted_into(data, byte_offset, bit_shift, 0, &mut decoded)?;
+    let record_bit_offset = byte_offset
+        .checked_mul(8)?
+        .checked_add(usize::from(bit_shift))?;
+    let target_handle = parse_client_fight_target_wire_identity(
+        data,
+        record_bit_offset.checked_add(CLIENT_FIGHT_DATA_ARRAY_HEADER_BITS)?,
+    )?;
+    let prefix = &decoded[..BOSS_HP_PREFIX_HEAD.len()];
+    let encoded_count = u16::from_le_bytes([prefix[5], prefix[6]]);
+    let element_count = usize::from(encoded_count >> 5);
+    let tagged_prefix = prefix[..5] == BOSS_HP_PREFIX_HEAD[..5]
+        && encoded_count & 0x1f == 0
+        && (1..=MAX_CLIENT_FIGHT_DATA_ELEMENTS).contains(&element_count)
+        && prefix[7] & 0x1f == 0;
+    let continued_prefix = prefix.iter().all(|byte| *byte == 0)
+        && zero_prefix_handles.is_some_and(|handles| handles.contains(&target_handle));
+    if !tagged_prefix && !continued_prefix {
+        return None;
+    }
+    let current_hp = f32::from_le_bytes(decoded[BOSS_HP_PREFIX_LENGTH..].try_into().ok()?);
+    if !current_hp.is_finite() || !(0.0..=MAX_COMBAT_VALUE).contains(&current_hp) {
+        return None;
+    }
+    Some(ParsedBossHpUpdate {
+        target_handle,
+        current_hp,
+        byte_offset: byte_offset + BOSS_HP_PREFIX_LENGTH,
+        bit_shift,
+    })
+}
+
+fn parse_client_fight_target_wire_identity(
+    data: &[u8],
+    bit_offset: usize,
+) -> Option<[u8; CLIENT_FIGHT_TARGET_WIRE_BYTES]> {
+    let mut identity = [0; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+    decode_shifted_into(
+        data,
+        bit_offset / 8,
+        (bit_offset % 8) as u8,
+        0,
+        &mut identity,
+    )?;
+    identity[CLIENT_FIGHT_TARGET_WIRE_BYTES - 1] &= 0x07;
+
+    // SDK `FCharacterForNet::NetSerialize` writes a 128-bit opaque reference
+    // followed by the compact instance fields. The SDK-confirmed variants use
+    // 0x07, 0x0f, or 0x17 at byte 16; requiring every remaining reserved byte
+    // to be zero prevents unrelated shifted data from entering the
+    // authoritative per-target HP map.
+    if !identity[..16].iter().any(|byte| *byte != 0)
+        || !matches!(identity[16], 0x07 | 0x0f | 0x17)
+        || identity[17..20].iter().any(|byte| *byte != 0)
+        || identity[21..].iter().any(|byte| *byte != 0)
+    {
+        return None;
+    }
+    Some(identity)
+}
+
+fn parse_compact_client_fight_target_identity(
+    data: &[u8],
+    bit_offset: usize,
+) -> Option<[u8; CLIENT_FIGHT_TARGET_WIRE_BYTES]> {
+    let mut compact = [0_u8; COMPACT_CLIENT_FIGHT_IDENTITY_BYTES];
+    decode_shifted_into(
+        data,
+        bit_offset / 8,
+        (bit_offset % 8) as u8,
+        0,
+        &mut compact,
+    )?;
+    if !compact[..16].iter().any(|byte| *byte != 0) || compact[20..].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    let mut identity = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+    identity[..COMPACT_CLIENT_FIGHT_IDENTITY_BYTES].copy_from_slice(&compact);
+    Some(identity)
+}
+
+/// Decodes SDK `ClientSetReplicatedTargetData.ClientFightDataArray` directly
+/// from the external transport payload.
+///
+/// Each bounded array element contains the exact 227-bit
+/// `FCharacterForNet::NetSerialize` identity and `ClientRepFightData.fCurHealth`.
+/// A zero-leading wrapper is accepted only for the SDK-confirmed terminal
+/// `DeadState == 2 && fCurHealth == 0` shape, avoiding heuristic target claims.
+fn parse_bitpacked_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
+    const MIN_RECORD_BITS: usize = CLIENT_FIGHT_DATA_DEAD_STATE_BIT_OFFSET + 32;
+
+    let data_bits = data.len().saturating_mul(8);
+    if data_bits < MIN_RECORD_BITS {
+        return Vec::new();
+    }
+
     let mut updates = Vec::new();
-    for byte_offset in 0..data.len() {
-        for bit_shift in 0..8_u8 {
-            let mut decoded = [0; BOSS_HP_PREFIX_LENGTH + 4];
-            if decode_shifted_into(data, byte_offset, bit_shift, 0, &mut decoded).is_none()
-                || decoded[..BOSS_HP_PREFIX_HEAD.len()] != BOSS_HP_PREFIX_HEAD
-                || decoded[8..24].iter().all(|byte| *byte == 0)
-                || decoded[24..BOSS_HP_PREFIX_LENGTH]
-                    .iter()
-                    .any(|byte| *byte != 0)
+    for record_bit_offset in 0..=data_bits - MIN_RECORD_BITS {
+        let mut prefix = [0; BOSS_HP_PREFIX_HEAD.len()];
+        if decode_shifted_into(
+            data,
+            record_bit_offset / 8,
+            (record_bit_offset % 8) as u8,
+            0,
+            &mut prefix,
+        )
+        .is_none()
+        {
+            continue;
+        }
+        let encoded_count = u16::from_le_bytes([prefix[5], prefix[6]]);
+        let element_count = usize::from(encoded_count >> 5);
+        let normal_array = prefix[..5] == BOSS_HP_PREFIX_HEAD[..5];
+        let terminal_death = prefix[..5].iter().all(|byte| *byte == 0) && element_count == 1;
+        if encoded_count & 0x1f != 0
+            || !(1..=MAX_CLIENT_FIGHT_DATA_ELEMENTS).contains(&element_count)
+            || prefix[7] & 0x1f != 0
+            || (!normal_array && !terminal_death)
+        {
+            continue;
+        }
+        let Some(last_record_bit_offset) = (element_count - 1)
+            .checked_mul(CLIENT_FIGHT_DATA_ELEMENT_BITS)
+            .and_then(|bits| record_bit_offset.checked_add(bits))
+        else {
+            continue;
+        };
+        if last_record_bit_offset
+            .checked_add(MIN_RECORD_BITS)
+            .is_none_or(|end| end > data_bits)
+        {
+            continue;
+        }
+
+        let mut candidate = Vec::with_capacity(element_count);
+        for element_index in 0..element_count {
+            let element_bit_offset =
+                record_bit_offset + element_index * CLIENT_FIGHT_DATA_ELEMENT_BITS;
+            let Some(target_handle) = parse_client_fight_target_wire_identity(
+                data,
+                element_bit_offset + CLIENT_FIGHT_DATA_ARRAY_HEADER_BITS,
+            ) else {
+                candidate.clear();
+                break;
+            };
+            let mut current_hp_bytes = [0; 4];
+            let mut dead_state_bytes = [0; 4];
+            if decode_shifted_into(
+                data,
+                element_bit_offset / 8,
+                (element_bit_offset % 8) as u8,
+                CLIENT_FIGHT_DATA_HP_BIT_OFFSET,
+                &mut current_hp_bytes,
+            )
+            .is_none()
+                || decode_shifted_into(
+                    data,
+                    element_bit_offset / 8,
+                    (element_bit_offset % 8) as u8,
+                    CLIENT_FIGHT_DATA_DEAD_STATE_BIT_OFFSET,
+                    &mut dead_state_bytes,
+                )
+                .is_none()
+            {
+                candidate.clear();
+                break;
+            }
+            let current_hp = f32::from_le_bytes(current_hp_bytes);
+            let dead_state = u32::from_le_bytes(dead_state_bytes);
+            if !current_hp.is_finite()
+                || !(0.0..=MAX_COMBAT_VALUE).contains(&current_hp)
+                || dead_state > 2
+                || (terminal_death && (current_hp != 0.0 || dead_state != 2))
+            {
+                candidate.clear();
+                break;
+            }
+            let hp_bit_offset = element_bit_offset + CLIENT_FIGHT_DATA_HP_BIT_OFFSET;
+            candidate.push(ParsedBossHpUpdate {
+                target_handle,
+                current_hp,
+                byte_offset: hp_bit_offset / 8,
+                bit_shift: (hp_bit_offset % 8) as u8,
+            });
+        }
+        if candidate.len() == element_count {
+            updates.extend(candidate);
+        }
+    }
+    updates
+}
+
+/// Decodes the current SDK `ClientRepFightData` wire layout.
+///
+/// `FCharacterForNet::NetSerialize` now writes the 16-byte opaque actor value,
+/// the 4-byte instance discriminator, and 8 reserved zero bytes directly before
+/// `fCurHealth`. The surrounding array prefix and the remaining SDK fields are
+/// all required so an arbitrary UUID-like byte run cannot create a target.
+fn parse_compact_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
+    #[derive(Clone)]
+    struct Candidate {
+        update: ParsedBossHpUpdate,
+        actor_value: [u8; 16],
+        declared_element_count: Option<usize>,
+    }
+
+    if data.len() < COMPACT_CLIENT_FIGHT_RECORD_BYTES {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for bit_shift in 0..8_u8 {
+        for byte_offset in 0..=data.len() - COMPACT_CLIENT_FIGHT_RECORD_BYTES {
+            let mut decoded = [0_u8; COMPACT_CLIENT_FIGHT_RECORD_BYTES];
+            if decode_shifted_into(data, byte_offset, bit_shift, 0, &mut decoded).is_none() {
+                continue;
+            }
+            let prefix = &decoded[..8];
+            let encoded_count = u16::from_le_bytes([prefix[5], prefix[6]]);
+            let element_count = usize::from(encoded_count >> 5);
+            let normal_array = prefix[..5] == BOSS_HP_PREFIX_HEAD[..5]
+                && encoded_count & 0x1f == 0
+                && (1..=MAX_CLIENT_FIGHT_DATA_ELEMENTS).contains(&element_count)
+                && prefix[7] & 0x1f == 0;
+            let terminal_array = prefix[..5].iter().all(|byte| *byte == 0)
+                && encoded_count == 0x20
+                && prefix[7] == 0;
+            let continuation = prefix.iter().all(|byte| *byte == 0);
+            if !normal_array && !terminal_array && !continuation {
+                continue;
+            }
+
+            let identity = &decoded[8..8 + COMPACT_CLIENT_FIGHT_IDENTITY_BYTES];
+            let mut actor_value = [0_u8; 16];
+            actor_value.copy_from_slice(&identity[..16]);
+            if !actor_value.iter().any(|byte| *byte != 0)
+                || identity[20..].iter().any(|byte| *byte != 0)
             {
                 continue;
             }
-            let current_hp = f32::from_le_bytes(
-                decoded[BOSS_HP_PREFIX_LENGTH..]
-                    .try_into()
-                    .expect("Boss HP field has a fixed four-byte length"),
-            );
-            if !current_hp.is_finite() || !(0.0..=MAX_COMBAT_VALUE).contains(&current_hp) {
+            let current_hp =
+                f32::from_le_bytes([decoded[36], decoded[37], decoded[38], decoded[39]]);
+            let dead_state =
+                u32::from_le_bytes([decoded[40], decoded[41], decoded[42], decoded[43]]);
+            let shield_damage =
+                f32::from_le_bytes([decoded[44], decoded[45], decoded[46], decoded[47]]);
+            let lock_target =
+                u32::from_le_bytes([decoded[48], decoded[49], decoded[50], decoded[51]]);
+            if !current_hp.is_finite()
+                || !(0.0..=MAX_COMBAT_VALUE).contains(&current_hp)
+                || dead_state > 2
+                || !shield_damage.is_finite()
+                || !(0.0..=MAX_COMBAT_VALUE).contains(&shield_damage)
+                || lock_target > 1
+                || (terminal_array && (current_hp != 0.0 || dead_state != 2))
+            {
                 continue;
             }
-            updates.push(ParsedBossHpUpdate {
-                target_handle: decoded[8..24]
-                    .try_into()
-                    .expect("Boss target handle has a fixed 16-byte length"),
-                current_hp,
-                byte_offset: byte_offset + BOSS_HP_PREFIX_LENGTH,
-                bit_shift,
+
+            let mut target_handle = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+            target_handle[..COMPACT_CLIENT_FIGHT_IDENTITY_BYTES].copy_from_slice(identity);
+            candidates.push(Candidate {
+                update: ParsedBossHpUpdate {
+                    target_handle,
+                    current_hp,
+                    byte_offset: byte_offset + 36,
+                    bit_shift,
+                },
+                actor_value,
+                declared_element_count: (normal_array || terminal_array).then_some(element_count),
             });
+        }
+    }
+
+    let actor_candidate_counts = candidates.iter().fold(
+        HashMap::<[u8; 16], usize>::new(),
+        |mut counts, candidate| {
+            *counts.entry(candidate.actor_value).or_default() += 1;
+            counts
+        },
+    );
+    let declared_actor_values = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.declared_element_count.is_some_and(|declared| {
+                actor_candidate_counts
+                    .get(&candidate.actor_value)
+                    .is_some_and(|actual| *actual >= declared)
+            })
+        })
+        .map(|candidate| candidate.actor_value)
+        .collect::<HashSet<_>>();
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            candidate.declared_element_count.is_some_and(|declared| {
+                actor_candidate_counts
+                    .get(&candidate.actor_value)
+                    .is_some_and(|actual| *actual >= declared)
+            }) || declared_actor_values.contains(&candidate.actor_value)
+        })
+        .filter_map(|candidate| {
+            seen.insert((
+                candidate.update.target_handle,
+                candidate.update.current_hp.to_bits(),
+            ))
+            .then_some(candidate.update)
+        })
+        .collect()
+}
+
+pub fn parse_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
+    let compact = parse_compact_client_fight_target_updates(data);
+    if compact.is_empty() {
+        parse_bitpacked_client_fight_target_updates(data)
+    } else {
+        compact
+    }
+}
+
+/// Decodes the validated `ClientSetReplicatedTargetData + ClientDamageBoss` wire layout.
+///
+/// The shape and field position were independently stable in both chronological halves of the
+/// reference capture. Every structural condition remains mandatory so unrelated packets fall
+/// through to the generic bounded scanner.
+pub fn parse_client_damage_boss_update(
+    packet: &SequencedPacket,
+    bunch_packet: &BunchPacket,
+) -> Option<ParsedBossHpUpdate> {
+    let [located] = bunch_packet.bunches.as_slice() else {
+        return None;
+    };
+    if packet.mode != 0
+        || packet.payload_bit_len != CLIENT_DAMAGE_BOSS_PAYLOAD_BITS
+        || bunch_packet.packet_info_bit_len != CLIENT_DAMAGE_BOSS_PACKET_INFO_BITS
+        || located.bit_offset != CLIENT_DAMAGE_BOSS_PACKET_INFO_BITS
+        || located.bunch.descriptor != 0
+        || located.bunch.partial_flags != 0x0c
+        || located.bunch.data_bit_len != 91
+    {
+        return None;
+    }
+    parse_boss_hp_update_at(
+        &packet.payload,
+        CLIENT_DAMAGE_BOSS_PREFIX_BYTE_OFFSET,
+        CLIENT_DAMAGE_BOSS_BIT_SHIFT,
+        None,
+    )
+}
+
+pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
+    let mut updates = parse_client_fight_target_updates(data);
+    let mut locations = updates
+        .iter()
+        .map(|update| (update.byte_offset, update.bit_shift))
+        .collect::<HashSet<_>>();
+    let mut packet_handles = HashSet::new();
+    packet_handles.extend(updates.iter().map(|update| update.target_handle));
+    for byte_offset in 0..data.len() {
+        for bit_shift in 0..8_u8 {
+            if let Some(update) =
+                parse_boss_hp_update_at(data, byte_offset, bit_shift, Some(&packet_handles))
+                && locations.insert((update.byte_offset, update.bit_shift))
+            {
+                packet_handles.insert(update.target_handle);
+                updates.push(update);
+            }
         }
     }
     updates
@@ -2697,7 +3064,35 @@ pub fn parse_damage_payload(
         } else {
             HitDirection::Unknown
         };
-        hits.push(Hit {
+        let record_bit_offset = record
+            .byte_offset
+            .checked_mul(8)
+            .and_then(|bit_offset| bit_offset.checked_add(usize::from(record.bit_shift)));
+        let target_handle = record_bit_offset
+            .and_then(|bit_offset| {
+                bit_offset.checked_add(BITPACKED_DAMAGE_RECORD_TARGET_WIRE_BIT_DELTA)
+            })
+            .and_then(|bit_offset| parse_client_fight_target_wire_identity(data, bit_offset))
+            .or_else(|| {
+                record_bit_offset
+                    .and_then(|bit_offset| {
+                        bit_offset.checked_add(COMPACT_DAMAGE_RECORD_TARGET_WIRE_BIT_DELTA)
+                    })
+                    .and_then(|bit_offset| {
+                        parse_compact_client_fight_target_identity(data, bit_offset)
+                    })
+            });
+        let (target_id, target_context) = match target_handle {
+            Some(target_handle) => {
+                let wire_id = hex::encode(target_handle);
+                (
+                    Some(format!("enemy-wire:{wire_id}")),
+                    vec![format!("enemy_target_wire={wire_id}")],
+                )
+            }
+            None => (None, Vec::new()),
+        };
+        let hit = Hit {
             timestamp,
             char_id,
             char_name: name,
@@ -2721,12 +3116,12 @@ pub fn parse_damage_payload(
             } else {
                 0.0
             },
-            target_id: None,
+            target_id,
             target_name: None,
             target_name_en: None,
             target_name_ja: None,
             target_monster_id: None,
-            target_context: Vec::new(),
+            target_context,
             gameplay_effect_index: None,
             gameplay_effect_name: None,
             ability_name: None,
@@ -2739,7 +3134,8 @@ pub fn parse_damage_payload(
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
-        });
+        };
+        hits.push(hit);
     }
     hits
 }
@@ -2852,6 +3248,53 @@ mod character_tests {
                     payload[target_byte] &= !(1 << target_bit_offset);
                 }
             }
+        }
+    }
+
+    fn write_bytes_at_bit(payload: &mut [u8], bit_offset: usize, bytes: &[u8]) {
+        write_shifted_bytes(payload, (bit_offset % 8) as u8, bit_offset / 8, bytes);
+    }
+
+    fn client_fight_target_identity(discriminator: u8) -> [u8; CLIENT_FIGHT_TARGET_WIRE_BYTES] {
+        let mut identity = [0; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+        identity[..16].copy_from_slice(&[
+            0x08, 0x81, 0x77, 0x92, 0x4c, 0xac, 0x9c, 0x79, 0x62, 0x5c, 0xe0, 0x55, 0x75, 0x08,
+            0x7f, 0x3b,
+        ]);
+        identity[16] = 0x0f;
+        identity[20] = discriminator;
+        identity
+    }
+
+    fn write_client_fight_array(
+        payload: &mut [u8],
+        record_bit_offset: usize,
+        terminal_death: bool,
+        elements: &[([u8; CLIENT_FIGHT_TARGET_WIRE_BYTES], f32, u32)],
+    ) {
+        let mut prefix = [0; BOSS_HP_PREFIX_HEAD.len()];
+        if !terminal_death {
+            prefix[0] = BOSS_HP_PREFIX_HEAD[0];
+        }
+        prefix[5..7].copy_from_slice(&((elements.len() as u16) << 5).to_le_bytes());
+        write_bytes_at_bit(payload, record_bit_offset, &prefix);
+        for (index, (identity, hp, dead_state)) in elements.iter().enumerate() {
+            let element_bit_offset = record_bit_offset + index * CLIENT_FIGHT_DATA_ELEMENT_BITS;
+            write_bytes_at_bit(
+                payload,
+                element_bit_offset + CLIENT_FIGHT_DATA_ARRAY_HEADER_BITS,
+                identity,
+            );
+            write_bytes_at_bit(
+                payload,
+                element_bit_offset + CLIENT_FIGHT_DATA_HP_BIT_OFFSET,
+                &hp.to_le_bytes(),
+            );
+            write_bytes_at_bit(
+                payload,
+                element_bit_offset + CLIENT_FIGHT_DATA_DEAD_STATE_BIT_OFFSET,
+                &dead_state.to_le_bytes(),
+            );
         }
     }
 
@@ -3770,20 +4213,156 @@ mod character_tests {
 
     #[test]
     fn parses_target_handle_from_boss_hp_update() {
-        let handle = [
-            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
-            0x6f, 0xe7,
-        ];
-        let mut payload = [0_u8; BOSS_HP_PREFIX_LENGTH + 4];
-        payload[..8].copy_from_slice(&BOSS_HP_PREFIX_HEAD);
-        payload[8..24].copy_from_slice(&handle);
-        payload[BOSS_HP_PREFIX_LENGTH..].copy_from_slice(&1_927_891_f32.to_le_bytes());
+        let handle = client_fight_target_identity(0);
+        let mut payload = vec![0_u8; 48];
+        write_client_fight_array(&mut payload, 0, false, &[(handle, 1_927_891.0, 0)]);
 
         let updates = parse_boss_hp_updates(&payload);
 
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].target_handle, handle);
         assert_eq!(updates[0].current_hp, 1_927_891.0);
+    }
+
+    #[test]
+    fn parses_client_fight_array_with_same_prefix_distinct_instances() {
+        let first = client_fight_target_identity(0);
+        let second = client_fight_target_identity(8);
+        assert_eq!(first[..16], second[..16]);
+        let mut payload = vec![0; 112];
+        write_client_fight_array(
+            &mut payload,
+            3,
+            false,
+            &[(first, 200.0, 0), (second, 100.0, 0)],
+        );
+
+        let updates = parse_client_fight_target_updates(&payload);
+
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].target_handle, first);
+        assert_eq!(updates[0].current_hp, 200.0);
+        assert_eq!(updates[1].target_handle, second);
+        assert_eq!(updates[1].current_hp, 100.0);
+        assert_ne!(updates[0].target_handle, updates[1].target_handle);
+        assert_eq!(parse_boss_hp_updates(&payload), updates);
+    }
+
+    #[test]
+    fn parses_current_sdk_compact_client_fight_instances() {
+        let actor_value = [
+            0x62, 0x01, 0x2d, 0x22, 0x05, 0xc8, 0x6d, 0x4f, 0x94, 0x61, 0x82, 0x17, 0xa4, 0x97,
+            0x64, 0x72,
+        ];
+        let mut payload = vec![0_u8; 128];
+        let mut first = [0_u8; COMPACT_CLIENT_FIGHT_RECORD_BYTES];
+        first[..8].copy_from_slice(&BOSS_HP_PREFIX_HEAD);
+        first[5..7].copy_from_slice(&0x40_u16.to_le_bytes());
+        first[8..24].copy_from_slice(&actor_value);
+        first[24..28].copy_from_slice(&2_u32.to_le_bytes());
+        first[36..40].copy_from_slice(&69_613.0_f32.to_le_bytes());
+        first[48..52].copy_from_slice(&1_u32.to_le_bytes());
+        write_shifted_bytes(&mut payload, 3, 4, &first);
+
+        let mut second = [0_u8; COMPACT_CLIENT_FIGHT_RECORD_BYTES];
+        second[8..24].copy_from_slice(&actor_value);
+        second[24..28].copy_from_slice(&5_u32.to_le_bytes());
+        second[36..40].copy_from_slice(&327_350.0_f32.to_le_bytes());
+        write_shifted_bytes(&mut payload, 3, 68, &second);
+
+        let updates = parse_client_fight_target_updates(&payload);
+
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].target_handle[..16], actor_value);
+        assert_eq!(&updates[0].target_handle[16..20], &2_u32.to_le_bytes());
+        assert_eq!(updates[0].current_hp, 69_613.0);
+        assert_eq!(&updates[1].target_handle[16..20], &5_u32.to_le_bytes());
+        assert_eq!(updates[1].current_hp, 327_350.0);
+    }
+
+    #[test]
+    fn parses_only_sdk_confirmed_terminal_death_shape() {
+        let target = client_fight_target_identity(8);
+        let mut payload = vec![0; 48];
+        write_client_fight_array(&mut payload, 5, true, &[(target, 0.0, 2)]);
+
+        let updates = parse_client_fight_target_updates(&payload);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target_handle, target);
+        assert_eq!(updates[0].current_hp, 0.0);
+
+        write_bytes_at_bit(
+            &mut payload,
+            5 + CLIENT_FIGHT_DATA_DEAD_STATE_BIT_OFFSET,
+            &1_u32.to_le_bytes(),
+        );
+        assert!(parse_client_fight_target_updates(&payload).is_empty());
+    }
+
+    #[test]
+    fn rejects_truncated_or_oversized_client_fight_arrays() {
+        let target = client_fight_target_identity(0);
+        let mut truncated = vec![0; 48];
+        write_client_fight_array(&mut truncated, 0, false, &[(target, 200.0, 0)]);
+        truncated.truncate(20);
+        assert!(parse_client_fight_target_updates(&truncated).is_empty());
+
+        let mut oversized = vec![0; 48];
+        let mut prefix = BOSS_HP_PREFIX_HEAD;
+        prefix[5..7]
+            .copy_from_slice(&(((MAX_CLIENT_FIGHT_DATA_ELEMENTS + 1) as u16) << 5).to_le_bytes());
+        write_bytes_at_bit(&mut oversized, 0, &prefix);
+        assert!(parse_client_fight_target_updates(&oversized).is_empty());
+    }
+
+    #[test]
+    fn decodes_validated_client_damage_boss_wire_shape_at_fixed_offset() {
+        let handle = client_fight_target_identity(0);
+        let current_hp = 2_852_241.0_f32;
+        let mut payload = vec![0; CLIENT_DAMAGE_BOSS_PAYLOAD_BITS.div_ceil(8)];
+        write_client_fight_array(
+            &mut payload,
+            CLIENT_DAMAGE_BOSS_PREFIX_BYTE_OFFSET * 8 + usize::from(CLIENT_DAMAGE_BOSS_BIT_SHIFT),
+            false,
+            &[(handle, current_hp, 0)],
+        );
+        let packet = SequencedPacket {
+            handler_prefix: 0,
+            mode: 0,
+            header_flags: 0,
+            acknowledged_packet_id: 0,
+            packet_id: 0,
+            acknowledgment_history: 0,
+            packet_flags: 0,
+            payload_bit_len: CLIENT_DAMAGE_BOSS_PAYLOAD_BITS,
+            payload,
+        };
+        let mut bunch_packet = BunchPacket {
+            packet_info_bit_len: CLIENT_DAMAGE_BOSS_PACKET_INFO_BITS,
+            bunches: vec![crate::engine::protocol::LocatedBunch {
+                bit_offset: CLIENT_DAMAGE_BOSS_PACKET_INFO_BITS,
+                bunch: crate::engine::protocol::SingleBunch {
+                    prefix: 0,
+                    sequence: 0,
+                    descriptor: 0,
+                    partial_flags: 0x0c,
+                    data_bit_len: 91,
+                    data: vec![0; 12],
+                },
+            }],
+        };
+
+        let update = parse_client_damage_boss_update(&packet, &bunch_packet)
+            .expect("validated shape should decode");
+
+        assert_eq!(update.target_handle, handle);
+        assert_eq!(update.current_hp, current_hp);
+        assert_eq!(update.byte_offset, 65);
+        assert_eq!(update.bit_shift, 2);
+
+        bunch_packet.bunches[0].bunch.descriptor = 1;
+        assert!(parse_client_damage_boss_update(&packet, &bunch_packet).is_none());
     }
 
     #[test]
@@ -3868,12 +4447,26 @@ mod character_tests {
     }
 
     #[test]
+    fn enforces_two_point_damage_floor() {
+        let below_floor = encoded_damage_record(1.0, 45_126.0, 104_448.0);
+        let at_floor = encoded_damage_record(2.0, 45_126.0, 104_448.0);
+
+        assert!(parse_damage_records(&below_floor).is_empty());
+        let records = parse_damage_records(&at_floor);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].damage, 2.0);
+    }
+
+    #[test]
     fn parses_boss_hp_in_tens_of_billions() {
         let current_hp = 80_000_000_000.0_f32;
-        let mut payload = [0_u8; BOSS_HP_PREFIX_LENGTH + 4];
-        payload[..8].copy_from_slice(&BOSS_HP_PREFIX_HEAD);
-        payload[8..24].copy_from_slice(&[0x42; 16]);
-        payload[BOSS_HP_PREFIX_LENGTH..].copy_from_slice(&current_hp.to_le_bytes());
+        let mut payload = vec![0_u8; 48];
+        write_client_fight_array(
+            &mut payload,
+            0,
+            false,
+            &[(client_fight_target_identity(0), current_hp, 0)],
+        );
 
         let updates = parse_boss_hp_updates(&payload);
 
@@ -3928,6 +4521,135 @@ mod character_tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].direction, HitDirection::Outgoing);
         assert_eq!(hits[0].char_id, 1001);
+        assert!(hits[0].target_id.is_none());
+        assert!(hits[0].target_context.is_empty());
+    }
+
+    #[test]
+    fn raw_damage_payload_does_not_fabricate_target_identity() {
+        let payload = encoded_damage_record(1_341.0, 808_898.0, 808_898.0);
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &[]);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, HitDirection::Outgoing);
+        assert!(hits[0].target_id.is_none());
+        assert!(hits[0].target_context.is_empty());
+    }
+
+    #[test]
+    fn sdk_adjacent_target_identity_reaches_the_damage_hit() {
+        const TARGET_HANDLE_FROM_DAMAGE_BITS: usize = 1_277;
+
+        let mut payload = encoded_damage_record(1_341.0, 808_898.0, 808_898.0);
+        let target = client_fight_target_identity(8);
+        let target_bit_offset = 5 * 8 + TARGET_HANDLE_FROM_DAMAGE_BITS;
+        payload.resize(
+            (target_bit_offset + CLIENT_FIGHT_TARGET_WIRE_BITS).div_ceil(8) + 1,
+            0,
+        );
+        write_bytes_at_bit(&mut payload, target_bit_offset, &target);
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &[]);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].target_id.as_deref(),
+            Some(format!("enemy-wire:{}", hex::encode(target)).as_str())
+        );
+        assert_eq!(
+            hits[0].target_context,
+            [format!("enemy_target_wire={}", hex::encode(target))]
+        );
+    }
+
+    #[test]
+    fn current_sdk_compact_target_identity_reaches_the_damage_hit() {
+        let mut payload = encoded_damage_record(1_341.0, 808_898.0, 808_898.0);
+        let actor_value = [
+            0x62, 0x01, 0x2d, 0x22, 0x05, 0xc8, 0x6d, 0x4f, 0x94, 0x61, 0x82, 0x17, 0xa4, 0x97,
+            0x64, 0x72,
+        ];
+        let mut compact = [0_u8; COMPACT_CLIENT_FIGHT_IDENTITY_BYTES];
+        compact[..16].copy_from_slice(&actor_value);
+        compact[16..20].copy_from_slice(&5_u32.to_le_bytes());
+        let target_bit_offset = 5 * 8 + COMPACT_DAMAGE_RECORD_TARGET_WIRE_BIT_DELTA;
+        payload.resize(
+            (target_bit_offset + COMPACT_CLIENT_FIGHT_IDENTITY_BYTES * 8).div_ceil(8) + 1,
+            0,
+        );
+        write_bytes_at_bit(&mut payload, target_bit_offset, &compact);
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &[]);
+
+        let mut target = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+        target[..COMPACT_CLIENT_FIGHT_IDENTITY_BYTES].copy_from_slice(&compact);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].target_id.as_deref(),
+            Some(format!("enemy-wire:{}", hex::encode(target)).as_str())
+        );
+    }
+
+    #[test]
+    fn sdk_adjacent_target_identity_accepts_confirmed_0x17_variant() {
+        let mut payload = encoded_damage_record(1_341.0, 1_752_612.0, 1_752_612.0);
+        let mut target = client_fight_target_identity(0);
+        target[16] = 0x17;
+        let target_bit_offset = 5 * 8 + BITPACKED_DAMAGE_RECORD_TARGET_WIRE_BIT_DELTA;
+        payload.resize(
+            (target_bit_offset + CLIENT_FIGHT_TARGET_WIRE_BITS).div_ceil(8) + 1,
+            0,
+        );
+        write_bytes_at_bit(&mut payload, target_bit_offset, &target);
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &[]);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].target_id.as_deref(),
+            Some(format!("enemy-wire:{}", hex::encode(target)).as_str())
+        );
     }
 
     #[test]

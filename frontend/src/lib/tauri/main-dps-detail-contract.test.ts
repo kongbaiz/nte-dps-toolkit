@@ -92,6 +92,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         damage: 123,
         primaryDamage: 100,
         followUpDamage: 23,
+        overkillDamage: 0,
         skillId: "Skill",
         skill: "Skill",
         damageType: "Basic Attack",
@@ -118,7 +119,18 @@ describe("main DPS detail contract", () => {
     expect(parsed.skills[0]?.sharePercent).toBe(100);
     expect(parsed.rows[0]?.targetHpPercent).toBe(87.7);
     expect(parsed.rows[0]?.typeLabel).toBe("Basic Attack·Skill");
+    expect(parsed.rows[0]?.overkillDamage).toBe(0);
     expect(parsed.columns.typeWidth).toBe(250);
+  });
+
+  it("records the exact overkill damage projected by Rust", () => {
+    const value = snapshot();
+    value.rows[0]!.primaryDamage = 1500;
+    value.rows[0]!.damage = 1500;
+    value.rows[0]!.followUpDamage = 0;
+    value.rows[0]!.overkillDamage = 500;
+
+    expect(parseMainDpsDetailSnapshot(value).rows[0]?.overkillDamage).toBe(500);
   });
 
   it("accepts a selected reaction type", () => {

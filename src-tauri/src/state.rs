@@ -210,10 +210,9 @@ const HUD_OPTIONAL_TITLE_HEIGHT: u16 = 22;
 const HUD_OPTIONAL_STATUS_HEIGHT: u16 = 22;
 const HUD_MINI_TIMELINE_HEIGHT: u16 = 42;
 const MAIN_DPS_DETAIL_CACHE_CAPACITY: usize = 4;
-/// Normal desktop capture keeps only bounded semantic events. Raw PCAPNG
-/// remains enabled independently; `FullDebug` is reserved for explicit
-/// diagnostics/replay tooling that opts into retaining packet payload text.
-const DESKTOP_PACKET_EMISSION_MODE: PacketEmissionMode = PacketEmissionMode::SummaryOnly;
+/// The desktop exposes a live packet-inspection page, so its capture must emit
+/// the bounded debug-packet projection as well as semantic observations.
+const DESKTOP_PACKET_EMISSION_MODE: PacketEmissionMode = PacketEmissionMode::FullDebug;
 type EmptyCurtainDataSnapshot = (
     Vec<EmptyCurtainItem>,
     Vec<EmptyCurtainCharacter>,
@@ -4271,11 +4270,8 @@ mod tests {
     use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
 
     #[test]
-    fn desktop_capture_uses_summary_only_by_default() {
-        assert_eq!(
-            DESKTOP_PACKET_EMISSION_MODE,
-            PacketEmissionMode::SummaryOnly
-        );
+    fn desktop_capture_retains_packets_for_the_live_inspector() {
+        assert_eq!(DESKTOP_PACKET_EMISSION_MODE, PacketEmissionMode::FullDebug);
     }
 
     #[test]

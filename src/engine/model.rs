@@ -230,6 +230,16 @@ impl Hit {
     pub fn total_damage(&self) -> f64 {
         self.damage + self.follow_up_damage
     }
+
+    pub fn overkill_damage(&self) -> f64 {
+        if self.target_max_hp <= 0.0
+            || !self.damage.is_finite()
+            || !self.target_hp_before.is_finite()
+        {
+            return 0.0;
+        }
+        (self.damage - self.target_hp_before).max(0.0)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -7000,6 +7010,22 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
         }
+    }
+
+    #[test]
+    fn overkill_damage_records_only_primary_damage_beyond_known_target_hp() {
+        let mut hit = test_hit(1.0, 1010, "outgoing", 1_500.0);
+        hit.target_hp_before = 1_000.0;
+        hit.target_max_hp = 10_000.0;
+        hit.follow_up_damage = 250.0;
+        assert_eq!(hit.overkill_damage(), 500.0);
+
+        hit.damage = 1_000.0;
+        assert_eq!(hit.overkill_damage(), 0.0);
+
+        hit.damage = 1_500.0;
+        hit.target_max_hp = 0.0;
+        assert_eq!(hit.overkill_damage(), 0.0);
     }
 
     fn apply_test_pause(state: &mut CombatState, start: f64, end: f64) {
