@@ -24,7 +24,7 @@ use nte_dps_tool::{
 
 use crate::state::{AppState, MainDpsDetailKind};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 6;
+pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 7;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
@@ -734,6 +734,7 @@ pub(crate) struct MainDpsHitSnapshot {
     pub primary_damage: f64,
     pub follow_up_damage: f64,
     pub overkill_damage: f64,
+    pub max_hp_reduction: f64,
     pub skill_id: String,
     pub skill: String,
     pub damage_type: String,
@@ -826,6 +827,7 @@ impl MainDpsHitSnapshot {
             primary_damage: hit.damage,
             follow_up_damage: hit.follow_up_damage,
             overkill_damage: hit.overkill_damage(),
+            max_hp_reduction: hit.max_hp_reduction,
             skill_id,
             skill,
             damage_type: text_budget.text(
@@ -1007,6 +1009,7 @@ mod tests {
             target_hp_before: 1000.0,
             target_hp_after: 1000.0 - damage,
             target_max_hp: 1000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: (1000.0 - damage) / 10.0,
             target_id: None,
             target_name: None,
@@ -1208,6 +1211,7 @@ mod tests {
         hit.target_hp_before = 1_000.0;
         hit.target_max_hp = 10_000.0;
         hit.follow_up_damage = 250.0;
+        hit.max_hp_reduction = 3_000.0;
 
         let snapshot = MainDpsHitSnapshot::from_hit(
             &hit,
@@ -1221,6 +1225,27 @@ mod tests {
         assert_eq!(snapshot.damage, 1_750.0);
         assert_eq!(snapshot.primary_damage, 1_500.0);
         assert_eq!(snapshot.overkill_damage, 500.0);
+        assert_eq!(snapshot.max_hp_reduction, 3_000.0);
+    }
+
+    #[test]
+    fn hit_snapshot_hides_stale_overkill_while_target_is_alive() {
+        let mut hit = skill_hit(224_701.0, Some("GA_Test"), None, "Special Damage");
+        hit.target_hp_before = 711_968.0;
+        hit.target_hp_after = 391_749.0;
+        hit.target_max_hp = 2_292_536.0;
+        hit.reconciled_overkill_damage = Some(169_224.0);
+
+        let snapshot = MainDpsHitSnapshot::from_hit(
+            &hit,
+            0,
+            &HashMap::new(),
+            Language::SimplifiedChinese,
+            &GenericTargetLabels::default(),
+            &mut MainDpsDetailTextBudget::default(),
+        );
+
+        assert_eq!(snapshot.overkill_damage, 0.0);
     }
 
     #[test]

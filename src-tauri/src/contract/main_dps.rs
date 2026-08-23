@@ -18,7 +18,7 @@ use crate::{
     state::{AppState, HistoryRoundIndex, MainDpsReadout},
 };
 
-pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 6;
+pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 7;
 pub(crate) const MAIN_DPS_MAX_TEXT_BYTES: usize = 256;
 pub(crate) const MAIN_DPS_MAX_PROJECTED_TEXT_BYTES: usize = 128 * 1024;
 
@@ -108,6 +108,7 @@ pub(crate) struct MainDpsSnapshot {
     pub always_on_top: bool,
     pub passthrough: bool,
     pub appearance: MainDpsAppearanceSnapshot,
+    pub display: MainDpsDisplaySnapshot,
     pub rounds: Vec<MainDpsRoundSnapshot>,
     pub selected_round_id: Option<String>,
     pub readout: MainDpsReadoutSnapshot,
@@ -182,6 +183,20 @@ impl MainDpsSnapshot {
             always_on_top,
             passthrough: state.passthrough(),
             appearance: MainDpsAppearanceSnapshot::from(&config),
+            display: MainDpsDisplaySnapshot {
+                metrics: config
+                    .main_dps_display
+                    .metrics
+                    .iter()
+                    .map(|value| value.id())
+                    .collect(),
+                attributions: config
+                    .main_dps_display
+                    .attributions
+                    .iter()
+                    .map(|value| value.id())
+                    .collect(),
+            },
             rounds: round_snapshots,
             selected_round_id,
             readout: MainDpsReadoutSnapshot::from_hud(
@@ -251,6 +266,13 @@ pub(crate) struct MainDpsAppearanceSnapshot {
     pub density: &'static str,
     pub reduce_motion: bool,
     pub opacity: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MainDpsDisplaySnapshot {
+    pub metrics: Vec<&'static str>,
+    pub attributions: Vec<&'static str>,
 }
 
 impl From<&UiConfig> for MainDpsAppearanceSnapshot {
@@ -329,6 +351,7 @@ impl MainDpsReadoutSnapshot {
                 .collect(),
             damage_attribution: MainDpsDamageAttributionSnapshot {
                 total_damage: damage_attribution.total_damage,
+                max_hp_reduction: damage_attribution.max_hp_reduction,
                 character_direct_damage: damage_attribution.character_direct_damage,
                 character_reaction_damage: damage_attribution.character_reaction_damage,
                 shared_damage: damage_attribution.shared_damage,
@@ -407,6 +430,7 @@ impl MainDpsCharacterSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsDamageAttributionSnapshot {
     pub total_damage: f64,
+    pub max_hp_reduction: f64,
     pub character_direct_damage: f64,
     pub character_reaction_damage: f64,
     pub shared_damage: f64,
@@ -465,7 +489,7 @@ pub(crate) struct MainDpsOnboardingSnapshot {
     pub capture_devices_available: bool,
     pub game_detected: bool,
     pub game_detection_status: GameDetectionStatus,
-    pub passthrough_hotkey_label: &'static str,
+    pub passthrough_hotkey_label: String,
     pub passthrough_hotkey_ready: bool,
 }
 
@@ -614,6 +638,9 @@ mod tests {
         assert!(value["generation"].as_str().is_some());
         assert_eq!(value["rounds"][0]["live"], true);
         assert_eq!(value["readout"]["dataState"], "empty");
+        assert_eq!(value["display"]["metrics"][0], "team-dps");
+        assert_eq!(value["display"]["attributions"][4], "max-hp-reduction");
+        assert_eq!(value["readout"]["damageAttribution"]["maxHpReduction"], 0.0);
         assert_eq!(
             value["readout"]["characters"].as_array().map(Vec::len),
             Some(0)

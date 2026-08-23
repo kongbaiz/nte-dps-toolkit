@@ -14,7 +14,7 @@ import {
   type DpsTimeRuntime,
 } from "@/lib/tauri/dps-time-contract";
 
-export const SETTINGS_CONTRACT_VERSION = 6;
+export const SETTINGS_CONTRACT_VERSION = 8;
 export const HUD_SETTING_OPTION_IDS = [
   "title",
   "team_dps",
@@ -27,7 +27,86 @@ export const HUD_SETTING_OPTION_IDS = [
   "mini_timeline",
 ] as const;
 export const HUD_PRESET_IDS = ["minimal", "standard", "detailed"] as const;
-export const GLOBAL_HOTKEY_ACTION_IDS = ["capture", "reset", "hud"] as const;
+export const GLOBAL_HOTKEY_ACTION_IDS = [
+  "capture",
+  "reset",
+  "hud",
+  "new-round",
+] as const;
+export const HOTKEY_KEY_IDS = [
+  "A",
+  "B",
+  "C",
+  "D",
+  "E",
+  "F",
+  "G",
+  "H",
+  "I",
+  "J",
+  "K",
+  "L",
+  "M",
+  "N",
+  "O",
+  "P",
+  "Q",
+  "R",
+  "S",
+  "T",
+  "U",
+  "V",
+  "W",
+  "X",
+  "Y",
+  "Z",
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "F1",
+  "F2",
+  "F3",
+  "F4",
+  "F5",
+  "F6",
+  "F7",
+  "F8",
+  "F9",
+  "F10",
+  "F11",
+  "F12",
+  "Home",
+  "End",
+  "Insert",
+  "Delete",
+  "PageUp",
+  "PageDown",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Space",
+] as const;
+export const MAIN_DPS_METRIC_IDS = [
+  "team-dps",
+  "total-damage",
+  "total-damage-taken",
+  "duration",
+] as const;
+export const MAIN_DPS_ATTRIBUTION_IDS = [
+  "character",
+  "reaction",
+  "shared",
+  "unattributed",
+  "max-hp-reduction",
+] as const;
 export const LAYOUT_PROFILE_IDS = ["combat", "review", "research"] as const;
 
 const {
@@ -51,6 +130,9 @@ const {
 export type HudSettingOptionId = (typeof HUD_SETTING_OPTION_IDS)[number];
 export type HudPresetId = (typeof HUD_PRESET_IDS)[number];
 export type GlobalHotkeyActionId = (typeof GLOBAL_HOTKEY_ACTION_IDS)[number];
+export type HotkeyKey = (typeof HOTKEY_KEY_IDS)[number];
+export type MainDpsMetricId = (typeof MAIN_DPS_METRIC_IDS)[number];
+export type MainDpsAttributionId = (typeof MAIN_DPS_ATTRIBUTION_IDS)[number];
 export type LayoutProfileId = (typeof LAYOUT_PROFILE_IDS)[number];
 export type SettingsCommandError = TechnicalCommandError;
 export type SettingsLanguage = "en" | "ja" | "zh-CN";
@@ -58,21 +140,7 @@ export type ThemePresetId = "zinc" | "tactical" | "high-contrast";
 export type AccentId = "zinc" | "blue" | "violet" | "orange" | "green";
 export type DensityId = "compact" | "cozy" | "comfortable";
 export type { DpsTimeModeId } from "@/lib/tauri/dps-time-contract";
-export type PassthroughHotkeyId = "home" | "insert" | "f8" | "f9";
 export type UpdateComponentId = "app" | "mods-plugin";
-export type FunctionKey =
-  | "F1"
-  | "F2"
-  | "F3"
-  | "F4"
-  | "F5"
-  | "F6"
-  | "F7"
-  | "F8"
-  | "F9"
-  | "F10"
-  | "F11"
-  | "F12";
 
 export interface InterfaceSettings {
   language: SettingsLanguage;
@@ -132,14 +200,14 @@ export interface CaptureSettings {
   autoRoundIdleSecondsMax: number;
   dpsTimeMode: DpsTimeModeId;
   dpsTimeRuntime: DpsTimeRuntime;
-  passthroughHotkey: PassthroughHotkeyId;
+  passthroughHotkey: HotkeyBinding;
 }
 
 export interface HotkeyBinding {
   ctrl: boolean;
   alt: boolean;
   shift: boolean;
-  key: FunctionKey;
+  key: HotkeyKey;
 }
 
 export interface GlobalHotkeyBinding {
@@ -150,6 +218,11 @@ export interface GlobalHotkeyBinding {
 export interface GlobalHotkeys {
   enabled: boolean;
   bindings: GlobalHotkeyBinding[];
+}
+
+export interface MainDpsDisplaySettings {
+  metrics: MainDpsMetricId[];
+  attributions: MainDpsAttributionId[];
 }
 
 export interface CaptureFiles {
@@ -177,6 +250,7 @@ export interface SettingsSnapshot {
   updates: UpdateSettings;
   capture: CaptureSettings;
   hotkeys: GlobalHotkeys;
+  mainDps: MainDpsDisplaySettings;
   captureFiles: CaptureFiles;
   teamData: TeamDataSettings;
   alwaysOnTop: boolean;
@@ -204,6 +278,7 @@ export type CaptureSettingsInput = Omit<
   | "autoRoundIdleSecondsMax"
   | "dpsTimeRuntime"
 >;
+export type MainDpsDisplayInput = MainDpsDisplaySettings;
 
 export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   const snapshot = record(value, "settings snapshot");
@@ -241,6 +316,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   const updates = record(snapshot.updates, "settings.updates");
   const capture = record(snapshot.capture, "settings.capture");
   const hotkeys = record(snapshot.hotkeys, "settings.hotkeys");
+  const mainDps = record(snapshot.mainDps, "settings.mainDps");
   const captureFiles = record(snapshot.captureFiles, "settings.captureFiles");
   const teamData = record(snapshot.teamData, "settings.teamData");
   const idleMin = positiveInteger(
@@ -347,9 +423,8 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
         capture.dpsTimeRuntime,
         "settings.capture.dpsTimeRuntime",
       ),
-      passthroughHotkey: enumValue(
+      passthroughHotkey: parseHotkeyBinding(
         capture.passthroughHotkey,
-        ["home", "insert", "f8", "f9"] as const,
         "settings.capture.passthroughHotkey",
       ),
     },
@@ -357,6 +432,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       enabled: boolean(hotkeys.enabled, "settings.hotkeys.enabled"),
       bindings: parseHotkeyBindings(hotkeys.bindings),
     },
+    mainDps: parseMainDpsDisplay(mainDps),
     captureFiles: {
       count: nonNegativeInteger(
         captureFiles.count,
@@ -570,25 +646,42 @@ function parseHotkeyBinding(value: unknown, field: string): HotkeyBinding {
     ctrl: boolean(binding.ctrl, `${field}.ctrl`),
     alt: boolean(binding.alt, `${field}.alt`),
     shift: boolean(binding.shift, `${field}.shift`),
-    key: enumValue(
-      binding.key,
-      [
-        "F1",
-        "F2",
-        "F3",
-        "F4",
-        "F5",
-        "F6",
-        "F7",
-        "F8",
-        "F9",
-        "F10",
-        "F11",
-        "F12",
-      ] as const,
-      `${field}.key`,
-    ),
+    key: enumValue(binding.key, HOTKEY_KEY_IDS, `${field}.key`),
   };
+}
+
+function parseMainDpsDisplay(
+  value: Record<string, unknown>,
+): MainDpsDisplaySettings {
+  const metrics = array(value.metrics, "settings.mainDps.metrics").map(
+    (metric, index) =>
+      enumValue(
+        metric,
+        MAIN_DPS_METRIC_IDS,
+        `settings.mainDps.metrics[${index}]`,
+      ),
+  );
+  const attributions = array(
+    value.attributions,
+    "settings.mainDps.attributions",
+  ).map((attribution, index) =>
+    enumValue(
+      attribution,
+      MAIN_DPS_ATTRIBUTION_IDS,
+      `settings.mainDps.attributions[${index}]`,
+    ),
+  );
+  if (
+    metrics.length > MAIN_DPS_METRIC_IDS.length ||
+    attributions.length > MAIN_DPS_ATTRIBUTION_IDS.length ||
+    new Set(metrics).size !== metrics.length ||
+    new Set(attributions).size !== attributions.length
+  ) {
+    throw new TechnicalContractError(
+      "settings.mainDps display identifiers must be unique and bounded",
+    );
+  }
+  return { metrics, attributions };
 }
 
 export function formatHotkeyBinding(

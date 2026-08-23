@@ -742,6 +742,8 @@ fn history_hits_are_valid(hits: &[Hit]) -> bool {
         !hit.timestamp.is_finite()
             || !hit.damage.is_finite()
             || !hit.follow_up_damage.is_finite()
+            || !hit.max_hp_reduction.is_finite()
+            || hit.max_hp_reduction < 0.0
             || hit
                 .follow_up_timestamp
                 .is_some_and(|timestamp| !timestamp.is_finite())
@@ -3054,6 +3056,7 @@ fn validate_history_summary_scope(
 fn validate_damage_attribution_summary(summary: &DamageAttributionSummary) -> Result<(), String> {
     for value in [
         summary.total_damage,
+        summary.max_hp_reduction,
         summary.character_direct_damage,
         summary.character_reaction_damage,
         summary.shared_damage,
@@ -5581,6 +5584,7 @@ mod tests {
             target_hp_before: 1_000.0,
             target_hp_after: 1_000.0 - damage,
             target_max_hp: 1_000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: (1_000.0 - damage) / 10.0,
             target_id: None,
             target_name: None,

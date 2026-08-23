@@ -12,6 +12,7 @@ use crate::{
         console::CONSOLE_WINDOW_LABEL,
         hud::HUD_WINDOW_LABEL,
         island::ISLAND_WINDOW_LABEL,
+        window_position,
     },
 };
 
@@ -171,6 +172,7 @@ fn restore_geometry(window: &WebviewWindow, state: &AppState) -> Result<(), Stri
                 f64::from(y),
             )))
             .map_err(|error| error.to_string())?;
+        window_position::ensure_window_reachable(window)?;
     } else {
         window.center().map_err(|error| error.to_string())?;
     }

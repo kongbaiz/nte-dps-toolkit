@@ -44,6 +44,16 @@ const sample = {
     reduceMotion: false,
     opacity: 1,
   },
+  display: {
+    metrics: ["team-dps", "total-damage", "total-damage-taken", "duration"],
+    attributions: [
+      "character",
+      "reaction",
+      "shared",
+      "unattributed",
+      "max-hp-reduction",
+    ],
+  },
   rounds: [{ id: null, live: true, displayTime: null, abyssFloor: null }],
   selectedRoundId: null,
   readout: {
@@ -57,6 +67,7 @@ const sample = {
     characters: [],
     damageAttribution: {
       totalDamage: 0,
+      maxHpReduction: 0,
       characterDirectDamage: 0,
       characterReactionDamage: 0,
       sharedDamage: 0,
@@ -111,6 +122,15 @@ describe("main DPS contract", () => {
     expect(() => parseMainDpsSnapshot({ ...sample, onboarding })).toThrow(
       /onboarding.captureDevicesAvailable must be a boolean/,
     );
+  });
+
+  it("requires unique bounded display identifiers", () => {
+    expect(() =>
+      parseMainDpsSnapshot({
+        ...sample,
+        display: { ...sample.display, metrics: ["duration", "duration"] },
+      }),
+    ).toThrow(/display.metrics must contain unique identifiers/);
   });
 
   it("validates resource-derived strings by UTF-8 bytes", () => {
@@ -279,6 +299,7 @@ describe("main DPS contract", () => {
         ...sample.readout,
         damageAttribution: {
           totalDamage: 100,
+          maxHpReduction: 12.5,
           characterDirectDamage: 72.5,
           characterReactionDamage: 27.2,
           sharedDamage: 0.3,
@@ -307,5 +328,6 @@ describe("main DPS contract", () => {
       durationSeconds: 29,
     });
     expect(parsed.readout.damageAttribution.separateReactionDamage).toBe(true);
+    expect(parsed.readout.damageAttribution.maxHpReduction).toBe(12.5);
   });
 });

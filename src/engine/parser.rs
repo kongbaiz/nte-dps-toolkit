@@ -437,6 +437,8 @@ pub struct GameplayEffectSkill {
     pub attack_type: String,
     pub damage_component: Option<String>,
     pub owner_character_id: Option<u32>,
+    pub use_server_damage: bool,
+    pub max_hp_reduction_percent: u32,
 }
 
 pub fn find_data_file(relative_path: &Path) -> Option<PathBuf> {
@@ -871,6 +873,8 @@ impl AbilityCatalog {
                 skill.damage_component = Some(damage_name_en);
             }
             skill.owner_character_id = semantic.owner_character_id;
+            skill.use_server_damage = semantic.use_server_damage;
+            skill.max_hp_reduction_percent = semantic.max_hp_reduction_percent;
         }
         Ok(())
     }
@@ -906,6 +910,10 @@ struct GameplayEffectSemantic {
     damage_name_zh: Option<String>,
     #[serde(default)]
     damage_name_ja: Option<String>,
+    #[serde(default)]
+    use_server_damage: bool,
+    #[serde(default)]
+    max_hp_reduction_percent: u32,
 }
 
 const fn default_show_parent_ability() -> bool {
@@ -963,6 +971,10 @@ fn load_gameplay_effect_semantics(path: &Path) -> Result<HashMap<String, Gamepla
                     .iter()
                     .all(|name| name.is_some_and(|name| !name.trim().is_empty())),
             "GE 语义表 {effect_name} 的多语言伤害组件名必须同时提供"
+        );
+        ensure!(
+            semantic.max_hp_reduction_percent <= 10_000,
+            "GE 语义表 {effect_name} 的 max_hp_reduction_percent 无效"
         );
     }
     Ok(document.effects)
@@ -1024,6 +1036,8 @@ pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, Gamepl
                         attack_type,
                         damage_component: None,
                         owner_character_id: None,
+                        use_server_damage: false,
+                        max_hp_reduction_percent: 0,
                     },
                 )
             })
@@ -1059,6 +1073,8 @@ pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, Gamepl
                     attack_type,
                     damage_component: None,
                     owner_character_id: None,
+                    use_server_damage: false,
+                    max_hp_reduction_percent: 0,
                 },
             )
         })
@@ -3316,6 +3332,7 @@ pub fn parse_damage_payload(
             target_hp_before: target_hp_before as f64,
             target_hp_after: target_hp_after as f64,
             target_max_hp: target_max_hp as f64,
+            max_hp_reduction: 0.0,
             target_hp_percent: if target_max_hp > 0.0 {
                 target_hp_after as f64 / target_max_hp as f64 * 100.0
             } else {
@@ -4364,6 +4381,19 @@ mod character_tests {
             Some("Additional Settlement")
         );
         assert_eq!(additional_settlement.owner_character_id, Some(1055));
+        assert!(!additional_settlement.use_server_damage);
+        assert_eq!(additional_settlement.max_hp_reduction_percent, 0);
+
+        let nightmare = catalog
+            .skill("GE_Player_Lacrimosa_Blood_Damage_LV6")
+            .unwrap();
+        assert!(nightmare.use_server_damage);
+        assert_eq!(nightmare.max_hp_reduction_percent, 200);
+
+        let daffodill_unbalance = catalog
+            .skill("GE_Player_Daffodill_ExtraUnbalance_Damage")
+            .unwrap();
+        assert_eq!(daffodill_unbalance.attack_type, "倾陷伤害");
 
         let blossom = catalog.skill("GE_ActorReaction_1_Damage").unwrap();
         assert_eq!(blossom.ability_name, None);
