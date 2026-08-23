@@ -2294,6 +2294,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 

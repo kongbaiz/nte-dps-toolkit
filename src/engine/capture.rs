@@ -43,16 +43,18 @@ use crate::engine::parser::{
     AbilityCatalog, DamageRecordEncoding, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
     EquipmentCatalog, EquipmentKind, GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH,
     GameplayEffectSkill, ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot,
-    ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, classify_attack_type, damage_record_encoding_at,
-    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
-    find_final_tower_character_evidence, load_enemy_catalog, load_equipment_catalog,
-    load_gameplay_effect_mapping, matches_shifted_bytes_at, normalize_damage_name,
-    parse_boss_hp_updates, parse_client_damage_boss_update, parse_client_fight_target_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
+    ParsedGameplayEffect, ParsedServerDamageSettlement, SKILL_DAMAGE_DATA_PATH,
+    classify_attack_type, damage_record_encoding_at, declared_character_ids_from_evidence,
+    find_data_file, find_declared_character_evidence, find_final_tower_character_evidence,
+    load_enemy_catalog, load_equipment_catalog, load_gameplay_effect_mapping,
+    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    parse_client_damage_boss_update, parse_client_fight_target_updates, parse_current_hp_updates,
+    parse_damage_payload, parse_empty_curtain_character_owners,
     parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
     parse_empty_curtain_item_additions, parse_empty_curtain_item_removals,
-    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
-    valid_item_net_id, validate_empty_curtain_snapshot,
+    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects,
+    parse_server_damage_settlements, qte_reaction_type, valid_item_net_id,
+    validate_empty_curtain_snapshot,
 };
 use crate::platform::mods_plugin::{
     CombatClockQueryError, CombatClockTransitionSnapshot, query_combat_clock_transitions,
@@ -2866,7 +2868,7 @@ impl FollowUpDamageTracker {
 #[derive(Clone)]
 struct ServerDamagePendingHit {
     hit: Hit,
-    target_handle: [u8; 29],
+    target_handle: Option<[u8; 29]>,
 }
 
 #[derive(Clone, Copy)]
@@ -2879,6 +2881,10 @@ struct ServerHpSnapshot {
 struct ServerDamageCalibrationTracker {
     hp_by_handle: HashMap<[u8; 29], ServerHpSnapshot>,
     pending_hits: VecDeque<ServerDamagePendingHit>,
+    client_damage_by_handle: HashMap<[u8; 29], f64>,
+    target_max_hp_by_handle: HashMap<[u8; 29], f64>,
+    residual_emitted: HashSet<[u8; 29]>,
+    residual_hits: Vec<Hit>,
 }
 
 impl ServerDamageCalibrationTracker {
@@ -2890,9 +2896,35 @@ impl ServerDamageCalibrationTracker {
         {
             return;
         }
-        let Some(target_handle) = wire_handle_from_hit(hit) else {
-            return;
-        };
+        let target_handle = wire_handle_from_hit(hit);
+        if let Some(target_handle) = target_handle {
+            if self
+                .hp_by_handle
+                .get(&target_handle)
+                .is_some_and(|snapshot| snapshot.hp <= 1.0)
+                && nearly_same(hit.target_hp_before, hit.target_max_hp)
+            {
+                self.client_damage_by_handle.remove(&target_handle);
+                self.residual_emitted.remove(&target_handle);
+            }
+            if !self.hp_by_handle.contains_key(&target_handle)
+                && self.hp_by_handle.len() < MAX_SERVER_DAMAGE_TARGETS
+            {
+                self.hp_by_handle.insert(
+                    target_handle,
+                    ServerHpSnapshot {
+                        timestamp: hit.timestamp,
+                        hp: hit.target_hp_before,
+                    },
+                );
+            }
+            self.target_max_hp_by_handle
+                .insert(target_handle, hit.target_max_hp);
+            *self
+                .client_damage_by_handle
+                .entry(target_handle)
+                .or_default() += (hit.damage - hit.overkill_damage()).max(0.0);
+        }
         if self
             .pending_hits
             .back()
@@ -2907,6 +2939,221 @@ impl ServerDamageCalibrationTracker {
         while self.pending_hits.len() > MAX_PENDING_FOLLOW_UP_HITS {
             self.pending_hits.pop_front();
         }
+    }
+
+    #[cfg(test)]
+    fn observe_server_damage_settlement(
+        &mut self,
+        timestamp: f64,
+        settlement: &ParsedServerDamageSettlement,
+    ) -> (
+        Option<HitDamageCorrection>,
+        Option<UnattributedServerDamage>,
+    ) {
+        let (mut corrections, mut unattributed) =
+            self.observe_server_damage_settlements(timestamp, std::slice::from_ref(settlement));
+        (corrections.pop(), unattributed.pop())
+    }
+
+    fn observe_server_damage_settlements(
+        &mut self,
+        timestamp: f64,
+        settlements: &[ParsedServerDamageSettlement],
+    ) -> (Vec<HitDamageCorrection>, Vec<UnattributedServerDamage>) {
+        self.pending_hits.retain(|pending| {
+            timestamp - pending.hit.timestamp <= SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS
+        });
+
+        let mut previous_snapshots = Vec::with_capacity(settlements.len());
+        let mut current_hps = Vec::with_capacity(settlements.len());
+        for settlement in settlements {
+            let current_hp = normalized_server_hp(settlement.current_hp);
+            if !self.hp_by_handle.contains_key(&settlement.target_handle)
+                && self.hp_by_handle.len() >= MAX_SERVER_DAMAGE_TARGETS
+                && let Some(oldest) = self
+                    .hp_by_handle
+                    .iter()
+                    .min_by(|(left_handle, left), (right_handle, right)| {
+                        left.timestamp
+                            .total_cmp(&right.timestamp)
+                            .then_with(|| left_handle.cmp(right_handle))
+                    })
+                    .map(|(handle, _)| *handle)
+            {
+                self.hp_by_handle.remove(&oldest);
+            }
+            previous_snapshots.push(self.hp_by_handle.insert(
+                settlement.target_handle,
+                ServerHpSnapshot {
+                    timestamp,
+                    hp: current_hp,
+                },
+            ));
+            current_hps.push(current_hp);
+        }
+
+        let mut candidates = settlements
+            .iter()
+            .zip(&current_hps)
+            .zip(&previous_snapshots)
+            .map(|((settlement, current_hp), previous)| {
+                self.pending_hits
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(pending_index, pending)| {
+                        server_damage_match_rank(
+                            pending,
+                            timestamp,
+                            settlement,
+                            *current_hp,
+                            previous.map(|snapshot| snapshot.hp),
+                        )
+                        .map(|rank| (pending_index, rank))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut settlement_order = (0..settlements.len()).collect::<Vec<_>>();
+        settlement_order.sort_by_key(|settlement_index| {
+            let best_rank = candidates[*settlement_index]
+                .iter()
+                .map(|(_, rank)| *rank)
+                .max()
+                .unwrap_or(0);
+            let best_count = candidates[*settlement_index]
+                .iter()
+                .filter(|(_, rank)| *rank == best_rank)
+                .count();
+            (std::cmp::Reverse(best_rank), best_count, *settlement_index)
+        });
+
+        let mut assigned_pending = HashSet::new();
+        let mut assignments = vec![None; settlements.len()];
+        for settlement_index in settlement_order {
+            candidates[settlement_index]
+                .retain(|(pending_index, _)| !assigned_pending.contains(pending_index));
+            let best_rank = candidates[settlement_index]
+                .iter()
+                .map(|(_, rank)| *rank)
+                .max()
+                .unwrap_or(0);
+            let mut best = candidates[settlement_index]
+                .iter()
+                .filter(|(_, rank)| *rank == best_rank)
+                .map(|(pending_index, _)| *pending_index);
+            let Some(pending_index) = best.next() else {
+                continue;
+            };
+            if best.next().is_some() {
+                continue;
+            }
+            assigned_pending.insert(pending_index);
+            assignments[settlement_index] = Some(pending_index);
+        }
+
+        let sources = assignments
+            .iter()
+            .map(|pending_index| {
+                pending_index
+                    .and_then(|index| self.pending_hits.get(index).map(|row| row.hit.clone()))
+            })
+            .collect::<Vec<_>>();
+        let mut pending_index = 0_usize;
+        self.pending_hits.retain(|_| {
+            let keep = !assigned_pending.contains(&pending_index);
+            pending_index += 1;
+            keep
+        });
+
+        let mut corrections = Vec::new();
+        let mut unattributed = Vec::new();
+        for (settlement_index, settlement) in settlements.iter().enumerate() {
+            let current_hp = current_hps[settlement_index];
+            let previous = previous_snapshots[settlement_index];
+            let raw_damage = f64::from(settlement.raw_damage);
+            let Some(source) = &sources[settlement_index] else {
+                let effective_damage = previous
+                    .map(|snapshot| raw_damage.min((snapshot.hp - current_hp).max(0.0)))
+                    .unwrap_or(raw_damage);
+                if effective_damage >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+                    unattributed.push(UnattributedServerDamage {
+                        timestamp,
+                        damage: effective_damage,
+                        candidate_hits: u32::try_from(candidates[settlement_index].len())
+                            .unwrap_or(u32::MAX),
+                    });
+                }
+                continue;
+            };
+            let target_hp_before = previous
+                .map(|snapshot| snapshot.hp)
+                .filter(|previous_hp| *previous_hp >= current_hp)
+                .unwrap_or_else(|| source.target_hp_before.max(current_hp));
+            let effective_damage = raw_damage.min((target_hp_before - current_hp).max(0.0));
+            if let Some(source_target) = wire_handle_from_hit(source)
+                && source_target == settlement.target_handle
+                && let Some(client_damage) = self.client_damage_by_handle.get_mut(&source_target)
+            {
+                let source_effective = (source.damage - source.overkill_damage()).max(0.0);
+                *client_damage = (*client_damage + effective_damage - source_effective).max(0.0);
+            }
+            corrections.push(HitDamageCorrection {
+                source_timestamp: source.timestamp,
+                source_char_id: source.char_id,
+                source_damage: source.damage,
+                source_target_hp_before: source.target_hp_before,
+                source_target_hp_after: source.target_hp_after,
+                source_target_max_hp: source.target_max_hp,
+                source_gameplay_effect_index: source.gameplay_effect_index,
+                damage: raw_damage,
+                target_hp_before,
+                target_hp_after: current_hp,
+                target_hp_percent: if source.target_max_hp > 0.0 {
+                    current_hp / source.target_max_hp * 100.0
+                } else {
+                    0.0
+                },
+                reconciled_overkill_damage: Some((raw_damage - effective_damage).max(0.0)),
+            });
+        }
+        for (settlement, current_hp) in settlements.iter().zip(current_hps) {
+            if current_hp > 0.0 || self.residual_emitted.contains(&settlement.target_handle) {
+                continue;
+            }
+            let Some(target_max_hp) = self
+                .target_max_hp_by_handle
+                .get(&settlement.target_handle)
+                .copied()
+                .filter(|value| value.is_finite() && *value > 0.0)
+            else {
+                continue;
+            };
+            // The terminal one-point settlement is deliberately filtered from
+            // damage output. The latest wire max-HP snapshot already reflects
+            // max-HP reduction mechanics, so the remaining lifecycle budget is
+            // exactly that current maximum minus the ignored terminal point.
+            let authoritative_damage = (target_max_hp - 1.0).max(0.0);
+            let represented_damage = self
+                .client_damage_by_handle
+                .get(&settlement.target_handle)
+                .copied()
+                .unwrap_or(0.0)
+                .min(target_max_hp);
+            let residual_damage = (authoritative_damage - represented_damage).max(0.0);
+            self.residual_emitted.insert(settlement.target_handle);
+            self.residual_hits.push(server_residual_hit(
+                timestamp,
+                settlement,
+                residual_damage,
+                authoritative_damage,
+                target_max_hp,
+            ));
+        }
+        (corrections, unattributed)
+    }
+
+    fn take_residual_hits(&mut self) -> Vec<Hit> {
+        std::mem::take(&mut self.residual_hits)
     }
 
     #[cfg(test)]
@@ -2960,7 +3207,8 @@ impl ServerDamageCalibrationTracker {
         };
         if current_hp >= previous.hp {
             self.pending_hits.retain(|pending| {
-                pending.target_handle != update.target_handle || pending.hit.timestamp > timestamp
+                pending.target_handle != Some(update.target_handle)
+                    || pending.hit.timestamp > timestamp
             });
             return (None, None);
         }
@@ -2971,7 +3219,7 @@ impl ServerDamageCalibrationTracker {
             if pending.hit.timestamp > previous.timestamp
                 && pending.hit.timestamp <= timestamp
                 && pending.hit.target_max_hp > 0.0
-                && pending.target_handle == update.target_handle
+                && pending.target_handle == Some(update.target_handle)
             {
                 candidate_count = candidate_count.saturating_add(1);
                 source_index = index;
@@ -3002,7 +3250,7 @@ impl ServerDamageCalibrationTracker {
         }
         let source = self.pending_hits[source_index].hit.clone();
         self.pending_hits.retain(|pending| {
-            pending.target_handle != update.target_handle
+            pending.target_handle != Some(update.target_handle)
                 || pending.hit.timestamp > source.timestamp
         });
         (
@@ -3022,6 +3270,7 @@ impl ServerDamageCalibrationTracker {
                 } else {
                     0.0
                 },
+                reconciled_overkill_damage: None,
             }),
             None,
         )
@@ -4838,6 +5087,22 @@ impl PacketDecoder {
         )
     }
 
+    fn reconcile_server_damage_settlements(
+        &mut self,
+        timestamp: f64,
+        settlements: &[ParsedServerDamageSettlement],
+    ) -> (
+        Vec<HitDamageCorrection>,
+        Vec<UnattributedServerDamage>,
+        Vec<Hit>,
+    ) {
+        let (corrections, unattributed) = self
+            .server_damage_calibration
+            .observe_server_damage_settlements(timestamp, settlements);
+        let residual_hits = self.server_damage_calibration.take_residual_hits();
+        (corrections, unattributed, residual_hits)
+    }
+
     fn suppress_matching_ambiguous_hits(&mut self, confirmed_hit: &Hit) -> usize {
         if !is_confirmed_packet_hit(confirmed_hit) {
             return 0;
@@ -4924,9 +5189,13 @@ fn exact_untyped_skill_match(candidate: &Hit, confirmed: &Hit) -> bool {
 }
 
 fn same_exact_wire_damage_event(left: &Hit, right: &Hit) -> bool {
-    same_wire_damage_snapshot(left, right)
-        && left.target_id.is_some()
-        && left.target_id == right.target_id
+    if !same_wire_damage_snapshot(left, right) {
+        return false;
+    }
+    match (left.wire_event, right.wire_event) {
+        (Some(left_event), Some(right_event)) => left_event == right_event,
+        _ => left.target_id.is_some() && left.target_id == right.target_id,
+    }
 }
 
 fn extend_unique_exact_wire_hits(
@@ -5012,6 +5281,103 @@ fn propagate_unanimous_trailing_skill(hits: &mut [Hit]) {
 
 fn nearly_same(left: f64, right: f64) -> bool {
     (left - right).abs() <= 0.5
+}
+
+fn normalized_server_hp(current_hp: f32) -> f64 {
+    if current_hp <= 1.0 {
+        0.0
+    } else {
+        f64::from(current_hp)
+    }
+}
+
+fn server_damage_match_rank(
+    pending: &ServerDamagePendingHit,
+    timestamp: f64,
+    settlement: &ParsedServerDamageSettlement,
+    current_hp: f64,
+    previous_hp: Option<f64>,
+) -> Option<u8> {
+    if pending.hit.timestamp > timestamp
+        || timestamp - pending.hit.timestamp > SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS
+    {
+        return None;
+    }
+    let target_exact = match pending.target_handle {
+        Some(target_handle) if target_handle != settlement.target_handle => return None,
+        Some(_) => true,
+        None => false,
+    };
+    let damage_delta = (pending.hit.damage - f64::from(settlement.raw_damage)).abs();
+    let hp_exact = (pending.hit.target_hp_after.max(0.0) - current_hp).abs() <= 1.0;
+    let previous_hp_exact =
+        previous_hp.is_some_and(|hp| (pending.hit.target_hp_before.max(0.0) - hp).abs() <= 1.0);
+    if damage_delta > 1.0 && !(target_exact && previous_hp_exact) {
+        return None;
+    }
+    let rounded_damage = damage_delta > 0.5;
+    if damage_delta <= 1.0 && rounded_damage && !(target_exact && hp_exact) {
+        return None;
+    }
+    Some(
+        match (target_exact, previous_hp_exact, hp_exact, rounded_damage) {
+            (true, true, true, false) => 8,
+            (true, true, _, _) => 7,
+            (true, false, true, false) => 6,
+            (true, false, true, true) => 5,
+            (true, false, false, false) => 4,
+            (false, false, true, false) => 3,
+            (false, false, false, false) => 2,
+            _ => return None,
+        },
+    )
+}
+
+fn server_residual_hit(
+    timestamp: f64,
+    settlement: &ParsedServerDamageSettlement,
+    damage: f64,
+    authoritative_damage: f64,
+    target_max_hp: f64,
+) -> Hit {
+    Hit {
+        timestamp,
+        char_id: 0,
+        char_name: "Unattributed".to_owned(),
+        char_known: false,
+        damage,
+        byte_offset: settlement.byte_offset,
+        bit_shift: settlement.bit_shift,
+        char_source: HitCharacterSource::Unknown,
+        direction: HitDirection::Outgoing,
+        target_hp_before: authoritative_damage,
+        target_hp_after: 0.0,
+        target_max_hp,
+        target_hp_percent: 0.0,
+        target_id: Some(target_id_from_wire_handle(&settlement.target_handle)),
+        target_name: None,
+        target_name_en: None,
+        target_name_ja: None,
+        target_monster_id: None,
+        target_context: vec![format!(
+            "enemy_target_wire={}",
+            hex::encode(settlement.target_handle)
+        )],
+        gameplay_effect_index: None,
+        gameplay_effect_name: None,
+        ability_name: None,
+        damage_name: Some("Server settlement residual".to_owned()),
+        damage_component: None,
+        attack_type: None,
+        damage_attribute: None,
+        follow_up_damage: 0.0,
+        follow_up_timestamp: None,
+        follow_up_damage_name: None,
+        follow_up_attack_type: None,
+        follow_up_damage_attribute: None,
+        reconciled_overkill_damage: Some(0.0),
+        wire_event: None,
+    }
 }
 
 fn is_enemy_death_settlement_hit(hit: &Hit) -> bool {
@@ -5996,6 +6362,44 @@ impl PacketDecoder {
                 }
             }
         }
+        let mut server_damage_settlements = if outgoing {
+            Vec::new()
+        } else {
+            parse_server_damage_settlements(payload)
+        };
+        if !outgoing {
+            let settlement_key = |settlement: &ParsedServerDamageSettlement| {
+                (
+                    settlement.target_handle,
+                    settlement.current_hp.to_bits(),
+                    settlement.dead_state,
+                    settlement.raw_damage,
+                    settlement.secondary_value,
+                )
+            };
+            let mut packet_occurrences = HashMap::new();
+            for settlement in &server_damage_settlements {
+                *packet_occurrences
+                    .entry(settlement_key(settlement))
+                    .or_insert(0_usize) += 1;
+            }
+            for observation in &reassembled_bunches {
+                for settlement in parse_server_damage_settlements(&observation.bunch.data) {
+                    let key = settlement_key(&settlement);
+                    if packet_occurrences.get_mut(&key).is_some_and(|remaining| {
+                        if *remaining == 0 {
+                            false
+                        } else {
+                            *remaining -= 1;
+                            true
+                        }
+                    }) {
+                        continue;
+                    }
+                    server_damage_settlements.push(settlement);
+                }
+            }
+        }
         let target_hp_keys = target_hp_updates
             .iter()
             .map(|update| (update.target_handle, update.current_hp.to_bits()))
@@ -6081,6 +6485,7 @@ impl PacketDecoder {
             && current_hp_updates.is_empty()
             && target_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
+            && server_damage_settlements.is_empty()
             && equipment_slots.is_empty()
         {
             fuwen_start_pair(payload, &evidence, characters)
@@ -6098,6 +6503,7 @@ impl PacketDecoder {
         if current_hp_updates.is_empty()
             && target_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
+            && server_damage_settlements.is_empty()
             && prepared_hits.deferred_ambiguous == 0
             && prepared_hits.deferred_targetless == 0
             && fuwen_start.is_none()
@@ -6115,11 +6521,18 @@ impl PacketDecoder {
         }
         if matches!(self.packet_emission, PacketEmissionMode::SummaryOnly) {
             let (
+                mut server_damage_corrections,
+                mut unattributed_server_damage,
+                server_residual_hits,
+            ) = self.reconcile_server_damage_settlements(timestamp, &server_damage_settlements);
+            let (
                 inferred_follow_ups,
                 hp_sync_follow_ups,
-                server_damage_corrections,
-                unattributed_server_damage,
+                legacy_server_damage_corrections,
+                legacy_unattributed_server_damage,
             ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
+            server_damage_corrections.extend(legacy_server_damage_corrections);
+            unattributed_server_damage.extend(legacy_unattributed_server_damage);
             let _ = sender.send(EngineEvent::PacketObservation(PacketObservation {
                 parsed_hits: accepted,
             }));
@@ -6140,6 +6553,7 @@ impl PacketDecoder {
             for observation in unattributed_server_damage {
                 let _ = sender.send(EngineEvent::UnattributedServerDamage(observation));
             }
+            self.emit_hits(server_residual_hits, characters, sender);
             return;
         }
         let mut note = String::new();
@@ -6268,6 +6682,19 @@ impl PacketDecoder {
                 )),
             );
         }
+        if !server_damage_settlements.is_empty() {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "Server damage settlements: {} rows, raw={}",
+                    server_damage_settlements.len(),
+                    server_damage_settlements
+                        .iter()
+                        .map(|settlement| u64::from(settlement.raw_damage))
+                        .sum::<u64>()
+                )),
+            );
+        }
         if used_direct_client_damage_boss {
             append_packet_note(
                 &mut note,
@@ -6278,12 +6705,16 @@ impl PacketDecoder {
             );
         }
         append_packet_note(&mut note, equipment_slots_note(&equipment_slots));
+        let (mut server_damage_corrections, mut unattributed_server_damage, server_residual_hits) =
+            self.reconcile_server_damage_settlements(timestamp, &server_damage_settlements);
         let (
             inferred_follow_ups,
             hp_sync_follow_ups,
-            server_damage_corrections,
-            unattributed_server_damage,
+            legacy_server_damage_corrections,
+            legacy_unattributed_server_damage,
         ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
+        server_damage_corrections.extend(legacy_server_damage_corrections);
+        unattributed_server_damage.extend(legacy_unattributed_server_damage);
         if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
             if packet.mode != 0 {
                 append_packet_note(
@@ -6356,6 +6787,7 @@ impl PacketDecoder {
         for observation in unattributed_server_damage {
             let _ = sender.send(EngineEvent::UnattributedServerDamage(observation));
         }
+        self.emit_hits(server_residual_hits, characters, sender);
     }
 }
 
@@ -7215,6 +7647,8 @@ struct ExportHit {
     follow_up_attack_type: Option<String>,
     #[serde(default)]
     follow_up_damage_attribute: Option<String>,
+    #[serde(default)]
+    reconciled_overkill_damage: Option<f64>,
 }
 
 fn default_outgoing_direction() -> HitDirection {
@@ -7427,6 +7861,7 @@ impl From<&Hit> for ExportHit {
             follow_up_damage_name: hit.follow_up_damage_name.clone(),
             follow_up_attack_type: hit.follow_up_attack_type.clone(),
             follow_up_damage_attribute: hit.follow_up_damage_attribute.clone(),
+            reconciled_overkill_damage: hit.reconciled_overkill_damage,
         }
     }
 }
@@ -8137,6 +8572,14 @@ fn validate_capture_export_structure_with_limits(
             0.0,
             MAX_CAPTURE_JSON_IMPORT_DAMAGE,
         )?;
+        if let Some(overkill) = hit.reconciled_overkill_damage {
+            validate_capture_number(
+                "hits[].reconciled_overkill_damage",
+                overkill,
+                0.0,
+                hit.damage,
+            )?;
+        }
         if let Some(timestamp) = hit.follow_up_timestamp {
             validate_capture_number(
                 "hits[].follow_up_timestamp",
@@ -8760,6 +9203,8 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         follow_up_damage_name: hit.follow_up_damage_name,
         follow_up_attack_type: hit.follow_up_attack_type,
         follow_up_damage_attribute: hit.follow_up_damage_attribute,
+        reconciled_overkill_damage: hit.reconciled_overkill_damage,
+        wire_event: None,
     }))
 }
 
@@ -11921,7 +12366,8 @@ mod tests {
                     "follow_up_timestamp":1.5,
                     "follow_up_damage_name":"Follow Up",
                     "follow_up_attack_type":"覆纹",
-                    "follow_up_damage_attribute":"灵"
+                    "follow_up_damage_attribute":"灵",
+                    "reconciled_overkill_damage":234.5
                 }],
                 "packets":[],
                 "empty_curtain":[],
@@ -11968,6 +12414,8 @@ mod tests {
         assert_eq!(hit.follow_up_damage_name.as_deref(), Some("Follow Up"));
         assert_eq!(hit.follow_up_attack_type.as_deref(), Some("覆纹"));
         assert_eq!(hit.follow_up_damage_attribute.as_deref(), Some("灵"));
+        assert_eq!(hit.reconciled_overkill_damage, Some(234.5));
+        assert_eq!(hit.overkill_damage(), 234.5);
         assert_eq!(hit.char_source, HitCharacterSource::ExportJson);
     }
 
@@ -14201,6 +14649,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 
@@ -14420,6 +14870,23 @@ mod tests {
         }
     }
 
+    fn server_damage_settlement_for(
+        target_handle: [u8; 29],
+        current_hp: f32,
+        dead_state: u32,
+        raw_damage: u32,
+    ) -> ParsedServerDamageSettlement {
+        ParsedServerDamageSettlement {
+            target_handle,
+            current_hp,
+            dead_state,
+            raw_damage,
+            secondary_value: 0,
+            byte_offset: 0,
+            bit_shift: 0,
+        }
+    }
+
     fn set_wire_target(hit: &mut Hit, target_handle: [u8; 29]) {
         let target_id = target_id_from_wire_handle(&target_handle);
         hit.target_id = Some(target_id);
@@ -14566,6 +15033,36 @@ mod tests {
     }
 
     #[test]
+    fn exact_wire_event_deduplicates_across_conflicting_target_handles() {
+        let mut packet_hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        packet_hit.wire_event = Some(crate::engine::model::DamageWireEvent {
+            damage: packet_hit.damage as f32,
+            target_hp_before: packet_hit.target_hp_before as f32,
+            target_max_hp: packet_hit.target_max_hp as f32,
+            damage_time: 16_933_585.899_492_1,
+            world_time: 151.193_88,
+            repeated_damage: packet_hit.damage as f32,
+            state_flags: [0, 1, 0],
+            trailing_value: 0.0,
+        });
+        set_wire_target(&mut packet_hit, [1; 29]);
+        let mut attributed = packet_hit.clone();
+        attributed.timestamp = 10.001;
+        attributed.char_source = HitCharacterSource::GameplayEffect;
+        set_wire_target(&mut attributed, [2; 29]);
+        let mut later_overlap = attributed.clone();
+        later_overlap.timestamp = 10.05;
+        later_overlap.wire_event.as_mut().unwrap().damage_time += 0.05;
+        let mut hits = vec![packet_hit];
+
+        extend_unique_exact_wire_hits(&mut hits, [attributed, later_overlap]);
+
+        assert_eq!(hits.len(), 2);
+        assert_eq!(wire_handle_from_hit(&hits[0]), Some([1; 29]));
+        assert_eq!(wire_handle_from_hit(&hits[1]), Some([2; 29]));
+    }
+
+    #[test]
     fn reassembled_batch_does_not_consume_same_hit_from_previous_chain() {
         let mut decoder = PacketDecoder::default();
         let mut previous = duplicate_test_hit(9.99, HitCharacterSource::Packet, "outgoing");
@@ -14578,6 +15075,32 @@ mod tests {
 
         assert_eq!(recovered.len(), 1);
         assert_eq!(wire_handle_from_hit(&recovered[0]), Some([1; 29]));
+    }
+
+    #[test]
+    fn reassembled_batch_deduplicates_rebound_target_for_same_wire_event() {
+        let mut decoder = PacketDecoder::default();
+        let mut emitted = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        emitted.wire_event = Some(crate::engine::model::DamageWireEvent {
+            damage: emitted.damage as f32,
+            target_hp_before: emitted.target_hp_before as f32,
+            target_max_hp: emitted.target_max_hp as f32,
+            damage_time: 16_933_585.899_492_1,
+            world_time: 151.193_88,
+            repeated_damage: emitted.damage as f32,
+            state_flags: [0, 1, 0],
+            trailing_value: 0.0,
+        });
+        set_wire_target(&mut emitted, [1; 29]);
+        decoder.recent_confirmed_hits.push(emitted.clone());
+        let mut reassembled = emitted;
+        reassembled.timestamp = 10.001;
+        reassembled.char_source = HitCharacterSource::GameplayEffect;
+        set_wire_target(&mut reassembled, [2; 29]);
+
+        let recovered = decoder.take_new_reassembled_hits(vec![reassembled], &[], 10.0);
+
+        assert!(recovered.is_empty());
     }
 
     #[test]
@@ -14723,6 +15246,199 @@ mod tests {
         marker.target_context.clear();
         decoder.emit_hits(std::iter::once(marker), &characters, &sink);
         assert!(matches!(receiver.try_recv(), Ok(EngineEvent::Hit(_))));
+    }
+
+    #[test]
+    fn server_damage_settlement_marks_partial_and_post_terminal_overkill() {
+        let target = [7_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        let mut lethal = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        lethal.damage = 11_662.0;
+        lethal.target_hp_before = 7_086.0;
+        lethal.target_hp_after = 0.0;
+        lethal.target_max_hp = 808_898.0;
+        set_wire_target(&mut lethal, target);
+        tracker.observe_hit(&lethal);
+
+        let (correction, unattributed) = tracker.observe_server_damage_settlement(
+            10.05,
+            &server_damage_settlement_for(target, 1.0, 1, 11_662),
+        );
+        let correction = correction.expect("lethal settlement should match the outgoing hit");
+        assert!(unattributed.is_none());
+        assert_eq!(correction.damage, 11_662.0);
+        assert_eq!(correction.target_hp_before, 7_086.0);
+        assert_eq!(correction.target_hp_after, 0.0);
+        assert_eq!(correction.reconciled_overkill_damage, Some(4_576.0));
+
+        let mut post_terminal = lethal;
+        post_terminal.timestamp = 10.06;
+        post_terminal.damage = 4_256.0;
+        post_terminal.target_hp_before = 1.0;
+        tracker.observe_hit(&post_terminal);
+        let (correction, unattributed) = tracker.observe_server_damage_settlement(
+            10.10,
+            &server_damage_settlement_for(target, 1.0, 1, 4_256),
+        );
+        assert!(unattributed.is_none());
+        assert_eq!(
+            correction.and_then(|row| row.reconciled_overkill_damage),
+            Some(4_256.0)
+        );
+    }
+
+    #[test]
+    fn server_damage_settlement_does_not_guess_between_identical_pending_hits() {
+        let target = [7_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        for timestamp in [10.0, 10.01] {
+            let mut hit = duplicate_test_hit(timestamp, HitCharacterSource::Packet, "outgoing");
+            hit.damage = 892.0;
+            hit.target_hp_before = 10_000.0;
+            hit.target_hp_after = 9_108.0;
+            hit.target_max_hp = 10_000.0;
+            set_wire_target(&mut hit, target);
+            tracker.observe_hit(&hit);
+        }
+
+        let (correction, unattributed) = tracker.observe_server_damage_settlement(
+            10.05,
+            &server_damage_settlement_for(target, 9_108.0, 0, 892),
+        );
+
+        assert!(correction.is_none());
+        assert_eq!(unattributed.map(|row| row.candidate_hits), Some(2));
+    }
+
+    #[test]
+    fn server_damage_batch_does_not_consume_a_conflicting_target_by_hp() {
+        let first_target = [7_u8; 29];
+        let second_target = [8_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        hit.damage = 126_190.0;
+        hit.target_hp_before = 782_367.0;
+        hit.target_hp_after = 656_177.0;
+        hit.target_max_hp = 808_898.0;
+        set_wire_target(&mut hit, second_target);
+        tracker.observe_hit(&hit);
+
+        let (corrections, unattributed) = tracker.observe_server_damage_settlements(
+            10.05,
+            &[
+                server_damage_settlement_for(first_target, 656_177.0, 0, 126_190),
+                server_damage_settlement_for(second_target, 656_177.0, 0, 126_190),
+            ],
+        );
+
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].source_timestamp, 10.0);
+        assert_eq!(unattributed.len(), 1);
+        assert_eq!(unattributed[0].damage, 126_190.0);
+        assert_eq!(unattributed[0].candidate_hits, 0);
+    }
+
+    #[test]
+    fn server_damage_accepts_one_point_rounding_only_with_target_and_hp_evidence() {
+        let target = [7_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        hit.damage = 19_986.0;
+        hit.target_hp_before = 1_715_144.0;
+        hit.target_hp_after = 1_695_158.0;
+        hit.target_max_hp = 1_752_612.0;
+        set_wire_target(&mut hit, target);
+        tracker.observe_hit(&hit);
+
+        let (correction, unattributed) = tracker.observe_server_damage_settlement(
+            10.05,
+            &server_damage_settlement_for(target, 1_695_157.0, 0, 19_987),
+        );
+
+        assert!(unattributed.is_none());
+        assert_eq!(correction.map(|row| row.damage), Some(19_987.0));
+
+        let mut targetless = ServerDamageCalibrationTracker::default();
+        hit.target_id = None;
+        hit.target_context.clear();
+        targetless.observe_hit(&hit);
+        let (correction, unattributed) = targetless.observe_server_damage_settlement(
+            10.05,
+            &server_damage_settlement_for(target, 1_695_157.0, 0, 19_987),
+        );
+        assert!(correction.is_none());
+        assert_eq!(unattributed.map(|row| row.candidate_hits), Some(0));
+    }
+
+    #[test]
+    fn server_damage_uses_previous_target_hp_to_correct_a_different_client_value() {
+        let target = [7_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        tracker.hp_by_handle.insert(
+            target,
+            ServerHpSnapshot {
+                timestamp: 10.0,
+                hp: 1_662_647.0,
+            },
+        );
+        let mut hit = duplicate_test_hit(10.01, HitCharacterSource::Packet, "outgoing");
+        hit.damage = 8_492.0;
+        hit.target_hp_before = 1_662_647.0;
+        hit.target_hp_after = 1_654_155.0;
+        hit.target_max_hp = 1_752_612.0;
+        set_wire_target(&mut hit, target);
+        tracker.observe_hit(&hit);
+
+        let (correction, unattributed) = tracker.observe_server_damage_settlement(
+            10.05,
+            &server_damage_settlement_for(target, 1_651_786.0, 0, 10_861),
+        );
+
+        assert!(unattributed.is_none());
+        let correction = correction.expect("previous HP should anchor the target-specific hit");
+        assert_eq!(correction.damage, 10_861.0);
+        assert_eq!(correction.target_hp_before, 1_662_647.0);
+        assert_eq!(correction.target_hp_after, 1_651_786.0);
+    }
+
+    #[test]
+    fn server_damage_emits_one_unattributed_residual_when_a_target_dies() {
+        let target = [7_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        hit.damage = 800.0;
+        hit.target_hp_before = 1_000.0;
+        hit.target_hp_after = 200.0;
+        hit.target_max_hp = 1_000.0;
+        set_wire_target(&mut hit, target);
+        tracker.observe_hit(&hit);
+
+        let (corrections, unattributed) = tracker.observe_server_damage_settlements(
+            10.05,
+            &[
+                server_damage_settlement_for(target, 200.0, 0, 800),
+                server_damage_settlement_for(target, 1.0, 1, 300),
+            ],
+        );
+
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(unattributed.len(), 1);
+        let residual_hits = tracker.take_residual_hits();
+        assert_eq!(residual_hits.len(), 1);
+        assert_eq!(residual_hits[0].damage, 199.0);
+        assert_eq!(residual_hits[0].target_hp_before, 999.0);
+        assert_eq!(residual_hits[0].char_id, 0);
+        assert!(!residual_hits[0].char_known);
+        assert_eq!(
+            residual_hits[0].target_id,
+            Some(target_id_from_wire_handle(&target))
+        );
+
+        let _ = tracker.observe_server_damage_settlement(
+            10.06,
+            &server_damage_settlement_for(target, 1.0, 1, 2),
+        );
+        assert!(tracker.take_residual_hits().is_empty());
     }
 
     #[test]
