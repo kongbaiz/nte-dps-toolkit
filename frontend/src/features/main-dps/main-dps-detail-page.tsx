@@ -806,6 +806,17 @@ function HitRow({
     0,
     Math.min(100, (row.damage / maxDamage) * 100),
   );
+  const damageTitle =
+    row.followUpDamage > 0
+      ? tf("Damage: {} + {}", [
+          formatMainMetric(row.primaryDamage),
+          formatMainMetric(row.followUpDamage),
+        ])
+      : tf("Damage: {}", [formatMainMetric(row.damage)]);
+  const damageTitleWithOverkill =
+    row.overkillDamage > 0
+      ? `${damageTitle}\n${t("Overkill")}: ${formatMainMetric(row.overkillDamage)}`
+      : damageTitle;
   return (
     <tr
       className="h-16 border-t align-middle hover:bg-muted/35"
@@ -857,29 +868,26 @@ function HitRow({
         </td>
       )}
       {columns.showDamage && (
-        <td
-          className="border-r px-2 py-1.5"
-          title={
-            row.followUpDamage > 0
-              ? tf("Damage: {} + {}", [
-                  formatMainMetric(row.primaryDamage),
-                  formatMainMetric(row.followUpDamage),
-                ])
-              : tf("Damage: {}", [formatMainMetric(row.damage)])
-          }
-        >
-          <span className="relative inline-flex min-h-7 items-center">
-            <DamageDigits
-              value={row.primaryDamage}
-              digitKey={row.damageDigitKey}
-            />
-            {row.followUpDamage > 0 && (
-              <span className="ml-1 self-start rounded bg-background/80 px-1 py-0.5 shadow-sm">
-                <DamageDigits
-                  value={row.followUpDamage}
-                  digitKey={row.followUpDamageDigitKey}
-                  compact
-                />
+        <td className="border-r px-2 py-1.5" title={damageTitleWithOverkill}>
+          <span className="inline-flex flex-col items-start gap-0.5">
+            <span className="relative inline-flex min-h-7 items-center">
+              <DamageDigits
+                value={row.primaryDamage}
+                digitKey={row.damageDigitKey}
+              />
+              {row.followUpDamage > 0 && (
+                <span className="ml-1 self-start rounded bg-background/80 px-1 py-0.5 shadow-sm">
+                  <DamageDigits
+                    value={row.followUpDamage}
+                    digitKey={row.followUpDamageDigitKey}
+                    compact
+                  />
+                </span>
+              )}
+            </span>
+            {row.overkillDamage > 0 && (
+              <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-destructive">
+                {t("Overkill")} +{formatMainMetric(row.overkillDamage)}
               </span>
             )}
           </span>

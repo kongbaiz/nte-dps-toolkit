@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ use nte_dps_tool::{
 
 use crate::state::{AppState, MainDpsDetailKind};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 5;
+pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 6;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
@@ -157,6 +157,7 @@ impl MainDpsDetailSnapshot {
             let total_hits = indexed.total_hits;
             let total_damage = indexed.total_damage;
             let max_row_damage = indexed.max_row_damage;
+            let generic_target_labels = GenericTargetLabels::from_source(source, language);
             let rows = indexed
                 .rows
                 .into_iter()
@@ -167,6 +168,7 @@ impl MainDpsDetailSnapshot {
                         offset.saturating_add(page_index),
                         &resources.characters,
                         language,
+                        &generic_target_labels,
                         &mut text_budget,
                     )
                 })
@@ -668,6 +670,9 @@ fn skill_summaries<'a>(
 }
 
 fn skill_summary_display_name(hit: &Hit, language: Language) -> String {
+    if is_target_hp_residual(hit) {
+        return i18n::t_for(language, "Target HP Residual");
+    }
     let stable_name = hit_skill_name(hit);
     let resource_name = hit
         .gameplay_effect_name
@@ -705,6 +710,10 @@ fn is_technical_skill_name(value: &str) -> bool {
         || value.contains('_')
 }
 
+fn is_target_hp_residual(hit: &Hit) -> bool {
+    hit.damage_name.as_deref() == Some("Target HP Residual")
+}
+
 fn percent(value: f64, total: f64) -> f64 {
     if total > 0.0 {
         value / total * 100.0
@@ -724,6 +733,7 @@ pub(crate) struct MainDpsHitSnapshot {
     pub damage: f64,
     pub primary_damage: f64,
     pub follow_up_damage: f64,
+    pub overkill_damage: f64,
     pub skill_id: String,
     pub skill: String,
     pub damage_type: String,
@@ -738,15 +748,65 @@ pub(crate) struct MainDpsHitSnapshot {
     pub target_hp_percent: f64,
 }
 
+#[derive(Default)]
+struct GenericTargetLabels {
+    by_id: HashMap<String, String>,
+}
+
+impl GenericTargetLabels {
+    fn from_source(source: DetailSource<'_>, language: Language) -> Self {
+        Self::from_hits(source.hits().iter(), language)
+    }
+
+    fn from_hits<'a>(hits: impl IntoIterator<Item = &'a Hit>, language: Language) -> Self {
+        let mut candidates = HashSet::<String>::new();
+        for hit in hits {
+            if localized_target_name(hit, language).is_some() {
+                continue;
+            }
+            let Some(target_id) = hit
+                .target_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            candidates.insert(target_id.to_owned());
+        }
+
+        let mut ordered = candidates.into_iter().collect::<Vec<_>>();
+        ordered.sort();
+        let mut by_id = HashMap::with_capacity(ordered.len());
+        for (index, target_id) in ordered.into_iter().enumerate() {
+            let prefix = i18n::t_for(language, "Enemy");
+            by_id.insert(target_id, format!("{prefix}{}", index + 1));
+        }
+        Self { by_id }
+    }
+
+    fn for_hit(&self, hit: &Hit) -> Option<&str> {
+        hit.target_id
+            .as_deref()
+            .and_then(|target_id| self.by_id.get(target_id))
+            .map(String::as_str)
+    }
+}
+
 impl MainDpsHitSnapshot {
     fn from_hit(
         hit: &Hit,
         index: usize,
         characters: &HashMap<u32, CharacterInfo>,
         language: Language,
+        generic_target_labels: &GenericTargetLabels,
         text_budget: &mut MainDpsDetailTextBudget,
     ) -> Self {
-        let skill = hit_skill_name(hit);
+        let skill = if is_target_hp_residual(hit) {
+            i18n::t_for(language, "Target HP Residual")
+        } else {
+            hit_skill_name(hit)
+        };
         let skill_id = text_budget.text(skill, "-");
         let skill = text_budget.text(skill_id.clone(), "-");
         Self {
@@ -765,6 +825,7 @@ impl MainDpsHitSnapshot {
             damage: hit.total_damage(),
             primary_damage: hit.damage,
             follow_up_damage: hit.follow_up_damage,
+            overkill_damage: hit.overkill_damage(),
             skill_id,
             skill,
             damage_type: text_budget.text(
@@ -782,9 +843,14 @@ impl MainDpsHitSnapshot {
             follow_up_damage_digit_key: text_budget
                 .optional(follow_up_damage_digit_key_for_hit(hit).map(str::to_owned)),
             target: text_budget.text(
-                localized_target_name(hit, language)
-                    .unwrap_or("-")
-                    .to_owned(),
+                if is_target_hp_residual(hit) {
+                    i18n::t_for(language, "Completed Targets")
+                } else {
+                    localized_target_name(hit, language)
+                        .or_else(|| generic_target_labels.for_hit(hit))
+                        .unwrap_or("-")
+                        .to_owned()
+                },
                 "-",
             ),
             target_monster_id: text_budget.optional(hit.target_monster_id.clone()),
@@ -800,6 +866,9 @@ fn hit_type_display_text(hit: &Hit, language: Language) -> String {
         HitDirection::Incoming => return i18n::t_for(language, "Incoming"),
         HitDirection::Unknown => return i18n::t_for(language, "Candidate Output"),
         HitDirection::Outgoing => {}
+    }
+    if is_target_hp_residual(hit) {
+        return i18n::t_for(language, "Target HP Residual");
     }
     let attack_type = hit
         .attack_type
@@ -975,6 +1044,181 @@ mod tests {
             filter_id(&CombatDetailFilter::QteType("创生花".to_owned())),
             "qteType"
         );
+    }
+
+    #[test]
+    fn unresolved_unique_targets_receive_stable_generic_labels() {
+        let mut first_minion = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        first_minion.target_id = Some("enemy-instance:0001".to_owned());
+        first_minion.target_max_hp = 808_898.0;
+        first_minion.target_monster_id = Some("mon_015".to_owned());
+
+        let mut boss = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        boss.timestamp = 2.0;
+        boss.target_id = Some("enemy-instance:0002".to_owned());
+        boss.target_max_hp = 2_628_918.0;
+        boss.target_monster_id = Some("Boss_015".to_owned());
+
+        let mut second_minion = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        second_minion.timestamp = 3.0;
+        second_minion.target_id = Some("enemy-instance:0003".to_owned());
+        second_minion.target_max_hp = 808_898.0;
+        second_minion.target_context = vec!["enemy_config_id=mon_016_BP".to_owned()];
+
+        let mut unknown = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        unknown.timestamp = 4.0;
+        unknown.target_id = Some("enemy-instance:0004".to_owned());
+
+        let hits = VecDeque::from([
+            first_minion.clone(),
+            boss.clone(),
+            second_minion.clone(),
+            unknown.clone(),
+            first_minion.clone(),
+        ]);
+        let labels = GenericTargetLabels::from_hits(hits.iter(), Language::SimplifiedChinese);
+        let characters = HashMap::new();
+        let mut text_budget = MainDpsDetailTextBudget::default();
+
+        let first = MainDpsHitSnapshot::from_hit(
+            &first_minion,
+            0,
+            &characters,
+            Language::SimplifiedChinese,
+            &labels,
+            &mut text_budget,
+        );
+        let boss = MainDpsHitSnapshot::from_hit(
+            &boss,
+            1,
+            &characters,
+            Language::SimplifiedChinese,
+            &labels,
+            &mut text_budget,
+        );
+        let second = MainDpsHitSnapshot::from_hit(
+            &second_minion,
+            2,
+            &characters,
+            Language::SimplifiedChinese,
+            &labels,
+            &mut text_budget,
+        );
+        let repeated = MainDpsHitSnapshot::from_hit(
+            &first_minion,
+            4,
+            &characters,
+            Language::SimplifiedChinese,
+            &labels,
+            &mut text_budget,
+        );
+        let unknown = MainDpsHitSnapshot::from_hit(
+            &unknown,
+            3,
+            &characters,
+            Language::SimplifiedChinese,
+            &labels,
+            &mut text_budget,
+        );
+
+        assert_eq!(first.target, "敌人1");
+        assert_eq!(boss.target, "敌人2");
+        assert_eq!(second.target, "敌人3");
+        assert_eq!(unknown.target, "敌人4");
+        assert_eq!(repeated.target, "敌人1");
+    }
+
+    #[test]
+    fn generic_target_labels_are_stable_across_real_pages_and_filters() {
+        let mut first = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        first.target_id = Some("enemy-instance:0001".to_owned());
+        let mut second = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        second.timestamp = 2.0;
+        second.target_id = Some("enemy-instance:0002".to_owned());
+        second.direction = HitDirection::Incoming;
+        let mut combat = CombatState::default();
+        combat.push_hit(first);
+        combat.push_hit(second);
+        let source = DetailSource::Combat(&combat);
+        let labels = GenericTargetLabels::from_source(source, Language::SimplifiedChinese);
+        let page = source.indexed_combat_details(
+            None,
+            &nte_dps_tool::engine::model::IndexedCombatDetailFilter::All,
+            None,
+            1,
+            1,
+        );
+        let filtered = source.indexed_combat_details(
+            None,
+            &nte_dps_tool::engine::model::IndexedCombatDetailFilter::Incoming,
+            None,
+            0,
+            1,
+        );
+
+        assert_eq!(labels.for_hit(page.rows[0].1), Some("敌人2"));
+        assert_eq!(labels.for_hit(filtered.rows[0].1), Some("敌人2"));
+    }
+
+    #[test]
+    fn target_kind_metadata_does_not_change_generic_enemy_labels() {
+        let mut minion = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        minion.target_id = Some("enemy-instance:0001".to_owned());
+        minion.target_context = vec!["target_kind=minion".to_owned()];
+        let mut boss = skill_hit(100.0, Some("GA_Test"), None, "Skill");
+        boss.target_id = Some("enemy-instance:0002".to_owned());
+        boss.target_context = vec!["target_kind=boss".to_owned()];
+
+        let labels = GenericTargetLabels::from_hits([&minion, &boss], Language::SimplifiedChinese);
+
+        assert_eq!(labels.for_hit(&minion), Some("敌人1"));
+        assert_eq!(labels.for_hit(&boss), Some("敌人2"));
+    }
+
+    #[test]
+    fn target_hp_residual_is_localized_as_explicit_unattributed_damage() {
+        let mut hit = skill_hit(100.0, None, None, "Skill");
+        hit.damage_name = Some("Target HP Residual".to_owned());
+
+        assert_eq!(
+            skill_summary_display_name(&hit, Language::SimplifiedChinese),
+            "未归属目标生命差值"
+        );
+        assert_eq!(
+            hit_type_display_text(&hit, Language::Japanese),
+            "未帰属の対象HP差分"
+        );
+
+        let snapshot = MainDpsHitSnapshot::from_hit(
+            &hit,
+            0,
+            &HashMap::new(),
+            Language::SimplifiedChinese,
+            &GenericTargetLabels::default(),
+            &mut MainDpsDetailTextBudget::default(),
+        );
+        assert_eq!(snapshot.target, "本阶段已击败目标");
+    }
+
+    #[test]
+    fn hit_snapshot_records_primary_overkill_damage() {
+        let mut hit = skill_hit(1_500.0, Some("GA_Test"), None, "Skill");
+        hit.target_hp_before = 1_000.0;
+        hit.target_max_hp = 10_000.0;
+        hit.follow_up_damage = 250.0;
+
+        let snapshot = MainDpsHitSnapshot::from_hit(
+            &hit,
+            0,
+            &HashMap::new(),
+            Language::SimplifiedChinese,
+            &GenericTargetLabels::default(),
+            &mut MainDpsDetailTextBudget::default(),
+        );
+
+        assert_eq!(snapshot.damage, 1_750.0);
+        assert_eq!(snapshot.primary_damage, 1_500.0);
+        assert_eq!(snapshot.overkill_damage, 500.0);
     }
 
     #[test]
