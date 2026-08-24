@@ -375,6 +375,16 @@ jobs:
             }
           }
 
+          $core = Resolve-Path "dist/nte-core-windows-x64/nte-core.exe"
+          $versionJson = & $core version --json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Post-UPX nte-core smoke test failed"
+          }
+          $version = $versionJson | ConvertFrom-Json
+          if (-not $version.core_version) {
+            throw "Post-UPX nte-core smoke test returned an invalid version payload"
+          }
+
       - name: Prepare release packages
         shell: pwsh
         run: |

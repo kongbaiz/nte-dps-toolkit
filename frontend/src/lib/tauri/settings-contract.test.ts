@@ -48,6 +48,7 @@ function settingsFixture(): Record<string, unknown> {
       devices: [{ id: "device", label: "Ethernet · 192.0.2.1" }],
       manualCaptureDevice: null,
       serverDamageCalibration: false,
+      includeMaxHpReductionInTotalDamage: false,
       separateReactionDamage: false,
       autoRoundAfterIdle: false,
       autoRoundIdleSeconds: 30,
@@ -150,6 +151,7 @@ describe("settings contract", () => {
     expect(snapshot.hud.showTeamDps).toBe(true);
     expect(snapshot.capture.bpfFilter).toBe("udp");
     expect(snapshot.capture.devicesAvailable).toBe(true);
+    expect(snapshot.capture.includeMaxHpReductionInTotalDamage).toBe(false);
     expect(snapshot.teamData.available).toBe(true);
     expect(snapshot.hotkeys.bindings).toHaveLength(4);
     expect(snapshot.capture.passthroughHotkey.key).toBe("Home");

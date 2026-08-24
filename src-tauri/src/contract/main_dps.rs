@@ -5,7 +5,7 @@ use nte_dps_tool::{
         CoreError,
         hud::{HudCharacterSnapshot, HudDataState, HudSnapshot, HudSummarySnapshot},
     },
-    engine::model::{CharacterInfo, DamageAttributionSummary},
+    engine::model::CharacterInfo,
     storage::{
         config::{AccentColor, ThemePreset, UiConfig, UiDensity},
         history::MAX_HISTORY_RECORDS,
@@ -18,7 +18,7 @@ use crate::{
     state::{AppState, HistoryRoundIndex, MainDpsReadout},
 };
 
-pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 7;
+pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 8;
 pub(crate) const MAIN_DPS_MAX_TEXT_BYTES: usize = 256;
 pub(crate) const MAIN_DPS_MAX_PROJECTED_TEXT_BYTES: usize = 128 * 1024;
 
@@ -147,6 +147,17 @@ impl MainDpsSnapshot {
             separate_reaction_damage,
             character_durations,
         } = state.main_dps_readout()?;
+        let damage_attribution = MainDpsDamageAttributionSnapshot {
+            total_damage: damage_attribution.total_damage,
+            max_hp_reduction: damage_attribution.max_hp_reduction,
+            character_direct_damage: damage_attribution.character_direct_damage,
+            character_reaction_damage: damage_attribution.character_reaction_damage,
+            shared_damage: damage_attribution.shared_damage,
+            unattributed_damage: damage_attribution.unattributed_damage,
+            separate_reaction_damage,
+            include_max_hp_reduction_in_total_damage: config
+                .include_max_hp_reduction_in_total_damage,
+        };
         let resources = state.live_capture_resources();
         let data_empty = matches!(hud.data_state, HudDataState::Empty);
         let abyss_detected = hud.status.abyss_detected;
@@ -204,7 +215,6 @@ impl MainDpsSnapshot {
                 &resources.characters,
                 config.language,
                 damage_attribution,
-                separate_reaction_damage,
                 &character_durations,
                 &mut text_budget,
             ),
@@ -313,8 +323,7 @@ impl MainDpsReadoutSnapshot {
         hud: HudSnapshot,
         characters: &std::collections::HashMap<u32, CharacterInfo>,
         language: Language,
-        damage_attribution: DamageAttributionSummary,
-        separate_reaction_damage: bool,
+        damage_attribution: MainDpsDamageAttributionSnapshot,
         character_durations: &std::collections::HashMap<u32, f64>,
         text_budget: &mut MainDpsTextBudget,
     ) -> Self {
@@ -349,15 +358,7 @@ impl MainDpsReadoutSnapshot {
                     )
                 })
                 .collect(),
-            damage_attribution: MainDpsDamageAttributionSnapshot {
-                total_damage: damage_attribution.total_damage,
-                max_hp_reduction: damage_attribution.max_hp_reduction,
-                character_direct_damage: damage_attribution.character_direct_damage,
-                character_reaction_damage: damage_attribution.character_reaction_damage,
-                shared_damage: damage_attribution.shared_damage,
-                unattributed_damage: damage_attribution.unattributed_damage,
-                separate_reaction_damage,
-            },
+            damage_attribution,
             abyss: MainDpsAbyssSnapshot {
                 detected: hud.status.abyss_detected,
                 floor: hud.status.abyss_floor,
@@ -436,6 +437,7 @@ pub(crate) struct MainDpsDamageAttributionSnapshot {
     pub shared_damage: f64,
     pub unattributed_damage: f64,
     pub separate_reaction_damage: bool,
+    pub include_max_hp_reduction_in_total_damage: bool,
 }
 
 fn localized_character_name(
@@ -641,6 +643,10 @@ mod tests {
         assert_eq!(value["display"]["metrics"][0], "team-dps");
         assert_eq!(value["display"]["attributions"][4], "max-hp-reduction");
         assert_eq!(value["readout"]["damageAttribution"]["maxHpReduction"], 0.0);
+        assert_eq!(
+            value["readout"]["damageAttribution"]["includeMaxHpReductionInTotalDamage"],
+            false
+        );
         assert_eq!(
             value["readout"]["characters"].as_array().map(Vec::len),
             Some(0)

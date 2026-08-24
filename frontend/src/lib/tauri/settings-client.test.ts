@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
 
 import { createSettingsClient } from "./settings-client";
-import type { SettingsSnapshot } from "./settings-contract";
+import {
+  SETTINGS_CONTRACT_VERSION,
+  type SettingsSnapshot,
+} from "./settings-contract";
 
 const encodeDelivery = (events: unknown[]) => ({
   streamProtocolVersion: 1,
@@ -12,7 +15,7 @@ const encodeDelivery = (events: unknown[]) => ({
 
 function settingsFixture(): SettingsSnapshot {
   return {
-    contractVersion: 8,
+    contractVersion: SETTINGS_CONTRACT_VERSION,
     generation: "0",
     adapterVersion: "0.3.6",
     interface: {
@@ -46,6 +49,7 @@ function settingsFixture(): SettingsSnapshot {
       devices: [],
       manualCaptureDevice: null,
       serverDamageCalibration: false,
+      includeMaxHpReductionInTotalDamage: false,
       separateReactionDamage: false,
       autoRoundAfterIdle: false,
       autoRoundIdleSeconds: 30,

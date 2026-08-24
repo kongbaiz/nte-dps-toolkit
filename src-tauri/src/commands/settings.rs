@@ -405,6 +405,7 @@ pub(crate) fn set_settings_capture(
             filter,
             manual_device,
             settings.server_damage_calibration,
+            settings.include_max_hp_reduction_in_total_damage,
             settings.separate_reaction_damage,
             settings.auto_round_after_idle,
             settings.auto_round_idle_seconds,

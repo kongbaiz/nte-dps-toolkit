@@ -17,7 +17,7 @@ import {
   type MainDpsMetricId,
 } from "@/lib/tauri/settings-contract";
 
-export const MAIN_DPS_CONTRACT_VERSION = 7;
+export const MAIN_DPS_CONTRACT_VERSION = 8;
 export const MAIN_DPS_MAX_HISTORY_RECORDS = 200;
 export const MAIN_DPS_MAX_ROUNDS = MAIN_DPS_MAX_HISTORY_RECORDS + 1;
 export const MAIN_DPS_MAX_CHARACTERS = 4;
@@ -144,6 +144,7 @@ export interface MainDpsDamageAttribution {
   sharedDamage: number;
   unattributedDamage: number;
   separateReactionDamage: boolean;
+  includeMaxHpReductionInTotalDamage: boolean;
 }
 
 export interface MainDpsActions {
@@ -314,6 +315,10 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
         separateReactionDamage: boolean(
           damageAttribution.separateReactionDamage,
           "damageAttribution.separateReactionDamage",
+        ),
+        includeMaxHpReductionInTotalDamage: boolean(
+          damageAttribution.includeMaxHpReductionInTotalDamage,
+          "damageAttribution.includeMaxHpReductionInTotalDamage",
         ),
       },
       abyss: {

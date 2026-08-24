@@ -673,7 +673,7 @@ function ParseSettingsCard({
       </SettingsRow>
       <SettingsRow
         labelKey="Damage Source"
-        descriptionKey="When enabled, a server HP delta may replace the only recent candidate hit; leave this disabled for mechanism or environment damage. Disabled mode reports unexplained residuals without changing DPS totals."
+        descriptionKey="When enabled, skills missing from the gameplay-effect semantics table use server settlements; listed skills keep their declared policy. Disabled mode reports unexplained residuals without changing DPS totals."
       >
         <LabeledSwitch
           disabled={pending}
@@ -681,6 +681,19 @@ function ParseSettingsCard({
           checked={settings.serverDamageCalibration}
           onCheckedChange={(serverDamageCalibration) =>
             void save({ serverDamageCalibration })
+          }
+        />
+      </SettingsRow>
+      <SettingsRow
+        labelKey="Damage Total"
+        descriptionKey="When enabled, maximum HP reduction is added to team total damage and DPS, and all attribution percentages use that combined total."
+      >
+        <LabeledSwitch
+          disabled={pending}
+          labelKey="Include maximum HP reduction in total damage"
+          checked={settings.includeMaxHpReductionInTotalDamage}
+          onCheckedChange={(includeMaxHpReductionInTotalDamage) =>
+            void save({ includeMaxHpReductionInTotalDamage })
           }
         />
       </SettingsRow>

@@ -1031,6 +1031,8 @@ pub struct UiConfig {
     pub capture_filter: String,
     pub server_damage_calibration: bool,
     #[serde(default)]
+    pub include_max_hp_reduction_in_total_damage: bool,
+    #[serde(default)]
     pub separate_reaction_damage: bool,
     #[serde(default)]
     pub auto_round_after_idle: bool,
@@ -1115,6 +1117,7 @@ impl Default for UiConfig {
             island_offset_x: 0.0,
             capture_filter: default_capture_filter(),
             server_damage_calibration: false,
+            include_max_hp_reduction_in_total_damage: false,
             separate_reaction_damage: false,
             auto_round_after_idle: false,
             auto_round_idle_seconds: AUTO_ROUND_IDLE_SECONDS_DEFAULT,

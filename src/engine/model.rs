@@ -533,6 +533,13 @@ impl DamageAttributionSummary {
                 self.character_reaction_damage
             }
     }
+
+    pub fn with_max_hp_reduction_in_total(mut self, include: bool) -> Self {
+        if include {
+            self.total_damage += self.max_hp_reduction;
+        }
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -5442,7 +5449,7 @@ impl CombatState {
                     && hit.direction.is_outgoing()
                     && hit.target_id.as_deref() == Some(target_id)
             })
-            .map(|(hit, _)| (hit.damage - hit.overkill_damage()).max(0.0))
+            .map(|(hit, _)| (hit.total_damage() - hit.overkill_damage()).max(0.0))
             .sum::<f64>();
         let residual = authoritative_damage - represented_damage;
         if residual >= 2.0 {
@@ -8436,7 +8443,15 @@ mod tests {
             max_hp_reduction: Some(250.0),
             reconciled_overkill_damage: None,
         }));
-        assert_eq!(state.damage_attribution_summary().max_hp_reduction, 250.0);
+        let attribution = state.damage_attribution_summary();
+        assert_eq!(attribution.total_damage, 175.0);
+        assert_eq!(attribution.max_hp_reduction, 250.0);
+        assert_eq!(
+            attribution
+                .with_max_hp_reduction_in_total(true)
+                .total_damage,
+            425.0
+        );
         assert!(state.apply_follow_up(HitFollowUp {
             source_timestamp: 1.0,
             source_char_id: 7,

@@ -73,6 +73,7 @@ const sample = {
       sharedDamage: 0,
       unattributedDamage: 0,
       separateReactionDamage: false,
+      includeMaxHpReductionInTotalDamage: false,
     },
     abyss: { detected: false, floor: null, half: null, success: false },
   },
@@ -305,6 +306,7 @@ describe("main DPS contract", () => {
           sharedDamage: 0.3,
           unattributedDamage: 0,
           separateReactionDamage: true,
+          includeMaxHpReductionInTotalDamage: true,
         },
         characters: [
           {
@@ -328,6 +330,9 @@ describe("main DPS contract", () => {
       durationSeconds: 29,
     });
     expect(parsed.readout.damageAttribution.separateReactionDamage).toBe(true);
+    expect(
+      parsed.readout.damageAttribution.includeMaxHpReductionInTotalDamage,
+    ).toBe(true);
     expect(parsed.readout.damageAttribution.maxHpReduction).toBe(12.5);
   });
 });
