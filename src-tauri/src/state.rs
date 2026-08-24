@@ -1442,6 +1442,8 @@ impl AppState {
                             subtract_time_stop_for_state(config.dps_time_mode, state),
                         ),
                         separate_reaction_damage: config.separate_reaction_damage,
+                        include_max_hp_reduction_in_total_damage: config
+                            .include_max_hp_reduction_in_total_damage,
                         selected_abyss_half,
                         preview_when_empty: !self.passthrough(),
                         timeline_bucket_seconds: f64::from(sanitize_timeline_bucket_seconds(
@@ -2175,6 +2177,8 @@ impl AppState {
             HudProjectionOptions {
                 dps_time_basis: DpsTimeBasis::from_subtract_time_stop(subtract_time_stop),
                 separate_reaction_damage: config.separate_reaction_damage,
+                include_max_hp_reduction_in_total_damage: config
+                    .include_max_hp_reduction_in_total_damage,
                 selected_abyss_half,
                 preview_when_empty: false,
                 timeline_bucket_seconds: f64::from(sanitize_timeline_bucket_seconds(
@@ -2196,7 +2200,14 @@ impl AppState {
                         })
                     })
                     .collect();
-                (state.damage_attribution_summary(), durations)
+                (
+                    state
+                        .damage_attribution_summary()
+                        .with_max_hp_reduction_in_total(
+                            config.include_max_hp_reduction_in_total_damage,
+                        ),
+                    durations,
+                )
             },
             |half| {
                 let party = state.abyss.half(half);
@@ -2212,7 +2223,14 @@ impl AppState {
                         })
                     })
                     .collect();
-                (party.damage_attribution_summary(), durations)
+                (
+                    party
+                        .damage_attribution_summary()
+                        .with_max_hp_reduction_in_total(
+                            config.include_max_hp_reduction_in_total_damage,
+                        ),
+                    durations,
+                )
             },
         );
         MainDpsReadout {
@@ -2723,6 +2741,7 @@ impl AppState {
         filter: String,
         manual_capture_device: Option<String>,
         server_damage_calibration: bool,
+        include_max_hp_reduction_in_total_damage: bool,
         separate_reaction_damage: bool,
         auto_round_after_idle: bool,
         auto_round_idle_seconds: u32,
@@ -2733,6 +2752,8 @@ impl AppState {
             config.capture_filter = filter;
             config.manual_capture_device = manual_capture_device;
             config.server_damage_calibration = server_damage_calibration;
+            config.include_max_hp_reduction_in_total_damage =
+                include_max_hp_reduction_in_total_damage;
             config.separate_reaction_damage = separate_reaction_damage;
             config.auto_round_after_idle = auto_round_after_idle;
             config.auto_round_idle_seconds = auto_round_idle_seconds;
@@ -4817,6 +4838,36 @@ mod tests {
         let (cache, recovered) = state.0.presentation.lock_main_readout_cache();
         assert!(!recovered);
         assert_eq!(cache.len(), 6, "readout cache memory must remain bounded");
+    }
+
+    #[test]
+    fn main_readout_can_include_max_hp_reduction_in_total_and_denominator() {
+        let config_path = temporary_config_path("max_hp_reduction_total");
+        let config = UiConfig {
+            include_max_hp_reduction_in_total_damage: true,
+            ..UiConfig::default()
+        };
+        let state = AppState::new_with_config_path(
+            config,
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        let mut hit = test_hit(100.0);
+        hit.max_hp_reduction = 50.0;
+        let mut combat = CombatState::default();
+        combat.push_hit(hit);
+        state.restore_live_state_for_test(combat, CaptureQualitySource::Live);
+
+        let readout = state.main_dps_readout().expect("combined main readout");
+        let summary = readout.hud.summary.expect("combined summary");
+        assert_eq!(summary.total_damage, 150.0);
+        assert_eq!(summary.team_dps, 150.0);
+        assert_eq!(readout.damage_attribution.total_damage, 150.0);
+        assert_eq!(readout.damage_attribution.max_hp_reduction, 50.0);
+        assert!((readout.hud.characters[0].damage_share_percent - 66.666_666).abs() < 0.001);
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
     }
 
     #[test]
@@ -7165,6 +7216,7 @@ mod tests {
                     true,
                     true,
                     true,
+                    true,
                     45,
                     DpsTimeMode::RealTime,
                     HotkeyBinding::new(false, false, false, config::HotkeyKey::Insert),
@@ -7215,6 +7267,7 @@ mod tests {
             snapshot.capture.manual_capture_device.as_deref(),
             Some("capture-device")
         );
+        assert!(snapshot.capture.include_max_hp_reduction_in_total_damage);
         assert!(snapshot.capture.separate_reaction_damage);
         assert_eq!(snapshot.capture.auto_round_idle_seconds, 45);
         assert_eq!(
@@ -7246,6 +7299,7 @@ mod tests {
         assert_eq!(saved.accent, AccentColor::Orange);
         assert_eq!(saved.capture_filter, "udp port 30196");
         assert!(saved.reduce_motion);
+        assert!(saved.include_max_hp_reduction_in_total_damage);
         assert_eq!(
             saved.manual_capture_device.as_deref(),
             Some("capture-device")

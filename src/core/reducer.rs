@@ -814,6 +814,54 @@ mod tests {
     }
 
     #[test]
+    fn server_target_reconciliation_counts_follow_up_damage_as_already_represented() {
+        let mut state = CombatState::default();
+        let mut represented = test_hit(1.0, 7, 80.0);
+        represented.target_id = Some("enemy-wire:test".to_owned());
+        represented.target_hp_before = 100.0;
+        represented.target_hp_after = 20.0;
+        represented.target_max_hp = 100.0;
+        represented.reconciled_overkill_damage = Some(0.0);
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(represented)));
+        apply_engine_event(
+            &mut state,
+            EngineEvent::HitFollowUp(HitFollowUp {
+                source_timestamp: 1.0,
+                source_char_id: 7,
+                source_damage: 80.0,
+                source_target_hp_before: 100.0,
+                source_target_hp_after: 20.0,
+                source_target_max_hp: 100.0,
+                source_gameplay_effect_index: None,
+                timestamp: 1.05,
+                damage: 19.0,
+                target_hp_after: 1.0,
+                target_hp_percent: 1.0,
+                damage_name: None,
+                attack_type: None,
+                damage_attribute: None,
+            }),
+        );
+
+        let mut marker = test_hit(1.1, 0, 0.0);
+        marker.char_name = "Unattributed".to_owned();
+        marker.char_known = false;
+        marker.target_id = Some("enemy-wire:test".to_owned());
+        marker.target_hp_before = 99.0;
+        marker.target_hp_after = 0.0;
+        marker.target_max_hp = 100.0;
+        marker.damage_name = Some("Server settlement residual".to_owned());
+        marker.reconciled_overkill_damage = Some(0.0);
+
+        assert_eq!(
+            apply_engine_event(&mut state, EngineEvent::Hit(Box::new(marker))),
+            CoreSignal::Unchanged
+        );
+        assert_eq!(state.hits.len(), 1);
+        assert_eq!(state.total_damage, 99.0);
+    }
+
+    #[test]
     fn replayed_server_residual_remains_an_ordinary_hit() {
         let mut state = CombatState::default();
         let mut represented = test_hit(1.0, 7, 80.0);

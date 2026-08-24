@@ -1285,7 +1285,9 @@ function DamageAttributionStrip({
       ? [
           {
             label: t("Life reduction"),
-            value: `${formatMainMetric(attribution.maxHpReduction)} · ${percentage(attribution.maxHpReduction)}`,
+            value: attribution.includeMaxHpReductionInTotalDamage
+              ? `${formatMainMetric(attribution.maxHpReduction)} · ${percentage(attribution.maxHpReduction)}`
+              : formatMainMetric(attribution.maxHpReduction),
             filter: null,
           },
         ]
