@@ -2,6 +2,7 @@ import { ChevronDown, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
+import { MaxHpCompressionEffect } from "@/components/nte/max-hp-compression-effect";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -32,7 +33,11 @@ import type {
 import { cn } from "@/lib/utils";
 import { monsterImageUrl } from "@/features/abyss-values/abyss-values-model";
 
-import { formatDuration, formatMainMetric } from "./main-dps-model";
+import {
+  formatDuration,
+  formatMainMetric,
+  maxHpCompression,
+} from "./main-dps-model";
 import { createDamageImageLookup } from "./damage-image-lookup";
 import {
   DEFAULT_DETAIL_COLUMNS,
@@ -202,91 +207,99 @@ export function MainDpsDetailPage() {
         <main className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-3">
           <DetailSummary snapshot={snapshot} />
 
-          <div className="flex min-w-0 flex-wrap items-center gap-2 py-0.5">
-            <span className="text-sm font-medium text-muted-foreground">
-              {t(snapshot.kind === "character" ? "Damage Type" : "Hit Type")}
-            </span>
-            {snapshot.hitTypes.map((summary) => (
-              <FilterButton
-                key={summary.id}
-                active={snapshot.filter === summary.id}
-                disabled={pending}
-                onClick={() =>
-                  void setView(summary.id, null, snapshot.skillFilter)
-                }
-              >
-                {hitTypeLabel(summary)}
-              </FilterButton>
-            ))}
-            {snapshot.kind === "character" && (
-              <>
-                <span className="mx-1 h-6 w-px bg-border" />
-                <span className="text-sm font-medium text-muted-foreground">
-                  {t("Specific Move")}
-                </span>
-                <label className="relative min-w-52 flex-1 sm:max-w-80">
-                  <select
-                    className="h-8 w-full appearance-none rounded-lg border bg-background px-3 pr-8 text-sm"
-                    value={snapshot.skillFilter ?? ""}
+          <section className="flex flex-col gap-2 rounded-xl border bg-card px-2.5 py-2">
+            <div className="grid min-w-0 grid-cols-[6.25rem_minmax(0,1fr)] items-center gap-2">
+              <span className="text-sm font-medium text-muted-foreground">
+                {t(snapshot.kind === "character" ? "Damage Type" : "Hit Type")}
+              </span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {snapshot.hitTypes.map((summary) => (
+                  <FilterButton
+                    key={summary.id}
+                    active={snapshot.filter === summary.id}
                     disabled={pending}
-                    onChange={(event) =>
-                      void setView(
-                        snapshot.filter,
-                        snapshot.qteType,
-                        event.target.value || null,
-                      )
+                    onClick={() =>
+                      void setView(summary.id, null, snapshot.skillFilter)
                     }
                   >
-                    <option value="">{t("All moves")}</option>
-                    {snapshot.skills.map((skill) => (
-                      <option key={skill.id} value={skill.id}>
-                        {skill.name} · {formatMainMetric(skill.damage)} ·{" "}
-                        {skill.hits} {t("hits")}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-2 top-2 size-4" />
-                </label>
-              </>
-            )}
-            {pending && <RefreshCw className="ml-auto size-4 animate-spin" />}
-          </div>
-
-          {snapshot.kind === "team" && (
-            <AttributionStrip
-              snapshot={snapshot}
-              pending={pending}
-              setView={setView}
-            />
-          )}
-
-          {snapshot.qteSummaries.length > 0 && (
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className="text-sm font-medium text-muted-foreground">
-                {t("Reaction Damage")}
-              </span>
-              {snapshot.qteSummaries.map((summary) => (
-                <FilterButton
-                  key={summary.attackType}
-                  active={
-                    snapshot.filter === "qteType" &&
-                    snapshot.qteType === summary.attackType
-                  }
-                  disabled={pending}
-                  onClick={() =>
-                    void setView(
-                      "qteType",
-                      summary.attackType,
-                      snapshot.skillFilter,
-                    )
-                  }
-                >
-                  {summary.attackType} {formatMainMetric(summary.damage)} ·{" "}
-                  {summary.sharePercent.toFixed(1)}%
-                </FilterButton>
-              ))}
+                    {hitTypeLabel(summary)}
+                  </FilterButton>
+                ))}
+                {snapshot.kind === "character" && (
+                  <>
+                    <span className="mx-1 h-6 w-px bg-border" />
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {t("Specific Move")}
+                    </span>
+                    <label className="relative min-w-52 flex-1 sm:max-w-80">
+                      <select
+                        className="h-8 w-full appearance-none rounded-lg border bg-background px-3 pr-8 text-sm"
+                        value={snapshot.skillFilter ?? ""}
+                        disabled={pending}
+                        onChange={(event) =>
+                          void setView(
+                            snapshot.filter,
+                            snapshot.qteType,
+                            event.target.value || null,
+                          )
+                        }
+                      >
+                        <option value="">{t("All moves")}</option>
+                        {snapshot.skills.map((skill) => (
+                          <option key={skill.id} value={skill.id}>
+                            {skill.name} · {formatMainMetric(skill.damage)} ·{" "}
+                            {skill.hits} {t("hits")}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-2 top-2 size-4" />
+                    </label>
+                  </>
+                )}
+                {pending && (
+                  <RefreshCw className="ml-auto size-4 animate-spin" />
+                )}
+              </div>
             </div>
-          )}
+
+            {snapshot.kind === "team" && (
+              <AttributionStrip
+                snapshot={snapshot}
+                pending={pending}
+                setView={setView}
+              />
+            )}
+
+            {snapshot.qteSummaries.length > 0 && (
+              <div className="grid min-w-0 grid-cols-[6.25rem_minmax(0,1fr)] items-center gap-2">
+                <span className="text-sm font-medium text-muted-foreground">
+                  {t("Reaction Damage")}
+                </span>
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {snapshot.qteSummaries.map((summary) => (
+                    <FilterButton
+                      key={summary.attackType}
+                      active={
+                        snapshot.filter === "qteType" &&
+                        snapshot.qteType === summary.attackType
+                      }
+                      disabled={pending}
+                      onClick={() =>
+                        void setView(
+                          "qteType",
+                          summary.attackType,
+                          snapshot.skillFilter,
+                        )
+                      }
+                    >
+                      {summary.attackType} {formatMainMetric(summary.damage)} ·{" "}
+                      {summary.sharePercent.toFixed(1)}%
+                    </FilterButton>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
 
           {snapshot.kind === "character" && snapshot.skills.length > 0 && (
             <SkillBreakdown
@@ -386,8 +399,7 @@ export function MainDpsDetailPage() {
 
 function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
   const avatar = useCharacterAvatar(snapshot.characterId);
-  const metrics = [
-    ["Total Output", formatMainMetric(snapshot.metrics.totalOutput), false],
+  const secondaryMetrics = [
     ["DPS", formatMainMetric(snapshot.metrics.dps), false],
     ["Output Count", String(snapshot.metrics.outputCount), false],
     [
@@ -399,65 +411,81 @@ function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
   ] as const;
 
   return (
-    <section className="rounded-xl border bg-card p-2.5">
-      <div className="flex min-w-0 gap-2.5">
-        {snapshot.kind === "character" && (
-          <div className="flex w-44 shrink-0 items-center gap-2 border-r pr-2.5 max-[780px]:w-36">
-            <span
-              className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted text-xl font-semibold"
-              style={{ backgroundColor: snapshot.characterColor ?? undefined }}
-            >
-              {avatar ? (
-                <img
-                  src={avatar}
-                  alt=""
-                  className="size-full object-cover"
-                  draggable={false}
-                />
-              ) : (
-                snapshot.characterName?.slice(0, 1)
-              )}
+    <section className="grid min-w-0 grid-cols-[minmax(16rem,0.9fr)_minmax(0,2.1fr)] gap-2 max-[900px]:grid-cols-1">
+      <div className="flex min-w-0 flex-col justify-between rounded-xl border bg-card p-3">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <span className="min-w-0">
+            <span className="block text-xs font-medium text-muted-foreground">
+              {t("Total Output")}
             </span>
-            <span className="min-w-0">
-              <strong className="block truncate text-base">
-                {snapshot.characterName}
-              </strong>
-              <span className="block truncate text-xs text-muted-foreground">
-                {tf("Character ID {}", [String(snapshot.characterId)])}
+            <strong className="mt-0.5 block truncate font-mono text-2xl font-medium tabular-nums">
+              {formatMainMetric(snapshot.metrics.totalOutput)}
+            </strong>
+          </span>
+          {snapshot.kind === "character" && (
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 text-right">
+                <strong className="block truncate text-sm">
+                  {snapshot.characterName}
+                </strong>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {tf("Character ID {}", [String(snapshot.characterId)])}
+                </span>
               </span>
+              <span
+                className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted text-lg font-semibold"
+                style={{
+                  backgroundColor: snapshot.characterColor ?? undefined,
+                }}
+              >
+                {avatar ? (
+                  <img
+                    src={avatar}
+                    alt=""
+                    className="size-full object-cover"
+                    draggable={false}
+                  />
+                ) : (
+                  snapshot.characterName?.slice(0, 1)
+                )}
+              </span>
+            </span>
+          )}
+        </div>
+        <p className="mt-2 border-t pt-2 text-xs text-muted-foreground">
+          {tf(
+            "Confirmed output {} ({} hits) · candidate output {} ({} hits, {}% of total output)",
+            [
+              formatMainMetric(snapshot.direction.confirmedOutput),
+              String(snapshot.direction.confirmedHits),
+              formatMainMetric(snapshot.direction.candidateOutput),
+              String(snapshot.direction.candidateHits),
+              snapshot.direction.candidateSharePercent.toFixed(1),
+            ],
+          )}
+        </p>
+      </div>
+
+      <div className="grid min-w-0 grid-cols-4 divide-x rounded-xl border bg-card max-[760px]:grid-cols-2">
+        {secondaryMetrics.map(([label, value, danger]) => (
+          <div
+            key={label}
+            className="flex min-w-0 flex-col justify-center px-3 py-2 text-center"
+          >
+            <strong
+              className={cn(
+                "block truncate font-mono text-lg font-medium tabular-nums",
+                danger && "text-destructive",
+              )}
+            >
+              {value}
+            </strong>
+            <span className="block truncate text-xs text-muted-foreground">
+              {t(label)}
             </span>
           </div>
-        )}
-        <div className="grid min-w-0 flex-1 grid-cols-5 divide-x max-[760px]:grid-cols-3 max-[540px]:grid-cols-2">
-          {metrics.map(([label, value, danger]) => (
-            <div key={label} className="min-w-0 px-2.5 py-1 text-center">
-              <strong
-                className={cn(
-                  "block truncate font-mono text-lg font-medium tabular-nums",
-                  danger && "text-destructive",
-                )}
-              >
-                {value}
-              </strong>
-              <span className="block truncate text-xs text-muted-foreground">
-                {t(label)}
-              </span>
-            </div>
-          ))}
-        </div>
+        ))}
       </div>
-      <p className="mt-2 border-t pt-2 text-xs text-muted-foreground">
-        {tf(
-          "Confirmed output {} ({} hits) · candidate output {} ({} hits, {}% of total output)",
-          [
-            formatMainMetric(snapshot.direction.confirmedOutput),
-            String(snapshot.direction.confirmedHits),
-            formatMainMetric(snapshot.direction.candidateOutput),
-            String(snapshot.direction.candidateHits),
-            snapshot.direction.candidateSharePercent.toFixed(1),
-          ],
-        )}
-      </p>
     </section>
   );
 }
@@ -498,21 +526,26 @@ function AttributionStrip({
     ["unattributed", "Unattributed", "unattributedDamage"],
   ];
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+    <div className="grid min-w-0 grid-cols-[6.25rem_minmax(0,1fr)] items-center gap-2">
       <span className="text-sm font-medium text-muted-foreground">
         {t("Damage attribution")}
       </span>
-      {values.map(([filter, label, field]) => (
-        <FilterButton
-          key={filter}
-          active={snapshot.filter === filter}
-          disabled={pending}
-          onClick={() => void setView(filter, null, null)}
-        >
-          {t(label)}{" "}
-          {share(snapshot.attribution[field], snapshot.attribution.totalDamage)}
-        </FilterButton>
-      ))}
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {values.map(([filter, label, field]) => (
+          <FilterButton
+            key={filter}
+            active={snapshot.filter === filter}
+            disabled={pending}
+            onClick={() => void setView(filter, null, null)}
+          >
+            {t(label)}{" "}
+            {share(
+              snapshot.attribution[field],
+              snapshot.attribution.totalDamage,
+            )}
+          </FilterButton>
+        ))}
+      </div>
     </div>
   );
 }
@@ -800,8 +833,24 @@ function HitRow({
   const targetPortrait = row.targetMonsterId
     ? monsterImageUrl(row.targetMonsterId)
     : null;
+  const typeSeparator = row.typeLabel.indexOf("·");
+  const typeCategory =
+    typeSeparator < 0 ? row.typeLabel : row.typeLabel.slice(0, typeSeparator);
+  const typeDetail =
+    typeSeparator < 0 ? null : row.typeLabel.slice(typeSeparator + 1);
+  const hpCompression = maxHpCompression(row.targetMaxHp, row.maxHpReduction);
   const hpPercent =
-    row.targetMaxHp > 0 ? Math.max(0, Math.min(100, row.targetHpPercent)) : 0;
+    hpCompression.remainingMaxHp > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            (row.targetHpAfter / hpCompression.remainingMaxHp) * 100,
+          ),
+        )
+      : 0;
+  const hpPercentOfPreviousMax =
+    (hpPercent * hpCompression.remainingPercent) / 100;
   const damagePercent = Math.max(
     0,
     Math.min(100, (row.damage / maxDamage) * 100),
@@ -845,25 +894,29 @@ function HitRow({
       )}
       {columns.showType && (
         <td className="border-r p-1.5">
-          <div
-            className={cn(
-              "truncate rounded-lg px-3 py-2 text-center text-xs",
-              row.direction === "outgoing"
-                ? "bg-foreground text-background"
-                : row.direction === "incoming"
-                  ? "bg-destructive/10 text-destructive"
-                  : "border border-dashed bg-muted text-muted-foreground",
-            )}
-            title={`${row.typeLabel}\n${row.skill}\n${row.damageType}`}
-          >
-            {row.reactionTextKey === null ? (
-              row.typeLabel
-            ) : (
-              <ReactionLabelImages
-                reaction={row.reactionTextKey}
-                fallback={row.typeLabel}
-              />
-            )}
+          <div className="flex min-w-0 justify-center">
+            <span
+              className="main-dps-hit-type"
+              data-direction={row.direction}
+              title={`${row.typeLabel}\n${row.skill}\n${row.damageType}`}
+            >
+              <span className="main-dps-hit-type-marker" aria-hidden="true" />
+              {row.reactionTextKey === null ? (
+                <span className="flex min-w-0 items-center text-xs">
+                  <span className="truncate font-medium">{typeCategory}</span>
+                  {typeDetail && (
+                    <span className="main-dps-hit-type-detail shrink-0">
+                      {typeDetail}
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <ReactionLabelImages
+                  reaction={row.reactionTextKey}
+                  fallback={row.typeLabel}
+                />
+              )}
+            </span>
           </div>
         </td>
       )}
@@ -890,14 +943,6 @@ function HitRow({
                 {t("Overkill")} +{formatMainMetric(row.overkillDamage)}
               </span>
             )}
-            {row.maxHpReduction > 0 && (
-              <span
-                className="rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-violet-700 dark:text-violet-300"
-                title={`${t("Max HP reduction")}: ${formatMainMetric(row.maxHpReduction)}`}
-              >
-                {t("Max HP reduction")} -{formatMainMetric(row.maxHpReduction)}
-              </span>
-            )}
           </span>
         </td>
       )}
@@ -913,7 +958,16 @@ function HitRow({
                     ? "bg-amber-500/20"
                     : "bg-destructive/20",
               )}
-              style={{ width: `calc(${hpPercent}% - 0.5rem)` }}
+              style={{ width: `calc(${hpPercentOfPreviousMax}% - 0.5rem)` }}
+            />
+          )}
+          {hpCompression.reductionPercent > 0 && (
+            <span
+              className="max-hp-compression-cut absolute inset-y-1 right-1 rounded-r-md"
+              style={{
+                width: `max(3px, ${hpCompression.reductionPercent}%)`,
+              }}
+              aria-hidden="true"
             />
           )}
           <span className="relative flex min-w-0 items-center gap-2">
@@ -925,12 +979,25 @@ function HitRow({
                 draggable={false}
               />
             )}
-            <span className="min-w-0">
-              <span className="block truncate">{row.target}</span>
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate">{row.target}</span>
+                {row.maxHpReduction > 0 && (
+                  <MaxHpCompressionEffect
+                    key={row.maxHpReduction}
+                    label={t("Max HP reduction")}
+                    value={formatMainMetric(row.maxHpReduction)}
+                    percentage={hpCompression.reductionPercent}
+                    compact
+                    className="shrink-0 px-1.5 py-0.5 text-[10px] leading-none"
+                  />
+                )}
+              </span>
               {row.targetMaxHp > 0 && (
                 <span className="block truncate text-xs tabular-nums text-muted-foreground">
                   {formatMainMetric(row.targetHpAfter)} /{" "}
-                  {formatMainMetric(row.targetMaxHp)} · {hpPercent.toFixed(1)}%
+                  {formatMainMetric(hpCompression.remainingMaxHp)} ·{" "}
+                  {hpPercent.toFixed(1)}%
                 </span>
               )}
             </span>

@@ -65,6 +65,7 @@ import {
   historyRecordById,
   nextHistoryRecordIndex,
   selectHistoryRecord,
+  validHistoryComparisonPair,
 } from "./history-view-model";
 import { useHistory } from "./use-history";
 
@@ -112,12 +113,12 @@ export function HistoryPage() {
   }, [clearPreferredRecordId, preferredRecordId, records]);
 
   useEffect(() => {
-    if (!leftId || !rightId || leftId === rightId) {
+    if (!validHistoryComparisonPair(records, leftId, rightId)) {
       clearComparison();
       return;
     }
     void compare(leftId, rightId);
-  }, [clearComparison, compare, historyRevision, leftId, rightId]);
+  }, [clearComparison, compare, historyRevision, leftId, records, rightId]);
 
   useEffect(() => {
     if (contextMenu === null) return;
