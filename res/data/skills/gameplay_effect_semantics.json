@@ -1,6 +1,204 @@
 {
   "format_version": 1,
   "effects": {
+    "GE_Parry_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Rail Counter",
+      "damage_name_zh": "承轨反击",
+      "damage_name_ja": "レール反撃"
+    },
+    "GE_Parry_boss_28_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Rail Counter",
+      "damage_name_zh": "承轨反击",
+      "damage_name_ja": "レール反撃"
+    },
+    "GE_Player_Mint_Skill4_Damage_New": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：焦糖脆片",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Oneiroi_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "无意识响应",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Female046_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：一瞬灵感",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Female051_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：一瞬灵感",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Mint_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：焦糖脆片",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Sagiri_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：恶作剧",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Nanally_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：伤我没门！",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Lacrimosa_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：fff休止符",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Lacrimosa_PerfectEvadeAttack_1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：fff休止符",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Skia_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：顿笔签字",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Fadia_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：回避条件作用",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Hathor_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：零误差行动",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Hathor_PerfectEvadeAttack1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：零误差行动",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Jin_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：半霎",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Kuhara_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：局势逆转",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Adler_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：揭谛",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Daffodill_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：一线",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Haniel020_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：王牌身法",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Edgar_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：危机亦是机遇",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Cang_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：避实击虚",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Chiichan073_PerfectEvadeAttack1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：明斯基时刻",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Chiichan073_PerfectEvadeAttack2_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：明斯基时刻",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Mitsuki_PerfectEvadeAtk_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：切分节奏",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Mitsuki_PerfectAtkBullet_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：切分节奏",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Mitsuki_PerfectAtkBullet_Power_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：切分节奏",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Chaos_PerfectEvadeAttack1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：直觉/本能",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Shinku_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：不容喘息",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Shinku_PerfectEvadeAttack_Rage_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：瞬时决胜",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Radio072_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：挨打必须还「手」！",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Radio072_PerfectEvadeAttack_1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：挨打必须还「手」！",
+      "damage_name_ja": "極限回避反撃"
+    },
+    "GE_Player_Zankou_PerfectEvadeAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_en": "Perfect Dodge Counter",
+      "damage_name_zh": "极限反击：虚徊",
+      "damage_name_ja": "極限回避反撃"
+    },
     "GE_ActorReaction_1_Damage": {
       "attack_type": "创生花",
       "show_parent_ability": false,

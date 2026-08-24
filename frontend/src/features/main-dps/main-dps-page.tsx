@@ -12,6 +12,7 @@ import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { ActionNotice } from "@/components/nte/action-notice";
 import { AnimatedNumber } from "@/components/nte/animated-number";
 import { useWindowMotion } from "@/components/nte/window-motion-context";
+import { MaxHpCompressionEffect } from "@/components/nte/max-hp-compression-effect";
 import {
   AlertDialog,
   AlertDialogBackdrop,
@@ -1281,45 +1282,39 @@ function DamageAttributionStrip({
           },
         ]
       : []),
-    ...(visible.includes("max-hp-reduction")
-      ? [
-          {
-            label: t("Life reduction"),
-            value: attribution.includeMaxHpReductionInTotalDamage
-              ? `${formatMainMetric(attribution.maxHpReduction)} · ${percentage(attribution.maxHpReduction)}`
-              : formatMainMetric(attribution.maxHpReduction),
-            filter: null,
-          },
-        ]
-      : []),
   ];
 
-  if (items.length === 0) return null;
+  const showMaxHpReduction = visible.includes("max-hp-reduction");
+  if (items.length === 0 && !showMaxHpReduction) return null;
 
   return (
     <div className="main-dps-attribution flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
       <span className="font-medium text-muted-foreground">
         {t("Damage attribution")}
       </span>
-      {items.map((item) =>
-        item.filter === null ? (
-          <span
-            key={item.label}
-            className="rounded-md border bg-background px-2 py-1 whitespace-nowrap"
-          >
-            {item.label} {item.value}
-          </span>
-        ) : (
-          <button
-            type="button"
-            key={item.label}
-            className="rounded-md border bg-background px-2 py-1 whitespace-nowrap transition-colors hover:bg-muted"
-            onClick={() => onOpen(item.filter)}
-          >
-            {item.label}
-            {item.value !== null && ` ${item.value}`}
-          </button>
-        ),
+      {items.map((item) => (
+        <button
+          type="button"
+          key={item.label}
+          className="rounded-md border bg-background px-2 py-1 whitespace-nowrap transition-colors hover:bg-muted"
+          onClick={() => onOpen(item.filter)}
+        >
+          {item.label}
+          {item.value !== null && ` ${item.value}`}
+        </button>
+      ))}
+      {showMaxHpReduction && (
+        <MaxHpCompressionEffect
+          key={attribution.maxHpReduction}
+          label={t("Life reduction")}
+          value={
+            attribution.includeMaxHpReductionInTotalDamage
+              ? `${formatMainMetric(attribution.maxHpReduction)} · ${percentage(attribution.maxHpReduction)}`
+              : formatMainMetric(attribution.maxHpReduction)
+          }
+          active={attribution.maxHpReduction > 0}
+          className="px-2 py-1"
+        />
       )}
     </div>
   );

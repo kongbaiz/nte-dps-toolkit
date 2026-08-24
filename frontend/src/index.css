@@ -394,6 +394,122 @@ html[data-window-route="notification-island"] .motion-skeleton {
   transition: width var(--motion-duration-slow) var(--motion-ease-emphasized);
 }
 
+.main-dps-hit-type {
+  position: relative;
+  display: inline-flex;
+  width: min(100%, 16rem);
+  min-width: 0;
+  max-width: 100%;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 1.5rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 18%, var(--border));
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--primary) 5%, var(--background));
+  box-shadow:
+    0 1px 2px color-mix(in oklab, var(--foreground) 6%, transparent),
+    inset 0 1px color-mix(in oklab, var(--background) 78%, transparent);
+  color: var(--foreground);
+}
+
+.main-dps-hit-type-marker {
+  position: absolute;
+  inset-inline-start: 0.6rem;
+  width: 0.2rem;
+  height: 1rem;
+  flex: none;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--primary) 78%, var(--foreground));
+}
+
+.main-dps-hit-type-detail {
+  margin-left: 0.35rem;
+  padding: 0.12rem 0.42rem;
+  border-radius: 0.35rem;
+  background: color-mix(in oklab, var(--primary) 9%, transparent);
+  color: color-mix(in oklab, var(--primary) 72%, var(--foreground));
+  font-weight: 650;
+}
+
+.main-dps-hit-type[data-direction="incoming"] {
+  border-color: color-mix(in oklab, var(--destructive) 24%, var(--border));
+  background: color-mix(in oklab, var(--destructive) 6%, var(--background));
+}
+
+.main-dps-hit-type[data-direction="incoming"] .main-dps-hit-type-marker {
+  background: var(--destructive);
+}
+
+.main-dps-hit-type[data-direction="incoming"] .main-dps-hit-type-detail {
+  background: color-mix(in oklab, var(--destructive) 9%, transparent);
+  color: color-mix(in oklab, var(--destructive) 74%, var(--foreground));
+}
+
+.main-dps-hit-type[data-direction="unknown"] {
+  border-style: dashed;
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  box-shadow: none;
+}
+
+.main-dps-hit-type[data-direction="unknown"] .main-dps-hit-type-marker {
+  background: var(--muted-foreground);
+}
+
+.max-hp-compression-effect {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid color-mix(in oklab, oklch(0.62 0.18 300) 26%, var(--border));
+  border-radius: 0.375rem;
+  background: color-mix(in oklab, oklch(0.68 0.16 300) 7%, var(--background));
+  box-shadow: inset 2px 0
+    color-mix(in oklab, oklch(0.62 0.18 300) 52%, transparent);
+  color: color-mix(in oklab, oklch(0.54 0.18 300) 76%, var(--foreground));
+  white-space: nowrap;
+}
+
+.max-hp-compression-effect[data-active="true"] {
+  animation: ui-max-hp-compression-enter 260ms var(--motion-ease-standard) both;
+}
+
+.max-hp-compression-effect[data-compact="true"] {
+  border-color: transparent;
+  border-radius: 999px;
+  background: color-mix(in oklab, oklch(0.68 0.16 300) 10%, transparent);
+  box-shadow: none;
+}
+
+.max-hp-compression-icon {
+  opacity: 0.72;
+}
+
+.max-hp-compression-effect[data-active="true"] .max-hp-compression-icon {
+  animation: ui-max-hp-compression-icon 360ms var(--motion-ease-emphasized) both;
+}
+
+.max-hp-compression-percent {
+  border-left: 1px solid color-mix(in oklab, currentColor 28%, transparent);
+  padding-left: 0.3rem;
+  font-weight: 700;
+}
+
+.max-hp-compression-cut {
+  z-index: 0;
+  border-left: 1px solid
+    color-mix(in oklab, oklch(0.62 0.18 300) 44%, transparent);
+  background: linear-gradient(
+    to left,
+    color-mix(in oklab, oklch(0.68 0.16 300) 14%, transparent),
+    transparent
+  );
+  animation: ui-max-hp-compression-cut 360ms var(--motion-ease-standard) both;
+}
+
 .motion-list-item {
   animation: ui-list-item-enter var(--motion-duration-slow)
     var(--motion-ease-emphasized) both;
@@ -651,6 +767,40 @@ html[data-window-route="notification-island"] .motion-skeleton {
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes ui-max-hp-compression-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ui-max-hp-compression-icon {
+  0% {
+    transform: scaleX(1.45);
+  }
+  70% {
+    transform: scaleX(0.72);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes ui-max-hp-compression-cut {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0);
   }
 }
 

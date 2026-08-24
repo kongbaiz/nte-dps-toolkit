@@ -895,10 +895,12 @@ fn hit_type_display_text(hit: &Hit, language: Language) -> String {
                 hit.damage_component
                     .as_deref()
                     .or(hit.damage_name.as_deref())
+                    .filter(|value| !is_technical_skill_name(value))
                     .map(str::to_owned)
             })
-            .unwrap_or(stable_name)
-    });
+            .or_else(|| (!is_technical_skill_name(&stable_name)).then_some(stable_name))
+    })
+    .flatten();
     match (attack_type.as_deref(), name.as_deref()) {
         (Some(kind), Some(name)) if hit.attack_type.as_deref() != Some(name) && kind != name => {
             format!("{kind}·{name}")
@@ -1203,6 +1205,33 @@ mod tests {
             &mut MainDpsDetailTextBudget::default(),
         );
         assert_eq!(snapshot.target, "本阶段已击败目标");
+    }
+
+    #[test]
+    fn counter_hits_use_localized_names_and_never_expose_technical_ids() {
+        let (_, warning) = ability_names::init(Language::SimplifiedChinese);
+        assert_eq!(warning, None);
+
+        let mut parry = skill_hit(100.0, None, None, "格挡反击");
+        parry.gameplay_effect_name = Some("GE_Parry_Damage".to_owned());
+        assert_eq!(
+            hit_type_display_text(&parry, Language::SimplifiedChinese),
+            "格挡反击·承轨反击"
+        );
+
+        let mut evade = skill_hit(100.0, Some("GA_Lacrimosa_ExtremEvadeAtk"), None, "闪避反击");
+        evade.gameplay_effect_name =
+            Some("GE_Player_Lacrimosa_PerfectEvadeAttack_Damage".to_owned());
+        assert_eq!(
+            hit_type_display_text(&evade, Language::SimplifiedChinese),
+            "闪避反击·极限反击：fff休止符"
+        );
+
+        let unknown = skill_hit(100.0, Some("GA_Unknown_Counter"), None, "闪避反击");
+        assert_eq!(
+            hit_type_display_text(&unknown, Language::SimplifiedChinese),
+            "闪避反击"
+        );
     }
 
     #[test]

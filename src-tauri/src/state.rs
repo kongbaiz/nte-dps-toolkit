@@ -695,6 +695,7 @@ struct PausedPresentation {
 #[derive(Clone)]
 struct SelectedRoundPresentation {
     record_id: String,
+    history_revision: u64,
     state: Arc<CombatState>,
 }
 
@@ -1634,10 +1635,12 @@ impl AppState {
 
     fn presentation_mode_snapshot(&self) -> PresentationModeSnapshot {
         let outgoing_revision = self.0.live_capture.outgoing_hit_revision();
+        let history_revision = self.history_revision();
         let (mut mode, recovered) = self.0.presentation.lock_mode();
-        let stale_selection = mode.selected_round.is_some()
-            && mode.paused.is_none()
-            && outgoing_revision != mode.selected_outgoing_revision;
+        let stale_selection = mode.selected_round.as_ref().is_some_and(|selection| {
+            selection.history_revision != history_revision
+                || (mode.paused.is_none() && outgoing_revision != mode.selected_outgoing_revision)
+        });
         if stale_selection {
             mode.selected_round = None;
         }
@@ -1780,6 +1783,7 @@ impl AppState {
         operation: u64,
         load: impl FnOnce(&str) -> Result<CombatState, PresentationError>,
     ) -> Result<bool, PresentationError> {
+        let history_revision = self.history_revision();
         if self
             .0
             .presentation
@@ -1795,11 +1799,10 @@ impl AppState {
             self.0.presentation.publish_technical_and_main();
             return Err(PresentationError::StateUnavailable);
         }
-        if mode
-            .selected_round
-            .as_ref()
-            .map(|value| value.record_id.as_str())
-            == record_id.as_deref()
+        if mode.selected_round.as_ref().is_some_and(|value| {
+            Some(value.record_id.as_str()) == record_id.as_deref()
+                && value.history_revision == history_revision
+        }) || (record_id.is_none() && mode.selected_round.is_none())
         {
             return Ok(false);
         }
@@ -1826,6 +1829,7 @@ impl AppState {
                 };
                 Some(SelectedRoundPresentation {
                     record_id,
+                    history_revision,
                     state: Arc::new(state),
                 })
             }
@@ -1837,20 +1841,23 @@ impl AppState {
             self.0.presentation.publish_technical_and_main();
             return Err(PresentationError::StateUnavailable);
         }
-        if self
-            .0
-            .presentation
-            .selection_generation
-            .load(Ordering::Acquire)
-            != operation
+        if self.history_revision() != history_revision
+            || self
+                .0
+                .presentation
+                .selection_generation
+                .load(Ordering::Acquire)
+                != operation
         {
             return Ok(false);
         }
         if mode
             .selected_round
             .as_ref()
-            .map(|value| value.record_id.as_str())
-            == selection.as_ref().map(|value| value.record_id.as_str())
+            .map(|value| (value.record_id.as_str(), value.history_revision))
+            == selection
+                .as_ref()
+                .map(|value| (value.record_id.as_str(), value.history_revision))
         {
             return Ok(false);
         }
@@ -4716,6 +4723,51 @@ mod tests {
     }
 
     #[test]
+    fn selected_history_round_reloads_same_id_after_history_revision_changes() {
+        let state = AppState::default();
+        let first_operation = state.reserve_main_round_selection();
+        assert!(
+            state
+                .set_main_selected_round_id_with(
+                    Some("reimported".to_owned()),
+                    first_operation,
+                    |_| {
+                        let mut selected = CombatState::default();
+                        selected.push_hit(test_hit(100.0));
+                        Ok(selected)
+                    },
+                )
+                .expect("select first History contents")
+        );
+
+        state.bump_history_revision();
+        assert!(
+            state.presentation_mode_snapshot().selected_round.is_none(),
+            "a History mutation must not keep projecting materialized old contents"
+        );
+        let second_operation = state.reserve_main_round_selection();
+        assert!(
+            state
+                .set_main_selected_round_id_with(
+                    Some("reimported".to_owned()),
+                    second_operation,
+                    |_| {
+                        let mut selected = CombatState::default();
+                        selected.push_hit(test_hit(250.0));
+                        Ok(selected)
+                    },
+                )
+                .expect("reload replaced History contents")
+        );
+        assert_eq!(
+            state
+                .with_main_presented_state(|selected| selected.total_damage)
+                .expect("project replaced History contents"),
+            250.0
+        );
+    }
+
+    #[test]
     fn already_loading_history_selection_cannot_overwrite_a_newer_intent() {
         let state = AppState::default();
         let slow_operation = state.reserve_main_round_selection();
@@ -6385,6 +6437,7 @@ mod tests {
             paused.paused.as_mut().expect("paused snapshot").state = Arc::new(partial);
             paused.selected_round = Some(SelectedRoundPresentation {
                 record_id: "private-partial-round".to_owned(),
+                history_revision: 0,
                 state: Arc::new(CombatState::default()),
             });
             panic!("poison paused presentation after a partial replacement");
@@ -6528,6 +6581,7 @@ mod tests {
             mode.selected_outgoing_revision = selected_outgoing_revision;
             mode.selected_round = Some(SelectedRoundPresentation {
                 record_id: "history-round".to_owned(),
+                history_revision: state.history_revision(),
                 state: Arc::new(CombatState::default()),
             });
         }
