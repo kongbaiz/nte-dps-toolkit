@@ -19,7 +19,7 @@ use nte_dps_tool::{
 
 use crate::contract::dps_time::DpsTimeRuntimeSnapshot;
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 8;
+pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +115,7 @@ pub(crate) struct CaptureSettingsSnapshot {
     pub devices_available: bool,
     pub manual_capture_device: Option<String>,
     pub server_damage_calibration: bool,
+    pub include_max_hp_reduction_in_total_damage: bool,
     pub separate_reaction_damage: bool,
     pub auto_round_after_idle: bool,
     pub auto_round_idle_seconds: u32,
@@ -227,6 +228,7 @@ pub(crate) struct CaptureSettingsInput {
     pub bpf_filter: String,
     pub manual_capture_device: Option<String>,
     pub server_damage_calibration: bool,
+    pub include_max_hp_reduction_in_total_damage: bool,
     pub separate_reaction_damage: bool,
     pub auto_round_after_idle: bool,
     pub auto_round_idle_seconds: u32,
@@ -277,6 +279,8 @@ impl SettingsSnapshot {
                 devices_available,
                 manual_capture_device: config.manual_capture_device.clone(),
                 server_damage_calibration: config.server_damage_calibration,
+                include_max_hp_reduction_in_total_damage: config
+                    .include_max_hp_reduction_in_total_damage,
                 separate_reaction_damage: config.separate_reaction_damage,
                 auto_round_after_idle: config.auto_round_after_idle,
                 auto_round_idle_seconds: config.auto_round_idle_seconds,
@@ -557,6 +561,10 @@ mod tests {
         assert_eq!(value["updates"]["downloadedBytes"], "0");
         assert_eq!(value["capture"]["bpfFilter"], "udp");
         assert_eq!(value["capture"]["devicesAvailable"], true);
+        assert_eq!(
+            value["capture"]["includeMaxHpReductionInTotalDamage"],
+            false
+        );
         assert_eq!(value["teamData"]["available"], true);
         assert_eq!(value["hotkeys"]["bindings"][0]["action"], "capture");
         assert_eq!(value["hotkeys"]["bindings"][3]["action"], "new-round");

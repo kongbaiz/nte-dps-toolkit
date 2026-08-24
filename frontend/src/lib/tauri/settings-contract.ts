@@ -14,7 +14,7 @@ import {
   type DpsTimeRuntime,
 } from "@/lib/tauri/dps-time-contract";
 
-export const SETTINGS_CONTRACT_VERSION = 8;
+export const SETTINGS_CONTRACT_VERSION = 9;
 export const HUD_SETTING_OPTION_IDS = [
   "title",
   "team_dps",
@@ -193,6 +193,7 @@ export interface CaptureSettings {
   devicesAvailable: boolean;
   manualCaptureDevice: string | null;
   serverDamageCalibration: boolean;
+  includeMaxHpReductionInTotalDamage: boolean;
   separateReactionDamage: boolean;
   autoRoundAfterIdle: boolean;
   autoRoundIdleSeconds: number;
@@ -402,6 +403,10 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       serverDamageCalibration: boolean(
         capture.serverDamageCalibration,
         "settings.capture.serverDamageCalibration",
+      ),
+      includeMaxHpReductionInTotalDamage: boolean(
+        capture.includeMaxHpReductionInTotalDamage,
+        "settings.capture.includeMaxHpReductionInTotalDamage",
       ),
       separateReactionDamage: boolean(
         capture.separateReactionDamage,
