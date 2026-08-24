@@ -2732,10 +2732,12 @@ impl FollowUpDamageTracker {
         let new_full_health_battle = self.last_hit_timestamp.is_some_and(|last_timestamp| {
             hit.timestamp - last_timestamp > 10.0 && hit.target_hp_before >= hit.target_max_hp * 0.9
         });
-        let changed_target_max_hp = self
+        // Max-HP reduction is an in-fight mutation and must not end 覆纹.
+        // A later increase still invalidates the HP baseline and pending hits.
+        let increased_target_max_hp = self
             .target_max_hp
-            .is_some_and(|maximum| (maximum - hit.target_max_hp).abs() > 1.0);
-        if new_full_health_battle || changed_target_max_hp {
+            .is_some_and(|maximum| hit.target_max_hp > maximum + 1.0);
+        if new_full_health_battle || increased_target_max_hp {
             self.reset_battle();
             self.last_server_hp = None;
         }
@@ -2830,7 +2832,10 @@ impl FollowUpDamageTracker {
         if !self.fuwen_active && !has_recent_fuwen_damage_effect {
             return None;
         }
-        if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+        // 覆纹 is derived from one source hit and cannot deal more damage than
+        // that hit. A larger HP delta includes another settlement and must not
+        // be merged into this source as follow-up damage.
+        if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE || residual_damage > source.damage {
             return None;
         }
         self.fuwen_recorded_damage = true;
@@ -2945,8 +2950,10 @@ impl ServerDamageCalibrationTracker {
             let target_reset = self
                 .hp_by_handle
                 .get(&target_handle)
-                .is_some_and(|snapshot| snapshot.hp <= 1.0)
-                && nearly_same(hit.target_hp_before, hit.target_max_hp);
+                .is_some_and(|snapshot| {
+                    nearly_same(hit.target_hp_before, hit.target_max_hp)
+                        && (snapshot.hp <= 1.0 || hit.target_hp_before > snapshot.hp + 1.0)
+                });
             if target_reset {
                 self.hp_by_handle.remove(&target_handle);
                 self.client_damage_by_handle.remove(&target_handle);
@@ -3095,6 +3102,41 @@ impl ServerDamageCalibrationTracker {
             .retain(|pending| pending.target_handle != Some(target_handle));
     }
 
+    fn remove_max_hp_reduction_candidate(&mut self, source_hit: &Hit) {
+        let source_target = wire_handle_from_hit(source_hit);
+        self.pending_max_hp_reduction_hits.retain(|pending| {
+            !(pending.target_handle == source_target
+                && pending.hit.timestamp.to_bits() == source_hit.timestamp.to_bits()
+                && pending.hit.char_id == source_hit.char_id
+                && pending.hit.gameplay_effect_index == source_hit.gameplay_effect_index)
+        });
+    }
+
+    fn scaled_max_hp_reduction_for_settlement(
+        &self,
+        source: &ServerDamagePendingHit,
+        previous: Option<ServerHpSnapshot>,
+        current_hp: f64,
+        raw_damage: f64,
+        target_handle: [u8; 29],
+    ) -> Option<(f64, f64)> {
+        let previous = previous?;
+        let previous_max_hp = self.target_max_hp_by_handle.get(&target_handle).copied()?;
+        if source.max_hp_reduction_percent == 0 || previous_max_hp <= 0.0 {
+            return None;
+        }
+        let reduction = raw_damage * f64::from(source.max_hp_reduction_percent) / 100.0;
+        let next_max_hp = previous_max_hp - reduction;
+        if reduction <= 0.0 || next_max_hp <= 0.0 {
+            return None;
+        }
+        let hp_after_direct_damage = (previous.hp - raw_damage).max(0.0);
+        let ordinary_error = (hp_after_direct_damage - current_hp).abs();
+        let expected_scaled_hp = hp_after_direct_damage * next_max_hp / previous_max_hp;
+        let scaled_error = (expected_scaled_hp - current_hp).abs();
+        (ordinary_error > 0.5 && scaled_error <= 0.5).then_some((reduction, next_max_hp))
+    }
+
     #[cfg(test)]
     fn observe_server_damage_settlement(
         &mut self,
@@ -3190,14 +3232,23 @@ impl ServerDamageCalibrationTracker {
                 .filter(|previous_hp| *previous_hp >= current_hp)
                 .unwrap_or_else(|| source_hit.target_hp_before.max(current_hp));
             let effective_damage = raw_damage.min((target_hp_before - current_hp).max(0.0));
-            if source.use_server_damage
-                && let Some(source_target) = wire_handle_from_hit(source_hit)
+            if let Some(source_target) = wire_handle_from_hit(source_hit)
                 && source_target == settlement.target_handle
                 && let Some(client_damage) = self.client_damage_by_handle.get_mut(&source_target)
             {
                 let source_effective = (source_hit.damage - source_hit.overkill_damage()).max(0.0);
                 *client_damage = (*client_damage + effective_damage - source_effective).max(0.0);
             }
+            let confirmed_max_hp_reduction = self.scaled_max_hp_reduction_for_settlement(
+                source,
+                previous,
+                current_hp,
+                raw_damage,
+                settlement.target_handle,
+            );
+            let target_max_hp = confirmed_max_hp_reduction
+                .map(|(_, next_max_hp)| next_max_hp)
+                .unwrap_or(source_hit.target_max_hp);
             let correction = HitDamageCorrection {
                 source_timestamp: source_hit.timestamp,
                 source_char_id: source_hit.char_id,
@@ -3209,16 +3260,24 @@ impl ServerDamageCalibrationTracker {
                 damage: raw_damage,
                 target_hp_before,
                 target_hp_after: current_hp,
-                target_hp_percent: if source_hit.target_max_hp > 0.0 {
-                    current_hp / source_hit.target_max_hp * 100.0
+                target_hp_percent: if target_max_hp > 0.0 {
+                    current_hp / target_max_hp * 100.0
                 } else {
                     0.0
                 },
-                max_hp_reduction: (source.max_hp_reduction_percent > 0)
-                    .then_some(raw_damage * f64::from(source.max_hp_reduction_percent) / 100.0),
-                reconciled_overkill_damage: source.use_server_damage.then_some(0.0),
+                max_hp_reduction: confirmed_max_hp_reduction.map(|(reduction, _)| reduction),
+                // A structurally validated Type 0x06 settlement is already the
+                // exact server result. The legacy HP-delta preference controls
+                // only fallback inference and must not discard this value.
+                reconciled_overkill_damage: Some(0.0),
             };
-            self.update_pending_max_hp_reduction_hit(source_hit, &correction);
+            if let Some((_, next_max_hp)) = confirmed_max_hp_reduction {
+                self.target_max_hp_by_handle
+                    .insert(settlement.target_handle, next_max_hp);
+                self.remove_max_hp_reduction_candidate(source_hit);
+            } else {
+                self.update_pending_max_hp_reduction_hit(source_hit, &correction);
+            }
             corrections.push(correction);
         }
         for (settlement, current_hp) in settlements.iter().zip(current_hps.iter().copied()) {
@@ -3380,8 +3439,10 @@ impl ServerDamageCalibrationTracker {
             } else {
                 0.0
             },
-            max_hp_reduction: (source.max_hp_reduction_percent > 0)
-                .then_some(damage * f64::from(source.max_hp_reduction_percent) / 100.0),
+            // A current-HP delta can include proportional compression caused by
+            // a max-HP change. Only an observed max-HP drop or the validated
+            // scaled settlement formula may attribute max-HP reduction.
+            max_hp_reduction: None,
             reconciled_overkill_damage: source.use_server_damage.then_some(0.0),
         };
         self.update_pending_max_hp_reduction_hit(source_hit, &correction);
@@ -5184,6 +5245,20 @@ impl PacketDecoder {
         recovered
     }
 
+    fn infer_fuwen_follow_ups_from_target_hp_updates(
+        &mut self,
+        timestamp: f64,
+        target_hp_updates: &[crate::engine::parser::ParsedBossHpUpdate],
+    ) -> Vec<HitFollowUp> {
+        target_hp_updates
+            .iter()
+            .filter_map(|update| {
+                self.follow_up_damage
+                    .observe_server_hp(timestamp, update.current_hp as f64)
+            })
+            .collect()
+    }
+
     /// Reconciles this packet's boss-HP-sync candidates against the pending
     /// hits queued in each of the three damage-reconciliation mechanisms.
     ///
@@ -6725,11 +6800,14 @@ impl PacketDecoder {
                 &server_damage_settlements,
                 resolved_target_hits.iter().chain(prepared_hits.emit.iter()),
             );
+            let mut inferred_follow_ups =
+                self.infer_fuwen_follow_ups_from_target_hp_updates(timestamp, &target_hp_updates);
             let (
-                inferred_follow_ups,
+                legacy_inferred_follow_ups,
                 legacy_server_damage_corrections,
                 legacy_unattributed_server_damage,
             ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
+            inferred_follow_ups.extend(legacy_inferred_follow_ups);
             server_damage_corrections.extend(legacy_server_damage_corrections);
             unattributed_server_damage.extend(legacy_unattributed_server_damage);
             let _ = sender.send(EngineEvent::PacketObservation(PacketObservation {
@@ -6907,11 +6985,14 @@ impl PacketDecoder {
                 &server_damage_settlements,
                 resolved_target_hits.iter().chain(prepared_hits.emit.iter()),
             );
+        let mut inferred_follow_ups =
+            self.infer_fuwen_follow_ups_from_target_hp_updates(timestamp, &target_hp_updates);
         let (
-            inferred_follow_ups,
+            legacy_inferred_follow_ups,
             legacy_server_damage_corrections,
             legacy_unattributed_server_damage,
         ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
+        inferred_follow_ups.extend(legacy_inferred_follow_ups);
         server_damage_corrections.extend(legacy_server_damage_corrections);
         unattributed_server_damage.extend(legacy_unattributed_server_damage);
         if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
@@ -12936,7 +13017,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_fuwen_damage_effect_claims_server_residual_without_ratio_guessing() {
+    fn exact_fuwen_damage_effect_claims_bounded_server_residual_without_ratio_guessing() {
         let characters = follow_up_test_characters();
         let mut tracker = FollowUpDamageTracker::default();
         tracker.observe_characters([1, 2], &characters);
@@ -12949,10 +13030,10 @@ mod tests {
         tracker.observe_fuwen_damage_effect(0.05);
 
         let follow_up = tracker
-            .observe_server_hp(0.1, 997_500.0)
+            .observe_server_hp(0.1, 998_500.0)
             .expect("the exact reaction damage GE should claim the server residual");
 
-        assert_eq!(follow_up.damage, 1_500.0);
+        assert_eq!(follow_up.damage, 500.0);
         assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
         assert_eq!(follow_up.damage_attribute.as_deref(), Some("灵"));
         assert_eq!(tracker.fuwen_damage_effect_at, None);
@@ -13020,6 +13101,45 @@ mod tests {
             .expect("visible fuwen trigger should be enough to open follow-up tracking");
         assert_eq!(follow_up.damage, 250.0);
         assert_eq!(follow_up.damage_attribute.as_deref(), Some("咒"));
+    }
+
+    #[test]
+    fn client_fight_target_update_drives_fuwen_follow_up() {
+        let characters = follow_up_test_characters();
+        let mut decoder = PacketDecoder::default();
+        decoder
+            .follow_up_damage
+            .observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut decoder.follow_up_damage, 1, 0.0);
+
+        let warm_up = boss_hp_update(800_000.0);
+        assert!(
+            decoder
+                .infer_fuwen_follow_ups_from_target_hp_updates(
+                    0.05,
+                    std::slice::from_ref(&warm_up),
+                )
+                .is_empty()
+        );
+
+        let mut hit = targetless_hit();
+        hit.char_id = 2;
+        hit.timestamp = 0.1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 1_000.0;
+        decoder
+            .follow_up_damage
+            .observe_hit(&hit, None, &characters);
+
+        let update = boss_hp_update(798_750.0);
+        let follow_ups = decoder
+            .infer_fuwen_follow_ups_from_target_hp_updates(0.2, std::slice::from_ref(&update));
+
+        assert_eq!(follow_ups.len(), 1);
+        assert_eq!(follow_ups[0].damage, 250.0);
+        assert_eq!(follow_ups[0].attack_type.as_deref(), Some("覆纹"));
+        assert_eq!(follow_ups[0].damage_attribute.as_deref(), Some("咒"));
     }
 
     fn character_with_attribute(name_zh: &str, attribute: &str) -> CharacterInfo {
@@ -13422,6 +13542,63 @@ mod tests {
         let follow_up = tracker
             .observe_server_hp(60.1, 798_750.0)
             .expect("fuwen follow-up should not expire just because of a long idle gap");
+        assert_eq!(follow_up.damage, 250.0);
+        assert!(tracker.fuwen_active);
+    }
+
+    #[test]
+    fn fuwen_stays_active_when_target_max_hp_decreases() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 1_000.0;
+
+        hit.timestamp = 0.1;
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(0.2, 799_000.0).is_none());
+
+        hit.timestamp = 0.3;
+        hit.target_max_hp = 900_000.0;
+        hit.target_hp_before = 799_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.4, 797_750.0)
+            .expect("in-fight max-HP reduction must preserve active fuwen");
+
+        assert_eq!(follow_up.damage, 250.0);
+        assert!(tracker.fuwen_active);
+    }
+
+    #[test]
+    fn fuwen_rejects_residual_larger_than_source_damage() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 539.0;
+        hit.timestamp = 0.1;
+
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(0.2, 798_900.0).is_none());
+        assert!(tracker.fuwen_active);
+
+        hit.target_hp_before = 798_900.0;
+        hit.damage = 1_000.0;
+        hit.timestamp = 0.3;
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.4, 797_650.0)
+            .expect("a later bounded fuwen residual should still be recorded");
+
         assert_eq!(follow_up.damage, 250.0);
         assert!(tracker.fuwen_active);
     }
@@ -15645,7 +15822,7 @@ mod tests {
     }
 
     #[test]
-    fn observe_only_server_damage_settlement_leaves_client_overkill_unchanged() {
+    fn exact_server_damage_settlement_reconciles_client_overkill() {
         let target = [7_u8; 29];
         let mut tracker = ServerDamageCalibrationTracker::default();
         let mut lethal = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
@@ -15665,7 +15842,7 @@ mod tests {
         assert_eq!(correction.damage, 11_662.0);
         assert_eq!(correction.target_hp_before, 7_086.0);
         assert_eq!(correction.target_hp_after, 0.0);
-        assert_eq!(correction.reconciled_overkill_damage, None);
+        assert_eq!(correction.reconciled_overkill_damage, Some(0.0));
 
         let mut post_terminal = lethal;
         post_terminal.timestamp = 10.06;
@@ -15679,32 +15856,98 @@ mod tests {
         assert!(unattributed.is_none());
         assert_eq!(
             correction.and_then(|row| row.reconciled_overkill_damage),
-            None
+            Some(0.0)
         );
     }
 
     #[test]
-    fn server_authoritative_special_damage_keeps_raw_value_and_max_hp_reduction() {
+    fn server_authoritative_special_damage_waits_for_max_hp_evidence() {
         let target = [8_u8; 29];
         let mut tracker = ServerDamageCalibrationTracker::default();
         let mut nightmare = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         nightmare.damage = 800.0;
-        nightmare.target_hp_before = 800.0;
-        nightmare.target_hp_after = 0.0;
+        nightmare.target_hp_before = 8_000.0;
+        nightmare.target_hp_after = 7_200.0;
         nightmare.target_max_hp = 10_000.0;
         set_wire_target(&mut nightmare, target);
         let _ = tracker.observe_hit_with_semantics(&nightmare, true, 200);
 
         let (correction, unattributed) = tracker.observe_server_damage_settlement(
             10.05,
-            &server_damage_settlement_for(target, 0.0, 1, 1_000),
+            &server_damage_settlement_for(target, 7_000.0, 0, 1_000),
         );
 
         let correction = correction.expect("server-authoritative damage should be corrected");
         assert!(unattributed.is_none());
         assert_eq!(correction.damage, 1_000.0);
         assert_eq!(correction.reconciled_overkill_damage, Some(0.0));
-        assert_eq!(correction.max_hp_reduction, Some(2_000.0));
+        assert_eq!(correction.max_hp_reduction, None);
+        assert_eq!(tracker.pending_max_hp_reduction_hits.len(), 1);
+    }
+
+    #[test]
+    fn normal_nightmare_settlement_does_not_reduce_max_hp_without_a_scaled_hp_transition() {
+        let target = [8_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        tracker.hp_by_handle.insert(
+            target,
+            ServerHpSnapshot {
+                timestamp: 9.0,
+                hp: 8_000.0,
+            },
+        );
+        tracker.target_max_hp_by_handle.insert(target, 10_000.0);
+
+        let mut nightmare = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        nightmare.damage = 800.0;
+        nightmare.target_hp_before = 8_000.0;
+        nightmare.target_hp_after = 7_200.0;
+        nightmare.target_max_hp = 10_000.0;
+        set_wire_target(&mut nightmare, target);
+        let _ = tracker.observe_hit_with_semantics(&nightmare, true, 200);
+
+        let (correction, unattributed) = tracker.observe_server_damage_settlement(
+            10.05,
+            &server_damage_settlement_for(target, 7_000.0, 0, 1_000),
+        );
+
+        assert!(unattributed.is_none());
+        assert_eq!(correction.unwrap().max_hp_reduction, None);
+        assert_eq!(tracker.target_max_hp_by_handle[&target], 10_000.0);
+    }
+
+    #[test]
+    fn scaled_nightmare_hp_transition_confirms_max_hp_reduction_immediately() {
+        let target = [8_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        tracker.hp_by_handle.insert(
+            target,
+            ServerHpSnapshot {
+                timestamp: 9.0,
+                hp: 8_000.0,
+            },
+        );
+        tracker.target_max_hp_by_handle.insert(target, 10_000.0);
+
+        let mut nightmare = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        nightmare.damage = 800.0;
+        nightmare.target_hp_before = 8_000.0;
+        nightmare.target_hp_after = 7_200.0;
+        nightmare.target_max_hp = 10_000.0;
+        set_wire_target(&mut nightmare, target);
+        let _ = tracker.observe_hit_with_semantics(&nightmare, true, 200);
+
+        // Server raw damage is 1,000. After that direct damage, the game keeps
+        // the HP ratio while reducing max HP by 2,000:
+        // (8,000 - 1,000) * (10,000 - 2,000) / 10,000 = 5,600.
+        let (correction, unattributed) = tracker.observe_server_damage_settlement(
+            10.05,
+            &server_damage_settlement_for(target, 5_600.0, 0, 1_000),
+        );
+
+        assert!(unattributed.is_none());
+        assert_eq!(correction.unwrap().max_hp_reduction, Some(2_000.0));
+        assert_eq!(tracker.target_max_hp_by_handle[&target], 8_000.0);
         assert!(tracker.pending_max_hp_reduction_hits.is_empty());
     }
 
@@ -16484,7 +16727,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_calibration_keeps_exact_client_hit_and_reports_only_server_residual() {
+    fn exact_server_settlement_overrides_client_damage_even_when_legacy_calibration_is_disabled() {
         let target = [7_u8; 29];
         let mut decoder = PacketDecoder::with_server_damage_calibration(false);
         let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
@@ -16501,18 +16744,13 @@ mod tests {
                 [&hit],
             );
 
-        assert!(corrections.is_empty());
-        assert_eq!(
-            residuals,
-            vec![UnattributedServerDamage {
-                timestamp: 10.05,
-                damage: 250.0,
-                candidate_hits: 1,
-            }]
-        );
+        assert!(residuals.is_empty());
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].damage, 1_250.0);
+        assert_eq!(corrections[0].reconciled_overkill_damage, Some(0.0));
         assert_eq!(
             decoder.server_damage_calibration.client_damage_by_handle[&target],
-            1_000.0
+            1_250.0
         );
     }
 
@@ -16593,7 +16831,7 @@ mod tests {
         assert_eq!(corrections.len(), 1);
         assert_eq!(corrections[0].damage, 1_250.0);
         assert_eq!(corrections[0].reconciled_overkill_damage, Some(0.0));
-        assert_eq!(corrections[0].max_hp_reduction, Some(2_500.0));
+        assert_eq!(corrections[0].max_hp_reduction, None);
     }
 
     #[test]
