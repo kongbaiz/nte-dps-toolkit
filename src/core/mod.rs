@@ -22,8 +22,6 @@ pub mod mod_sdk;
 pub mod mod_studio;
 pub mod packets;
 pub mod reducer;
-#[cfg(feature = "desktop")]
-pub mod resource_audit;
 pub mod skills;
 pub mod snapshot;
 #[cfg(feature = "desktop")]

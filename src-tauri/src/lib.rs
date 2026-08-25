@@ -258,7 +258,6 @@ pub fn run() {
             commands::mod_studio::save_mod_studio_document,
             commands::mod_studio::set_mod_studio_document_enabled,
             commands::packets::get_packets_snapshot,
-            commands::resources::get_resources_snapshot,
             commands::settings::apply_settings_hud_preset,
             commands::settings::apply_settings_layout_profile,
             commands::settings::clear_settings_capture_files,

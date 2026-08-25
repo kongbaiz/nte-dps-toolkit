@@ -18,7 +18,6 @@ pub(crate) mod main_dps;
 pub(crate) mod main_dps_detail;
 pub(crate) mod mod_studio;
 pub(crate) mod packets;
-pub(crate) mod resources;
 pub(crate) mod settings;
 pub(crate) mod skills;
 pub(crate) mod stream;
@@ -210,15 +209,6 @@ impl CommandError {
             code,
             message_key,
             message_arguments,
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn resources(code: &'static str, message_key: &'static str) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments: Vec::new(),
             diagnostic_line: None,
         }
     }
