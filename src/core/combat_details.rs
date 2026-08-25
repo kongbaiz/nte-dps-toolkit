@@ -112,11 +112,11 @@ pub fn damage_digit_key_for_hit<'a>(
 
 /// Stable resource key for the separately rendered follow-up damage digits.
 pub fn follow_up_damage_digit_key_for_hit(hit: &Hit) -> Option<&str> {
-    let source_attribute = hit.follow_up_damage_attribute.as_deref()?;
+    let source_attribute = hit.follow_up_damage_attribute.as_deref();
     hit.follow_up_attack_type
         .as_deref()
-        .and_then(|value| mixed_damage_digit_key(value, Some(source_attribute)))
-        .or(Some(source_attribute))
+        .and_then(|value| mixed_damage_digit_key(value, source_attribute))
+        .or(source_attribute)
 }
 
 pub fn mixed_damage_digit_key(
@@ -233,6 +233,18 @@ mod tests {
         assert_eq!(
             damage_digit_key_for_hit(&value, &characters),
             Some("Guangling_G")
+        );
+    }
+
+    #[test]
+    fn follow_up_reaction_digits_do_not_require_optional_attribute_metadata() {
+        let mut value = hit(HitDirection::Outgoing, true, Some("普攻"));
+        value.follow_up_attack_type = Some("覆纹".to_owned());
+
+        assert_eq!(value.follow_up_damage_attribute, None);
+        assert_eq!(
+            follow_up_damage_digit_key_for_hit(&value),
+            Some("lingzhou_L")
         );
     }
 }
