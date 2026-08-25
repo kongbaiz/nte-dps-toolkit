@@ -36,3 +36,6 @@ __pycache__/
 !src/bin/
 !src/bin/nte-core.rs
 **/obj/
+
+# Local Codex verification artifacts
+/.codex-transaction/

@@ -40,21 +40,20 @@ use crate::engine::model::{
     TimeStopEvent, UnattributedServerDamage,
 };
 use crate::engine::parser::{
-    AbilityCatalog, DamageRecordEncoding, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
-    EquipmentCatalog, EquipmentKind, GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH,
-    GameplayEffectSkill, ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot,
-    ParsedGameplayEffect, ParsedServerDamageSettlement, SKILL_DAMAGE_DATA_PATH,
-    classify_attack_type, damage_record_encoding_at, declared_character_ids_from_evidence,
-    find_data_file, find_declared_character_evidence, find_final_tower_character_evidence,
-    load_enemy_catalog, load_equipment_catalog, load_gameplay_effect_mapping,
-    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    AbilityCatalog, DamageDisplayType, DamageRecordEncoding, ENEMY_CATALOG_PATH,
+    EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind, GAMEPLAY_EFFECT_MAPPING_PATH,
+    GAMEPLAY_EFFECT_SEMANTICS_PATH, GameplayEffectSkill, ParsedEmptyCurtainEquipmentSnapshot,
+    ParsedEquipmentSlot, ParsedGameplayEffect, ParsedServerDamageSettlement,
+    SKILL_DAMAGE_DATA_PATH, classify_attack_type, damage_record_encoding_at,
+    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
+    find_final_tower_character_evidence, load_enemy_catalog, load_equipment_catalog,
+    load_gameplay_effect_mapping, normalize_damage_name, parse_boss_hp_updates,
     parse_client_damage_boss_update, parse_client_fight_target_updates, parse_current_hp_updates,
     parse_damage_payload, parse_empty_curtain_character_owners,
     parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
     parse_empty_curtain_item_additions, parse_empty_curtain_item_removals,
     parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects,
-    parse_server_damage_settlements, qte_reaction_type, valid_item_net_id,
-    validate_empty_curtain_snapshot,
+    parse_server_damage_settlements, valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::platform::mods_plugin::{
     CombatClockQueryError, CombatClockTransitionSnapshot, query_combat_clock_transitions,
@@ -2631,19 +2630,11 @@ const DUPLICATE_FRAME_WINDOW_SECONDS: f64 = 0.001;
 /// Bounds memory for external captures containing many frames with one timestamp.
 const MAX_RECENT_CAPTURE_FRAMES: usize = 512;
 const FRAME_DEDUP_VERIFICATION_BYTE_BUDGET: usize = 256 * 1024;
-const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
-const FUWEN_START_SIGNATURE_OFFSET: usize = 22;
-const FUWEN_START_SIGNATURE: &[u8] = &[1, 0, 0, 0, 2, 0, 0, 0];
-const FUWEN_ENTERING_ID_SHIFT: u8 = 0;
-const FUWEN_ENTERING_ID_OFFSET: usize = 53;
-const FUWEN_PREVIOUS_ID_SHIFT: u8 = 2;
-const FUWEN_PREVIOUS_ID_OFFSET: usize = 66;
 const MIN_FOLLOW_UP_RESIDUAL_DAMAGE: f64 = 1.0;
-const FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME: &str = "GE_ActorReaction_2_new_Damage";
-const FUWEN_DAMAGE_EFFECT_ASSOCIATION_WINDOW_SECONDS: f64 = 1.0;
-/// How far back to look for the real owner of an attribute-locked reaction whose
-/// damage packet carried no caster. Matches the 3s window used by the 环合 retag.
-const REACTION_REATTRIBUTION_WINDOW_SECONDS: f64 = 3.0;
+/// This window is used only to associate an already enum-classified appended
+/// server value with its source hit. It never classifies a damage type or
+/// derives a damage amount.
+const AUTHORITATIVE_DISPLAY_SOURCE_WINDOW_SECONDS: f64 = 0.1;
 const RECENT_CONFIRMED_HIT_WINDOW_SECONDS: f64 = 0.75;
 const UNTYPED_SHADOW_HIT_WINDOW_SECONDS: f64 = 0.05;
 const MAX_SERVER_DAMAGE_TARGETS: usize = 256;
@@ -2662,15 +2653,6 @@ const BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS: [usize; 2] = [1508, 1524]
 const LEGACY_DAMAGE_RECORD_SOURCE_CHARACTER_BITS: (usize, usize) = (769, 916);
 const BOOL_ENUM_DAMAGE_RECORD_SOURCE_CHARACTER_BITS: (usize, usize) = (537, 1173);
 
-fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
-    match hit.attack_type.as_deref() {
-        Some("创生") | Some("创生花") | Some("覆纹") | Some("延滞") | Some("黯星")
-        | Some("浊燃") | Some("浸染") | Some("盈蓄") | Some("失谐") => false,
-        Some(attack_type) if attack_type.starts_with("环合·") => attack_type == "环合·覆纹",
-        _ => true,
-    }
-}
-
 #[derive(Clone)]
 struct PendingHit {
     hit: Hit,
@@ -2678,49 +2660,23 @@ struct PendingHit {
 
 #[derive(Default)]
 struct FollowUpDamageTracker {
-    last_server_hp: Option<f64>,
     last_hit_timestamp: Option<f64>,
     target_max_hp: Option<f64>,
     pending_hits: VecDeque<PendingHit>,
-    team_attributes: HashSet<String>,
-    character_attributes: HashMap<u32, String>,
-    fuwen_active: bool,
-    fuwen_start_pending: bool,
-    fuwen_recorded_damage: bool,
-    fuwen_damage_effect_at: Option<f64>,
+    authoritative_sources_to_skip: Vec<Hit>,
 }
 
 impl FollowUpDamageTracker {
     fn reset_battle(&mut self) {
         self.pending_hits.clear();
-        self.team_attributes.clear();
-        self.character_attributes.clear();
-        self.clear_fuwen_state();
-    }
-
-    fn observe_characters(
-        &mut self,
-        character_ids: impl IntoIterator<Item = u32>,
-        characters: &HashMap<u32, CharacterInfo>,
-    ) {
-        for character_id in character_ids {
-            let Some(attribute) = characters
-                .get(&character_id)
-                .and_then(|character| character.attribute.as_deref())
-            else {
-                continue;
-            };
-            self.team_attributes.insert(attribute.to_owned());
-            self.character_attributes
-                .insert(character_id, attribute.to_owned());
-        }
+        self.authoritative_sources_to_skip.clear();
     }
 
     fn observe_hit(
         &mut self,
         hit: &Hit,
         _gameplay_effect_index: Option<u32>,
-        characters: &HashMap<u32, CharacterInfo>,
+        _characters: &HashMap<u32, CharacterInfo>,
     ) {
         if hit.direction.is_incoming()
             || hit.char_id == 0
@@ -2732,18 +2688,24 @@ impl FollowUpDamageTracker {
         let new_full_health_battle = self.last_hit_timestamp.is_some_and(|last_timestamp| {
             hit.timestamp - last_timestamp > 10.0 && hit.target_hp_before >= hit.target_max_hp * 0.9
         });
-        // Max-HP reduction is an in-fight mutation and must not end 覆纹.
-        // A later increase still invalidates the HP baseline and pending hits.
+        // A max-HP reduction is an in-fight mutation, so preserve pending
+        // source candidates. A later increase starts a new source window.
         let increased_target_max_hp = self
             .target_max_hp
             .is_some_and(|maximum| hit.target_max_hp > maximum + 1.0);
         if new_full_health_battle || increased_target_max_hp {
             self.reset_battle();
-            self.last_server_hp = None;
         }
         self.last_hit_timestamp = Some(hit.timestamp);
         self.target_max_hp = Some(hit.target_max_hp);
-        self.observe_characters([hit.char_id], characters);
+        if let Some(index) = self
+            .authoritative_sources_to_skip
+            .iter()
+            .position(|source| same_authoritative_follow_up_source(source, hit))
+        {
+            self.authoritative_sources_to_skip.swap_remove(index);
+            return;
+        }
         if self
             .pending_hits
             .back()
@@ -2757,117 +2719,29 @@ impl FollowUpDamageTracker {
         }
     }
 
-    fn observe_fuwen_start_candidate(
-        &mut self,
-        _timestamp: f64,
-        entering_character_id: u32,
-        previous_character_id: u32,
-        characters: &HashMap<u32, CharacterInfo>,
-    ) {
-        self.observe_characters([entering_character_id, previous_character_id], characters);
-        self.fuwen_start_pending = true;
-    }
-
-    fn observe_fuwen_trigger_hit(&mut self, hit: &Hit) {
-        if hit.direction.is_incoming() || hit.attack_type.as_deref() != Some("环合·覆纹") {
-            return;
-        }
-        self.fuwen_active = true;
-        self.fuwen_start_pending = false;
-        self.fuwen_recorded_damage = false;
-        self.pending_hits.clear();
-        self.last_server_hp = None;
-    }
-
-    fn observe_fuwen_damage_effect(&mut self, timestamp: f64) {
-        self.fuwen_damage_effect_at = Some(timestamp);
-    }
-
-    fn observe_direct_fuwen_damage_hit(&mut self) {
-        self.fuwen_damage_effect_at = None;
-    }
-
-    fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<HitFollowUp> {
-        let has_recent_fuwen_damage_effect =
-            self.fuwen_damage_effect_at.is_some_and(|observed_at| {
-                timestamp >= observed_at
-                    && timestamp - observed_at <= FUWEN_DAMAGE_EFFECT_ASSOCIATION_WINDOW_SECONDS
-            });
-        if self.fuwen_damage_effect_at.is_some() && !has_recent_fuwen_damage_effect {
-            self.fuwen_damage_effect_at = None;
-        }
+    fn observe_authoritative_settlement(&mut self, timestamp: f64) {
         self.pending_hits
             .retain(|pending| timestamp - pending.hit.timestamp <= 1.0);
-        let previous_hp = self.last_server_hp.or_else(|| {
-            self.pending_hits
-                .front()
-                .map(|pending| pending.hit.target_hp_before)
-        });
-        self.last_server_hp = Some(current_hp);
-        let previous_hp = previous_hp?;
-        if current_hp >= previous_hp || self.pending_hits.is_empty() {
-            if current_hp > previous_hp {
-                let reset_threshold = self.target_max_hp.unwrap_or(current_hp) * 0.25;
-                if current_hp - previous_hp >= reset_threshold {
-                    self.reset_battle();
-                } else {
-                    self.pending_hits.clear();
-                }
+    }
+
+    fn claim_authoritative_source(&mut self, source: &Hit, skip_future_observation: bool) {
+        self.pending_hits
+            .retain(|pending| !same_authoritative_follow_up_source(&pending.hit, source));
+        if skip_future_observation {
+            self.authoritative_sources_to_skip.push(source.clone());
+            if self.authoritative_sources_to_skip.len() > MAX_PENDING_FOLLOW_UP_HITS {
+                self.authoritative_sources_to_skip.remove(0);
             }
-            return None;
         }
-
-        let actual_damage = previous_hp - current_hp;
-        let source = self.pending_hits.pop_front()?.hit;
-        if !hit_can_trigger_fuwen_follow_up(&source) {
-            return None;
-        }
-        let residual_damage = actual_damage - source.damage;
-        let has_required_team_attributes =
-            self.team_attributes.contains("灵") && self.team_attributes.contains("咒");
-        let source_attribute = self.character_attributes.get(&source.char_id)?;
-        if !has_required_team_attributes || !matches!(source_attribute.as_str(), "灵" | "咒") {
-            return None;
-        }
-        if !self.fuwen_active && !has_recent_fuwen_damage_effect {
-            return None;
-        }
-        // 覆纹 is derived from one source hit and cannot deal more damage than
-        // that hit. A larger HP delta includes another settlement and must not
-        // be merged into this source as follow-up damage.
-        if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE || residual_damage > source.damage {
-            return None;
-        }
-        self.fuwen_recorded_damage = true;
-        self.fuwen_damage_effect_at = None;
-        Some(HitFollowUp {
-            source_timestamp: source.timestamp,
-            source_char_id: source.char_id,
-            source_damage: source.damage,
-            source_target_hp_before: source.target_hp_before,
-            source_target_hp_after: source.target_hp_after,
-            source_target_max_hp: source.target_max_hp,
-            source_gameplay_effect_index: source.gameplay_effect_index,
-            timestamp,
-            damage: residual_damage,
-            target_hp_after: current_hp,
-            target_hp_percent: if source.target_max_hp > 0.0 {
-                current_hp / source.target_max_hp * 100.0
-            } else {
-                0.0
-            },
-            damage_name: Some("覆纹追加攻击".to_owned()),
-            attack_type: Some("覆纹".to_owned()),
-            damage_attribute: Some(source_attribute.clone()),
-        })
     }
+}
 
-    fn clear_fuwen_state(&mut self) {
-        self.fuwen_active = false;
-        self.fuwen_start_pending = false;
-        self.fuwen_recorded_damage = false;
-        self.fuwen_damage_effect_at = None;
-    }
+fn same_authoritative_follow_up_source(left: &Hit, right: &Hit) -> bool {
+    left.timestamp.to_bits() == right.timestamp.to_bits()
+        && left.char_id == right.char_id
+        && left.damage.to_bits() == right.damage.to_bits()
+        && left.gameplay_effect_index == right.gameplay_effect_index
+        && wire_handle_from_hit(left) == wire_handle_from_hit(right)
 }
 
 #[derive(Clone)]
@@ -3060,6 +2934,8 @@ impl ServerDamageCalibrationTracker {
             target_hp_before: source_hit.target_hp_before,
             target_hp_after: source_hit.target_hp_after,
             target_hp_percent: source_hit.target_hp_percent,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: Some(reduction),
             reconciled_overkill_damage: None,
         })
@@ -3092,6 +2968,12 @@ impl ServerDamageCalibrationTracker {
         pending.hit.target_hp_before = correction.target_hp_before;
         pending.hit.target_hp_after = correction.target_hp_after;
         pending.hit.target_hp_percent = correction.target_hp_percent;
+        if correction.damage_name.is_some() {
+            pending.hit.damage_name.clone_from(&correction.damage_name);
+        }
+        if correction.attack_type.is_some() {
+            pending.hit.attack_type.clone_from(&correction.attack_type);
+        }
         if let Some(reduction) = correction.max_hp_reduction {
             pending.hit.max_hp_reduction = reduction;
         }
@@ -3214,6 +3096,21 @@ impl ServerDamageCalibrationTracker {
             let previous = previous_snapshots[settlement_index];
             let raw_damage = f64::from(settlement.raw_damage);
             let Some(source) = &sources[settlement_index] else {
+                if settlement.display_type.attack_type().is_some() {
+                    let target_max_hp = self
+                        .target_max_hp_by_handle
+                        .get(&settlement.target_handle)
+                        .copied()
+                        .unwrap_or(0.0);
+                    self.residual_hits.push(unattributed_display_damage_hit(
+                        timestamp,
+                        settlement,
+                        raw_damage,
+                        settlement.display_type,
+                        target_max_hp,
+                    ));
+                    continue;
+                }
                 let effective_damage = previous
                     .map(|snapshot| raw_damage.min((snapshot.hp - current_hp).max(0.0)))
                     .unwrap_or(raw_damage);
@@ -3265,6 +3162,8 @@ impl ServerDamageCalibrationTracker {
                 } else {
                     0.0
                 },
+                damage_name: settlement.display_type.damage_name().map(str::to_owned),
+                attack_type: settlement.display_type.attack_type().map(str::to_owned),
                 max_hp_reduction: confirmed_max_hp_reduction.map(|(reduction, _)| reduction),
                 // A structurally validated Type 0x06 settlement is already the
                 // exact server result. The legacy HP-delta preference controls
@@ -3439,6 +3338,8 @@ impl ServerDamageCalibrationTracker {
             } else {
                 0.0
             },
+            damage_name: None,
+            attack_type: None,
             // A current-HP delta can include proportional compression caused by
             // a max-HP change. Only an observed max-HP drop or the validated
             // scaled settlement formula may attribute max-HP reduction.
@@ -5245,80 +5146,177 @@ impl PacketDecoder {
         recovered
     }
 
-    fn infer_fuwen_follow_ups_from_target_hp_updates(
+    fn reconcile_authoritative_additional_damage_settlements(
         &mut self,
         timestamp: f64,
-        target_hp_updates: &[crate::engine::parser::ParsedBossHpUpdate],
-    ) -> Vec<HitFollowUp> {
-        target_hp_updates
-            .iter()
-            .filter_map(|update| {
+        settlements: &[ParsedServerDamageSettlement],
+        hits: &[&Hit],
+    ) -> (Vec<HitFollowUp>, Vec<Hit>) {
+        let mut follow_ups = Vec::new();
+        let mut shared_hits = Vec::new();
+        let mut claimed_hits = HashSet::new();
+        for settlement in settlements {
+            let (Some(additional_damage), Some(additional_display_type)) = (
+                settlement.additional_damage,
+                settlement.additional_display_type,
+            ) else {
+                continue;
+            };
+            let (Some(damage_name), Some(attack_type)) = (
+                additional_display_type.damage_name(),
+                additional_display_type.attack_type(),
+            ) else {
+                continue;
+            };
+            self.follow_up_damage
+                .observe_authoritative_settlement(timestamp);
+            let mut candidates = hits
+                .iter()
+                .enumerate()
+                .filter(|(index, hit)| {
+                    !claimed_hits.contains(index)
+                        && !hit.direction.is_incoming()
+                        && hit.char_id != 0
+                        && wire_handle_from_hit(hit) == Some(settlement.target_handle)
+                })
+                .map(|(index, hit)| (Some(index), (*hit).clone()))
+                .collect::<Vec<_>>();
+            candidates.extend(
                 self.follow_up_damage
-                    .observe_server_hp(timestamp, update.current_hp as f64)
-            })
-            .collect()
+                    .pending_hits
+                    .iter()
+                    .filter(|pending| {
+                        timestamp >= pending.hit.timestamp
+                            && timestamp - pending.hit.timestamp <= 1.0
+                            && !pending.hit.direction.is_incoming()
+                            && pending.hit.char_id != 0
+                            && wire_handle_from_hit(&pending.hit) == Some(settlement.target_handle)
+                    })
+                    .map(|pending| (None, pending.hit.clone())),
+            );
+            let exact_damage_match = candidates
+                .iter()
+                .filter(|(_, source)| source.damage == settlement.raw_damage as f64)
+                .min_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp));
+            let hp_bridge_match = candidates
+                .iter()
+                .filter(|(_, source)| {
+                    (source.target_hp_after
+                        - settlement.current_hp as f64
+                        - additional_damage as f64)
+                        .abs()
+                        <= 1.0
+                })
+                .min_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp));
+            let recent_matches = candidates
+                .iter()
+                .filter(|(_, source)| {
+                    timestamp >= source.timestamp
+                        && timestamp - source.timestamp
+                            <= AUTHORITATIVE_DISPLAY_SOURCE_WINDOW_SECONDS
+                })
+                .collect::<Vec<_>>();
+            let candidate = if let Some(candidate) = exact_damage_match {
+                Some(candidate)
+            } else if let Some(candidate) = hp_bridge_match {
+                Some(candidate)
+            } else if let [candidate] = recent_matches.as_slice() {
+                Some(*candidate)
+            } else {
+                None
+            };
+            let Some(candidate) = candidate else {
+                shared_hits.push(unattributed_display_damage_hit(
+                    timestamp,
+                    settlement,
+                    additional_damage as f64,
+                    additional_display_type,
+                    self.follow_up_damage.target_max_hp.unwrap_or(0.0),
+                ));
+                continue;
+            };
+            let (current_index, source) = candidate;
+            if let Some(index) = current_index {
+                claimed_hits.insert(*index);
+            }
+            self.follow_up_damage
+                .claim_authoritative_source(source, current_index.is_some());
+            follow_ups.push(HitFollowUp {
+                source_timestamp: source.timestamp,
+                source_char_id: source.char_id,
+                source_damage: source.damage,
+                source_target_hp_before: source.target_hp_before,
+                source_target_hp_after: source.target_hp_after,
+                source_target_max_hp: source.target_max_hp,
+                source_gameplay_effect_index: source.gameplay_effect_index,
+                timestamp,
+                damage: additional_damage as f64,
+                target_hp_after: settlement.current_hp as f64,
+                target_hp_percent: if source.target_max_hp > 0.0 {
+                    settlement.current_hp as f64 / source.target_max_hp * 100.0
+                } else {
+                    0.0
+                },
+                damage_name: Some(damage_name.to_owned()),
+                attack_type: Some(attack_type.to_owned()),
+                damage_attribute: None,
+            });
+        }
+        (follow_ups, shared_hits)
     }
 
-    /// Reconciles this packet's boss-HP-sync candidates against the pending
-    /// hits queued in each of the three damage-reconciliation mechanisms.
-    ///
-    /// A boss-HP delta already explained by a reaction follow-up (e.g. 覆纹) is
-    /// fully accounted for: source damage + residual == the observed delta by
-    /// construction. Handing that same delta to the legacy kill-merge or the
-    /// server-damage-calibration pass as well would make them treat the whole
-    /// delta as an undiscovered correction to the base hit, silently
-    /// overwriting a damage value that was already correct and erasing the
-    /// follow-up attribution in the process. So each update is *claimed* by at
-    /// most one attribution mechanism, with the reaction follow-up given first
-    /// refusal. Conservative mode never turns an HP-sync residual into guessed
-    /// character damage; aggressive calibration remains an explicit opt-in.
-    /// The calibration tracker still gets to *observe* every update regardless,
-    /// since it keeps its own HP snapshot/pending-hit state
-    /// (`ServerDamageCalibrationTracker::hp_by_handle`); skipping the call
-    /// entirely on a claimed update would leave that state stale and make its
-    /// *next* correction compare against the wrong baseline.
+    fn hp_update_has_authoritative_additional_damage(
+        settlements: &[ParsedServerDamageSettlement],
+        update: &crate::engine::parser::ParsedBossHpUpdate,
+    ) -> bool {
+        settlements.iter().any(|settlement| {
+            settlement.additional_damage.is_some()
+                && settlement
+                    .additional_display_type
+                    .is_some_and(|display_type| display_type.attack_type().is_some())
+                && settlement.target_handle == update.target_handle
+                && settlement.current_hp.to_bits() == update.current_hp.to_bits()
+        })
+    }
+
+    /// Reconciles legacy boss-HP synchronization for server-damage calibration.
+    /// HP deltas can correct already-observed damage, but they never create a
+    /// display-classified reaction record. Only a concrete `EDamageDisPlayType`
+    /// entry decoded by `parse_server_damage_settlements` can do that.
     fn reconcile_boss_hp_updates(
         &mut self,
         timestamp: f64,
         boss_hp_updates: &[crate::engine::parser::ParsedBossHpUpdate],
     ) -> BossHpReconciliation {
-        let mut inferred_follow_ups = Vec::new();
         let mut server_damage_corrections = Vec::new();
         let mut unattributed_server_damage = Vec::new();
         for update in boss_hp_updates {
-            let follow_up = self
-                .follow_up_damage
-                .observe_server_hp(timestamp, update.current_hp as f64);
-            let claimed = follow_up.is_some();
-            inferred_follow_ups.extend(follow_up);
             let (correction, unattributed) = self
                 .server_damage_calibration
                 .observe_boss_hp_detailed(timestamp, update);
-            if !claimed {
-                unattributed_server_damage.extend(unattributed);
-                let force_server_damage = correction
-                    .as_ref()
-                    .is_some_and(|correction| correction.reconciled_overkill_damage == Some(0.0));
-                if force_server_damage {
-                    server_damage_corrections.extend(correction);
-                } else if let Some(correction) = correction {
-                    // The decoded hit already contributes source_damage to
-                    // team/personal totals. Conservative mode publishes only
-                    // the positive residual as unassigned evidence and never
-                    // fabricates a follow-up for a likely character.
-                    let residual = correction.damage - correction.source_damage;
-                    if residual >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
-                        unattributed_server_damage.push(UnattributedServerDamage {
-                            timestamp,
-                            damage: residual,
-                            candidate_hits: 1,
-                        });
-                    }
+            unattributed_server_damage.extend(unattributed);
+            let force_server_damage = correction
+                .as_ref()
+                .is_some_and(|correction| correction.reconciled_overkill_damage == Some(0.0));
+            if force_server_damage {
+                server_damage_corrections.extend(correction);
+            } else if let Some(correction) = correction {
+                // The decoded hit already contributes source_damage to
+                // team/personal totals. Conservative mode publishes only
+                // the positive residual as unassigned evidence and never
+                // fabricates a follow-up for a likely character.
+                let residual = correction.damage - correction.source_damage;
+                if residual >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+                    unattributed_server_damage.push(UnattributedServerDamage {
+                        timestamp,
+                        damage: residual,
+                        candidate_hits: 1,
+                    });
                 }
             }
         }
         (
-            inferred_follow_ups,
+            Vec::new(),
             server_damage_corrections,
             unattributed_server_damage,
         )
@@ -5615,6 +5613,59 @@ fn server_residual_hit(
     }
 }
 
+fn unattributed_display_damage_hit(
+    timestamp: f64,
+    settlement: &ParsedServerDamageSettlement,
+    damage: f64,
+    display_type: DamageDisplayType,
+    target_max_hp: f64,
+) -> Hit {
+    let target_hp_after = f64::from(settlement.current_hp);
+    Hit {
+        timestamp,
+        char_id: 0,
+        char_name: "Unattributed".to_owned(),
+        char_known: false,
+        damage,
+        byte_offset: settlement.byte_offset,
+        bit_shift: settlement.bit_shift,
+        char_source: HitCharacterSource::Unknown,
+        direction: HitDirection::Outgoing,
+        target_hp_before: target_hp_after + damage,
+        target_hp_after,
+        target_max_hp,
+        max_hp_reduction: 0.0,
+        target_hp_percent: if target_max_hp > 0.0 {
+            target_hp_after / target_max_hp * 100.0
+        } else {
+            0.0
+        },
+        target_id: Some(target_id_from_wire_handle(&settlement.target_handle)),
+        target_name: None,
+        target_name_en: None,
+        target_name_ja: None,
+        target_monster_id: None,
+        target_context: vec![format!(
+            "enemy_target_wire={}",
+            hex::encode(settlement.target_handle)
+        )],
+        gameplay_effect_index: None,
+        gameplay_effect_name: None,
+        ability_name: None,
+        damage_name: display_type.damage_name().map(str::to_owned),
+        damage_component: None,
+        attack_type: display_type.attack_type().map(str::to_owned),
+        damage_attribute: None,
+        follow_up_damage: 0.0,
+        follow_up_timestamp: None,
+        follow_up_damage_name: None,
+        follow_up_attack_type: None,
+        follow_up_damage_attribute: None,
+        reconciled_overkill_damage: Some(0.0),
+        wire_event: None,
+    }
+}
+
 fn is_enemy_death_settlement_hit(hit: &Hit) -> bool {
     hit.direction.is_outgoing()
         && hit.target_id.is_some()
@@ -5693,54 +5744,6 @@ fn apply_target_snapshot(hit: &mut Hit, target_id: String, snapshot: &HitTargetS
     hit.target_context.clone_from(&snapshot.target_context);
 }
 
-fn fuwen_start_pair(
-    payload: &[u8],
-    evidence: &[(u32, u8, usize)],
-    characters: &HashMap<u32, CharacterInfo>,
-) -> Option<(u32, u32)> {
-    if !matches_shifted_bytes_at(
-        payload,
-        FUWEN_START_SIGNATURE_SHIFT,
-        FUWEN_START_SIGNATURE_OFFSET,
-        FUWEN_START_SIGNATURE,
-    ) {
-        return None;
-    }
-    let entering_character_id = character_id_at_evidence_location(
-        evidence,
-        FUWEN_ENTERING_ID_SHIFT,
-        FUWEN_ENTERING_ID_OFFSET,
-    )?;
-    let previous_character_id = character_id_at_evidence_location(
-        evidence,
-        FUWEN_PREVIOUS_ID_SHIFT,
-        FUWEN_PREVIOUS_ID_OFFSET,
-    )?;
-    if entering_character_id == previous_character_id {
-        return None;
-    }
-    let entering_attribute = characters
-        .get(&entering_character_id)
-        .and_then(|character| character.attribute.as_deref())?;
-    let previous_attribute = characters
-        .get(&previous_character_id)
-        .and_then(|character| character.attribute.as_deref())?;
-    let has_fuwen_pair = (entering_attribute == "灵" && previous_attribute == "咒")
-        || (entering_attribute == "咒" && previous_attribute == "灵");
-    has_fuwen_pair.then_some((entering_character_id, previous_character_id))
-}
-
-fn character_id_at_evidence_location(
-    evidence: &[(u32, u8, usize)],
-    bit_shift: u8,
-    byte_offset: usize,
-) -> Option<u32> {
-    evidence
-        .iter()
-        .find(|(_, shift, offset)| *shift == bit_shift && *offset == byte_offset)
-        .map(|(character_id, _, _)| *character_id)
-}
-
 fn damage_record_source_character(
     hit: &Hit,
     evidence: &[(u32, u8, usize)],
@@ -5805,27 +5808,6 @@ fn reattribute_hit_from_damage_record_owner(
         set_hit_character(hit, character_id, characters);
     }
     hit.char_source = HitCharacterSource::Packet;
-}
-
-fn character_debug_label(character_id: u32, characters: &HashMap<u32, CharacterInfo>) -> String {
-    characters.get(&character_id).map_or_else(
-        || character_id.to_string(),
-        |character| {
-            let name = if character.name_zh.is_empty() {
-                character.name_en.as_str()
-            } else {
-                character.name_zh.as_str()
-            };
-            match character.attribute.as_deref() {
-                Some(attribute) if !name.is_empty() => {
-                    format!("{name}({character_id}/{attribute})")
-                }
-                Some(attribute) => format!("{character_id}/{attribute}"),
-                None if !name.is_empty() => format!("{name}({character_id})"),
-                None => character_id.to_string(),
-            }
-        },
-    )
 }
 
 fn matching_gameplay_effect<'a>(
@@ -5934,7 +5916,11 @@ fn apply_gameplay_effect(
     hit.gameplay_effect_name = Some(effect_name.clone());
     if let Some(skill) = skill {
         hit.ability_name = skill.ability_name.clone();
-        hit.attack_type = Some(skill.attack_type.clone());
+        if is_authoritative_display_attack_type(&skill.attack_type) {
+            hit.attack_type = None;
+        } else {
+            hit.attack_type = Some(skill.attack_type.clone());
+        }
         hit.damage_component = skill.damage_component.clone();
     } else {
         hit.attack_type = Some(classify_attack_type(None, effect_name, None));
@@ -5956,6 +5942,24 @@ fn apply_gameplay_effect(
         hit.damage_attribute = Some("物理".to_owned());
         hit.attack_type = Some("载具伤害".to_owned());
     }
+}
+
+fn is_authoritative_display_attack_type(attack_type: &str) -> bool {
+    if attack_type == "环合伤害" || attack_type.starts_with("环合·") {
+        return true;
+    }
+    [
+        DamageDisplayType::Unbal,
+        DamageDisplayType::GuangLingReactionFollow,
+        DamageDisplayType::LingZhouReactionFollow,
+        DamageDisplayType::ZhouAnReactionFollow,
+        DamageDisplayType::AnHunReactionFollow,
+        DamageDisplayType::HunXiangReactionFollow,
+        DamageDisplayType::XiangGuangReactionFollow,
+    ]
+    .into_iter()
+    .filter_map(DamageDisplayType::attack_type)
+    .any(|authoritative| attack_type == authoritative)
 }
 
 fn enrich_packet_hits(
@@ -6056,7 +6060,7 @@ fn reattribute_hit_from_ability_name(
     can_override_packet_id: bool,
     characters: &HashMap<u32, CharacterInfo>,
 ) {
-    if hit.direction.is_incoming() || hit.attack_type.as_deref() == Some("创生花") {
+    if hit.direction.is_incoming() {
         return;
     }
     if hit.char_source == HitCharacterSource::Packet && !can_override_packet_id {
@@ -6134,107 +6138,7 @@ fn set_hit_character(hit: &mut Hit, new_char_id: u32, characters: &HashMap<u32, 
         .unwrap_or_else(|| format!("未知角色({new_char_id})"));
 }
 
-/// The two character attributes whose 环合 produces a given reaction *burst*
-/// (`Buff_Reaction_*`, classified by [`classify_attack_type`]). Only reactions
-/// that are attribute-locked and whose damage packets carry no caster need this;
-/// returns `None` for everything else. Mirrors the pairings in `qte_reaction_type`.
-fn reaction_owner_attributes(attack_type: &str) -> Option<[&'static str; 2]> {
-    match attack_type {
-        // 黯星 = 暗 + 魂. See `qte_reaction_type("暗", "魂")`.
-        "黯星" => Some(["暗", "魂"]),
-        _ => None,
-    }
-}
-
-/// Re-home a reaction burst that was credited to a character who can't produce it.
-///
-/// Reactions like `黯星` carry no caster in their damage record, so
-/// [`parse_damage_payload`] attributes them to whatever single character the
-/// packet happened to declare. When the game bundles such a tick into an
-/// unrelated character's replication packet (e.g. a 咒 character who is merely
-/// on-field), the credit lands on someone whose attribute can't generate the
-/// reaction. Detect that and move it to the most recently declared character
-/// whose attribute *can* — i.e. the on-field reaction participant.
-///
-/// No-op when the reaction isn't attribute-locked, when the current owner is
-/// already plausible, or when no recent valid owner is on record.
-fn reattribute_orphan_reaction(
-    hit: &mut Hit,
-    character_declarations: &HashMap<u32, f64>,
-    timestamp: f64,
-    characters: &HashMap<u32, CharacterInfo>,
-) {
-    let Some(valid_attributes) = hit
-        .attack_type
-        .as_deref()
-        .and_then(reaction_owner_attributes)
-    else {
-        return;
-    };
-    let attribute_of = |character_id: &u32| {
-        characters
-            .get(character_id)
-            .and_then(|character| character.attribute.as_deref())
-    };
-    if attribute_of(&hit.char_id).is_some_and(|attribute| valid_attributes.contains(&attribute)) {
-        return; // already credited to a character that can produce this reaction
-    }
-    let Some(new_char_id) = character_declarations
-        .iter()
-        .filter(|(character_id, declared_at)| {
-            timestamp - **declared_at <= REACTION_REATTRIBUTION_WINDOW_SECONDS
-                && attribute_of(character_id)
-                    .is_some_and(|attribute| valid_attributes.contains(&attribute))
-        })
-        .max_by(|left, right| left.1.total_cmp(right.1))
-        .map(|(character_id, _)| *character_id)
-    else {
-        return; // no on-field 暗/魂 character to credit — leave attribution as-is
-    };
-    if new_char_id == hit.char_id {
-        return;
-    }
-    set_hit_character(hit, new_char_id, characters);
-}
-
 impl PacketDecoder {
-    fn finalize_contextual_hit_attribution(
-        &mut self,
-        hit: &mut Hit,
-        timestamp: f64,
-        characters: &HashMap<u32, CharacterInfo>,
-    ) {
-        if hit
-            .attack_type
-            .as_deref()
-            .is_some_and(|attack_type| attack_type.starts_with("环合"))
-        {
-            let previous_declared_character = self
-                .character_declarations
-                .iter()
-                .filter(|(character_id, declared_at)| {
-                    **character_id != hit.char_id && timestamp - **declared_at <= 3.0
-                })
-                .max_by(|left, right| left.1.total_cmp(right.1))
-                .map(|(character_id, _)| *character_id);
-            let previous_attribute = previous_declared_character
-                .and_then(|character_id| characters.get(&character_id))
-                .and_then(|character| character.attribute.as_deref());
-            let entering_attribute = characters
-                .get(&hit.char_id)
-                .and_then(|character| character.attribute.as_deref());
-            if let (Some(previous_attribute), Some(entering_attribute)) =
-                (previous_attribute, entering_attribute)
-                && let Some(reaction_type) =
-                    qte_reaction_type(previous_attribute, entering_attribute)
-            {
-                hit.attack_type = Some(format!("环合·{reaction_type}"));
-            }
-        }
-        reattribute_orphan_reaction(hit, &self.character_declarations, timestamp, characters);
-        self.follow_up_damage.observe_fuwen_trigger_hit(hit);
-    }
-
     #[cfg(test)]
     fn process_ethernet_frame(
         &mut self,
@@ -6345,8 +6249,6 @@ impl PacketDecoder {
         let final_tower_evidence = find_final_tower_character_evidence(combat_payload);
         let character_evidence = merged_character_evidence(&evidence, &final_tower_evidence);
         let ids = character_ids_from_evidence_sources(&evidence, &final_tower_evidence);
-        self.follow_up_damage
-            .observe_characters(ids.iter().copied(), characters);
         let outgoing = infer_outgoing(
             src,
             src_port,
@@ -6394,14 +6296,6 @@ impl PacketDecoder {
         let effective_gameplay_effects = inherited_gameplay_effect
             .as_ref()
             .map_or(gameplay_effects.as_slice(), std::slice::from_ref);
-        // SDK/CN exposes the server damage application through
-        // FHandleDamageInfo_Net.GameplayEffect and FPlayGamePlayEffect_Net.GameplayEffect.
-        // Prefer that exact GE identity over any damage-ratio inference.
-        let packet_has_fuwen_damage_effect = effective_gameplay_effects.iter().any(|effect| {
-            self.gameplay_effect_names
-                .get(&effect.unique_index)
-                .is_some_and(|name| name == FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
-        });
         enrich_packet_hits(
             combat_payload,
             &mut hits,
@@ -6558,21 +6452,6 @@ impl PacketDecoder {
         hits.append(&mut bool_enum_fragment_observation.abandoned_hits);
         propagate_unanimous_trailing_skill(&mut hits);
         self.resolve_and_observe_hit_targets(&mut hits);
-        let has_direct_fuwen_damage_hit = hits.iter().any(|hit| {
-            hit.gameplay_effect_name.as_deref() == Some(FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
-        });
-        if has_direct_fuwen_damage_hit {
-            // A decoded damage record already carries the authoritative GE and
-            // will be counted directly as 覆纹; do not infer the same damage
-            // again from the following boss-HP synchronization.
-            self.follow_up_damage.observe_direct_fuwen_damage_hit();
-        } else if packet_has_fuwen_damage_effect {
-            self.follow_up_damage.observe_fuwen_damage_effect(timestamp);
-        }
-        for hit in &mut hits {
-            let hit_timestamp = hit.timestamp;
-            self.finalize_contextual_hit_attribution(hit, hit_timestamp, characters);
-        }
         let prepared_hits =
             self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
         for character_id in &ids {
@@ -6631,7 +6510,9 @@ impl PacketDecoder {
                     settlement.current_hp.to_bits(),
                     settlement.dead_state,
                     settlement.raw_damage,
-                    settlement.secondary_value,
+                    settlement.display_type,
+                    settlement.additional_damage,
+                    settlement.additional_display_type,
                 )
             };
             let mut packet_occurrences = HashMap::new();
@@ -6751,33 +6632,12 @@ impl PacketDecoder {
                 );
             }
         }
-        let fuwen_start = if !outgoing
-            && gameplay_effects.is_empty()
-            && current_hp_updates.is_empty()
-            && target_hp_updates.is_empty()
-            && boss_hp_updates.is_empty()
-            && server_damage_settlements.is_empty()
-            && equipment_slots.is_empty()
-        {
-            fuwen_start_pair(payload, &evidence, characters)
-        } else {
-            None
-        };
-        if let Some((entering_character_id, previous_character_id)) = fuwen_start {
-            self.follow_up_damage.observe_fuwen_start_candidate(
-                timestamp,
-                entering_character_id,
-                previous_character_id,
-                characters,
-            );
-        }
         if current_hp_updates.is_empty()
             && target_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
             && server_damage_settlements.is_empty()
             && prepared_hits.deferred_ambiguous == 0
             && prepared_hits.deferred_targetless == 0
-            && fuwen_start.is_none()
             && equipment_slots.is_empty()
             && !should_keep_debug_packet(
                 payload,
@@ -6791,23 +6651,38 @@ impl PacketDecoder {
             return;
         }
         if matches!(self.packet_emission, PacketEmissionMode::SummaryOnly) {
+            let current_packet_hits = resolved_target_hits
+                .iter()
+                .chain(prepared_hits.emit.iter())
+                .collect::<Vec<_>>();
+            let (inferred_follow_ups, authoritative_shared_hits) = self
+                .reconcile_authoritative_additional_damage_settlements(
+                    timestamp,
+                    &server_damage_settlements,
+                    &current_packet_hits,
+                );
             let (
                 mut server_damage_corrections,
                 mut unattributed_server_damage,
-                server_residual_hits,
+                mut server_residual_hits,
             ) = self.reconcile_current_packet_server_damage_settlements(
                 timestamp,
                 &server_damage_settlements,
-                resolved_target_hits.iter().chain(prepared_hits.emit.iter()),
+                current_packet_hits.iter().copied(),
             );
-            let mut inferred_follow_ups =
-                self.infer_fuwen_follow_ups_from_target_hp_updates(timestamp, &target_hp_updates);
-            let (
-                legacy_inferred_follow_ups,
-                legacy_server_damage_corrections,
-                legacy_unattributed_server_damage,
-            ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
-            inferred_follow_ups.extend(legacy_inferred_follow_ups);
+            server_residual_hits.extend(authoritative_shared_hits);
+            let unclaimed_boss_hp_updates = boss_hp_updates
+                .iter()
+                .filter(|update| {
+                    !Self::hp_update_has_authoritative_additional_damage(
+                        &server_damage_settlements,
+                        update,
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let (_, legacy_server_damage_corrections, legacy_unattributed_server_damage) =
+                self.reconcile_boss_hp_updates(timestamp, &unclaimed_boss_hp_updates);
             server_damage_corrections.extend(legacy_server_damage_corrections);
             unattributed_server_damage.extend(legacy_unattributed_server_damage);
             let _ = sender.send(EngineEvent::PacketObservation(PacketObservation {
@@ -6864,16 +6739,6 @@ impl PacketDecoder {
                 Some(format!(
                     "丢弃 {} 条已确认重复候选伤害",
                     prepared_hits.suppressed_ambiguous
-                )),
-            );
-        }
-        if let Some((entering_character_id, previous_character_id)) = fuwen_start {
-            append_packet_note(
-                &mut note,
-                Some(format!(
-                    "覆纹启动：{} + {}",
-                    character_debug_label(entering_character_id, characters),
-                    character_debug_label(previous_character_id, characters)
                 )),
             );
         }
@@ -6960,11 +6825,20 @@ impl PacketDecoder {
             append_packet_note(
                 &mut note,
                 Some(format!(
-                    "Server damage settlements: {} rows, raw={}",
+                    "Server damage settlements: {} rows, raw={}, additional_rows={}, additional_damage={}",
                     server_damage_settlements.len(),
                     server_damage_settlements
                         .iter()
                         .map(|settlement| u64::from(settlement.raw_damage))
+                        .sum::<u64>(),
+                    server_damage_settlements
+                        .iter()
+                        .filter(|settlement| settlement.additional_damage.is_some())
+                        .count(),
+                    server_damage_settlements
+                        .iter()
+                        .filter_map(|settlement| settlement.additional_damage)
+                        .map(u64::from)
                         .sum::<u64>()
                 )),
             );
@@ -6979,20 +6853,38 @@ impl PacketDecoder {
             );
         }
         append_packet_note(&mut note, equipment_slots_note(&equipment_slots));
-        let (mut server_damage_corrections, mut unattributed_server_damage, server_residual_hits) =
-            self.reconcile_current_packet_server_damage_settlements(
+        let current_packet_hits = resolved_target_hits
+            .iter()
+            .chain(prepared_hits.emit.iter())
+            .collect::<Vec<_>>();
+        let (inferred_follow_ups, authoritative_shared_hits) = self
+            .reconcile_authoritative_additional_damage_settlements(
                 timestamp,
                 &server_damage_settlements,
-                resolved_target_hits.iter().chain(prepared_hits.emit.iter()),
+                &current_packet_hits,
             );
-        let mut inferred_follow_ups =
-            self.infer_fuwen_follow_ups_from_target_hp_updates(timestamp, &target_hp_updates);
         let (
-            legacy_inferred_follow_ups,
-            legacy_server_damage_corrections,
-            legacy_unattributed_server_damage,
-        ) = self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates);
-        inferred_follow_ups.extend(legacy_inferred_follow_ups);
+            mut server_damage_corrections,
+            mut unattributed_server_damage,
+            mut server_residual_hits,
+        ) = self.reconcile_current_packet_server_damage_settlements(
+            timestamp,
+            &server_damage_settlements,
+            current_packet_hits.iter().copied(),
+        );
+        server_residual_hits.extend(authoritative_shared_hits);
+        let unclaimed_boss_hp_updates = boss_hp_updates
+            .iter()
+            .filter(|update| {
+                !Self::hp_update_has_authoritative_additional_damage(
+                    &server_damage_settlements,
+                    update,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let (_, legacy_server_damage_corrections, legacy_unattributed_server_damage) =
+            self.reconcile_boss_hp_updates(timestamp, &unclaimed_boss_hp_updates);
         server_damage_corrections.extend(legacy_server_damage_corrections);
         unattributed_server_damage.extend(legacy_unattributed_server_damage);
         if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
@@ -12947,119 +12839,9 @@ mod tests {
     }
 
     #[test]
-    fn follow_up_pending_hits_are_bounded_and_recent_hits_still_resolve() {
-        let characters = HashMap::from([
-            (
-                1,
-                CharacterInfo {
-                    name_zh: "character1".to_owned(),
-                    name_en: String::new(),
-                    color: None,
-                    avatar: None,
-                    attribute: Some("灵".to_owned()),
-                },
-            ),
-            (
-                2,
-                CharacterInfo {
-                    name_zh: "character2".to_owned(),
-                    name_en: String::new(),
-                    color: None,
-                    avatar: None,
-                    attribute: Some("咒".to_owned()),
-                },
-            ),
-        ]);
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.char_name = "character1".to_owned();
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.damage = 3_177.0;
-        for index in 0..MAX_PENDING_FOLLOW_UP_HITS + 20 {
-            hit.timestamp = index as f64 / 1_000.0;
-            tracker.observe_hit(&hit, Some(241), &characters);
-        }
-        assert_eq!(tracker.pending_hits.len(), MAX_PENDING_FOLLOW_UP_HITS);
-
-        hit.timestamp = 2.0;
-        tracker.observe_hit(&hit, Some(241), &characters);
-        assert_eq!(tracker.pending_hits.len(), 1);
-        let follow_up = tracker
-            .observe_server_hp(2.1, 996_150.0)
-            .expect("recent pending hit should still resolve follow-up damage");
-        assert_eq!(follow_up.damage, 673.0);
-        assert_eq!(follow_up.source_char_id, 1);
-        assert_eq!(follow_up.source_damage, 3_177.0);
-        assert_eq!(follow_up.damage_name.as_deref(), Some("覆纹追加攻击"));
-        assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
-        assert_eq!(follow_up.damage_attribute.as_deref(), Some("灵"));
-    }
-
-    #[test]
-    fn follow_up_requires_visible_fuwen_trigger() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.damage = 1_000.0;
-
-        tracker.observe_hit(&hit, None, &characters);
-
-        assert!(tracker.observe_server_hp(0.1, 998_750.0).is_none());
-    }
-
-    #[test]
-    fn exact_fuwen_damage_effect_claims_bounded_server_residual_without_ratio_guessing() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.damage = 1_000.0;
-        tracker.observe_hit(&hit, None, &characters);
-        tracker.observe_fuwen_damage_effect(0.05);
-
-        let follow_up = tracker
-            .observe_server_hp(0.1, 998_500.0)
-            .expect("the exact reaction damage GE should claim the server residual");
-
-        assert_eq!(follow_up.damage, 500.0);
-        assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
-        assert_eq!(follow_up.damage_attribute.as_deref(), Some("灵"));
-        assert_eq!(tracker.fuwen_damage_effect_at, None);
-    }
-
-    #[test]
-    fn stale_fuwen_damage_effect_does_not_claim_later_server_residual() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        tracker.observe_fuwen_damage_effect(0.0);
-        let mut hit = targetless_hit();
-        hit.timestamp = 1.5;
-        hit.char_id = 1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.damage = 1_000.0;
-        tracker.observe_hit(&hit, None, &characters);
-
-        assert!(tracker.observe_server_hp(2.0, 997_500.0).is_none());
-        assert_eq!(tracker.fuwen_damage_effect_at, None);
-    }
-
-    #[test]
-    fn exact_fuwen_damage_effect_is_attached_to_direct_damage_record() {
-        let names = HashMap::from([(555, FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME.to_owned())]);
+    fn reaction_2_gameplay_effect_is_not_authoritative_fuwen_damage() {
+        const REACTION_2_DAMAGE_EFFECT: &str = "GE_ActorReaction_2_new_Damage";
+        let names = HashMap::from([(555, REACTION_2_DAMAGE_EFFECT.to_owned())]);
         let effects = [ParsedGameplayEffect {
             unique_index: 555,
             byte_offset: 0,
@@ -13078,68 +12860,35 @@ mod tests {
         assert_eq!(hit.gameplay_effect_index, Some(555));
         assert_eq!(
             hit.gameplay_effect_name.as_deref(),
-            Some(FUWEN_DAMAGE_GAMEPLAY_EFFECT_NAME)
+            Some(REACTION_2_DAMAGE_EFFECT)
         );
-        assert_eq!(hit.attack_type.as_deref(), Some("覆纹"));
+        assert_eq!(hit.attack_type.as_deref(), Some("其他"));
     }
 
     #[test]
-    fn visible_fuwen_trigger_without_start_packet_records_follow_up() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.char_id = 2;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 800_000.0;
-        hit.damage = 1_000.0;
-
-        tracker.observe_hit(&hit, None, &characters);
-        let follow_up = tracker
-            .observe_server_hp(0.1, 798_750.0)
-            .expect("visible fuwen trigger should be enough to open follow-up tracking");
-        assert_eq!(follow_up.damage, 250.0);
-        assert_eq!(follow_up.damage_attribute.as_deref(), Some("咒"));
-    }
-
-    #[test]
-    fn client_fight_target_update_drives_fuwen_follow_up() {
-        let characters = follow_up_test_characters();
-        let mut decoder = PacketDecoder::default();
-        decoder
-            .follow_up_damage
-            .observe_characters([1, 2], &characters);
-        observe_visible_fuwen_trigger(&mut decoder.follow_up_damage, 1, 0.0);
-
-        let warm_up = boss_hp_update(800_000.0);
-        assert!(
-            decoder
-                .infer_fuwen_follow_ups_from_target_hp_updates(
-                    0.05,
-                    std::slice::from_ref(&warm_up),
-                )
-                .is_empty()
-        );
+    fn hp_residual_does_not_prove_fuwen_without_display_type() {
+        let mut decoder = PacketDecoder::with_server_damage_calibration(true);
+        let warm_up = boss_hp_update(1_000_000.0);
+        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up));
 
         let mut hit = targetless_hit();
-        hit.char_id = 2;
         hit.timestamp = 0.1;
+        hit.char_id = 1;
         hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 800_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.target_hp_after = 999_000.0;
         hit.damage = 1_000.0;
-        decoder
-            .follow_up_damage
-            .observe_hit(&hit, None, &characters);
+        set_wire_target(&mut hit, [7; 29]);
+        let _ = decoder.observe_server_damage_hit(&hit);
 
-        let update = boss_hp_update(798_750.0);
-        let follow_ups = decoder
-            .infer_fuwen_follow_ups_from_target_hp_updates(0.2, std::slice::from_ref(&update));
+        let residual_update = boss_hp_update(998_750.0);
+        let (follow_ups, _, _) =
+            decoder.reconcile_boss_hp_updates(0.2, std::slice::from_ref(&residual_update));
 
-        assert_eq!(follow_ups.len(), 1);
-        assert_eq!(follow_ups[0].damage, 250.0);
-        assert_eq!(follow_ups[0].attack_type.as_deref(), Some("覆纹"));
-        assert_eq!(follow_ups[0].damage_attribute.as_deref(), Some("咒"));
+        assert!(
+            follow_ups.is_empty(),
+            "only EDamageDisPlayType::DisplayType_LingZhouReactionFollow may create 覆纹"
+        );
     }
 
     fn character_with_attribute(name_zh: &str, attribute: &str) -> CharacterInfo {
@@ -13150,48 +12899,6 @@ mod tests {
             avatar: None,
             attribute: Some(attribute.to_owned()),
         }
-    }
-
-    #[test]
-    fn orphan_dark_star_reaction_is_rehomed_to_dark_or_soul_owner() {
-        let characters = HashMap::from([
-            (1003, character_with_attribute("早雾", "咒")),
-            (1004, character_with_attribute("安魂曲", "暗")),
-            (1020, character_with_attribute("哈尼娅", "魂")),
-        ]);
-        // 暗 (安魂曲) is the most recently declared reaction participant.
-        let declarations = HashMap::from([(1004_u32, 10.0_f64), (1020_u32, 8.0_f64)]);
-
-        // 黯星 burst mis-credited to 早雾 (咒) because the packet declared 早雾.
-        let mut orphan = targetless_hit();
-        orphan.char_id = 1003;
-        orphan.char_name = "早雾".to_owned();
-        orphan.attack_type = Some("黯星".to_owned());
-        reattribute_orphan_reaction(&mut orphan, &declarations, 10.001, &characters);
-        assert_eq!(orphan.char_id, 1004);
-        assert_eq!(orphan.char_name, "安魂曲");
-        assert!(orphan.char_known);
-
-        // Already on a 暗 character: untouched.
-        let mut already_ok = targetless_hit();
-        already_ok.char_id = 1004;
-        already_ok.attack_type = Some("黯星".to_owned());
-        reattribute_orphan_reaction(&mut already_ok, &declarations, 10.001, &characters);
-        assert_eq!(already_ok.char_id, 1004);
-
-        // No recent 暗/魂 declaration in window: left as-is rather than guessed.
-        let mut stale = targetless_hit();
-        stale.char_id = 1003;
-        stale.attack_type = Some("黯星".to_owned());
-        reattribute_orphan_reaction(&mut stale, &declarations, 99.0, &characters);
-        assert_eq!(stale.char_id, 1003);
-
-        // A non-attribute-locked reaction is never rehomed.
-        let mut other = targetless_hit();
-        other.char_id = 1003;
-        other.attack_type = Some("普攻".to_owned());
-        reattribute_orphan_reaction(&mut other, &declarations, 10.001, &characters);
-        assert_eq!(other.char_id, 1003);
     }
 
     #[test]
@@ -13441,256 +13148,6 @@ mod tests {
         assert_eq!(hit.char_name, "哈尼娅");
         assert_eq!(hit.char_source, HitCharacterSource::Packet);
         assert_eq!(hit.direction, HitDirection::Outgoing);
-    }
-
-    #[test]
-    fn creation_flower_does_not_trigger_fuwen_follow_up() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.char_id = 2;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 800_000.0;
-        hit.damage = 1_000.0;
-        hit.attack_type = Some("创生花".to_owned());
-
-        tracker.observe_hit(&hit, None, &characters);
-
-        assert!(tracker.observe_server_hp(0.1, 798_750.0).is_none());
-        assert!(tracker.fuwen_active);
-    }
-
-    #[test]
-    fn non_ling_zhou_hit_does_not_end_active_fuwen() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.target_max_hp = 1_000_000.0;
-
-        hit.char_id = 3;
-        hit.target_hp_before = 1_000_000.0;
-        hit.damage = 500.0;
-        tracker.observe_hit(&hit, None, &characters);
-        assert!(tracker.observe_server_hp(0.1, 999_500.0).is_none());
-        assert!(tracker.fuwen_active);
-
-        hit.char_id = 1;
-        hit.timestamp = 0.2;
-        hit.target_hp_before = 999_500.0;
-        hit.damage = 1_000.0;
-        tracker.observe_hit(&hit, None, &characters);
-        let follow_up = tracker
-            .observe_server_hp(0.3, 998_250.0)
-            .expect("ling/zhou residual should still be recorded after other-attribute hit");
-        assert_eq!(follow_up.damage, 250.0);
-    }
-
-    #[test]
-    fn zero_residual_does_not_end_active_fuwen_after_recorded_residual() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.damage = 1_000.0;
-
-        tracker.observe_hit(&hit, None, &characters);
-
-        assert!(tracker.observe_server_hp(0.1, 999_000.0).is_none());
-        assert!(tracker.fuwen_active);
-
-        hit.timestamp = 0.2;
-        hit.target_hp_before = 999_000.0;
-        hit.damage = 1_000.0;
-        hit.attack_type = Some("普攻".to_owned());
-        tracker.observe_hit(&hit, None, &characters);
-        let follow_up = tracker
-            .observe_server_hp(0.3, 997_750.0)
-            .expect("first residual after fuwen start should be recorded");
-        assert_eq!(follow_up.damage, 250.0);
-        assert!(tracker.fuwen_active);
-
-        hit.timestamp = 0.4;
-        hit.target_hp_before = 997_750.0;
-        hit.damage = 1_000.0;
-        tracker.observe_hit(&hit, None, &characters);
-        assert!(tracker.observe_server_hp(0.5, 996_750.0).is_none());
-        assert!(tracker.fuwen_active);
-    }
-
-    #[test]
-    fn fuwen_stays_active_across_long_gaps_until_battle_reset() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 800_000.0;
-        hit.damage = 1_000.0;
-
-        hit.timestamp = 60.0;
-        tracker.observe_hit(&hit, None, &characters);
-        let follow_up = tracker
-            .observe_server_hp(60.1, 798_750.0)
-            .expect("fuwen follow-up should not expire just because of a long idle gap");
-        assert_eq!(follow_up.damage, 250.0);
-        assert!(tracker.fuwen_active);
-    }
-
-    #[test]
-    fn fuwen_stays_active_when_target_max_hp_decreases() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 800_000.0;
-        hit.damage = 1_000.0;
-
-        hit.timestamp = 0.1;
-        tracker.observe_hit(&hit, None, &characters);
-        assert!(tracker.observe_server_hp(0.2, 799_000.0).is_none());
-
-        hit.timestamp = 0.3;
-        hit.target_max_hp = 900_000.0;
-        hit.target_hp_before = 799_000.0;
-        tracker.observe_hit(&hit, None, &characters);
-        let follow_up = tracker
-            .observe_server_hp(0.4, 797_750.0)
-            .expect("in-fight max-HP reduction must preserve active fuwen");
-
-        assert_eq!(follow_up.damage, 250.0);
-        assert!(tracker.fuwen_active);
-    }
-
-    #[test]
-    fn fuwen_rejects_residual_larger_than_source_damage() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 800_000.0;
-        hit.damage = 539.0;
-        hit.timestamp = 0.1;
-
-        tracker.observe_hit(&hit, None, &characters);
-        assert!(tracker.observe_server_hp(0.2, 798_900.0).is_none());
-        assert!(tracker.fuwen_active);
-
-        hit.target_hp_before = 798_900.0;
-        hit.damage = 1_000.0;
-        hit.timestamp = 0.3;
-        tracker.observe_hit(&hit, None, &characters);
-        let follow_up = tracker
-            .observe_server_hp(0.4, 797_650.0)
-            .expect("a later bounded fuwen residual should still be recorded");
-
-        assert_eq!(follow_up.damage, 250.0);
-        assert!(tracker.fuwen_active);
-    }
-
-    #[test]
-    fn hidden_fuwen_candidate_does_not_record_without_visible_trigger() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
-        let mut hit = targetless_hit();
-        hit.timestamp = 5.0;
-        hit.char_id = 2;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.damage = 1_000.0;
-        hit.attack_type = Some("普攻".to_owned());
-
-        tracker.observe_hit(&hit, None, &characters);
-        assert!(tracker.observe_server_hp(5.1, 999_000.0).is_none());
-        assert!(!tracker.fuwen_active);
-        assert!(tracker.fuwen_start_pending);
-
-        hit.char_id = 1;
-        hit.timestamp = 5.2;
-        hit.target_hp_before = 999_000.0;
-        hit.attack_type = Some("Q技能".to_owned());
-        tracker.observe_hit(&hit, None, &characters);
-        assert!(tracker.observe_server_hp(5.3, 998_000.0).is_none());
-        assert!(!tracker.fuwen_active);
-        assert!(tracker.fuwen_start_pending);
-    }
-
-    #[test]
-    fn visible_fuwen_trigger_activates_follow_up_window() {
-        let characters = follow_up_test_characters();
-        let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_characters([1, 2], &characters);
-        observe_visible_fuwen_trigger(&mut tracker, 1, 5.0);
-
-        assert!(tracker.fuwen_active);
-        assert!(!tracker.fuwen_start_pending);
-    }
-
-    #[test]
-    fn fuwen_start_pair_uses_shifted_signature_and_fixed_role_positions() {
-        let mut payload = vec![0_u8; 90];
-        write_shifted_bytes(
-            &mut payload,
-            FUWEN_START_SIGNATURE_SHIFT,
-            FUWEN_START_SIGNATURE_OFFSET,
-            FUWEN_START_SIGNATURE,
-        );
-        write_shifted_bytes(
-            &mut payload,
-            FUWEN_ENTERING_ID_SHIFT,
-            FUWEN_ENTERING_ID_OFFSET,
-            &character_evidence_row(1001),
-        );
-        write_shifted_bytes(
-            &mut payload,
-            FUWEN_PREVIOUS_ID_SHIFT,
-            FUWEN_PREVIOUS_ID_OFFSET,
-            &character_evidence_row(1002),
-        );
-        let evidence = find_declared_character_evidence(&payload);
-        let characters = HashMap::from([
-            (
-                1001,
-                CharacterInfo {
-                    name_zh: "entering".to_owned(),
-                    name_en: String::new(),
-                    color: None,
-                    avatar: None,
-                    attribute: Some("灵".to_owned()),
-                },
-            ),
-            (
-                1002,
-                CharacterInfo {
-                    name_zh: "previous".to_owned(),
-                    name_en: String::new(),
-                    color: None,
-                    avatar: None,
-                    attribute: Some("咒".to_owned()),
-                },
-            ),
-        ]);
-
-        assert_eq!(
-            fuwen_start_pair(&payload, &evidence, &characters),
-            Some((1001, 1002))
-        );
     }
 
     #[test]
@@ -14417,7 +13874,7 @@ mod tests {
     }
 
     #[test]
-    fn reaction_damage_effect_keeps_exact_incoming_direction() {
+    fn reaction_effect_keeps_direction_without_guessing_display_type() {
         let effects = [ParsedGameplayEffect {
             unique_index: 4010,
             byte_offset: 0,
@@ -14436,7 +13893,36 @@ mod tests {
         );
 
         assert_eq!(hit.direction, HitDirection::Incoming);
-        assert_eq!(hit.attack_type.as_deref(), Some("创生花"));
+        assert_eq!(hit.attack_type.as_deref(), Some("其他"));
+    }
+
+    #[test]
+    fn reaction_catalog_metadata_cannot_replace_authoritative_display_type() {
+        let effect = ParsedGameplayEffect {
+            unique_index: 4010,
+            byte_offset: 0,
+            bit_shift: 0,
+        };
+        let names = HashMap::from([(4010, "GE_ActorReaction_1_Damage".to_owned())]);
+        let catalog = AbilityCatalog::from(HashMap::from([(
+            "GE_ActorReaction_1_Damage".to_owned(),
+            GameplayEffectSkill {
+                damage_source_category: Some("R".to_owned()),
+                ability_name: None,
+                attack_type: "创生花".to_owned(),
+                damage_component: Some("Blossom Damage".to_owned()),
+                owner_character_id: None,
+                use_server_damage: false,
+                max_hp_reduction_percent: 0,
+            },
+        )]));
+        let mut hit = targetless_hit();
+        hit.attack_type = Some("环合·创生".to_owned());
+
+        apply_gameplay_effect(&mut hit, &effect, &names, &catalog);
+
+        assert_eq!(hit.gameplay_effect_index, Some(4010));
+        assert_eq!(hit.attack_type, None);
     }
 
     #[test]
@@ -14492,7 +13978,7 @@ mod tests {
             creation_flower.gameplay_effect_name.as_deref(),
             Some("GE_ActorReaction_1_Damage")
         );
-        assert_eq!(creation_flower.attack_type.as_deref(), Some("创生花"));
+        assert_eq!(creation_flower.attack_type.as_deref(), Some("其他"));
         assert_eq!(creation_flower.ability_name, None);
         assert_eq!(seed_reaction.gameplay_effect_index, Some(3529));
         assert_eq!(
@@ -14804,7 +14290,7 @@ mod tests {
     }
 
     #[test]
-    fn reaction_buff_effect_keeps_exact_incoming_direction() {
+    fn reaction_buff_keeps_direction_without_guessing_display_type() {
         let effects = [ParsedGameplayEffect {
             unique_index: 4011,
             byte_offset: 0,
@@ -14823,11 +14309,11 @@ mod tests {
         );
 
         assert_eq!(hit.direction, HitDirection::Incoming);
-        assert_eq!(hit.attack_type.as_deref(), Some("黯星"));
+        assert_eq!(hit.attack_type.as_deref(), Some("其他"));
     }
 
     #[test]
-    fn tenacity_damage_effect_keeps_exact_incoming_direction() {
+    fn tenacity_effect_keeps_direction_without_guessing_unbalance_type() {
         let effects = [ParsedGameplayEffect {
             unique_index: 4012,
             byte_offset: 0,
@@ -14846,7 +14332,7 @@ mod tests {
         );
 
         assert_eq!(hit.direction, HitDirection::Incoming);
-        assert_eq!(hit.attack_type.as_deref(), Some("倾陷伤害"));
+        assert_eq!(hit.attack_type.as_deref(), Some("其他"));
     }
 
     #[test]
@@ -15173,26 +14659,6 @@ mod tests {
         ])
     }
 
-    fn observe_visible_fuwen_trigger(
-        tracker: &mut FollowUpDamageTracker,
-        character_id: u32,
-        timestamp: f64,
-    ) {
-        let mut hit = targetless_hit();
-        hit.char_id = character_id;
-        hit.timestamp = timestamp;
-        hit.attack_type = Some("环合·覆纹".to_owned());
-        tracker.observe_fuwen_trigger_hit(&hit);
-    }
-
-    fn character_evidence_row(character_id: u32) -> [u8; 9] {
-        let digits = format!("{character_id:04}");
-        let mut row = [0_u8; 9];
-        row[..4].copy_from_slice(&[5, 0, 0, 0]);
-        row[4..8].copy_from_slice(digits.as_bytes());
-        row
-    }
-
     fn write_shifted_bytes(payload: &mut [u8], bit_shift: u8, byte_offset: usize, bytes: &[u8]) {
         for (index, byte) in bytes.iter().enumerate() {
             for bit in 0..8 {
@@ -15334,7 +14800,9 @@ mod tests {
             current_hp,
             dead_state,
             raw_damage,
-            secondary_value: 0,
+            display_type: DamageDisplayType::None,
+            additional_damage: None,
+            additional_display_type: None,
             byte_offset: 0,
             bit_shift: 0,
         }
@@ -16200,6 +15668,55 @@ mod tests {
     }
 
     #[test]
+    fn primary_display_type_replaces_heuristic_metadata_with_exact_enum_label() {
+        let target = [7_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        hit.damage = 800.0;
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_200.0;
+        hit.target_max_hp = 10_000.0;
+        hit.attack_type = Some("其他".to_owned());
+        set_wire_target(&mut hit, target);
+        tracker.observe_hit(&hit);
+        let mut settlement = server_damage_settlement_for(target, 9_079.0, 0, 921);
+        settlement.display_type = DamageDisplayType::Unbal;
+
+        let (correction, unattributed) =
+            tracker.observe_server_damage_settlement(10.05, &settlement);
+        let correction = correction.expect("the exact target settlement should match its hit");
+
+        assert!(unattributed.is_none());
+        assert_eq!(correction.damage, 921.0);
+        assert_eq!(correction.damage_name.as_deref(), Some("倾陷伤害"));
+        assert_eq!(correction.attack_type.as_deref(), Some("倾陷伤害"));
+    }
+
+    #[test]
+    fn unmatched_primary_reaction_display_type_emits_exact_unattributed_damage() {
+        let target = [7_u8; 29];
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        tracker.target_max_hp_by_handle.insert(target, 10_000.0);
+        let mut settlement = server_damage_settlement_for(target, 9_503.0, 0, 497);
+        settlement.display_type = DamageDisplayType::LingZhouReactionFollow;
+
+        let (corrections, unattributed) =
+            tracker.observe_server_damage_settlements(10.05, &[settlement]);
+        let residual_hits = tracker.take_residual_hits();
+
+        assert!(corrections.is_empty());
+        assert!(unattributed.is_empty());
+        assert_eq!(residual_hits.len(), 1);
+        assert_eq!(residual_hits[0].damage, 497.0);
+        assert_eq!(
+            residual_hits[0].damage_name.as_deref(),
+            Some("覆纹追加攻击")
+        );
+        assert_eq!(residual_hits[0].attack_type.as_deref(), Some("覆纹"));
+        assert!(!residual_hits[0].char_known);
+    }
+
+    #[test]
     fn server_damage_batch_does_not_consume_a_conflicting_target_by_hp() {
         let first_target = [7_u8; 29];
         let second_target = [8_u8; 29];
@@ -16531,109 +16048,103 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_boss_hp_updates_lets_follow_up_claim_before_calibration() {
+    fn authoritative_four_wrapper_display_type_uses_unique_wire_source_and_exact_damage() {
         let characters = follow_up_test_characters();
-        let mut decoder = PacketDecoder::with_server_damage_calibration(true);
+        let mut decoder = PacketDecoder::default();
+        let target = [7_u8; 29];
+        let mut source = targetless_hit();
+        source.timestamp = 10.0;
+        source.char_id = 1;
+        source.damage = 1_000.0;
+        source.target_hp_before = 10_000.0;
+        source.target_hp_after = 9_000.0;
+        source.target_max_hp = 10_000.0;
+        set_wire_target(&mut source, target);
+        let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+        settlement.additional_damage = Some(250);
+        settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+
+        let (follow_ups, shared_hits) = decoder
+            .reconcile_authoritative_additional_damage_settlements(
+                10.05,
+                &[settlement],
+                &[&source],
+            );
+
+        assert!(shared_hits.is_empty());
+        assert_eq!(follow_ups.len(), 1);
+        assert_eq!(follow_ups[0].damage, 250.0);
+        assert_eq!(follow_ups[0].source_char_id, 1);
         decoder
             .follow_up_damage
-            .observe_fuwen_start_candidate(0.0, 1, 2, &characters);
-        observe_visible_fuwen_trigger(&mut decoder.follow_up_damage, 1, 0.0);
-
-        let warm_up = boss_hp_update(1_000_000.0);
-        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up));
-
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.timestamp = 0.1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.target_hp_after = 999_000.0;
-        hit.damage = 1_000.0;
-        hit.attack_type = Some("普攻".to_owned());
-        set_wire_target(&mut hit, [7; 29]);
-        decoder
-            .follow_up_damage
-            .observe_hit(&hit, None, &characters);
-        let _ = decoder.observe_server_damage_hit(&hit);
-
-        let update = boss_hp_update(998_750.0);
-        let (inferred_follow_ups, server_damage_corrections, unattributed) =
-            decoder.reconcile_boss_hp_updates(0.2, std::slice::from_ref(&update));
-
-        assert_eq!(inferred_follow_ups.len(), 1);
-        assert_eq!(inferred_follow_ups[0].damage, 250.0);
-        assert!(unattributed.is_empty());
-        assert!(
-            server_damage_corrections.is_empty(),
-            "calibration must not also overwrite a hit the reaction follow-up already fully explained"
-        );
+            .observe_hit(&source, None, &characters);
+        assert!(decoder.follow_up_damage.pending_hits.is_empty());
     }
 
     #[test]
-    fn reconcile_boss_hp_updates_keeps_calibration_baseline_fresh_after_a_claimed_update() {
+    fn authoritative_four_wrapper_display_type_stays_unattributed_without_unique_source() {
+        let mut decoder = PacketDecoder::default();
+        let target = [7_u8; 29];
+        let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+        settlement.additional_damage = Some(250);
+        settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+
+        let (follow_ups, shared_hits) = decoder
+            .reconcile_authoritative_additional_damage_settlements(10.05, &[settlement], &[]);
+
+        assert!(follow_ups.is_empty());
+        assert_eq!(shared_hits.len(), 1);
+        assert_eq!(shared_hits[0].damage, 250.0);
+        assert_eq!(shared_hits[0].char_id, 0);
+        assert!(!shared_hits[0].char_known);
+        assert_eq!(shared_hits[0].attack_type.as_deref(), Some("覆纹"));
+    }
+
+    #[test]
+    fn authoritative_four_wrapper_display_type_pairs_identical_burst_hits_in_wire_order() {
         let characters = follow_up_test_characters();
-        let mut decoder = PacketDecoder::with_server_damage_calibration(true);
+        let mut decoder = PacketDecoder::default();
+        let target = [7_u8; 29];
+        let mut first = targetless_hit();
+        first.timestamp = 10.0;
+        first.char_id = 1;
+        first.damage = 2_486.0;
+        first.target_hp_before = 11_140_138.0;
+        first.target_hp_after = 11_137_652.0;
+        first.target_max_hp = 11_245_012.0;
+        set_wire_target(&mut first, target);
+        let mut second = first.clone();
+        second.timestamp = 10.025;
         decoder
             .follow_up_damage
-            .observe_fuwen_start_candidate(0.0, 1, 2, &characters);
-        observe_visible_fuwen_trigger(&mut decoder.follow_up_damage, 1, 0.0);
-
-        let warm_up = boss_hp_update(1_000_000.0);
-        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up));
-
-        // This hit is claimed by the reaction follow-up below.
-        let mut hit = targetless_hit();
-        hit.char_id = 1;
-        hit.timestamp = 0.1;
-        hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
-        hit.target_hp_after = 999_000.0;
-        hit.damage = 1_000.0;
-        hit.attack_type = Some("普攻".to_owned());
-        set_wire_target(&mut hit, [7; 29]);
+            .observe_hit(&first, None, &characters);
         decoder
             .follow_up_damage
-            .observe_hit(&hit, None, &characters);
-        let _ = decoder.observe_server_damage_hit(&hit);
+            .observe_hit(&second, None, &characters);
 
-        let claimed_update = boss_hp_update(998_750.0);
-        let (inferred_follow_ups, server_damage_corrections, unattributed) =
-            decoder.reconcile_boss_hp_updates(0.2, std::slice::from_ref(&claimed_update));
-        assert_eq!(inferred_follow_ups.len(), 1);
-        assert!(server_damage_corrections.is_empty());
-        assert!(unattributed.is_empty());
+        let mut first_settlement = server_damage_settlement_for(target, 11_137_155.0, 0, 2_486);
+        first_settlement.additional_damage = Some(497);
+        first_settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let (first_follow_ups, first_shared) = decoder
+            .reconcile_authoritative_additional_damage_settlements(
+                10.057,
+                &[first_settlement],
+                &[],
+            );
+        let mut second_settlement = server_damage_settlement_for(target, 11_134_172.0, 0, 2_486);
+        second_settlement.additional_damage = Some(497);
+        second_settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let (second_follow_ups, second_shared) = decoder
+            .reconcile_authoritative_additional_damage_settlements(
+                10.106,
+                &[second_settlement],
+                &[],
+            );
 
-        // A later, fuwen-ineligible hit (its own attack_type is itself an
-        // excluded reaction label) that calibration alone should evaluate.
-        let mut second_hit = targetless_hit();
-        second_hit.char_id = 2;
-        second_hit.timestamp = 0.3;
-        second_hit.target_max_hp = 1_000_000.0;
-        second_hit.target_hp_before = 998_750.0;
-        second_hit.target_hp_after = 998_050.0;
-        second_hit.damage = 700.0;
-        second_hit.attack_type = Some("创生花".to_owned());
-        set_wire_target(&mut second_hit, [7; 29]);
-        decoder
-            .follow_up_damage
-            .observe_hit(&second_hit, None, &characters);
-        let _ = decoder.observe_server_damage_hit(&second_hit);
-
-        let next_update = boss_hp_update(998_000.0);
-        let (_, server_damage_corrections, unattributed) =
-            decoder.reconcile_boss_hp_updates(0.4, std::slice::from_ref(&next_update));
-        assert!(unattributed.is_empty());
-
-        // If the claimed update above hadn't also advanced calibration's own
-        // HP snapshot and pending queue, this would compare against the stale
-        // pre-claim baseline (1,000,000) with the first hit still queued
-        // alongside this one, so `candidates.len() != 1` and no correction
-        // would come out at all.
-        let correction = server_damage_corrections
-            .first()
-            .expect("calibration's baseline must have advanced past the claimed update");
-        assert_eq!(correction.damage, 750.0);
-        assert_eq!(correction.source_damage, 700.0);
+        assert!(first_shared.is_empty());
+        assert!(second_shared.is_empty());
+        assert_eq!(first_follow_ups[0].source_timestamp, first.timestamp);
+        assert_eq!(second_follow_ups[0].source_timestamp, second.timestamp);
     }
 
     #[test]
@@ -17027,6 +16538,9 @@ mod tests {
 
         let mut semantic_events = 0;
         let mut debug_packets = 0;
+        let mut display_damage = HashMap::<String, (u64, f64)>::new();
+        let mut parsed_additional_count = 0_u64;
+        let mut parsed_additional_damage = 0_u64;
         let mut capture_stopped = false;
         let mut errors = Vec::new();
         while !handle.is_finished() || !reliable_receiver.is_empty() || !debug_receiver.is_empty() {
@@ -17035,11 +16549,58 @@ mod tests {
                 match event {
                     EngineEvent::CaptureStopped => capture_stopped = true,
                     EngineEvent::Error(error) => errors.push(error),
+                    EngineEvent::HitFollowUp(follow_up) => {
+                        if let Some(attack_type) = follow_up.attack_type
+                            && is_authoritative_display_attack_type(&attack_type)
+                        {
+                            let row = display_damage.entry(attack_type).or_default();
+                            row.0 += 1;
+                            row.1 += follow_up.damage;
+                        }
+                    }
+                    EngineEvent::Hit(hit) => {
+                        if let Some(attack_type) = hit.attack_type
+                            && is_authoritative_display_attack_type(&attack_type)
+                        {
+                            let row = display_damage.entry(attack_type).or_default();
+                            row.0 += 1;
+                            row.1 += hit.damage;
+                        }
+                    }
+                    EngineEvent::HitDamageCorrection(correction) => {
+                        if let Some(attack_type) = correction.attack_type
+                            && is_authoritative_display_attack_type(&attack_type)
+                        {
+                            let row = display_damage.entry(attack_type).or_default();
+                            row.0 += 1;
+                            row.1 += correction.damage;
+                        }
+                    }
                     _ => {}
                 }
             }
-            while debug_receiver.try_recv().is_ok() {
+            while let Ok(event) = debug_receiver.try_recv() {
                 debug_packets += 1;
+                if let EngineEvent::Packet(packet) = event
+                    && let Some((_, values)) = packet.note.split_once("additional_rows=")
+                {
+                    let mut values = values.split([',', ' ']);
+                    let packet_additional_count = values
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .unwrap_or(0);
+                    let packet_additional_damage = values
+                        .find_map(|value| value.strip_prefix("additional_damage="))
+                        .and_then(|value| {
+                            value
+                                .trim_end_matches(|character: char| !character.is_ascii_digit())
+                                .parse::<u64>()
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    parsed_additional_count += packet_additional_count;
+                    parsed_additional_damage += packet_additional_damage;
+                }
             }
             thread::sleep(Duration::from_millis(1));
         }
@@ -17049,8 +16610,16 @@ mod tests {
         assert!(errors.is_empty(), "{errors:#?}");
         assert!(semantic_events > 1);
         assert!(debug_packets > 0);
+        let display_summary = ["倾陷伤害", "创生花", "覆纹", "浊燃", "黯星", "浸染", "延滞"]
+            .into_iter()
+            .map(|attack_type| {
+                let (count, damage) = display_damage.get(attack_type).copied().unwrap_or_default();
+                format!("{attack_type}:{count}/{damage}")
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         println!(
-            "large pcapng import completed: semantic_events={semantic_events}, debug_packets={debug_packets}, dropped_debug_packets={}",
+            "large pcapng import completed: semantic_events={semantic_events}, debug_packets={debug_packets}, parsed_additional_count={parsed_additional_count}, parsed_additional_damage={parsed_additional_damage}, display_damage=[{display_summary}], dropped_debug_packets={}",
             dropped_debug_probe.take_dropped_debug_packets()
         );
     }

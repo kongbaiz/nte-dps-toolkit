@@ -102,12 +102,7 @@ pub fn damage_digit_key_for_hit<'a>(
             .and_then(|character| character.attribute.as_deref())
     });
     let attack_type = hit.attack_type.as_deref();
-    if attack_type == Some("倾陷伤害")
-        || hit
-            .damage_name
-            .as_deref()
-            .is_some_and(|name| name.contains("倾陷"))
-    {
+    if attack_type == Some("倾陷伤害") {
         return Some("真实");
     }
     attack_type
