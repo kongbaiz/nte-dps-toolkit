@@ -17,9 +17,9 @@ use crate::{
 
 use super::dto::{BattleQualityDto, BattleSummaryDto};
 
-/// Version 4 adds per-hit maximum-HP reduction alongside the ordinary and
-/// overkill damage axes. All battle read DTOs share one version so a CLI
-/// consumer can reject mixed semantics.
+/// Version 4 adds aggregate and per-hit maximum-HP reduction alongside the
+/// ordinary and overkill damage axes. All battle read DTOs share one version
+/// so a CLI consumer can reject mixed semantics.
 pub const BATTLE_READ_CONTRACT_VERSION: u32 = 4;
 pub const BATTLE_TIMELINE_BUCKET_LIMIT: usize = 10_000;
 pub const BATTLE_TIMELINE_ROLE_LIMIT: usize = 100_000;
@@ -622,6 +622,16 @@ mod tests {
         lethal.max_hp_reduction = 25.0;
         state.push_hit(lethal);
         state.push_hit(test_hit(2.0, 200.0));
+
+        let record = battle_record(&state, context(0), true);
+        assert_eq!(
+            record
+                .summary
+                .as_ref()
+                .expect("battle summary")
+                .max_hp_reduction,
+            25.0
+        );
 
         let first = battle_axis(&state, context(0), None, 1).expect("first page");
         assert_eq!(first.contract_version, BATTLE_READ_CONTRACT_VERSION);
