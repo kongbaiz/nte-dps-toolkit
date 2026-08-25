@@ -382,6 +382,14 @@ pub struct HitDamageCorrection {
     pub target_hp_before: f64,
     pub target_hp_after: f64,
     pub target_hp_percent: f64,
+    /// `Some` replaces the damage label with the authoritative server display
+    /// classification; `None` preserves the existing label.
+    #[serde(default)]
+    pub damage_name: Option<String>,
+    /// `Some` replaces the attack type with the authoritative server display
+    /// classification; `None` preserves the existing type.
+    #[serde(default)]
+    pub attack_type: Option<String>,
     /// `Some` updates the maximum-HP reduction attributed to this hit; `None`
     /// preserves older capture/history behavior.
     #[serde(default)]
@@ -3571,16 +3579,8 @@ impl CharacterStats {
     }
 }
 
-pub const REACTION_DAMAGE_TYPES: [&str; 8] = [
-    "创生花",
-    "覆纹",
-    "延滞",
-    "黯星",
-    "浊燃",
-    "浸染",
-    "盈蓄",
-    "失谐",
-];
+/// Reaction damage labels emitted only from SDK-confirmed display types 23..=28.
+pub const REACTION_DAMAGE_TYPES: [&str; 6] = ["创生花", "覆纹", "延滞", "黯星", "浊燃", "浸染"];
 
 pub fn is_reaction_damage_type(attack_type: &str) -> bool {
     REACTION_DAMAGE_TYPES.contains(&attack_type)
@@ -3639,10 +3639,6 @@ pub const UNBALANCE_ATTACK_TYPE: &str = "倾陷伤害";
 /// it can't inflate one character's ranking/DPS share.
 pub fn is_unbalance_damage_hit(hit: &Hit) -> bool {
     hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE)
-        || hit
-            .damage_name
-            .as_deref()
-            .is_some_and(|damage_name| damage_name.contains("倾陷"))
 }
 
 fn summarize_damage_attribution<'a>(
@@ -5496,6 +5492,8 @@ impl CombatState {
                 target_hp_before: source.target_hp_before,
                 target_hp_after: source.target_hp_after,
                 target_hp_percent: source.target_hp_percent,
+                damage_name: None,
+                attack_type: None,
                 max_hp_reduction: None,
                 reconciled_overkill_damage: Some(source.overkill_damage() + adjustment),
             };
@@ -7023,6 +7021,14 @@ fn apply_damage_correction_to_recent_hit(
     let max_hp_reduction_changed = correction
         .max_hp_reduction
         .is_some_and(|reduction| hit.max_hp_reduction.to_bits() != reduction.to_bits());
+    let damage_name_changed = correction
+        .damage_name
+        .as_ref()
+        .is_some_and(|damage_name| hit.damage_name.as_ref() != Some(damage_name));
+    let attack_type_changed = correction
+        .attack_type
+        .as_ref()
+        .is_some_and(|attack_type| hit.attack_type.as_ref() != Some(attack_type));
     let wire_overkill_interval_retired =
         correction.reconciled_overkill_damage.is_some() && hit.wire_event.is_some();
     let changed = hit.damage.to_bits() != correction.damage.to_bits()
@@ -7031,6 +7037,8 @@ fn apply_damage_correction_to_recent_hit(
         || hit.target_hp_percent.to_bits() != correction.target_hp_percent.to_bits()
         || overkill_changed
         || max_hp_reduction_changed
+        || damage_name_changed
+        || attack_type_changed
         || wire_overkill_interval_retired;
     if !changed {
         return None;
@@ -7040,6 +7048,12 @@ fn apply_damage_correction_to_recent_hit(
     hit.target_hp_before = correction.target_hp_before;
     hit.target_hp_after = correction.target_hp_after;
     hit.target_hp_percent = correction.target_hp_percent;
+    if correction.damage_name.is_some() {
+        hit.damage_name.clone_from(&correction.damage_name);
+    }
+    if correction.attack_type.is_some() {
+        hit.attack_type.clone_from(&correction.attack_type);
+    }
     if let Some(reduction) = correction.max_hp_reduction {
         hit.max_hp_reduction = reduction;
     }
@@ -7463,6 +7477,8 @@ mod tests {
             target_hp_before: 616_450.0,
             target_hp_after: 391_749.0,
             target_hp_percent: 391_749.0 / 2_292_536.0 * 100.0,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: Some(449_402.0),
             reconciled_overkill_damage: Some(0.0),
         }));
@@ -8119,6 +8135,8 @@ mod tests {
             target_hp_before: 1_050.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: None,
             reconciled_overkill_damage: None,
         }));
@@ -8440,6 +8458,8 @@ mod tests {
             target_hp_before: 1_025.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: Some(250.0),
             reconciled_overkill_damage: None,
         }));
@@ -9058,6 +9078,8 @@ mod tests {
             target_hp_before: 10_250.0,
             target_hp_after: 9_000.0,
             target_hp_percent: 90.0,
+            damage_name: Some("覆纹追加攻击".to_owned()),
+            attack_type: Some("覆纹".to_owned()),
             max_hp_reduction: None,
             reconciled_overkill_damage: None,
         });
@@ -9066,6 +9088,8 @@ mod tests {
         assert_eq!(corrected.damage, 1_250.0);
         assert_eq!(corrected.follow_up_damage, 0.0);
         assert_eq!(corrected.target_hp_before, 10_250.0);
+        assert_eq!(corrected.damage_name.as_deref(), Some("覆纹追加攻击"));
+        assert_eq!(corrected.attack_type.as_deref(), Some("覆纹"));
         assert_eq!(state.total_damage, 1_250.0);
         let stats = state.stats.get(&7).unwrap();
         assert_eq!(stats.hits, 1);
@@ -9118,6 +9142,8 @@ mod tests {
             target_hp_before: 1_050.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: None,
             reconciled_overkill_damage: None,
         }));
@@ -9191,6 +9217,8 @@ mod tests {
             target_hp_before: 10_000.0,
             target_hp_after: 8_750.0,
             target_hp_percent: 87.5,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: None,
             reconciled_overkill_damage: None,
         });
@@ -9327,7 +9355,7 @@ mod tests {
         for attack_type in REACTION_DAMAGE_TYPES {
             assert!(is_reaction_damage_type(attack_type));
         }
-        for attack_type in ["环合·创生", "普攻", UNBALANCE_ATTACK_TYPE] {
+        for attack_type in ["环合·创生", "盈蓄", "失谐", "普攻", UNBALANCE_ATTACK_TYPE] {
             assert!(!is_reaction_damage_type(attack_type));
         }
     }
@@ -9741,6 +9769,8 @@ mod tests {
             target_hp_before: 1_010.0,
             target_hp_after: 900.0,
             target_hp_percent: 90.0,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: None,
             reconciled_overkill_damage: None,
         });

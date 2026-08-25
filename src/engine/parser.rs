@@ -21,7 +21,7 @@ const BOOL_ENUM_STATE_FIELD_LENGTHS: [usize; 3] = [1, 4, 4];
 const RECORD_TRAILING_FIELD_TYPE: u8 = 12;
 const RECORD_TRAILING_FIELD_LENGTH: usize = 4;
 const MAX_RECORD_FIELD_LENGTH: usize = 8;
-const MIN_DAMAGE: f32 = 2.0;
+const MIN_DAMAGE: f32 = 1.0;
 // Damage and boss HP are serialized as f32. 999-night encounters can reach tens of
 // billions, while a one-trillion bound still rejects implausible shifted-float matches.
 const MAX_COMBAT_VALUE: f32 = 1_000_000_000_000.0;
@@ -49,6 +49,13 @@ const CLIENT_FIGHT_DATA_FIRST_WRAPPER_VALUE_BIT_OFFSET: usize = 488;
 const CLIENT_FIGHT_DATA_SECOND_WRAPPER_TYPE_BIT_OFFSET: usize = 520;
 const CLIENT_FIGHT_DATA_SECOND_WRAPPER_LENGTH_BIT_OFFSET: usize = 528;
 const CLIENT_FIGHT_DATA_SECOND_WRAPPER_VALUE_BIT_OFFSET: usize = 560;
+const CLIENT_FIGHT_DATA_THIRD_WRAPPER_TYPE_BIT_OFFSET: usize = 592;
+const CLIENT_FIGHT_DATA_THIRD_WRAPPER_LENGTH_BIT_OFFSET: usize = 600;
+const CLIENT_FIGHT_DATA_THIRD_WRAPPER_VALUE_BIT_OFFSET: usize = 632;
+const CLIENT_FIGHT_DATA_FOURTH_WRAPPER_TYPE_BIT_OFFSET: usize = 664;
+const CLIENT_FIGHT_DATA_FOURTH_WRAPPER_LENGTH_BIT_OFFSET: usize = 672;
+const CLIENT_FIGHT_DATA_FOURTH_WRAPPER_VALUE_BIT_OFFSET: usize = 704;
+const CLIENT_FIGHT_DATA_ADDITIONAL_WRAPPER_BITS: usize = 144;
 const SERVER_DAMAGE_WRAPPER_TYPE: u8 = 0x06;
 const SERVER_DAMAGE_SECONDARY_WRAPPER_TYPE: u8 = 0x1f;
 const MAX_CLIENT_FIGHT_DATA_ELEMENTS: usize = 64;
@@ -369,9 +376,119 @@ pub struct ParsedServerDamageSettlement {
     pub current_hp: f32,
     pub dead_state: u32,
     pub raw_damage: u32,
-    pub secondary_value: i32,
+    pub display_type: DamageDisplayType,
+    pub additional_damage: Option<u32>,
+    pub additional_display_type: Option<DamageDisplayType>,
     pub byte_offset: usize,
     pub bit_shift: u8,
+}
+
+/// Exact values from `HTGame.EDamageDisPlayType` in the SDK.
+///
+/// The server serializes this enum through a four-byte `IntProperty` wrapper.
+/// Keeping the complete enum typed here prevents range checks, effect names or
+/// HP deltas from being used as substitutes for the authoritative value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum DamageDisplayType {
+    None = 0,
+    Immune = 1,
+    Resist = 2,
+    RigidityResist = 3,
+    AbnormalResist = 4,
+    Miss = 5,
+    BigDamage = 6,
+    Angry = 7,
+    Weakness = 8,
+    Tired = 9,
+    BigFire = 10,
+    BigIce = 11,
+    BigThu = 12,
+    Vulnerable = 13,
+    Blood = 14,
+    Absorb = 15,
+    InstantKill = 16,
+    SufferInjury = 17,
+    Block = 18,
+    Erosive = 19,
+    SuddenDeath = 20,
+    Curse = 21,
+    Unbal = 22,
+    GuangLingReactionFollow = 23,
+    LingZhouReactionFollow = 24,
+    ZhouAnReactionFollow = 25,
+    AnHunReactionFollow = 26,
+    HunXiangReactionFollow = 27,
+    XiangGuangReactionFollow = 28,
+    Fons = 29,
+    FonsChii = 30,
+}
+
+impl TryFrom<i32> for DamageDisplayType {
+    type Error = ();
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Immune),
+            2 => Ok(Self::Resist),
+            3 => Ok(Self::RigidityResist),
+            4 => Ok(Self::AbnormalResist),
+            5 => Ok(Self::Miss),
+            6 => Ok(Self::BigDamage),
+            7 => Ok(Self::Angry),
+            8 => Ok(Self::Weakness),
+            9 => Ok(Self::Tired),
+            10 => Ok(Self::BigFire),
+            11 => Ok(Self::BigIce),
+            12 => Ok(Self::BigThu),
+            13 => Ok(Self::Vulnerable),
+            14 => Ok(Self::Blood),
+            15 => Ok(Self::Absorb),
+            16 => Ok(Self::InstantKill),
+            17 => Ok(Self::SufferInjury),
+            18 => Ok(Self::Block),
+            19 => Ok(Self::Erosive),
+            20 => Ok(Self::SuddenDeath),
+            21 => Ok(Self::Curse),
+            22 => Ok(Self::Unbal),
+            23 => Ok(Self::GuangLingReactionFollow),
+            24 => Ok(Self::LingZhouReactionFollow),
+            25 => Ok(Self::ZhouAnReactionFollow),
+            26 => Ok(Self::AnHunReactionFollow),
+            27 => Ok(Self::HunXiangReactionFollow),
+            28 => Ok(Self::XiangGuangReactionFollow),
+            29 => Ok(Self::Fons),
+            30 => Ok(Self::FonsChii),
+            _ => Err(()),
+        }
+    }
+}
+
+impl DamageDisplayType {
+    pub fn value(self) -> i32 {
+        self as i32
+    }
+
+    pub fn damage_name(self) -> Option<&'static str> {
+        match self {
+            Self::Unbal => Some("倾陷伤害"),
+            Self::GuangLingReactionFollow => Some("创生花"),
+            Self::LingZhouReactionFollow => Some("覆纹追加攻击"),
+            Self::ZhouAnReactionFollow => Some("浊燃"),
+            Self::AnHunReactionFollow => Some("黯星"),
+            Self::HunXiangReactionFollow => Some("浸染"),
+            Self::XiangGuangReactionFollow => Some("延滞"),
+            _ => None,
+        }
+    }
+
+    pub fn attack_type(self) -> Option<&'static str> {
+        match self {
+            Self::LingZhouReactionFollow => Some("覆纹"),
+            _ => self.damage_name(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1159,9 +1276,6 @@ pub fn classify_attack_type(
 ) -> String {
     let searchable = format!("{} {}", effect_name, ability_name.unwrap_or_default());
     let searchable_lower = searchable.to_ascii_lowercase();
-    if searchable_lower.contains("tenacity") {
-        return "倾陷伤害".to_owned();
-    }
     if searchable_lower.contains("parry") {
         return "格挡反击".to_owned();
     }
@@ -1170,34 +1284,6 @@ pub fn classify_attack_type(
     {
         return "深渊场地Buff".to_owned();
     }
-    if effect_name.contains("Reaction_1") || effect_name.contains("Reaction1_") {
-        return "创生花".to_owned();
-    }
-    if effect_name.contains("Reaction_2") || effect_name.contains("Reaction2_") {
-        return "覆纹".to_owned();
-    }
-    if effect_name.contains("Reaction_3") || effect_name.contains("Reaction3_") {
-        return "延滞".to_owned();
-    }
-    if effect_name.contains("Reaction_4") || effect_name.contains("Reaction4_") {
-        return "黯星".to_owned();
-    }
-    if effect_name.contains("Reaction_5") || effect_name.contains("Reaction5_") {
-        return "浊燃".to_owned();
-    }
-    if effect_name.contains("Reaction_6") || effect_name.contains("Reaction6_") {
-        return "浸染".to_owned();
-    }
-    if effect_name.contains("Reaction_7") || effect_name.contains("Reaction7_") {
-        return "盈蓄".to_owned();
-    }
-    if effect_name.contains("Reaction_8")
-        || effect_name.contains("Reaction8_")
-        || effect_name.contains("AnHunZhou")
-    {
-        return "失谐".to_owned();
-    }
-
     let category_type = match category {
         Some("A") => Some("普攻"),
         Some("E") => Some("E技能"),
@@ -1221,32 +1307,6 @@ pub fn classify_attack_type(
         "E技能".to_owned()
     } else {
         "其他".to_owned()
-    }
-}
-
-pub fn qte_reaction_type(
-    previous_attribute: &str,
-    entering_attribute: &str,
-) -> Option<&'static str> {
-    let has_pair = |left: &str, right: &str| {
-        (previous_attribute == left && entering_attribute == right)
-            || (previous_attribute == right && entering_attribute == left)
-    };
-
-    if has_pair("光", "灵") {
-        Some("创生")
-    } else if has_pair("灵", "咒") {
-        Some("覆纹")
-    } else if has_pair("光", "相") {
-        Some("延滞")
-    } else if has_pair("暗", "魂") {
-        Some("黯星")
-    } else if has_pair("暗", "咒") {
-        Some("浊燃")
-    } else if has_pair("魂", "相") {
-        Some("浸染")
-    } else {
-        None
     }
 }
 
@@ -2768,10 +2828,11 @@ pub fn parse_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate>
 /// Decodes authoritative server damage settlements from
 /// `ClientSetReplicatedTargetData.ClientFightDataArray`.
 ///
-/// The current SDK serializes every ordinary damage row as two parameter
-/// wrappers. Type `0x06` contains a negative little-endian `i32` damage value;
-/// type `0x1f` contains the secondary settlement marker. Requiring the complete
-/// array, both wrapper types and both four-byte payloads prevents a shifted
+/// The current SDK serializes an ordinary damage row as two parameter wrappers.
+/// A four-wrapper row repeats the `0x06, 0x1f` pair for an appended damage
+/// value. Every `0x1f` value must decode to an exact `EDamageDisPlayType` enum;
+/// no effect-name, HP-delta or numeric-range fallback participates.
+/// Requiring every declared wrapper, type, length and marker prevents a shifted
 /// integer elsewhere in an untrusted UDP payload from becoming damage.
 pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSettlement> {
     const REQUIRED_ELEMENT_BITS: usize = CLIENT_FIGHT_DATA_SECOND_WRAPPER_VALUE_BIT_OFFSET + 32;
@@ -2805,24 +2866,10 @@ pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSet
         {
             continue;
         }
-        let Some(last_element_bit_offset) = (element_count - 1)
-            .checked_mul(CLIENT_FIGHT_DATA_ELEMENT_BITS)
-            .and_then(|bits| record_bit_offset.checked_add(bits))
-        else {
-            continue;
-        };
-        if last_element_bit_offset
-            .checked_add(REQUIRED_ELEMENT_BITS)
-            .is_none_or(|end| end > data_bits)
-        {
-            continue;
-        }
-
         let mut candidate = Vec::with_capacity(element_count);
         let mut candidate_valid = true;
+        let mut element_bit_offset = record_bit_offset;
         for element_index in 0..element_count {
-            let element_bit_offset =
-                record_bit_offset + element_index * CLIENT_FIGHT_DATA_ELEMENT_BITS;
             let Some(target_handle) = parse_client_fight_target_wire_identity(
                 data,
                 element_bit_offset + CLIENT_FIGHT_DATA_ARRAY_HEADER_BITS,
@@ -2897,6 +2944,12 @@ pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSet
             let first_length = u32::from_le_bytes(first_length_bytes);
             let second_length = u32::from_le_bytes(second_length_bytes);
             let signed_damage = i32::from_le_bytes(first_value_bytes);
+            let Ok(display_type) =
+                DamageDisplayType::try_from(i32::from_le_bytes(second_value_bytes))
+            else {
+                candidate_valid = false;
+                break;
+            };
             if signed_damage >= 0 {
                 candidate_valid = false;
                 break;
@@ -2908,7 +2961,7 @@ pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSet
             if !current_hp.is_finite()
                 || !(0.0..=MAX_COMBAT_VALUE).contains(&current_hp)
                 || dead_state > 1
-                || wrapper_count != 2
+                || !matches!(wrapper_count, 2 | 4)
                 || first_type[0] != SERVER_DAMAGE_WRAPPER_TYPE
                 || first_length != 4
                 || second_type[0] != SERVER_DAMAGE_SECONDARY_WRAPPER_TYPE
@@ -2918,20 +2971,113 @@ pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSet
                 candidate_valid = false;
                 break;
             }
-            if (raw_damage as f32) < MIN_DAMAGE {
-                continue;
+            let (additional_damage, additional_display_type) = if wrapper_count == 4 {
+                let mut third_type = [0_u8; 1];
+                let mut third_length_bytes = [0_u8; 4];
+                let mut third_value_bytes = [0_u8; 4];
+                let mut fourth_type = [0_u8; 1];
+                let mut fourth_length_bytes = [0_u8; 4];
+                let mut fourth_value_bytes = [0_u8; 4];
+                let follow_up_fields = [
+                    (
+                        CLIENT_FIGHT_DATA_THIRD_WRAPPER_TYPE_BIT_OFFSET,
+                        third_type.as_mut_slice(),
+                    ),
+                    (
+                        CLIENT_FIGHT_DATA_THIRD_WRAPPER_LENGTH_BIT_OFFSET,
+                        third_length_bytes.as_mut_slice(),
+                    ),
+                    (
+                        CLIENT_FIGHT_DATA_THIRD_WRAPPER_VALUE_BIT_OFFSET,
+                        third_value_bytes.as_mut_slice(),
+                    ),
+                    (
+                        CLIENT_FIGHT_DATA_FOURTH_WRAPPER_TYPE_BIT_OFFSET,
+                        fourth_type.as_mut_slice(),
+                    ),
+                    (
+                        CLIENT_FIGHT_DATA_FOURTH_WRAPPER_LENGTH_BIT_OFFSET,
+                        fourth_length_bytes.as_mut_slice(),
+                    ),
+                    (
+                        CLIENT_FIGHT_DATA_FOURTH_WRAPPER_VALUE_BIT_OFFSET,
+                        fourth_value_bytes.as_mut_slice(),
+                    ),
+                ];
+                if follow_up_fields
+                    .into_iter()
+                    .any(|(relative_bit_offset, output)| {
+                        decode_shifted_into(
+                            data,
+                            element_bit_offset / 8,
+                            (element_bit_offset % 8) as u8,
+                            relative_bit_offset,
+                            output,
+                        )
+                        .is_none()
+                    })
+                {
+                    candidate_valid = false;
+                    break;
+                }
+                let signed_additional_damage = i32::from_le_bytes(third_value_bytes);
+                let Some(additional_damage) = signed_additional_damage
+                    .checked_neg()
+                    .filter(|_| signed_additional_damage < 0)
+                    .map(|value| value as u32)
+                else {
+                    candidate_valid = false;
+                    break;
+                };
+                let Ok(additional_display_type) =
+                    DamageDisplayType::try_from(i32::from_le_bytes(fourth_value_bytes))
+                else {
+                    candidate_valid = false;
+                    break;
+                };
+                if third_type[0] != SERVER_DAMAGE_WRAPPER_TYPE
+                    || u32::from_le_bytes(third_length_bytes) != 4
+                    || fourth_type[0] != SERVER_DAMAGE_SECONDARY_WRAPPER_TYPE
+                    || u32::from_le_bytes(fourth_length_bytes) != 4
+                    || additional_damage == 0
+                    || (additional_damage as f32) > MAX_COMBAT_VALUE
+                {
+                    candidate_valid = false;
+                    break;
+                }
+                (Some(additional_damage), Some(additional_display_type))
+            } else {
+                (None, None)
+            };
+            if !(raw_damage == 1 && current_hp == 0.0 && dead_state == 1) {
+                let damage_bit_offset =
+                    element_bit_offset + CLIENT_FIGHT_DATA_FIRST_WRAPPER_VALUE_BIT_OFFSET;
+                candidate.push(ParsedServerDamageSettlement {
+                    target_handle,
+                    current_hp,
+                    dead_state,
+                    raw_damage,
+                    display_type,
+                    additional_damage,
+                    additional_display_type,
+                    byte_offset: damage_bit_offset / 8,
+                    bit_shift: (damage_bit_offset % 8) as u8,
+                });
             }
-            let damage_bit_offset =
-                element_bit_offset + CLIENT_FIGHT_DATA_FIRST_WRAPPER_VALUE_BIT_OFFSET;
-            candidate.push(ParsedServerDamageSettlement {
-                target_handle,
-                current_hp,
-                dead_state,
-                raw_damage,
-                secondary_value: i32::from_le_bytes(second_value_bytes),
-                byte_offset: damage_bit_offset / 8,
-                bit_shift: (damage_bit_offset % 8) as u8,
-            });
+            if element_index + 1 < element_count {
+                let element_bits = CLIENT_FIGHT_DATA_ELEMENT_BITS
+                    + if wrapper_count == 4 {
+                        CLIENT_FIGHT_DATA_ADDITIONAL_WRAPPER_BITS
+                    } else {
+                        0
+                    };
+                let Some(next_element_bit_offset) = element_bit_offset.checked_add(element_bits)
+                else {
+                    candidate_valid = false;
+                    break;
+                };
+                element_bit_offset = next_element_bit_offset;
+            }
         }
         if candidate_valid {
             for settlement in candidate {
@@ -2941,6 +3087,9 @@ pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSet
                     settlement.target_handle,
                     settlement.current_hp.to_bits(),
                     settlement.raw_damage,
+                    settlement.display_type,
+                    settlement.additional_damage,
+                    settlement.additional_display_type,
                 )) {
                     settlements.push(settlement);
                 }
@@ -3313,6 +3462,14 @@ pub fn parse_damage_payload(
             }
             None => (None, Vec::new()),
         };
+        if !direction.is_incoming()
+            && target_id.is_some()
+            && damage == 1.0
+            && target_hp_before == 1.0
+            && target_hp_after == 0.0
+        {
+            continue;
+        }
         let hit = Hit {
             timestamp,
             char_id,
@@ -3541,42 +3698,124 @@ mod character_tests {
             .map(|(identity, hp, dead_state, _, _)| (*identity, *hp, *dead_state))
             .collect::<Vec<_>>();
         write_client_fight_array(payload, record_bit_offset, false, &base_elements);
-        for (index, (_, _, _, raw_damage, secondary_value)) in elements.iter().enumerate() {
+        for (index, (identity, hp, dead_state, raw_damage, display_type)) in
+            elements.iter().enumerate()
+        {
             let element_bit_offset = record_bit_offset + index * CLIENT_FIGHT_DATA_ELEMENT_BITS;
+            write_client_fight_damage_element(
+                payload,
+                element_bit_offset,
+                identity,
+                *hp,
+                *dead_state,
+                *raw_damage,
+                *display_type,
+            );
+        }
+    }
+
+    fn write_client_fight_damage_element(
+        payload: &mut [u8],
+        element_bit_offset: usize,
+        identity: &[u8; CLIENT_FIGHT_TARGET_WIRE_BYTES],
+        hp: f32,
+        dead_state: u32,
+        raw_damage: u32,
+        display_type: i32,
+    ) {
+        for (relative_bit_offset, bytes) in [
+            (CLIENT_FIGHT_DATA_ARRAY_HEADER_BITS, identity.as_slice()),
+            (CLIENT_FIGHT_DATA_HP_BIT_OFFSET, hp.to_le_bytes().as_slice()),
+            (
+                CLIENT_FIGHT_DATA_DEAD_STATE_BIT_OFFSET,
+                dead_state.to_le_bytes().as_slice(),
+            ),
+            (
+                CLIENT_FIGHT_DATA_WRAPPER_COUNT_BIT_OFFSET,
+                2_u32.to_le_bytes().as_slice(),
+            ),
+            (
+                CLIENT_FIGHT_DATA_FIRST_WRAPPER_TYPE_BIT_OFFSET,
+                [SERVER_DAMAGE_WRAPPER_TYPE].as_slice(),
+            ),
+            (
+                CLIENT_FIGHT_DATA_FIRST_WRAPPER_LENGTH_BIT_OFFSET,
+                4_u32.to_le_bytes().as_slice(),
+            ),
+            (
+                CLIENT_FIGHT_DATA_FIRST_WRAPPER_VALUE_BIT_OFFSET,
+                (-(raw_damage as i32)).to_le_bytes().as_slice(),
+            ),
+            (
+                CLIENT_FIGHT_DATA_SECOND_WRAPPER_TYPE_BIT_OFFSET,
+                [SERVER_DAMAGE_SECONDARY_WRAPPER_TYPE].as_slice(),
+            ),
+            (
+                CLIENT_FIGHT_DATA_SECOND_WRAPPER_LENGTH_BIT_OFFSET,
+                4_u32.to_le_bytes().as_slice(),
+            ),
+            (
+                CLIENT_FIGHT_DATA_SECOND_WRAPPER_VALUE_BIT_OFFSET,
+                display_type.to_le_bytes().as_slice(),
+            ),
+        ] {
+            write_bytes_at_bit(payload, element_bit_offset + relative_bit_offset, bytes);
+        }
+    }
+
+    fn write_client_fight_additional_damage(
+        payload: &mut [u8],
+        record_bit_offset: usize,
+        identity: [u8; CLIENT_FIGHT_TARGET_WIRE_BYTES],
+        hp: f32,
+        raw_damage: u32,
+        additional_damage: u32,
+        additional_display_type: DamageDisplayType,
+    ) {
+        write_client_fight_damage_array(
+            payload,
+            record_bit_offset,
+            &[(identity, hp, 0, raw_damage, 0)],
+        );
+        write_bytes_at_bit(
+            payload,
+            record_bit_offset + CLIENT_FIGHT_DATA_WRAPPER_COUNT_BIT_OFFSET,
+            &4_u32.to_le_bytes(),
+        );
+        for (wrapper_type_offset, wrapper_length_offset, wrapper_value_offset, value) in [
+            (
+                CLIENT_FIGHT_DATA_THIRD_WRAPPER_TYPE_BIT_OFFSET,
+                CLIENT_FIGHT_DATA_THIRD_WRAPPER_LENGTH_BIT_OFFSET,
+                CLIENT_FIGHT_DATA_THIRD_WRAPPER_VALUE_BIT_OFFSET,
+                -(additional_damage as i32),
+            ),
+            (
+                CLIENT_FIGHT_DATA_FOURTH_WRAPPER_TYPE_BIT_OFFSET,
+                CLIENT_FIGHT_DATA_FOURTH_WRAPPER_LENGTH_BIT_OFFSET,
+                CLIENT_FIGHT_DATA_FOURTH_WRAPPER_VALUE_BIT_OFFSET,
+                additional_display_type.value(),
+            ),
+        ] {
+            let wrapper_type =
+                if wrapper_type_offset == CLIENT_FIGHT_DATA_THIRD_WRAPPER_TYPE_BIT_OFFSET {
+                    SERVER_DAMAGE_WRAPPER_TYPE
+                } else {
+                    SERVER_DAMAGE_SECONDARY_WRAPPER_TYPE
+                };
             write_bytes_at_bit(
                 payload,
-                element_bit_offset + CLIENT_FIGHT_DATA_WRAPPER_COUNT_BIT_OFFSET,
-                &2_u32.to_le_bytes(),
+                record_bit_offset + wrapper_type_offset,
+                &[wrapper_type],
             );
             write_bytes_at_bit(
                 payload,
-                element_bit_offset + CLIENT_FIGHT_DATA_FIRST_WRAPPER_TYPE_BIT_OFFSET,
-                &[SERVER_DAMAGE_WRAPPER_TYPE],
-            );
-            write_bytes_at_bit(
-                payload,
-                element_bit_offset + CLIENT_FIGHT_DATA_FIRST_WRAPPER_LENGTH_BIT_OFFSET,
+                record_bit_offset + wrapper_length_offset,
                 &4_u32.to_le_bytes(),
             );
             write_bytes_at_bit(
                 payload,
-                element_bit_offset + CLIENT_FIGHT_DATA_FIRST_WRAPPER_VALUE_BIT_OFFSET,
-                &(-(*raw_damage as i32)).to_le_bytes(),
-            );
-            write_bytes_at_bit(
-                payload,
-                element_bit_offset + CLIENT_FIGHT_DATA_SECOND_WRAPPER_TYPE_BIT_OFFSET,
-                &[SERVER_DAMAGE_SECONDARY_WRAPPER_TYPE],
-            );
-            write_bytes_at_bit(
-                payload,
-                element_bit_offset + CLIENT_FIGHT_DATA_SECOND_WRAPPER_LENGTH_BIT_OFFSET,
-                &4_u32.to_le_bytes(),
-            );
-            write_bytes_at_bit(
-                payload,
-                element_bit_offset + CLIENT_FIGHT_DATA_SECOND_WRAPPER_VALUE_BIT_OFFSET,
-                &secondary_value.to_le_bytes(),
+                record_bit_offset + wrapper_value_offset,
+                &value.to_le_bytes(),
             );
         }
     }
@@ -4464,10 +4703,10 @@ mod character_tests {
     }
 
     #[test]
-    fn classifies_tenacity_and_parry_damage() {
+    fn classifies_parry_without_guessing_display_types_from_effect_names() {
         assert_eq!(
             classify_attack_type(Some("B"), "Buff_Tenacity_damage", None,),
-            "倾陷伤害"
+            "其他"
         );
         assert_eq!(
             classify_attack_type(Some("T"), "GE_Parry_Damage", None,),
@@ -4475,26 +4714,13 @@ mod character_tests {
         );
         assert_eq!(
             classify_attack_type(None, "GE_Reaction_AnHunZhou", None,),
-            "失谐"
+            "其他"
         );
-        assert_eq!(classify_attack_type(None, "GE_Reaction_7", None,), "盈蓄");
+        assert_eq!(classify_attack_type(None, "GE_Reaction_7", None,), "其他");
         assert_eq!(
             classify_attack_type(None, "GE_Reaction6_5Point_Damage", None,),
-            "浸染"
+            "其他"
         );
-    }
-
-    #[test]
-    fn classifies_qte_reaction_from_participant_attributes() {
-        assert_eq!(qte_reaction_type("暗", "咒"), Some("浊燃"));
-        assert_eq!(qte_reaction_type("灵", "咒"), Some("覆纹"));
-
-        assert_eq!(qte_reaction_type("光", "灵"), Some("创生"));
-        assert_eq!(qte_reaction_type("光", "相"), Some("延滞"));
-
-        assert_eq!(qte_reaction_type("暗", "咒"), Some("浊燃"));
-        assert_eq!(qte_reaction_type("暗", "魂"), Some("黯星"));
-        assert_eq!(qte_reaction_type("魂", "相"), Some("浸染"));
     }
 
     #[test]
@@ -4562,14 +4788,198 @@ mod character_tests {
         assert_eq!(settlements[0].current_hp, 7_086.0);
         assert_eq!(settlements[0].dead_state, 1);
         assert_eq!(settlements[0].raw_damage, 11_662);
-        assert_eq!(settlements[0].secondary_value, 0);
+        assert_eq!(settlements[0].display_type, DamageDisplayType::None);
+        assert_eq!(settlements[0].additional_damage, None);
+        assert_eq!(settlements[0].additional_display_type, None);
         assert_eq!(settlements[1].target_handle, second);
         assert_eq!(settlements[1].raw_damage, 6_934);
-        assert_eq!(settlements[1].secondary_value, 25);
+        assert_eq!(
+            settlements[1].display_type,
+            DamageDisplayType::ZhouAnReactionFollow
+        );
+        assert_eq!(settlements[1].additional_damage, None);
+        assert_eq!(settlements[1].additional_display_type, None);
     }
 
     #[test]
-    fn rejects_one_point_or_wrongly_typed_server_damage_wrappers() {
+    fn parses_complete_four_wrapper_additional_settlement() {
+        let target = client_fight_target_identity(0);
+        let mut payload = vec![0_u8; 104];
+        write_client_fight_additional_damage(
+            &mut payload,
+            3,
+            target,
+            11_210_597.0,
+            3_194,
+            638,
+            DamageDisplayType::LingZhouReactionFollow,
+        );
+
+        let settlements = parse_server_damage_settlements(&payload);
+
+        assert_eq!(settlements.len(), 1);
+        assert_eq!(settlements[0].target_handle, target);
+        assert_eq!(settlements[0].current_hp, 11_210_597.0);
+        assert_eq!(settlements[0].raw_damage, 3_194);
+        assert_eq!(settlements[0].display_type, DamageDisplayType::None);
+        assert_eq!(settlements[0].additional_damage, Some(638));
+        assert_eq!(
+            settlements[0].additional_display_type,
+            Some(DamageDisplayType::LingZhouReactionFollow)
+        );
+    }
+
+    #[test]
+    fn parses_element_after_four_wrapper_additional_settlement() {
+        let first = client_fight_target_identity(0);
+        let second = client_fight_target_identity(8);
+        let record_bit_offset = 3;
+        let mut payload = vec![0_u8; 192];
+        write_client_fight_additional_damage(
+            &mut payload,
+            record_bit_offset,
+            first,
+            11_210_597.0,
+            3_194,
+            638,
+            DamageDisplayType::LingZhouReactionFollow,
+        );
+        let mut prefix = BOSS_HP_PREFIX_HEAD;
+        prefix[5..7].copy_from_slice(&(2_u16 << 5).to_le_bytes());
+        write_bytes_at_bit(&mut payload, record_bit_offset, &prefix);
+        let second_element_bit_offset = record_bit_offset
+            + CLIENT_FIGHT_DATA_ELEMENT_BITS
+            + CLIENT_FIGHT_DATA_ADDITIONAL_WRAPPER_BITS;
+        write_client_fight_damage_element(
+            &mut payload,
+            second_element_bit_offset,
+            &second,
+            10_000_000.0,
+            0,
+            2_400,
+            DamageDisplayType::ZhouAnReactionFollow.value(),
+        );
+
+        let settlements = parse_server_damage_settlements(&payload);
+
+        assert_eq!(settlements.len(), 2);
+        assert_eq!(settlements[0].target_handle, first);
+        assert_eq!(settlements[0].additional_damage, Some(638));
+        assert_eq!(settlements[1].target_handle, second);
+        assert_eq!(settlements[1].raw_damage, 2_400);
+        assert_eq!(
+            settlements[1].display_type,
+            DamageDisplayType::ZhouAnReactionFollow
+        );
+    }
+
+    #[test]
+    fn every_reaction_display_type_is_decoded_from_its_exact_enum_value() {
+        let target = client_fight_target_identity(0);
+        for display_type in [
+            DamageDisplayType::Unbal,
+            DamageDisplayType::GuangLingReactionFollow,
+            DamageDisplayType::LingZhouReactionFollow,
+            DamageDisplayType::ZhouAnReactionFollow,
+            DamageDisplayType::AnHunReactionFollow,
+            DamageDisplayType::HunXiangReactionFollow,
+            DamageDisplayType::XiangGuangReactionFollow,
+        ] {
+            let mut payload = vec![0_u8; 104];
+            write_client_fight_additional_damage(
+                &mut payload,
+                3,
+                target,
+                11_210_597.0,
+                3_194,
+                638,
+                display_type,
+            );
+            write_bytes_at_bit(
+                &mut payload,
+                3 + CLIENT_FIGHT_DATA_SECOND_WRAPPER_VALUE_BIT_OFFSET,
+                &display_type.value().to_le_bytes(),
+            );
+
+            let settlements = parse_server_damage_settlements(&payload);
+
+            assert_eq!(settlements.len(), 1);
+            assert_eq!(settlements[0].display_type, display_type);
+            assert_eq!(settlements[0].additional_damage, Some(638));
+            assert_eq!(settlements[0].additional_display_type, Some(display_type));
+        }
+    }
+
+    #[test]
+    fn rejects_incomplete_or_unknown_display_type_settlement() {
+        let target = client_fight_target_identity(0);
+        let mut incomplete = vec![0_u8; 104];
+        write_client_fight_additional_damage(
+            &mut incomplete,
+            3,
+            target,
+            100.0,
+            50,
+            10,
+            DamageDisplayType::LingZhouReactionFollow,
+        );
+        incomplete.truncate(88);
+        assert!(parse_server_damage_settlements(&incomplete).is_empty());
+
+        let mut unknown_display = vec![0_u8; 104];
+        write_client_fight_additional_damage(
+            &mut unknown_display,
+            3,
+            target,
+            100.0,
+            50,
+            10,
+            DamageDisplayType::LingZhouReactionFollow,
+        );
+        write_bytes_at_bit(
+            &mut unknown_display,
+            3 + CLIENT_FIGHT_DATA_FOURTH_WRAPPER_VALUE_BIT_OFFSET,
+            &31_i32.to_le_bytes(),
+        );
+        assert!(parse_server_damage_settlements(&unknown_display).is_empty());
+    }
+
+    #[test]
+    fn damage_display_type_maps_only_sdk_confirmed_damage_labels() {
+        assert_eq!(DamageDisplayType::Unbal.attack_type(), Some("倾陷伤害"));
+        assert_eq!(
+            DamageDisplayType::GuangLingReactionFollow.attack_type(),
+            Some("创生花")
+        );
+        assert_eq!(
+            DamageDisplayType::LingZhouReactionFollow.damage_name(),
+            Some("覆纹追加攻击")
+        );
+        assert_eq!(
+            DamageDisplayType::LingZhouReactionFollow.attack_type(),
+            Some("覆纹")
+        );
+        assert_eq!(
+            DamageDisplayType::ZhouAnReactionFollow.attack_type(),
+            Some("浊燃")
+        );
+        assert_eq!(
+            DamageDisplayType::AnHunReactionFollow.attack_type(),
+            Some("黯星")
+        );
+        assert_eq!(
+            DamageDisplayType::HunXiangReactionFollow.attack_type(),
+            Some("浸染")
+        );
+        assert_eq!(
+            DamageDisplayType::XiangGuangReactionFollow.attack_type(),
+            Some("延滞")
+        );
+        assert_eq!(DamageDisplayType::None.attack_type(), None);
+    }
+
+    #[test]
+    fn keeps_normal_one_point_and_rejects_death_or_wrongly_typed_server_damage_wrappers() {
         let target = client_fight_target_identity(0);
         let mut second = target;
         second[20] = 8;
@@ -4580,9 +4990,15 @@ mod character_tests {
             &[(target, 100.0, 0, 1, 0), (second, 98.0, 0, 2, 0)],
         );
         let settlements = parse_server_damage_settlements(&one_point);
-        assert_eq!(settlements.len(), 1);
-        assert_eq!(settlements[0].target_handle, second);
-        assert_eq!(settlements[0].raw_damage, 2);
+        assert_eq!(settlements.len(), 2);
+        assert_eq!(settlements[0].target_handle, target);
+        assert_eq!(settlements[0].raw_damage, 1);
+        assert_eq!(settlements[1].target_handle, second);
+        assert_eq!(settlements[1].raw_damage, 2);
+
+        let mut death_settlement = vec![0_u8; 96];
+        write_client_fight_damage_array(&mut death_settlement, 5, &[(target, 0.0, 1, 1, 0)]);
+        assert!(parse_server_damage_settlements(&death_settlement).is_empty());
 
         let mut wrong_type = vec![0_u8; 96];
         write_client_fight_damage_array(&mut wrong_type, 5, &[(target, 100.0, 0, 50, 0)]);
@@ -4806,14 +5222,14 @@ mod character_tests {
     }
 
     #[test]
-    fn enforces_two_point_damage_floor() {
-        let below_floor = encoded_damage_record(1.0, 45_126.0, 104_448.0);
-        let at_floor = encoded_damage_record(2.0, 45_126.0, 104_448.0);
+    fn accepts_one_point_damage_floor() {
+        let below_floor = encoded_damage_record(0.5, 45_126.0, 104_448.0);
+        let at_floor = encoded_damage_record(1.0, 45_126.0, 104_448.0);
 
         assert!(parse_damage_records(&below_floor).is_empty());
         let records = parse_damage_records(&at_floor);
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].damage, 2.0);
+        assert_eq!(records[0].damage, 1.0);
     }
 
     #[test]
@@ -4917,6 +5333,48 @@ mod character_tests {
         assert_eq!(hits[0].direction, HitDirection::Outgoing);
         assert!(hits[0].target_id.is_none());
         assert!(hits[0].target_context.is_empty());
+    }
+
+    #[test]
+    fn normal_and_incoming_one_point_damage_survive_while_targeted_death_marker_is_filtered() {
+        let normal = encoded_damage_record(1.0, 100.0, 100.0);
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let outgoing = parse_damage_payload(&normal, 1.0, Some(1001), None, &characters, &[]);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].damage, 1.0);
+        assert_eq!(outgoing[0].direction, HitDirection::Outgoing);
+
+        let incoming = parse_damage_payload(
+            &normal,
+            1.0,
+            Some(1001),
+            None,
+            &characters,
+            &[(1001, 0, usize::MAX)],
+        );
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].direction, HitDirection::Incoming);
+
+        let mut marker = encoded_damage_record(1.0, 1.0, 100.0);
+        let target = client_fight_target_identity(8);
+        let target_bit_offset = 5 * 8 + BITPACKED_DAMAGE_RECORD_TARGET_WIRE_BIT_DELTA;
+        marker.resize(
+            (target_bit_offset + CLIENT_FIGHT_TARGET_WIRE_BITS).div_ceil(8) + 1,
+            0,
+        );
+        write_bytes_at_bit(&mut marker, target_bit_offset, &target);
+
+        assert!(parse_damage_payload(&marker, 1.0, None, None, &characters, &[]).is_empty());
     }
 
     #[test]

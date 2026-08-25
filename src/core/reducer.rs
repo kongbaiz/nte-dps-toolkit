@@ -740,6 +740,8 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_hp_percent: 0.0,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: None,
             reconciled_overkill_damage: Some(50.0),
         };
@@ -798,6 +800,8 @@ mod tests {
             target_hp_before: 100.0,
             target_hp_after: 0.0,
             target_hp_percent: 0.0,
+            damage_name: None,
+            attack_type: None,
             max_hp_reduction: None,
             reconciled_overkill_damage: Some(0.0),
         };
@@ -1020,6 +1024,8 @@ mod tests {
                 target_hp_before: 0.0,
                 target_hp_after: 0.0,
                 target_hp_percent: 0.0,
+                damage_name: None,
+                attack_type: None,
                 max_hp_reduction: None,
                 reconciled_overkill_damage: None,
             }),
