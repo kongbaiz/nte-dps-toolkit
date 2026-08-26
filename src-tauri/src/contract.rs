@@ -18,7 +18,6 @@ pub(crate) mod main_dps;
 pub(crate) mod main_dps_detail;
 pub(crate) mod mod_studio;
 pub(crate) mod packets;
-pub(crate) mod resources;
 pub(crate) mod settings;
 pub(crate) mod skills;
 pub(crate) mod stream;
@@ -214,15 +213,6 @@ impl CommandError {
         }
     }
 
-    pub(crate) fn resources(code: &'static str, message_key: &'static str) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
     pub(crate) fn diagnostics(code: &'static str, message_key: &'static str) -> Self {
         Self {
             code,
@@ -317,6 +307,15 @@ impl CommandError {
         Self {
             code: "invalid_settings_input",
             message_key: "Settings input is invalid.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn hotkey_conflict() -> Self {
+        Self {
+            code: "hotkey_conflict",
+            message_key: "This shortcut is already assigned",
             message_arguments: Vec::new(),
             diagnostic_line: None,
         }

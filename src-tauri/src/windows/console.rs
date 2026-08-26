@@ -3,7 +3,7 @@ use std::{sync::mpsc, thread, time::Duration};
 use nte_dps_tool::storage::config::CONSOLE_WINDOW_MIN_SIZE;
 use tauri::{LogicalPosition, LogicalSize, Position, Size, WebviewWindow, WindowEvent};
 
-use crate::{contract::CommandError, state::AppState};
+use crate::{contract::CommandError, state::AppState, windows::window_position};
 
 pub(crate) const CONSOLE_WINDOW_LABEL: &str = "console";
 pub(crate) const CONSOLE_NAVIGATE_EVENT: &str = "console-navigate";
@@ -93,6 +93,7 @@ fn restore_geometry(window: &WebviewWindow, state: &AppState) -> Result<(), Stri
                 f64::from(y),
             )))
             .map_err(|error| error.to_string())?;
+        window_position::ensure_window_reachable(window)?;
     } else {
         window.center().map_err(|error| error.to_string())?;
     }

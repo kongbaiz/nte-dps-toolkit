@@ -1,13 +1,16 @@
 [package]
 name = "nte-dps-tool-tauri"
-version = "0.4.2"
+version = "0.4.3"
 description = "Tauri desktop shell for NTE DPS TOOL"
 authors = ["NTE DPS TOOL contributors"]
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/kongbaiz/nte-dps-toolkit"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.98"
 autobins = false
+
+[lints.rust]
+linker_messages = "allow"
 
 [features]
 default = []
@@ -32,7 +35,7 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = { version = "2.7.2", default-features = false }
 tauri-plugin-log = "2"
 tokio = { version = "1", features = ["time"] }
-nte-dps-tool = { path = "..", default-features = false, features = ["desktop"] }
+nte-dps-tool = { path = "..", default-features = false, features = ["desktop", "tauri_frontend"] }
 
 [profile.release]
 panic = "abort"

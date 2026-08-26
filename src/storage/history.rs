@@ -742,6 +742,8 @@ fn history_hits_are_valid(hits: &[Hit]) -> bool {
         !hit.timestamp.is_finite()
             || !hit.damage.is_finite()
             || !hit.follow_up_damage.is_finite()
+            || !hit.max_hp_reduction.is_finite()
+            || hit.max_hp_reduction < 0.0
             || hit
                 .follow_up_timestamp
                 .is_some_and(|timestamp| !timestamp.is_finite())
@@ -2032,7 +2034,11 @@ fn import_record_text_to_dir(
     let mut record = parse_history_record(text, source_path)?;
     record.version = HISTORY_RECORD_VERSION;
     record.id = generate_record_id(Utc::now());
-    compatibility_save_result(write_record_to_dir(directory, record))
+    compatibility_save_result(write_record_to_dir_with_maintenance(
+        directory,
+        record,
+        |directory| prune_history_dir(directory, MAX_HISTORY_RECORDS),
+    ))
 }
 
 pub fn save_summary_to_dir(
@@ -2111,15 +2117,6 @@ fn save_record_to_dir_with_maintenance(
     write_record_to_dir_with_maintenance(directory, record, maintain)
 }
 
-fn write_record_to_dir(
-    directory: &Path,
-    record: HistoryRecord,
-) -> Result<HistorySaveOutcome, HistorySaveError> {
-    write_record_to_dir_with_maintenance(directory, record, |directory| {
-        prune_history_dir(directory, MAX_HISTORY_RECORDS)
-    })
-}
-
 fn history_chunk_path(
     directory: &Path,
     record_id: &str,
@@ -2130,6 +2127,16 @@ fn history_chunk_path(
         "{record_id}.{}.{}.nte-history-chunk",
         lane.file_token(),
         format_args!("{index:06}")
+    ))
+}
+
+fn history_main_path(directory: &Path, effective_timestamp: &DateTime<Utc>, id: &str) -> PathBuf {
+    directory.join(format!(
+        "{}_{}.json",
+        effective_timestamp
+            .with_timezone(&Local)
+            .format("%Y%m%d_%H%M%S"),
+        id
     ))
 }
 
@@ -2325,14 +2332,7 @@ fn write_borrowed_record_to_dir_with_maintenance(
         remove_chunk_paths(&created_paths);
         return Err(HistorySaveError::TooLarge);
     }
-    let effective_timestamp = recorded_at.unwrap_or(saved_at);
-    let main_path = directory.join(format!(
-        "{}_{}.json",
-        effective_timestamp
-            .with_timezone(&Local)
-            .format("%Y%m%d_%H%M%S"),
-        id
-    ));
+    let main_path = history_main_path(directory, recorded_at.unwrap_or(saved_at), id);
     if atomic_write_text(&main_path, &format!("{text}\n")).is_err() {
         remove_chunk_paths(&created_paths);
         return Err(HistorySaveError::Commit);
@@ -3054,6 +3054,7 @@ fn validate_history_summary_scope(
 fn validate_damage_attribution_summary(summary: &DamageAttributionSummary) -> Result<(), String> {
     for value in [
         summary.total_damage,
+        summary.max_hp_reduction,
         summary.character_direct_damage,
         summary.character_reaction_damage,
         summary.shared_damage,
@@ -3833,6 +3834,65 @@ mod tests {
     }
 
     #[test]
+    fn importing_the_same_external_id_never_overwrites_local_history() {
+        let directory = temp_history_dir("fresh_import_identity");
+        let saved_at = DateTime::<Utc>::from_timestamp_millis(1_700_000_000_125).unwrap();
+        let mut source = HistoryRecord {
+            id: "import-source".to_owned(),
+            saved_at,
+            summary: CombatSessionSummary {
+                total_damage: 100.0,
+                ..Default::default()
+            },
+            details: Some(HistoryCombatDetails {
+                global_hits: vec![history_hit(100.0, 1, 10.0)],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let first = import_record_json_to_dir(
+            &directory,
+            &serde_json::to_string(&source).expect("serialize first import"),
+        )
+        .expect("import first History record");
+        source.summary.total_damage = 250.0;
+        source.recorded_at = DateTime::<Utc>::from_timestamp_millis(1_700_000_001_125);
+        source.details.as_mut().unwrap().global_hits[0].damage = 250.0;
+        let second = import_record_json_to_dir(
+            &directory,
+            &serde_json::to_string(&source).expect("serialize updated import"),
+        )
+        .expect("import updated History record");
+
+        assert_ne!(first.id, source.id);
+        assert_ne!(second.id, source.id);
+        assert_ne!(first.id, second.id);
+        let entries = fs::read_dir(&directory)
+            .expect("read imported History directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+                .count(),
+            2
+        );
+        let loaded = load_history_from_dir(&directory);
+        assert_eq!(loaded.records.len(), 2);
+        let mut total_damage = loaded
+            .records
+            .iter()
+            .map(|record| record.summary.total_damage)
+            .collect::<Vec<_>>();
+        total_damage.sort_by(f64::total_cmp);
+        assert_eq!(total_damage, [100.0, 250.0]);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn detailed_record_uses_earliest_hit_time_for_display_file_and_sorting() {
         let directory = temp_history_dir("recorded_at");
         let mut state = CombatState::default();
@@ -4031,7 +4091,7 @@ mod tests {
     }
 
     #[test]
-    fn imported_record_preserves_details_with_a_fresh_local_id() {
+    fn imported_record_preserves_details_and_uses_fresh_local_identity() {
         let source_directory = temp_history_dir("import_source");
         let destination_directory = temp_history_dir("import_destination");
         let mut state = CombatState::default();
@@ -4054,6 +4114,7 @@ mod tests {
         let second = import_record_to_dir(&destination_directory, &export_path).unwrap();
 
         assert_ne!(first.id, original.id);
+        assert_ne!(second.id, original.id);
         assert_ne!(second.id, first.id);
         assert_eq!(first.version, HISTORY_RECORD_VERSION);
         assert_eq!(first.saved_at, original.saved_at);
@@ -4075,7 +4136,7 @@ mod tests {
     }
 
     #[test]
-    fn json_text_import_uses_the_same_validation_and_fresh_id_rules() {
+    fn json_text_import_uses_the_same_validation_and_fresh_identity_rules() {
         let directory = temp_history_dir("import_json_text");
         let json = r#"{"version":1,"id":"external-id","saved_at":"2026-01-01T00:00:00Z","summary":{"total_damage":42.0}}"#;
 
@@ -5581,6 +5642,7 @@ mod tests {
             target_hp_before: 1_000.0,
             target_hp_after: 1_000.0 - damage,
             target_max_hp: 1_000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: (1_000.0 - damage) / 10.0,
             target_id: None,
             target_name: None,
@@ -5600,6 +5662,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 }

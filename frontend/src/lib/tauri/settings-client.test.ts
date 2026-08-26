@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
 
 import { createSettingsClient } from "./settings-client";
-import type { SettingsSnapshot } from "./settings-contract";
+import {
+  SETTINGS_CONTRACT_VERSION,
+  type SettingsSnapshot,
+} from "./settings-contract";
 
 const encodeDelivery = (events: unknown[]) => ({
   streamProtocolVersion: 1,
@@ -12,7 +15,7 @@ const encodeDelivery = (events: unknown[]) => ({
 
 function settingsFixture(): SettingsSnapshot {
   return {
-    contractVersion: 6,
+    contractVersion: SETTINGS_CONTRACT_VERSION,
     generation: "0",
     adapterVersion: "0.3.6",
     interface: {
@@ -46,6 +49,7 @@ function settingsFixture(): SettingsSnapshot {
       devices: [],
       manualCaptureDevice: null,
       serverDamageCalibration: false,
+      includeMaxHpReductionInTotalDamage: false,
       separateReactionDamage: false,
       autoRoundAfterIdle: false,
       autoRoundIdleSeconds: 30,
@@ -60,7 +64,12 @@ function settingsFixture(): SettingsSnapshot {
         warningMessageKey:
           "Time-stop adjustment has not been verified for this session.",
       },
-      passthroughHotkey: "home",
+      passthroughHotkey: {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        key: "Home",
+      },
     },
     hotkeys: {
       enabled: true,
@@ -68,6 +77,17 @@ function settingsFixture(): SettingsSnapshot {
         { action: "capture", binding: null },
         { action: "reset", binding: null },
         { action: "hud", binding: null },
+        { action: "new-round", binding: null },
+      ],
+    },
+    mainDps: {
+      metrics: ["team-dps", "total-damage", "total-damage-taken", "duration"],
+      attributions: [
+        "character",
+        "reaction",
+        "shared",
+        "unattributed",
+        "max-hp-reduction",
       ],
     },
     captureFiles: { count: 0, totalBytes: "0", formattedSize: "0 B" },
@@ -122,6 +142,10 @@ describe("settings client", () => {
       shift: false,
       key: "F8",
     });
+    await client.setMainDpsDisplay({
+      metrics: ["team-dps", "duration"],
+      attributions: ["character", "max-hp-reduction"],
+    });
     await client.applyHudPreset("detailed");
     await client.moveHudModule("title", "summary", true);
     await client.setHudWidth(512);
@@ -157,6 +181,15 @@ describe("settings client", () => {
             alt: false,
             shift: false,
             key: "F8",
+          },
+        },
+      },
+      {
+        command: "set_settings_main_dps_display",
+        arguments_: {
+          settings: {
+            metrics: ["team-dps", "duration"],
+            attributions: ["character", "max-hp-reduction"],
           },
         },
       },

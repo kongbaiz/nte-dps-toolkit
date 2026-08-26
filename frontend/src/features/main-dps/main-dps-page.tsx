@@ -12,6 +12,7 @@ import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { ActionNotice } from "@/components/nte/action-notice";
 import { AnimatedNumber } from "@/components/nte/animated-number";
 import { useWindowMotion } from "@/components/nte/window-motion-context";
+import { MaxHpCompressionEffect } from "@/components/nte/max-hp-compression-effect";
 import {
   AlertDialog,
   AlertDialogBackdrop,
@@ -851,34 +852,44 @@ export function MainDpsPage() {
               </section>
             )}
 
-            <section className="main-dps-metrics grid grid-cols-2 gap-1.5 min-[500px]:grid-cols-4">
-              <Metric
-                value={snapshot.readout.summary.teamDps}
-                format={formatMainMetric}
-                label={t("Team DPS")}
-              />
-              <Metric
-                value={snapshot.readout.summary.totalDamage}
-                format={formatMainMetric}
-                label={t("Total Damage")}
-              />
-              <Metric
-                value={snapshot.readout.summary.totalDamageTaken}
-                format={formatMainMetric}
-                label={t("Total Damage Taken")}
-                danger
-              />
-              <Metric
-                value={snapshot.readout.summary.durationSeconds}
-                format={formatDuration}
-                label={t("Time")}
-              />
-            </section>
+            {snapshot.display.metrics.length > 0 && (
+              <section className="main-dps-metrics grid grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-1.5">
+                {snapshot.display.metrics.includes("team-dps") && (
+                  <Metric
+                    value={snapshot.readout.summary.teamDps}
+                    format={formatMainMetric}
+                    label={t("Team DPS")}
+                  />
+                )}
+                {snapshot.display.metrics.includes("total-damage") && (
+                  <Metric
+                    value={snapshot.readout.summary.totalDamage}
+                    format={formatMainMetric}
+                    label={t("Total Damage")}
+                  />
+                )}
+                {snapshot.display.metrics.includes("total-damage-taken") && (
+                  <Metric
+                    value={snapshot.readout.summary.totalDamageTaken}
+                    format={formatMainMetric}
+                    label={t("Total Damage Taken")}
+                    danger
+                  />
+                )}
+                {snapshot.display.metrics.includes("duration") && (
+                  <Metric
+                    value={snapshot.readout.summary.durationSeconds}
+                    format={formatDuration}
+                    label={t("Time")}
+                  />
+                )}
+              </section>
+            )}
 
             <section className="main-dps-team-section flex min-h-0 flex-1 flex-col gap-2">
               <div className="flex min-w-0 items-center gap-3">
                 <h1 className="text-base font-medium">{t("Team")}</h1>
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                <span className="main-dps-team-hint min-w-0 flex-1 truncate text-xs text-muted-foreground">
                   {t(
                     "Click a character to view details; right-click to copy data or hide the character",
                   )}
@@ -896,9 +907,11 @@ export function MainDpsPage() {
                   {t("Team Combat Details")}
                 </Button>
               </div>
-              {snapshot.readout.damageAttribution.totalDamage > 0 && (
+              {(snapshot.readout.damageAttribution.totalDamage > 0 ||
+                snapshot.readout.damageAttribution.maxHpReduction > 0) && (
                 <DamageAttributionStrip
                   attribution={snapshot.readout.damageAttribution}
+                  visible={snapshot.display.attributions}
                   onOpen={(filter) =>
                     void effect(`team-details-${filter}`, () =>
                       mainDpsClient.openTeamDetails(filter),
@@ -1201,9 +1214,11 @@ function CharacterRow({
 
 function DamageAttributionStrip({
   attribution,
+  visible,
   onOpen,
 }: {
   attribution: MainDpsSnapshot["readout"]["damageAttribution"];
+  visible: MainDpsSnapshot["display"]["attributions"];
   onOpen(filter: MainDpsOpenDetailFilter): void;
 }) {
   const percentage = (damage: number) =>
@@ -1212,18 +1227,22 @@ function DamageAttributionStrip({
     ? attribution.characterDirectDamage
     : attribution.characterDirectDamage + attribution.characterReactionDamage;
   const items = [
-    {
-      label: t(
-        attribution.separateReactionDamage
-          ? "Character direct"
-          : "Character attributed",
-      ),
-      value: percentage(characterDamage),
-      filter: attribution.separateReactionDamage
-        ? ("characterDirect" as const)
-        : ("characterAttributed" as const),
-    },
-    ...(attribution.separateReactionDamage
+    ...(visible.includes("character")
+      ? [
+          {
+            label: t(
+              attribution.separateReactionDamage
+                ? "Character direct"
+                : "Character attributed",
+            ),
+            value: percentage(characterDamage),
+            filter: attribution.separateReactionDamage
+              ? ("characterDirect" as const)
+              : ("characterAttributed" as const),
+          },
+        ]
+      : []),
+    ...(visible.includes("reaction") && attribution.separateReactionDamage
       ? [
           {
             label: t("Reaction Damage"),
@@ -1231,7 +1250,7 @@ function DamageAttributionStrip({
             filter: "reactionDamage" as const,
           },
         ]
-      : attribution.characterReactionDamage > 0
+      : visible.includes("reaction") && attribution.characterReactionDamage > 0
         ? [
             {
               label: tf("Includes reaction damage: {}%", [
@@ -1245,17 +1264,28 @@ function DamageAttributionStrip({
             },
           ]
         : []),
-    {
-      label: t("Shared mechanics"),
-      value: percentage(attribution.sharedDamage),
-      filter: "sharedMechanics" as const,
-    },
-    {
-      label: t("Unattributed"),
-      value: percentage(attribution.unattributedDamage),
-      filter: "unattributed" as const,
-    },
+    ...(visible.includes("shared")
+      ? [
+          {
+            label: t("Shared mechanics"),
+            value: percentage(attribution.sharedDamage),
+            filter: "sharedMechanics" as const,
+          },
+        ]
+      : []),
+    ...(visible.includes("unattributed")
+      ? [
+          {
+            label: t("Unattributed"),
+            value: percentage(attribution.unattributedDamage),
+            filter: "unattributed" as const,
+          },
+        ]
+      : []),
   ];
+
+  const showMaxHpReduction = visible.includes("max-hp-reduction");
+  if (items.length === 0 && !showMaxHpReduction) return null;
 
   return (
     <div className="main-dps-attribution flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
@@ -1273,6 +1303,19 @@ function DamageAttributionStrip({
           {item.value !== null && ` ${item.value}`}
         </button>
       ))}
+      {showMaxHpReduction && (
+        <MaxHpCompressionEffect
+          key={attribution.maxHpReduction}
+          label={t("Life reduction")}
+          value={
+            attribution.includeMaxHpReductionInTotalDamage
+              ? `${formatMainMetric(attribution.maxHpReduction)} · ${percentage(attribution.maxHpReduction)}`
+              : formatMainMetric(attribution.maxHpReduction)
+          }
+          active={attribution.maxHpReduction > 0}
+          className="px-2 py-1"
+        />
+      )}
     </div>
   );
 }

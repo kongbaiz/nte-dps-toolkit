@@ -30,6 +30,18 @@ export function adjacentHistoryRecordId(
   return records[index + 1]?.id ?? records[index - 1]?.id ?? null;
 }
 
+export function validHistoryComparisonPair(
+  records: HistoryRecord[],
+  leftId: string,
+  rightId: string,
+): boolean {
+  return (
+    leftId !== rightId &&
+    records.some((record) => record.id === leftId) &&
+    records.some((record) => record.id === rightId)
+  );
+}
+
 export function historyRecordById(
   records: HistoryRecord[],
   recordId: string | null,

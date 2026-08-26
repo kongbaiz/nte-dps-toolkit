@@ -213,7 +213,15 @@ pub(crate) fn start_main_dps_new_round(
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    let current = snapshot(state.inner())?;
+    start_main_dps_new_round_action(&app, state.inner())?;
+    snapshot(state.inner())
+}
+
+pub(crate) fn start_main_dps_new_round_action(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<(), CommandError> {
+    let current = snapshot(state)?;
     if !current.actions.can_start_new_round {
         return Err(action_unavailable());
     }
@@ -222,13 +230,13 @@ pub(crate) fn start_main_dps_new_round(
         CommandError::main_dps("round_archive_failed", "Failed to start a new combat round")
     })?;
     island::publish_notice(
-        &app,
-        state.inner(),
+        app,
+        state,
         "success",
         "New combat round started",
         Vec::new(),
     )?;
-    snapshot(state.inner())
+    Ok(())
 }
 
 #[tauri::command]

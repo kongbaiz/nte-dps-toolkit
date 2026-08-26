@@ -1431,10 +1431,10 @@ impl Drop for LiveCaptureInner {
         if let Some(control) = runtime.control.take() {
             let _ = control.try_send(EventWorkerControl::Shutdown);
         }
-        if let Some(worker) = runtime.worker.take() {
-            if !dropping_on_event_worker {
-                let _ = worker.join();
-            }
+        if let Some(worker) = runtime.worker.take()
+            && !dropping_on_event_worker
+        {
+            let _ = worker.join();
         }
 
         let replay = match self.replay.get_mut() {
@@ -1692,6 +1692,7 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
@@ -1711,6 +1712,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }))
     }
 

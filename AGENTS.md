@@ -490,3 +490,15 @@ Hardened review 只回答与变更相关的问题：
 - [Amazon Leadership Principles](https://www.amazon.jobs/content/en/our-workplace/leadership-principles)：Invent and Simplify；可逆决策不需要过度研究，强调 Bias for Action。
 - [Microsoft Azure Well-Architected: Simplify](https://learn.microsoft.com/en-us/azure/well-architected/reliability/simplify)：只引入支撑当前目标的组件，避免趋势驱动和过细拆分。
 - [Spotify Engineering: Agile à la Spotify](https://engineering.atspotify.com/2013/3/agile-a-la-spotify)：保持简单、频繁交付，用数据验证假设，同时不走捷径。
+
+## 11.File modification policy
+
+- Do not create backup, rollback, `.bak`, `.old`, copy, snapshot, or recovery files unless explicitly requested.
+- Do not duplicate existing files solely to preserve their previous contents.
+- Git is the source of truth for rollback and recovery.
+- Before editing, use `git status` / `git diff` when necessary to understand existing changes.
+- Preserve unrelated uncommitted user changes.
+- Make edits directly to the intended files.
+- Temporary files created during implementation must be removed before finishing.
+- Do not create rollback scripts or rollback artifacts unless the task explicitly requires a production rollback mechanism.
+- Do not spend time preparing rollback artifacts for normal code edits.

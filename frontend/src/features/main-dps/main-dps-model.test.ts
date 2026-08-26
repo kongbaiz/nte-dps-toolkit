@@ -9,6 +9,7 @@ import {
   mainCaptureStatusTone,
   mainCharacterListState,
   mainDpsContentState,
+  maxHpCompression,
   roundLabel,
 } from "./main-dps-model";
 
@@ -34,6 +35,23 @@ describe("main DPS view model", () => {
     expect(characterAccent(1010, "#123abc")).toBe("#123abc");
     expect(characterAccent(1010, "not-a-color")).toBe("#40a31f");
     expect(characterAccent(1010, null)).toBe("#40a31f");
+  });
+
+  it("projects an observed max-HP reduction as a bounded bar compression", () => {
+    const observed = maxHpCompression(2_924_242, 623_492);
+    expect(observed.remainingMaxHp).toBe(2_300_750);
+    expect(observed.reductionPercent).toBeCloseTo(21.3215, 4);
+    expect(observed.remainingPercent).toBeCloseTo(78.6785, 4);
+    expect(maxHpCompression(1_000, 1_500)).toEqual({
+      remainingMaxHp: 0,
+      reductionPercent: 100,
+      remainingPercent: 0,
+    });
+    expect(maxHpCompression(0, 500)).toEqual({
+      remainingMaxHp: 0,
+      reductionPercent: 0,
+      remainingPercent: 0,
+    });
   });
 
   it("orders string generations without Number precision loss", () => {

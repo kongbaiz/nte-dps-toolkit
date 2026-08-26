@@ -23,7 +23,7 @@ use nte_dps_tool::{
     storage::{
         config::{
             AccentColor, DpsTimeMode, GlobalHotkeyAction, HotkeyBinding, HotkeyKey,
-            PassthroughHotkey, ThemePreset, UiDensity,
+            MainDpsAttribution, MainDpsDisplayConfig, MainDpsMetric, ThemePreset, UiDensity,
         },
         i18n::{self, Language},
         io_util::atomic_write_text,
@@ -36,8 +36,9 @@ use crate::{
     contract::{
         CommandError,
         settings::{
-            CaptureSettingsInput, HotkeyBindingSnapshot, InterfaceSettingsInput, SettingsSnapshot,
-            TeamDataExportResult, TeamDataImportFileResult, UpdateSettingsInput,
+            CaptureSettingsInput, HotkeyBindingSnapshot, InterfaceSettingsInput,
+            MainDpsDisplayInput, SettingsSnapshot, TeamDataExportResult, TeamDataImportFileResult,
+            UpdateSettingsInput,
         },
     },
     file_dialog::{self, DialogOutcome},
@@ -375,6 +376,21 @@ pub(crate) fn set_settings_capture(
         return Err(CommandError::invalid_settings_input());
     }
     let dps_time_mode = parse_dps_time_mode(&settings.dps_time_mode)?;
+    let passthrough_hotkey = parse_hotkey_binding(settings.passthrough_hotkey)?;
+    if passthrough_hotkey.is_reserved()
+        || hotkey_conflicts(
+            passthrough_hotkey,
+            state.passthrough_hotkey(),
+            state.global_hotkeys(),
+            None,
+        )
+    {
+        return Err(if passthrough_hotkey.is_reserved() {
+            CommandError::invalid_settings_input()
+        } else {
+            CommandError::hotkey_conflict()
+        });
+    }
     if dps_time_mode == DpsTimeMode::TimeStopAdjusted
         && state
             .mod_studio()
@@ -389,11 +405,12 @@ pub(crate) fn set_settings_capture(
             filter,
             manual_device,
             settings.server_damage_calibration,
+            settings.include_max_hp_reduction_in_total_damage,
             settings.separate_reaction_damage,
             settings.auto_round_after_idle,
             settings.auto_round_idle_seconds,
             dps_time_mode,
-            parse_passthrough_hotkey(&settings.passthrough_hotkey)?,
+            passthrough_hotkey,
         )
         .map_err(settings_save_error)?;
     refresh_hotkey_configuration(&state);
@@ -438,17 +455,53 @@ pub(crate) fn set_settings_hotkey_binding(
     console::validate_window(&window)?;
     let action = parse_global_hotkey_action(&action)?;
     let binding = binding.map(parse_hotkey_binding).transpose()?;
-    if binding.is_some_and(|binding| {
-        (!binding.ctrl && !binding.alt && !binding.shift) || binding.is_reserved()
-    }) {
+    if binding.is_some_and(HotkeyBinding::is_reserved) {
         return Err(CommandError::invalid_settings_input());
     }
     let mut hotkeys = state.global_hotkeys();
+    if binding.is_some_and(|binding| {
+        hotkey_conflicts(binding, state.passthrough_hotkey(), hotkeys, Some(action))
+    }) {
+        return Err(CommandError::hotkey_conflict());
+    }
     hotkeys.set_binding(action, binding);
     state
         .update_global_hotkeys(hotkeys)
         .map_err(settings_save_error)?;
     refresh_hotkey_configuration(&state);
+    Ok(state.settings_snapshot())
+}
+
+#[tauri::command]
+pub(crate) fn set_settings_main_dps_display(
+    settings: MainDpsDisplayInput,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<SettingsSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    let metrics = settings
+        .metrics
+        .iter()
+        .map(|value| parse_main_dps_metric(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let attributions = settings
+        .attributions
+        .iter()
+        .map(|value| parse_main_dps_attribution(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    if metrics.len() > MainDpsMetric::ALL.len()
+        || attributions.len() > MainDpsAttribution::ALL.len()
+        || unique_len(&metrics) != metrics.len()
+        || unique_len(&attributions) != attributions.len()
+    {
+        return Err(CommandError::invalid_settings_input());
+    }
+    state
+        .update_main_dps_display(MainDpsDisplayConfig {
+            metrics,
+            attributions,
+        })
+        .map_err(settings_save_error)?;
     Ok(state.settings_snapshot())
 }
 
@@ -1035,47 +1088,62 @@ fn parse_dps_time_mode(value: &str) -> Result<DpsTimeMode, CommandError> {
     }
 }
 
-fn parse_passthrough_hotkey(value: &str) -> Result<PassthroughHotkey, CommandError> {
-    match value {
-        "home" => Ok(PassthroughHotkey::Home),
-        "insert" => Ok(PassthroughHotkey::Insert),
-        "f8" => Ok(PassthroughHotkey::F8),
-        "f9" => Ok(PassthroughHotkey::F9),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
 fn parse_global_hotkey_action(value: &str) -> Result<GlobalHotkeyAction, CommandError> {
     match value {
         "capture" => Ok(GlobalHotkeyAction::ToggleCapture),
         "reset" => Ok(GlobalHotkeyAction::ResetSession),
         "hud" => Ok(GlobalHotkeyAction::ToggleHud),
+        "new-round" => Ok(GlobalHotkeyAction::NewRound),
         _ => Err(CommandError::invalid_settings_input()),
     }
 }
 
 fn parse_hotkey_binding(binding: HotkeyBindingSnapshot) -> Result<HotkeyBinding, CommandError> {
-    let key = match binding.key.as_str() {
-        "F1" => HotkeyKey::F1,
-        "F2" => HotkeyKey::F2,
-        "F3" => HotkeyKey::F3,
-        "F4" => HotkeyKey::F4,
-        "F5" => HotkeyKey::F5,
-        "F6" => HotkeyKey::F6,
-        "F7" => HotkeyKey::F7,
-        "F8" => HotkeyKey::F8,
-        "F9" => HotkeyKey::F9,
-        "F10" => HotkeyKey::F10,
-        "F11" => HotkeyKey::F11,
-        "F12" => HotkeyKey::F12,
-        _ => return Err(CommandError::invalid_settings_input()),
-    };
+    let key = HotkeyKey::all()
+        .iter()
+        .copied()
+        .find(|key| key.label() == binding.key)
+        .ok_or_else(CommandError::invalid_settings_input)?;
     Ok(HotkeyBinding::new(
         binding.ctrl,
         binding.alt,
         binding.shift,
         key,
     ))
+}
+
+fn parse_main_dps_metric(value: &str) -> Result<MainDpsMetric, CommandError> {
+    MainDpsMetric::ALL
+        .into_iter()
+        .find(|metric| metric.id() == value)
+        .ok_or_else(CommandError::invalid_settings_input)
+}
+
+fn parse_main_dps_attribution(value: &str) -> Result<MainDpsAttribution, CommandError> {
+    MainDpsAttribution::ALL
+        .into_iter()
+        .find(|attribution| attribution.id() == value)
+        .ok_or_else(CommandError::invalid_settings_input)
+}
+
+fn unique_len<T: PartialEq>(values: &[T]) -> usize {
+    values
+        .iter()
+        .enumerate()
+        .filter(|(index, value)| !values[..*index].contains(value))
+        .count()
+}
+
+fn hotkey_conflicts(
+    binding: HotkeyBinding,
+    passthrough: HotkeyBinding,
+    hotkeys: nte_dps_tool::storage::config::GlobalHotkeys,
+    excluded_action: Option<GlobalHotkeyAction>,
+) -> bool {
+    (excluded_action.is_some() && binding == passthrough)
+        || GlobalHotkeyAction::all().iter().copied().any(|action| {
+            excluded_action != Some(action) && hotkeys.binding(action) == Some(binding)
+        })
 }
 
 fn refresh_hotkey_configuration(state: &AppState) {
@@ -1097,6 +1165,37 @@ mod tests {
     use nte_dps_tool::engine::model::{TeamDps, TeamDpsExport, TeamDpsMember};
 
     use super::*;
+
+    #[test]
+    fn custom_hotkeys_parse_and_conflict_across_global_and_passthrough_actions() {
+        let plain_k = parse_hotkey_binding(HotkeyBindingSnapshot {
+            ctrl: false,
+            alt: false,
+            shift: false,
+            key: "K".to_owned(),
+        })
+        .expect("letter hotkey");
+        assert_eq!(plain_k.key, HotkeyKey::K);
+
+        let passthrough = HotkeyBinding::new(true, false, false, HotkeyKey::Home);
+        let hotkeys = nte_dps_tool::storage::config::GlobalHotkeys {
+            capture: Some(plain_k),
+            ..Default::default()
+        };
+        assert!(hotkey_conflicts(plain_k, passthrough, hotkeys, None));
+        assert!(hotkey_conflicts(
+            passthrough,
+            passthrough,
+            hotkeys,
+            Some(GlobalHotkeyAction::ToggleHud)
+        ));
+        assert!(!hotkey_conflicts(
+            plain_k,
+            passthrough,
+            hotkeys,
+            Some(GlobalHotkeyAction::ToggleCapture)
+        ));
+    }
 
     struct TeamFileFixture {
         root: PathBuf,

@@ -187,6 +187,7 @@ pub struct HudSnapshot {
 pub struct HudProjectionOptions {
     pub dps_time_basis: DpsTimeBasis,
     pub separate_reaction_damage: bool,
+    pub include_max_hp_reduction_in_total_damage: bool,
     pub selected_abyss_half: Option<AbyssHalf>,
     pub preview_when_empty: bool,
     pub timeline_bucket_seconds: f64,
@@ -197,6 +198,7 @@ impl Default for HudProjectionOptions {
         Self {
             dps_time_basis: DpsTimeBasis::SubtractTimeStop,
             separate_reaction_damage: false,
+            include_max_hp_reduction_in_total_damage: false,
             selected_abyss_half: None,
             preview_when_empty: false,
             timeline_bucket_seconds: 1.0,
@@ -223,11 +225,13 @@ pub fn project_hud(
             project_readout(
                 &state.stats,
                 state.total_damage,
+                state.max_hp_reduction,
                 state.total_damage_taken,
                 state.dps_with_time_stop(subtract_time_stop),
                 state.duration_with_time_stop(subtract_time_stop),
                 hidden_character_ids,
                 options.separate_reaction_damage,
+                options.include_max_hp_reduction_in_total_damage,
                 |row| state.character_dps_with_time_stop(row, subtract_time_stop),
             )
         },
@@ -237,6 +241,7 @@ pub fn project_hud(
                 party,
                 hidden_character_ids,
                 options.separate_reaction_damage,
+                options.include_max_hp_reduction_in_total_damage,
                 subtract_time_stop,
             )
         },
@@ -305,16 +310,19 @@ fn project_party_readout(
     party: &PartyCombatState,
     hidden_character_ids: &HashSet<u32>,
     separate_reaction_damage: bool,
+    include_max_hp_reduction_in_total_damage: bool,
     subtract_time_stop: bool,
 ) -> (Vec<HudCharacterSnapshot>, HudSummarySnapshot) {
     project_readout(
         &party.stats,
         party.total_damage,
+        party.max_hp_reduction,
         party.total_damage_taken,
         party.dps_with_time_stop(subtract_time_stop),
         party.duration_with_time_stop(subtract_time_stop),
         hidden_character_ids,
         separate_reaction_damage,
+        include_max_hp_reduction_in_total_damage,
         |row| party.character_dps_with_time_stop(row, subtract_time_stop),
     )
 }
@@ -323,13 +331,26 @@ fn project_party_readout(
 fn project_readout(
     stats: &HashMap<u32, CharacterStats>,
     total_damage: f64,
+    max_hp_reduction: f64,
     total_damage_taken: f64,
     team_dps: f64,
     duration_seconds: f64,
     hidden_character_ids: &HashSet<u32>,
     separate_reaction_damage: bool,
+    include_max_hp_reduction_in_total_damage: bool,
     character_dps: impl Fn(&CharacterStats) -> f64,
 ) -> (Vec<HudCharacterSnapshot>, HudSummarySnapshot) {
+    let effective_total_damage = total_damage
+        + if include_max_hp_reduction_in_total_damage {
+            max_hp_reduction
+        } else {
+            0.0
+        };
+    let effective_team_dps = if include_max_hp_reduction_in_total_damage {
+        effective_total_damage / duration_seconds.max(1.0)
+    } else {
+        team_dps
+    };
     let mut rows = stats
         .values()
         .filter(|row| !hidden_character_ids.contains(&row.char_id) && row.has_hud_visible_hit())
@@ -344,7 +365,7 @@ fn project_readout(
                 hits: row.hits.to_string(),
                 damage: finite_nonnegative(row.damage),
                 dps: finite_nonnegative(dps),
-                damage_share_percent: percentage(row.damage, total_damage),
+                damage_share_percent: percentage(row.damage, effective_total_damage),
                 damage_taken: finite_nonnegative(row.damage_taken),
                 color: None,
             }
@@ -361,9 +382,9 @@ fn project_readout(
     (
         rows,
         HudSummarySnapshot {
-            team_dps: finite_nonnegative(team_dps),
+            team_dps: finite_nonnegative(effective_team_dps),
             duration_seconds: finite_nonnegative(duration_seconds),
-            total_damage: finite_nonnegative(total_damage),
+            total_damage: finite_nonnegative(effective_total_damage),
             total_damage_taken: finite_nonnegative(total_damage_taken),
         },
     )
@@ -553,6 +574,7 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
@@ -572,6 +594,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 
@@ -697,6 +721,39 @@ mod tests {
     }
 
     #[test]
+    fn max_hp_reduction_total_policy_uses_one_combined_denominator() {
+        let mut state = CombatState::default();
+        let mut source = hit(1.0, 1004, 100.0);
+        source.max_hp_reduction = 50.0;
+        state.push_hit(source);
+
+        let traditional = project_hud(
+            &state,
+            &HudConfig::default(),
+            &HashSet::new(),
+            HudProjectionOptions::default(),
+        );
+        let combined = project_hud(
+            &state,
+            &HudConfig::default(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                include_max_hp_reduction_in_total_damage: true,
+                ..HudProjectionOptions::default()
+            },
+        );
+
+        let traditional_summary = traditional.summary.expect("traditional summary");
+        let combined_summary = combined.summary.expect("combined summary");
+        assert_eq!(traditional_summary.total_damage, 100.0);
+        assert_eq!(traditional_summary.team_dps, 100.0);
+        assert_eq!(traditional.characters[0].damage_share_percent, 100.0);
+        assert_eq!(combined_summary.total_damage, 150.0);
+        assert_eq!(combined_summary.team_dps, 150.0);
+        assert!((combined.characters[0].damage_share_percent - 66.666_666).abs() < 0.001);
+    }
+
+    #[test]
     fn follow_up_updates_incremental_visibility_and_compact_timeline() {
         let mut state = CombatState::default();
         let mut source = hit(1.0, 77, 100.0);
@@ -778,6 +835,10 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_hp_percent: 0.0,
+            damage_name: None,
+            attack_type: None,
+            max_hp_reduction: None,
+            reconciled_overkill_damage: None,
         }));
         let corrected = state
             .compact_timeline(1.0, HUD_TIMELINE_MAX_BUCKETS)
