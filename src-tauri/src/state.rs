@@ -64,9 +64,9 @@ use nte_dps_tool::{
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
         config::{
-            self, AccentColor, DpsTimeMode, GlobalHotkeys, HudConfig, HudModule,
-            ModStudioLoadingMethod, PassthroughHotkey, ThemePreset, TimelineDpsViewMode, UiConfig,
-            UiDensity, sanitize_timeline_bucket_seconds,
+            self, AccentColor, DpsTimeMode, GlobalHotkeys, HotkeyBinding, HudConfig, HudModule,
+            MainDpsDisplayConfig, ModStudioLoadingMethod, ThemePreset, TimelineDpsViewMode,
+            UiConfig, UiDensity, sanitize_timeline_bucket_seconds,
         },
         history::{
             BorrowedHistorySaveOutcome, HistoryCombatDetails, HistoryDeleteTombstone,
@@ -210,10 +210,9 @@ const HUD_OPTIONAL_TITLE_HEIGHT: u16 = 22;
 const HUD_OPTIONAL_STATUS_HEIGHT: u16 = 22;
 const HUD_MINI_TIMELINE_HEIGHT: u16 = 42;
 const MAIN_DPS_DETAIL_CACHE_CAPACITY: usize = 4;
-/// Normal desktop capture keeps only bounded semantic events. Raw PCAPNG
-/// remains enabled independently; `FullDebug` is reserved for explicit
-/// diagnostics/replay tooling that opts into retaining packet payload text.
-const DESKTOP_PACKET_EMISSION_MODE: PacketEmissionMode = PacketEmissionMode::SummaryOnly;
+/// The desktop exposes a live packet-inspection page, so its capture must emit
+/// the bounded debug-packet projection as well as semantic observations.
+const DESKTOP_PACKET_EMISSION_MODE: PacketEmissionMode = PacketEmissionMode::FullDebug;
 type EmptyCurtainDataSnapshot = (
     Vec<EmptyCurtainItem>,
     Vec<EmptyCurtainCharacter>,
@@ -696,6 +695,7 @@ struct PausedPresentation {
 #[derive(Clone)]
 struct SelectedRoundPresentation {
     record_id: String,
+    history_revision: u64,
     state: Arc<CombatState>,
 }
 
@@ -1443,6 +1443,8 @@ impl AppState {
                             subtract_time_stop_for_state(config.dps_time_mode, state),
                         ),
                         separate_reaction_damage: config.separate_reaction_damage,
+                        include_max_hp_reduction_in_total_damage: config
+                            .include_max_hp_reduction_in_total_damage,
                         selected_abyss_half,
                         preview_when_empty: !self.passthrough(),
                         timeline_bucket_seconds: f64::from(sanitize_timeline_bucket_seconds(
@@ -1633,10 +1635,12 @@ impl AppState {
 
     fn presentation_mode_snapshot(&self) -> PresentationModeSnapshot {
         let outgoing_revision = self.0.live_capture.outgoing_hit_revision();
+        let history_revision = self.history_revision();
         let (mut mode, recovered) = self.0.presentation.lock_mode();
-        let stale_selection = mode.selected_round.is_some()
-            && mode.paused.is_none()
-            && outgoing_revision != mode.selected_outgoing_revision;
+        let stale_selection = mode.selected_round.as_ref().is_some_and(|selection| {
+            selection.history_revision != history_revision
+                || (mode.paused.is_none() && outgoing_revision != mode.selected_outgoing_revision)
+        });
         if stale_selection {
             mode.selected_round = None;
         }
@@ -1779,6 +1783,7 @@ impl AppState {
         operation: u64,
         load: impl FnOnce(&str) -> Result<CombatState, PresentationError>,
     ) -> Result<bool, PresentationError> {
+        let history_revision = self.history_revision();
         if self
             .0
             .presentation
@@ -1794,11 +1799,10 @@ impl AppState {
             self.0.presentation.publish_technical_and_main();
             return Err(PresentationError::StateUnavailable);
         }
-        if mode
-            .selected_round
-            .as_ref()
-            .map(|value| value.record_id.as_str())
-            == record_id.as_deref()
+        if mode.selected_round.as_ref().is_some_and(|value| {
+            Some(value.record_id.as_str()) == record_id.as_deref()
+                && value.history_revision == history_revision
+        }) || (record_id.is_none() && mode.selected_round.is_none())
         {
             return Ok(false);
         }
@@ -1825,6 +1829,7 @@ impl AppState {
                 };
                 Some(SelectedRoundPresentation {
                     record_id,
+                    history_revision,
                     state: Arc::new(state),
                 })
             }
@@ -1836,20 +1841,23 @@ impl AppState {
             self.0.presentation.publish_technical_and_main();
             return Err(PresentationError::StateUnavailable);
         }
-        if self
-            .0
-            .presentation
-            .selection_generation
-            .load(Ordering::Acquire)
-            != operation
+        if self.history_revision() != history_revision
+            || self
+                .0
+                .presentation
+                .selection_generation
+                .load(Ordering::Acquire)
+                != operation
         {
             return Ok(false);
         }
         if mode
             .selected_round
             .as_ref()
-            .map(|value| value.record_id.as_str())
-            == selection.as_ref().map(|value| value.record_id.as_str())
+            .map(|value| (value.record_id.as_str(), value.history_revision))
+            == selection
+                .as_ref()
+                .map(|value| (value.record_id.as_str(), value.history_revision))
         {
             return Ok(false);
         }
@@ -2176,6 +2184,8 @@ impl AppState {
             HudProjectionOptions {
                 dps_time_basis: DpsTimeBasis::from_subtract_time_stop(subtract_time_stop),
                 separate_reaction_damage: config.separate_reaction_damage,
+                include_max_hp_reduction_in_total_damage: config
+                    .include_max_hp_reduction_in_total_damage,
                 selected_abyss_half,
                 preview_when_empty: false,
                 timeline_bucket_seconds: f64::from(sanitize_timeline_bucket_seconds(
@@ -2197,7 +2207,14 @@ impl AppState {
                         })
                     })
                     .collect();
-                (state.damage_attribution_summary(), durations)
+                (
+                    state
+                        .damage_attribution_summary()
+                        .with_max_hp_reduction_in_total(
+                            config.include_max_hp_reduction_in_total_damage,
+                        ),
+                    durations,
+                )
             },
             |half| {
                 let party = state.abyss.half(half);
@@ -2213,7 +2230,14 @@ impl AppState {
                         })
                     })
                     .collect();
-                (party.damage_attribution_summary(), durations)
+                (
+                    party
+                        .damage_attribution_summary()
+                        .with_max_hp_reduction_in_total(
+                            config.include_max_hp_reduction_in_total_damage,
+                        ),
+                    durations,
+                )
             },
         );
         MainDpsReadout {
@@ -2419,7 +2443,7 @@ impl AppState {
         }
     }
 
-    pub(crate) fn passthrough_hotkey(&self) -> PassthroughHotkey {
+    pub(crate) fn passthrough_hotkey(&self) -> HotkeyBinding {
         self.ui_config().passthrough_hotkey
     }
 
@@ -2724,16 +2748,19 @@ impl AppState {
         filter: String,
         manual_capture_device: Option<String>,
         server_damage_calibration: bool,
+        include_max_hp_reduction_in_total_damage: bool,
         separate_reaction_damage: bool,
         auto_round_after_idle: bool,
         auto_round_idle_seconds: u32,
         dps_time_mode: DpsTimeMode,
-        passthrough_hotkey: PassthroughHotkey,
+        passthrough_hotkey: HotkeyBinding,
     ) -> Result<bool, SettingsServiceError> {
         let changed = self.update_ui_config(|config| {
             config.capture_filter = filter;
             config.manual_capture_device = manual_capture_device;
             config.server_damage_calibration = server_damage_calibration;
+            config.include_max_hp_reduction_in_total_damage =
+                include_max_hp_reduction_in_total_damage;
             config.separate_reaction_damage = separate_reaction_damage;
             config.auto_round_after_idle = auto_round_after_idle;
             config.auto_round_idle_seconds = auto_round_idle_seconds;
@@ -2756,6 +2783,15 @@ impl AppState {
     ) -> Result<bool, SettingsServiceError> {
         self.update_ui_config_with_effects(SettingsMutationEffects::SETTINGS, |config| {
             config.global_hotkeys = global_hotkeys;
+        })
+    }
+
+    pub(crate) fn update_main_dps_display(
+        &self,
+        display: MainDpsDisplayConfig,
+    ) -> Result<bool, SettingsServiceError> {
+        self.update_ui_config_with_effects(SettingsMutationEffects::SETTINGS_AND_MAIN, |config| {
+            config.main_dps_display = display
         })
     }
 
@@ -4271,11 +4307,8 @@ mod tests {
     use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
 
     #[test]
-    fn desktop_capture_uses_summary_only_by_default() {
-        assert_eq!(
-            DESKTOP_PACKET_EMISSION_MODE,
-            PacketEmissionMode::SummaryOnly
-        );
+    fn desktop_capture_retains_packets_for_the_live_inspector() {
+        assert_eq!(DESKTOP_PACKET_EMISSION_MODE, PacketEmissionMode::FullDebug);
     }
 
     #[test]
@@ -4331,6 +4364,7 @@ mod tests {
             target_hp_before: 1_000.0,
             target_hp_after: 1_000.0 - damage,
             target_max_hp: 1_000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 50.0,
             target_id: None,
             target_name: None,
@@ -4350,6 +4384,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 
@@ -4687,6 +4723,51 @@ mod tests {
     }
 
     #[test]
+    fn selected_history_round_reloads_same_id_after_history_revision_changes() {
+        let state = AppState::default();
+        let first_operation = state.reserve_main_round_selection();
+        assert!(
+            state
+                .set_main_selected_round_id_with(
+                    Some("reimported".to_owned()),
+                    first_operation,
+                    |_| {
+                        let mut selected = CombatState::default();
+                        selected.push_hit(test_hit(100.0));
+                        Ok(selected)
+                    },
+                )
+                .expect("select first History contents")
+        );
+
+        state.bump_history_revision();
+        assert!(
+            state.presentation_mode_snapshot().selected_round.is_none(),
+            "a History mutation must not keep projecting materialized old contents"
+        );
+        let second_operation = state.reserve_main_round_selection();
+        assert!(
+            state
+                .set_main_selected_round_id_with(
+                    Some("reimported".to_owned()),
+                    second_operation,
+                    |_| {
+                        let mut selected = CombatState::default();
+                        selected.push_hit(test_hit(250.0));
+                        Ok(selected)
+                    },
+                )
+                .expect("reload replaced History contents")
+        );
+        assert_eq!(
+            state
+                .with_main_presented_state(|selected| selected.total_damage)
+                .expect("project replaced History contents"),
+            250.0
+        );
+    }
+
+    #[test]
     fn already_loading_history_selection_cannot_overwrite_a_newer_intent() {
         let state = AppState::default();
         let slow_operation = state.reserve_main_round_selection();
@@ -4809,6 +4890,36 @@ mod tests {
         let (cache, recovered) = state.0.presentation.lock_main_readout_cache();
         assert!(!recovered);
         assert_eq!(cache.len(), 6, "readout cache memory must remain bounded");
+    }
+
+    #[test]
+    fn main_readout_can_include_max_hp_reduction_in_total_and_denominator() {
+        let config_path = temporary_config_path("max_hp_reduction_total");
+        let config = UiConfig {
+            include_max_hp_reduction_in_total_damage: true,
+            ..UiConfig::default()
+        };
+        let state = AppState::new_with_config_path(
+            config,
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        let mut hit = test_hit(100.0);
+        hit.max_hp_reduction = 50.0;
+        let mut combat = CombatState::default();
+        combat.push_hit(hit);
+        state.restore_live_state_for_test(combat, CaptureQualitySource::Live);
+
+        let readout = state.main_dps_readout().expect("combined main readout");
+        let summary = readout.hud.summary.expect("combined summary");
+        assert_eq!(summary.total_damage, 150.0);
+        assert_eq!(summary.team_dps, 150.0);
+        assert_eq!(readout.damage_attribution.total_damage, 150.0);
+        assert_eq!(readout.damage_attribution.max_hp_reduction, 50.0);
+        assert!((readout.hud.characters[0].damage_share_percent - 66.666_666).abs() < 0.001);
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
     }
 
     #[test]
@@ -6263,7 +6374,7 @@ mod tests {
     fn initial_window_and_hud_projection_follow_loaded_config() {
         let mut config = UiConfig {
             always_on_top: false,
-            passthrough_hotkey: PassthroughHotkey::F8,
+            passthrough_hotkey: HotkeyBinding::new(false, false, false, config::HotkeyKey::F8),
             ..UiConfig::default()
         };
         config.hud.width = 512;
@@ -6276,7 +6387,10 @@ mod tests {
         let snapshot = state.snapshot().expect("healthy live-capture snapshot");
 
         assert!(!state.always_on_top());
-        assert_eq!(state.passthrough_hotkey(), PassthroughHotkey::F8);
+        assert_eq!(
+            state.passthrough_hotkey(),
+            HotkeyBinding::new(false, false, false, config::HotkeyKey::F8)
+        );
         assert!(!state.passthrough_hotkey_ready());
         assert_eq!(state.hud_width(), 512);
         assert_eq!(
@@ -6323,6 +6437,7 @@ mod tests {
             paused.paused.as_mut().expect("paused snapshot").state = Arc::new(partial);
             paused.selected_round = Some(SelectedRoundPresentation {
                 record_id: "private-partial-round".to_owned(),
+                history_revision: 0,
                 state: Arc::new(CombatState::default()),
             });
             panic!("poison paused presentation after a partial replacement");
@@ -6466,6 +6581,7 @@ mod tests {
             mode.selected_outgoing_revision = selected_outgoing_revision;
             mode.selected_round = Some(SelectedRoundPresentation {
                 record_id: "history-round".to_owned(),
+                history_revision: state.history_revision(),
                 state: Arc::new(CombatState::default()),
             });
         }
@@ -7154,9 +7270,10 @@ mod tests {
                     true,
                     true,
                     true,
+                    true,
                     45,
                     DpsTimeMode::RealTime,
-                    PassthroughHotkey::Insert,
+                    HotkeyBinding::new(false, false, false, config::HotkeyKey::Insert),
                 )
                 .expect("capture settings save")
         );
@@ -7173,6 +7290,27 @@ mod tests {
         state
             .update_global_hotkeys(hotkeys)
             .expect("global hotkeys save");
+        let settings_revision = state.settings_revision();
+        let main_revision = state.0.presentation.main_revision.load(Ordering::Acquire);
+        assert!(
+            state
+                .update_main_dps_display(MainDpsDisplayConfig {
+                    metrics: vec![
+                        config::MainDpsMetric::TeamDps,
+                        config::MainDpsMetric::Duration,
+                    ],
+                    attributions: vec![
+                        config::MainDpsAttribution::Character,
+                        config::MainDpsAttribution::MaxHpReduction,
+                    ],
+                })
+                .expect("main DPS display settings save")
+        );
+        assert_eq!(state.settings_revision(), settings_revision + 1);
+        assert_eq!(
+            state.0.presentation.main_revision.load(Ordering::Acquire),
+            main_revision + 1
+        );
 
         let snapshot = state.settings_snapshot();
         assert_eq!(snapshot.interface.language, "ja");
@@ -7183,6 +7321,7 @@ mod tests {
             snapshot.capture.manual_capture_device.as_deref(),
             Some("capture-device")
         );
+        assert!(snapshot.capture.include_max_hp_reduction_in_total_damage);
         assert!(snapshot.capture.separate_reaction_damage);
         assert_eq!(snapshot.capture.auto_round_idle_seconds, 45);
         assert_eq!(
@@ -7200,6 +7339,11 @@ mod tests {
                 .map(|binding| binding.key.as_str()),
             Some("F8")
         );
+        assert_eq!(snapshot.main_dps.metrics, ["team-dps", "duration"]);
+        assert_eq!(
+            snapshot.main_dps.attributions,
+            ["character", "max-hp-reduction"]
+        );
 
         let saved: UiConfig =
             serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
@@ -7209,11 +7353,26 @@ mod tests {
         assert_eq!(saved.accent, AccentColor::Orange);
         assert_eq!(saved.capture_filter, "udp port 30196");
         assert!(saved.reduce_motion);
+        assert!(saved.include_max_hp_reduction_in_total_damage);
         assert_eq!(
             saved.manual_capture_device.as_deref(),
             Some("capture-device")
         );
         assert_eq!(saved.dps_time_mode, DpsTimeMode::RealTime);
+        assert_eq!(
+            saved.main_dps_display.metrics,
+            [
+                config::MainDpsMetric::TeamDps,
+                config::MainDpsMetric::Duration,
+            ]
+        );
+        assert_eq!(
+            saved.main_dps_display.attributions,
+            [
+                config::MainDpsAttribution::Character,
+                config::MainDpsAttribution::MaxHpReduction,
+            ]
+        );
 
         let restored = AppState::new_with_config_path(
             saved,
@@ -7223,6 +7382,10 @@ mod tests {
         assert_eq!(
             restored.settings_snapshot().capture.bpf_filter,
             "udp port 30196"
+        );
+        assert_eq!(
+            restored.settings_snapshot().main_dps.metrics,
+            ["team-dps", "duration"]
         );
         assert_eq!(
             restored.0.live_capture.history_archive_policy(),

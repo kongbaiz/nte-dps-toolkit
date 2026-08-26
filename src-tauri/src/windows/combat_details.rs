@@ -5,6 +5,7 @@ use tauri::{Emitter, LogicalPosition, LogicalSize, WebviewWindow, WindowEvent};
 use crate::{
     contract::CommandError,
     state::{AppState, MainDpsDetailKind},
+    windows::window_position,
 };
 
 pub(crate) const CHARACTER_DETAILS_WINDOW_LABEL: &str = "character-details";
@@ -44,6 +45,12 @@ pub(crate) fn show(
         window
             .set_position(LogicalPosition::new(f64::from(x), f64::from(y)))
             .map_err(window_error)?;
+        window_position::ensure_window_reachable(window).map_err(|error| {
+            log::error!("restore combat details window position failed: {error}");
+            CommandError::window_operation_failed()
+        })?;
+    } else {
+        window.center().map_err(window_error)?;
     }
     window.show().map_err(window_error)?;
     window.unminimize().map_err(window_error)?;
@@ -104,6 +111,12 @@ pub(crate) fn initialize(
         WindowEvent::Moved(_)
         | WindowEvent::Resized(_)
         | WindowEvent::ScaleFactorChanged { .. } => {
+            if !should_persist_geometry(
+                event_window.is_minimized().unwrap_or(false),
+                event_window.is_maximized().unwrap_or(false),
+            ) {
+                return;
+            }
             let Ok(scale) = event_window.scale_factor() else {
                 return;
             };
@@ -131,7 +144,23 @@ pub(crate) fn initialize(
     Ok(())
 }
 
+fn should_persist_geometry(minimized: bool, maximized: bool) -> bool {
+    !minimized && !maximized
+}
+
 fn window_error(error: tauri::Error) -> CommandError {
     log::error!("combat details window operation failed: {error}");
     CommandError::window_operation_failed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transient_minimized_or_maximized_geometry_is_not_persisted() {
+        assert!(should_persist_geometry(false, false));
+        assert!(!should_persist_geometry(true, false));
+        assert!(!should_persist_geometry(false, true));
+    }
 }

@@ -401,6 +401,7 @@ pub struct BattleSummaryDto {
     pub duration_seconds: f64,
     pub dps_time_mode: String,
     pub total_damage: f64,
+    pub max_hp_reduction: f64,
     pub total_dps: f64,
     pub total_damage_taken: f64,
     pub total_hits: u64,
@@ -416,6 +417,7 @@ impl From<&CombatSessionSummary> for BattleSummaryDto {
             duration_seconds: summary.duration_seconds,
             dps_time_mode: summary.dps_time_mode.protocol_code().to_owned(),
             total_damage: summary.total_damage,
+            max_hp_reduction: summary.damage_attribution.max_hp_reduction,
             total_dps: summary.total_dps,
             total_damage_taken: summary.total_damage_taken,
             total_hits: summary.total_hits,
@@ -460,7 +462,10 @@ mod tests {
             total_damage_taken: 25.0,
             total_hits: 4,
             reaction_damage_separated: false,
-            damage_attribution: Default::default(),
+            damage_attribution: crate::engine::model::DamageAttributionSummary {
+                max_hp_reduction: 40.0,
+                ..Default::default()
+            },
             characters: vec![CombatSessionCharacterSummary {
                 char_id: 7,
                 name: "Character".to_owned(),
@@ -495,6 +500,7 @@ mod tests {
         let dto = BattleSummaryDto::from(&summary);
         let json = serde_json::to_value(dto).unwrap();
         assert_eq!(json["dps_time_mode"], "subtract_time_stop");
+        assert_eq!(json["max_hp_reduction"], 40.0);
         assert_eq!(json["characters"][0]["char_id"], 7);
         assert_eq!(json["skills"][0]["name"], "Skill");
         assert_eq!(json["skills"][0]["ability_name"], "GA_Test_Skill");

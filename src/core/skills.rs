@@ -299,6 +299,7 @@ mod tests {
             target_hp_before: 1_000.0,
             target_hp_after: 1_000.0 - damage,
             target_max_hp: 1_000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 50.0,
             target_id: None,
             target_name: None,
@@ -318,6 +319,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 

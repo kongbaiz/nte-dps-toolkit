@@ -37,12 +37,6 @@ const HIT_DETAIL_COLUMN_WIDTH_MIN: u16 = 64;
 const HIT_DETAIL_COLUMN_WIDTH_MAX: u16 = 600;
 pub const MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES: usize = 32_768;
 
-const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
-    PassthroughHotkey::Home,
-    PassthroughHotkey::Insert,
-    PassthroughHotkey::F8,
-    PassthroughHotkey::F9,
-];
 const DPS_TIME_MODES: [DpsTimeMode; 2] = [DpsTimeMode::TimeStopAdjusted, DpsTimeMode::RealTime];
 const TIMELINE_DPS_VIEW_MODES: [TimelineDpsViewMode; 2] =
     [TimelineDpsViewMode::Team, TimelineDpsViewMode::Characters];
@@ -66,12 +60,49 @@ const HUD_MODULES: [HudModule; 5] = [
     HudModule::Characters,
     HudModule::Timeline,
 ];
-const GLOBAL_HOTKEY_ACTIONS: [GlobalHotkeyAction; 3] = [
+const GLOBAL_HOTKEY_ACTIONS: [GlobalHotkeyAction; 4] = [
     GlobalHotkeyAction::ToggleCapture,
     GlobalHotkeyAction::ResetSession,
     GlobalHotkeyAction::ToggleHud,
+    GlobalHotkeyAction::NewRound,
 ];
-const HOTKEY_KEYS: [HotkeyKey; 12] = [
+const HOTKEY_KEYS: [HotkeyKey; 59] = [
+    HotkeyKey::A,
+    HotkeyKey::B,
+    HotkeyKey::C,
+    HotkeyKey::D,
+    HotkeyKey::E,
+    HotkeyKey::F,
+    HotkeyKey::G,
+    HotkeyKey::H,
+    HotkeyKey::I,
+    HotkeyKey::J,
+    HotkeyKey::K,
+    HotkeyKey::L,
+    HotkeyKey::M,
+    HotkeyKey::N,
+    HotkeyKey::O,
+    HotkeyKey::P,
+    HotkeyKey::Q,
+    HotkeyKey::R,
+    HotkeyKey::S,
+    HotkeyKey::T,
+    HotkeyKey::U,
+    HotkeyKey::V,
+    HotkeyKey::W,
+    HotkeyKey::X,
+    HotkeyKey::Y,
+    HotkeyKey::Z,
+    HotkeyKey::Digit0,
+    HotkeyKey::Digit1,
+    HotkeyKey::Digit2,
+    HotkeyKey::Digit3,
+    HotkeyKey::Digit4,
+    HotkeyKey::Digit5,
+    HotkeyKey::Digit6,
+    HotkeyKey::Digit7,
+    HotkeyKey::Digit8,
+    HotkeyKey::Digit9,
     HotkeyKey::F1,
     HotkeyKey::F2,
     HotkeyKey::F3,
@@ -84,41 +115,18 @@ const HOTKEY_KEYS: [HotkeyKey; 12] = [
     HotkeyKey::F10,
     HotkeyKey::F11,
     HotkeyKey::F12,
+    HotkeyKey::Home,
+    HotkeyKey::End,
+    HotkeyKey::Insert,
+    HotkeyKey::Delete,
+    HotkeyKey::PageUp,
+    HotkeyKey::PageDown,
+    HotkeyKey::ArrowUp,
+    HotkeyKey::ArrowDown,
+    HotkeyKey::ArrowLeft,
+    HotkeyKey::ArrowRight,
+    HotkeyKey::Space,
 ];
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PassthroughHotkey {
-    #[default]
-    Home,
-    Insert,
-    F8,
-    F9,
-}
-
-impl PassthroughHotkey {
-    pub fn all() -> &'static [Self] {
-        &PASSTHROUGH_HOTKEYS
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Home => "Home",
-            Self::Insert => "Insert",
-            Self::F8 => "F8",
-            Self::F9 => "F9",
-        }
-    }
-
-    fn global_binding(self) -> Option<HotkeyBinding> {
-        let key = match self {
-            Self::F8 => HotkeyKey::F8,
-            Self::F9 => HotkeyKey::F9,
-            Self::Home | Self::Insert => return None,
-        };
-        Some(HotkeyBinding::new(false, false, false, key))
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -188,6 +196,7 @@ pub enum GlobalHotkeyAction {
     ToggleCapture,
     ResetSession,
     ToggleHud,
+    NewRound,
 }
 
 impl GlobalHotkeyAction {
@@ -201,6 +210,7 @@ impl GlobalHotkeyAction {
             Self::ToggleCapture => "Start / Stop Capture",
             Self::ResetSession => "Reset Session",
             Self::ToggleHud => "Toggle Combat HUD",
+            Self::NewRound => "New Round",
         }
     }
 }
@@ -208,6 +218,42 @@ impl GlobalHotkeyAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyKey {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Digit0,
+    Digit1,
+    Digit2,
+    Digit3,
+    Digit4,
+    Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
     F1,
     F2,
     F3,
@@ -220,6 +266,17 @@ pub enum HotkeyKey {
     F10,
     F11,
     F12,
+    Home,
+    End,
+    Insert,
+    Delete,
+    PageUp,
+    PageDown,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    Space,
 }
 
 impl HotkeyKey {
@@ -229,6 +286,42 @@ impl HotkeyKey {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+            Self::D => "D",
+            Self::E => "E",
+            Self::F => "F",
+            Self::G => "G",
+            Self::H => "H",
+            Self::I => "I",
+            Self::J => "J",
+            Self::K => "K",
+            Self::L => "L",
+            Self::M => "M",
+            Self::N => "N",
+            Self::O => "O",
+            Self::P => "P",
+            Self::Q => "Q",
+            Self::R => "R",
+            Self::S => "S",
+            Self::T => "T",
+            Self::U => "U",
+            Self::V => "V",
+            Self::W => "W",
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Z => "Z",
+            Self::Digit0 => "0",
+            Self::Digit1 => "1",
+            Self::Digit2 => "2",
+            Self::Digit3 => "3",
+            Self::Digit4 => "4",
+            Self::Digit5 => "5",
+            Self::Digit6 => "6",
+            Self::Digit7 => "7",
+            Self::Digit8 => "8",
+            Self::Digit9 => "9",
             Self::F1 => "F1",
             Self::F2 => "F2",
             Self::F3 => "F3",
@@ -241,6 +334,17 @@ impl HotkeyKey {
             Self::F10 => "F10",
             Self::F11 => "F11",
             Self::F12 => "F12",
+            Self::Home => "Home",
+            Self::End => "End",
+            Self::Insert => "Insert",
+            Self::Delete => "Delete",
+            Self::PageUp => "PageUp",
+            Self::PageDown => "PageDown",
+            Self::ArrowUp => "ArrowUp",
+            Self::ArrowDown => "ArrowDown",
+            Self::ArrowLeft => "ArrowLeft",
+            Self::ArrowRight => "ArrowRight",
+            Self::Space => "Space",
         }
     }
 }
@@ -282,10 +386,6 @@ impl HotkeyBinding {
     pub fn is_reserved(self) -> bool {
         self.alt && self.key == HotkeyKey::F4
     }
-
-    const fn has_modifier(self) -> bool {
-        self.ctrl || self.alt || self.shift
-    }
 }
 
 impl Default for HotkeyBinding {
@@ -301,6 +401,7 @@ pub struct GlobalHotkeys {
     pub capture: Option<HotkeyBinding>,
     pub reset: Option<HotkeyBinding>,
     pub hud: Option<HotkeyBinding>,
+    pub new_round: Option<HotkeyBinding>,
 }
 
 impl GlobalHotkeys {
@@ -309,6 +410,7 @@ impl GlobalHotkeys {
             GlobalHotkeyAction::ToggleCapture => self.capture,
             GlobalHotkeyAction::ResetSession => self.reset,
             GlobalHotkeyAction::ToggleHud => self.hud,
+            GlobalHotkeyAction::NewRound => self.new_round,
         }
     }
 
@@ -317,6 +419,7 @@ impl GlobalHotkeys {
             GlobalHotkeyAction::ToggleCapture => self.capture = binding,
             GlobalHotkeyAction::ResetSession => self.reset = binding,
             GlobalHotkeyAction::ToggleHud => self.hud = binding,
+            GlobalHotkeyAction::NewRound => self.new_round = binding,
         }
     }
 
@@ -324,7 +427,7 @@ impl GlobalHotkeys {
         for action in GlobalHotkeyAction::all() {
             if self
                 .binding(*action)
-                .is_some_and(|binding| !binding.has_modifier() || binding.is_reserved())
+                .is_some_and(HotkeyBinding::is_reserved)
             {
                 self.set_binding(*action, None);
             }
@@ -334,6 +437,13 @@ impl GlobalHotkeys {
         }
         if self.hud.is_some() && (self.hud == self.capture || self.hud == self.reset) {
             self.hud = None;
+        }
+        if self.new_round.is_some()
+            && (self.new_round == self.capture
+                || self.new_round == self.reset
+                || self.new_round == self.hud)
+        {
+            self.new_round = None;
         }
         self
     }
@@ -355,8 +465,146 @@ impl Default for GlobalHotkeys {
             capture: Some(HotkeyBinding::new(true, false, false, HotkeyKey::F9)),
             reset: Some(HotkeyBinding::new(true, false, false, HotkeyKey::F10)),
             hud: Some(HotkeyBinding::new(true, false, false, HotkeyKey::F11)),
+            new_round: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MainDpsMetric {
+    TeamDps,
+    TotalDamage,
+    TotalDamageTaken,
+    Duration,
+}
+
+impl MainDpsMetric {
+    pub const ALL: [Self; 4] = [
+        Self::TeamDps,
+        Self::TotalDamage,
+        Self::TotalDamageTaken,
+        Self::Duration,
+    ];
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::TeamDps => "team-dps",
+            Self::TotalDamage => "total-damage",
+            Self::TotalDamageTaken => "total-damage-taken",
+            Self::Duration => "duration",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MainDpsAttribution {
+    Character,
+    Reaction,
+    Shared,
+    Unattributed,
+    MaxHpReduction,
+}
+
+impl MainDpsAttribution {
+    pub const ALL: [Self; 5] = [
+        Self::Character,
+        Self::Reaction,
+        Self::Shared,
+        Self::Unattributed,
+        Self::MaxHpReduction,
+    ];
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Character => "character",
+            Self::Reaction => "reaction",
+            Self::Shared => "shared",
+            Self::Unattributed => "unattributed",
+            Self::MaxHpReduction => "max-hp-reduction",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MainDpsDisplayConfig {
+    pub metrics: Vec<MainDpsMetric>,
+    pub attributions: Vec<MainDpsAttribution>,
+}
+
+impl Default for MainDpsDisplayConfig {
+    fn default() -> Self {
+        Self {
+            metrics: MainDpsMetric::ALL.to_vec(),
+            attributions: MainDpsAttribution::ALL.to_vec(),
+        }
+    }
+}
+
+impl MainDpsDisplayConfig {
+    fn sanitized(mut self) -> Self {
+        let mut metrics = Vec::with_capacity(self.metrics.len().min(MainDpsMetric::ALL.len()));
+        for metric in self.metrics.drain(..) {
+            if !metrics.contains(&metric) {
+                metrics.push(metric);
+            }
+        }
+        let mut attributions =
+            Vec::with_capacity(self.attributions.len().min(MainDpsAttribution::ALL.len()));
+        for attribution in self.attributions.drain(..) {
+            if !attributions.contains(&attribution) {
+                attributions.push(attribution);
+            }
+        }
+        Self {
+            metrics,
+            attributions,
+        }
+    }
+}
+
+fn default_passthrough_hotkey() -> HotkeyBinding {
+    HotkeyBinding::new(false, false, false, HotkeyKey::Home)
+}
+
+fn deserialize_passthrough_hotkey<'de, D>(deserializer: D) -> Result<HotkeyBinding, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum LegacyPassthroughHotkey {
+        Home,
+        Insert,
+        F8,
+        F9,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PersistedPassthroughHotkey {
+        Binding(HotkeyBinding),
+        Legacy(LegacyPassthroughHotkey),
+    }
+
+    Ok(
+        match PersistedPassthroughHotkey::deserialize(deserializer)? {
+            PersistedPassthroughHotkey::Binding(binding) => binding,
+            PersistedPassthroughHotkey::Legacy(value) => HotkeyBinding::new(
+                false,
+                false,
+                false,
+                match value {
+                    LegacyPassthroughHotkey::Home => HotkeyKey::Home,
+                    LegacyPassthroughHotkey::Insert => HotkeyKey::Insert,
+                    LegacyPassthroughHotkey::F8 => HotkeyKey::F8,
+                    LegacyPassthroughHotkey::F9 => HotkeyKey::F9,
+                },
+            ),
+        },
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -783,6 +1031,8 @@ pub struct UiConfig {
     pub capture_filter: String,
     pub server_damage_calibration: bool,
     #[serde(default)]
+    pub include_max_hp_reduction_in_total_damage: bool,
+    #[serde(default)]
     pub separate_reaction_damage: bool,
     #[serde(default)]
     pub auto_round_after_idle: bool,
@@ -797,9 +1047,15 @@ pub struct UiConfig {
     pub hud: HudConfig,
     #[serde(default)]
     pub hit_detail_columns: HitDetailColumnsConfig,
-    pub passthrough_hotkey: PassthroughHotkey,
+    #[serde(
+        default = "default_passthrough_hotkey",
+        deserialize_with = "deserialize_passthrough_hotkey"
+    )]
+    pub passthrough_hotkey: HotkeyBinding,
     #[serde(default)]
     pub global_hotkeys: GlobalHotkeys,
+    #[serde(default)]
+    pub main_dps_display: MainDpsDisplayConfig,
     #[serde(default = "default_onboarding_done")]
     pub onboarding_done: bool,
     /// Last inner size (logical points) each window was dragged to, restored on the next launch.
@@ -861,6 +1117,7 @@ impl Default for UiConfig {
             island_offset_x: 0.0,
             capture_filter: default_capture_filter(),
             server_damage_calibration: false,
+            include_max_hp_reduction_in_total_damage: false,
             separate_reaction_damage: false,
             auto_round_after_idle: false,
             auto_round_idle_seconds: AUTO_ROUND_IDLE_SECONDS_DEFAULT,
@@ -870,8 +1127,9 @@ impl Default for UiConfig {
             timeline_dps_view_mode: TimelineDpsViewMode::default(),
             hud: HudConfig::default(),
             hit_detail_columns: HitDetailColumnsConfig::default(),
-            passthrough_hotkey: PassthroughHotkey::default(),
+            passthrough_hotkey: default_passthrough_hotkey(),
             global_hotkeys: GlobalHotkeys::default(),
+            main_dps_display: MainDpsDisplayConfig::default(),
             onboarding_done: true,
             main_window_size: None,
             abyss_window_size: None,
@@ -942,9 +1200,8 @@ impl UiConfig {
         self.hud = self.hud.sanitized();
         self.hit_detail_columns = self.hit_detail_columns.sanitized();
         self.global_hotkeys = self.global_hotkeys.sanitized();
-        if let Some(binding) = self.passthrough_hotkey.global_binding() {
-            self.global_hotkeys = self.global_hotkeys.without_binding(binding);
-        }
+        self.global_hotkeys = self.global_hotkeys.without_binding(self.passthrough_hotkey);
+        self.main_dps_display = self.main_dps_display.sanitized();
         self
     }
 }
@@ -1695,11 +1952,15 @@ mod tests {
             AUTO_ROUND_IDLE_SECONDS_DEFAULT
         );
         assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
+        assert_eq!(config.main_dps_display, MainDpsDisplayConfig::default());
         assert!(config.onboarding_done);
 
         let f9_config: UiConfig = serde_json::from_str(r#"{"passthrough_hotkey":"f9"}"#)
             .expect("legacy F9 config should deserialize");
-        assert_eq!(f9_config.passthrough_hotkey, PassthroughHotkey::F9);
+        assert_eq!(
+            f9_config.passthrough_hotkey,
+            HotkeyBinding::new(false, false, false, HotkeyKey::F9)
+        );
         assert_eq!(
             f9_config.sanitized().global_hotkeys.capture,
             GlobalHotkeys::default().capture
@@ -1746,6 +2007,7 @@ mod tests {
             capture: Some(HotkeyBinding::new(true, true, false, HotkeyKey::F12)),
             reset: None,
             hud: Some(HotkeyBinding::new(false, false, true, HotkeyKey::F7)),
+            new_round: Some(HotkeyBinding::new(true, false, true, HotkeyKey::F6)),
         };
 
         let json = serde_json::to_string(&hotkeys).expect("hotkeys should serialize");
@@ -1755,6 +2017,7 @@ mod tests {
         assert_eq!(decoded, hotkeys);
         assert!(json.contains("\"f12\""));
         assert!(json.contains("\"f7\""));
+        assert!(json.contains("\"f6\""));
         assert_eq!(hotkeys.capture.unwrap().label(), "Ctrl+Alt+F12");
         assert_eq!(
             GlobalHotkeyAction::ToggleCapture.label(),
@@ -1769,16 +2032,18 @@ mod tests {
             capture: Some(duplicate),
             reset: Some(duplicate),
             hud: Some(duplicate),
+            new_round: Some(duplicate),
             ..GlobalHotkeys::default()
         }
         .sanitized();
         assert_eq!(hotkeys.capture, Some(duplicate));
         assert_eq!(hotkeys.reset, None);
         assert_eq!(hotkeys.hud, None);
+        assert_eq!(hotkeys.new_round, None);
 
         let plain_f9 = HotkeyBinding::new(false, false, false, HotkeyKey::F9);
         let config = UiConfig {
-            passthrough_hotkey: PassthroughHotkey::F9,
+            passthrough_hotkey: plain_f9,
             global_hotkeys: GlobalHotkeys {
                 capture: Some(plain_f9),
                 ..GlobalHotkeys::default()
@@ -1790,14 +2055,17 @@ mod tests {
     }
 
     #[test]
-    fn sanitizes_unmodified_global_hotkeys() {
+    fn preserves_unmodified_global_hotkeys() {
         let hotkeys = GlobalHotkeys {
             capture: Some(HotkeyBinding::new(false, false, false, HotkeyKey::F9)),
             ..GlobalHotkeys::default()
         }
         .sanitized();
 
-        assert_eq!(hotkeys.capture, None);
+        assert_eq!(
+            hotkeys.capture,
+            Some(HotkeyBinding::new(false, false, false, HotkeyKey::F9))
+        );
         assert!(hotkeys.reset.is_some());
         assert!(hotkeys.hud.is_some());
     }
@@ -1809,6 +2077,34 @@ mod tests {
             ..GlobalHotkeys::default()
         };
         assert_eq!(hotkeys.sanitized().capture, None);
+    }
+
+    #[test]
+    fn main_dps_display_is_persisted_and_deduplicated() {
+        let config = UiConfig {
+            main_dps_display: MainDpsDisplayConfig {
+                metrics: vec![MainDpsMetric::Duration, MainDpsMetric::Duration],
+                attributions: vec![
+                    MainDpsAttribution::MaxHpReduction,
+                    MainDpsAttribution::Character,
+                    MainDpsAttribution::MaxHpReduction,
+                ],
+            },
+            ..UiConfig::default()
+        }
+        .sanitized();
+
+        assert_eq!(config.main_dps_display.metrics, [MainDpsMetric::Duration]);
+        assert_eq!(
+            config.main_dps_display.attributions,
+            [
+                MainDpsAttribution::MaxHpReduction,
+                MainDpsAttribution::Character
+            ]
+        );
+        let json = serde_json::to_string(&config).expect("serialize display settings");
+        let restored: UiConfig = serde_json::from_str(&json).expect("restore display settings");
+        assert_eq!(restored.main_dps_display, config.main_dps_display);
     }
 
     #[test]

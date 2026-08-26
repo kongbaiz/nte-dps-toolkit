@@ -13,6 +13,7 @@ import type {
   HudSettingOptionId,
   InterfaceSettingsInput,
   LayoutProfileId,
+  MainDpsDisplayInput,
   SettingsCommandError,
   SettingsSnapshot,
   UpdateComponentId,
@@ -167,6 +168,8 @@ export function useSettings(client: SettingsClient = settingsClient) {
       mutate(`hotkey:${action}`, () =>
         client.setHotkeyBinding(action, binding),
       ),
+    setMainDpsDisplay: (settings: MainDpsDisplayInput) =>
+      mutate("main-dps-display", () => client.setMainDpsDisplay(settings)),
     applyLayoutProfile: (profile: LayoutProfileId) =>
       mutate(`layout:${profile}`, () => client.applyLayoutProfile(profile)),
     openAbyssValues: () =>

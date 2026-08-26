@@ -1,8 +1,8 @@
 [package]
 name = "nte-dps-tool"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.98"
 description = "Local Windows DPS diagnostics tool for NTE."
 repository = "https://github.com/kongbaiz/nte-dps-toolkit"
 license = "AGPL-3.0-or-later"
@@ -17,6 +17,7 @@ desktop = [
 ]
 cli = []
 external_resources = []
+tauri_frontend = []
 
 [lib]
 name = "nte_dps_tool"

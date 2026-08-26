@@ -15,6 +15,7 @@ on:
       - "site/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
       - "build.rs"
       - "docs/**"
       - "README.md"
@@ -36,6 +37,7 @@ on:
       - "site/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
       - "build.rs"
       - "docs/**"
       - "README.md"
@@ -49,6 +51,7 @@ permissions:
   contents: write
 
 env:
+  CARGO_BUILD_WARNINGS: deny
   UPX_VERSION: 5.2.0
   UPX_SHA256: b471ebf1b7f20f4a89150264ed9a008a2a5bfd247f3c6d1184a75bb59ca08f5d
   NTE_UPDATE_KEY_ID: ${{ vars.NTE_UPDATE_KEY_ID }}
@@ -67,9 +70,8 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        # stable is a rolling branch and cannot be pinned by SHA; the project
-        # pins its minimum toolchain via rust-version in both Cargo.toml files.
+        uses: dtolnay/rust-toolchain@1.98.0
+        # Keep CI aligned with rust-toolchain.toml and the rust-version floor.
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -362,7 +364,7 @@ jobs:
           }
 
           foreach ($executable in $executables) {
-            & $upx.FullName -9 $executable.FullName
+            & $upx.FullName --best --lzma $executable.FullName
             if ($LASTEXITCODE -ne 0) {
               throw "UPX compression failed for $($executable.FullName)"
             }
@@ -371,6 +373,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "UPX integrity test failed for $($executable.FullName)"
             }
+          }
+
+          $core = Resolve-Path "dist/nte-core-windows-x64/nte-core.exe"
+          $versionJson = & $core version --json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Post-UPX nte-core smoke test failed"
+          }
+          $version = $versionJson | ConvertFrom-Json
+          if (-not $version.core_version) {
+            throw "Post-UPX nte-core smoke test returned an invalid version payload"
           }
 
       - name: Prepare release packages
@@ -384,11 +396,11 @@ jobs:
           # NTE DPS Tool - Windows x64
 
           - Standard Tauri desktop release with F12, Packets, Resources, and Diagnostics available.
-          - Runtime resources are embedded in the executable.
+          - Runtime data resources are embedded in the executable; UI images are embedded once by the Tauri frontend bundle.
           - Includes nte-updater.exe for official-channel updates.
           - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
-          - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
-          - The executable is compressed with UPX -9 and integrity-tested before packaging.
+          - JSON resources are minified and compressed during embedding.
+          - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
           "@
             "nte-core-windows-x64" = @"
           # NTE Core - Windows x64
@@ -396,7 +408,7 @@ jobs:
           - Local JSON-RPC 2.0 over NDJSON stdio sidecar for third-party integrations.
           - Does not open a network port and does not include desktop UI images or windowing dependencies.
           - Read CLI_PROTOCOL.md or CLI_PROTOCOL_ZH.md before integrating.
-          - The executable is compressed with UPX -9 and integrity-tested before packaging.
+          - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
           "@
             "nte-dps-tool-windows-external-resources" = @"
           # NTE DPS Tool - Windows External Resources Variant
@@ -407,7 +419,7 @@ jobs:
           - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
-          - The executable is compressed with UPX -9 and integrity-tested before packaging.
+          - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
           "@
           }
 

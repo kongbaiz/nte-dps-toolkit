@@ -17,9 +17,10 @@ use crate::{
 
 use super::dto::{BattleQualityDto, BattleSummaryDto};
 
-/// Version 2 adds bounded timeline omission/compaction metadata. All battle
-/// read DTOs share one version so a CLI consumer can reject mixed semantics.
-pub const BATTLE_READ_CONTRACT_VERSION: u32 = 2;
+/// Version 4 adds aggregate and per-hit maximum-HP reduction alongside the
+/// ordinary and overkill damage axes. All battle read DTOs share one version
+/// so a CLI consumer can reject mixed semantics.
+pub const BATTLE_READ_CONTRACT_VERSION: u32 = 4;
 pub const BATTLE_TIMELINE_BUCKET_LIMIT: usize = 10_000;
 pub const BATTLE_TIMELINE_ROLE_LIMIT: usize = 100_000;
 
@@ -173,6 +174,8 @@ pub struct BattleAxisHitDto {
     pub damage: f64,
     pub follow_up_damage: f64,
     pub total_damage: f64,
+    pub overkill_damage: f64,
+    pub max_hp_reduction: f64,
     pub follow_up_timestamp_unix: Option<f64>,
     pub target_id: Option<String>,
     pub target_name: Option<String>,
@@ -275,6 +278,8 @@ fn axis_hit(
         damage: hit.damage,
         follow_up_damage: hit.follow_up_damage,
         total_damage: hit.total_damage(),
+        overkill_damage: hit.overkill_damage(),
+        max_hp_reduction: hit.max_hp_reduction,
         follow_up_timestamp_unix: hit.follow_up_timestamp,
         target_id: hit.target_id.clone(),
         target_name: hit.target_name.clone(),
@@ -611,10 +616,25 @@ mod tests {
     #[test]
     fn battle_read_axis_is_cursor_paginated_and_reports_trimmed_history() {
         let mut state = CombatState::default();
-        state.push_hit(test_hit(1.0, 100.0));
+        let mut lethal = test_hit(1.0, 100.0);
+        lethal.target_hp_before = 60.0;
+        lethal.target_max_hp = 1_000.0;
+        lethal.max_hp_reduction = 25.0;
+        state.push_hit(lethal);
         state.push_hit(test_hit(2.0, 200.0));
 
+        let record = battle_record(&state, context(0), true);
+        assert_eq!(
+            record
+                .summary
+                .as_ref()
+                .expect("battle summary")
+                .max_hp_reduction,
+            25.0
+        );
+
         let first = battle_axis(&state, context(0), None, 1).expect("first page");
+        assert_eq!(first.contract_version, BATTLE_READ_CONTRACT_VERSION);
         assert!(first.complete);
         assert_eq!(first.cursor, "1");
         assert_eq!(first.next_cursor.as_deref(), Some("2"));
@@ -625,6 +645,16 @@ mod tests {
         assert_eq!(first.rows[0].attribution_status, "attributed");
         assert!(first.rows[0].attribution_unknown_reason.is_none());
         assert!(first.rows[0].team_snapshot_id.is_none());
+        assert_eq!(first.rows[0].overkill_damage, 40.0);
+        assert_eq!(first.rows[0].max_hp_reduction, 25.0);
+        assert_eq!(
+            serde_json::to_value(&first.rows[0]).unwrap()["overkill_damage"],
+            40.0
+        );
+        assert_eq!(
+            serde_json::to_value(&first.rows[0]).unwrap()["max_hp_reduction"],
+            25.0
+        );
 
         let trimmed = battle_axis(&state, context(5), Some(6), 10).expect("retained page");
         assert!(!trimmed.complete);
@@ -841,6 +871,7 @@ mod tests {
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
@@ -860,6 +891,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 }

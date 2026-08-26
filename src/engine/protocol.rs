@@ -1,10 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 const HANDLER_PREFIX_BITS: usize = 3;
 const HANDSHAKE_SIGNATURE: u8 = 7;
 const SEQUENCED_HEADER_BITS: usize = 72;
 const BUNCH_HEADER_BITS: usize = 48;
 const INVENTORY_BUNCH_DESCRIPTOR: u8 = 0xcc;
+const MAX_BUNCHES_PER_PACKET: usize = 64;
+const BUNCH_SEQUENCE_MASK: u16 = 0x03ff;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SequencedPacket {
@@ -27,6 +29,292 @@ pub struct SingleBunch {
     pub partial_flags: u8,
     pub data_bit_len: usize,
     pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocatedBunch {
+    pub bit_offset: usize,
+    pub bunch: SingleBunch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BunchPacket {
+    /// Bits before the first decoded Bunch. These are retained as packet-level information.
+    pub packet_info_bit_len: usize,
+    pub bunches: Vec<LocatedBunch>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BunchParseError {
+    UnsupportedMode,
+    PayloadTooShort,
+    MissingTerminator,
+    NoTailBunch,
+    AmbiguousTail,
+    AmbiguousPredecessor,
+    TooManyBunches,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReassembledBunch {
+    pub channel: u16,
+    pub descriptor: u8,
+    pub first_sequence: u16,
+    pub last_sequence: u16,
+    pub fragment_count: usize,
+    pub data_bit_len: usize,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct StoredBunch {
+    bunch: SingleBunch,
+    packet_order: i64,
+}
+
+/// Connection-local, bounded reassembly for the observed reliable Bunch fragment flags.
+///
+/// One capture decoder owns each instance. Fragments are keyed by channel and 10-bit reliable
+/// sequence. Capacity eviction drops the oldest incomplete fragment; malformed, oversized, stale,
+/// or cross-descriptor chains fail closed instead of returning partially joined bytes.
+pub struct BunchReassembler {
+    known_channels: HashSet<u16>,
+    verified_partial_profiles: HashSet<(u16, u8)>,
+    fragments: HashMap<(u16, u16), StoredBunch>,
+    fragment_order: VecDeque<(u16, u16)>,
+    latest_packet_order: Option<i64>,
+    max_fragments: usize,
+    max_stream_bits: usize,
+    max_packet_span: i64,
+}
+
+impl BunchReassembler {
+    pub fn new(max_fragments: usize, max_stream_bits: usize, max_packet_span: i64) -> Self {
+        Self {
+            known_channels: HashSet::new(),
+            verified_partial_profiles: HashSet::new(),
+            fragments: HashMap::new(),
+            fragment_order: VecDeque::new(),
+            latest_packet_order: None,
+            max_fragments: max_fragments.max(1),
+            max_stream_bits,
+            max_packet_span: max_packet_span.max(0),
+        }
+    }
+
+    pub fn observe_packet(
+        &mut self,
+        packet_id: u16,
+        bunches: impl IntoIterator<Item = SingleBunch>,
+    ) -> Vec<ReassembledBunch> {
+        let packet_order = unwrap_packet_id(packet_id, self.latest_packet_order);
+        if self
+            .latest_packet_order
+            .is_none_or(|latest| packet_order > latest)
+        {
+            self.latest_packet_order = Some(packet_order);
+        }
+
+        let mut completed = Vec::new();
+        for bunch in bunches {
+            let channel = reliable_bunch_channel(bunch.prefix);
+            self.known_channels.insert(channel);
+            match bunch.partial_flags {
+                // Observed complete, non-fragmented Bunches and a one-fragment partial stream.
+                0x04 | 0x05 | 0x0d => {
+                    completed.push(ReassembledBunch {
+                        channel,
+                        descriptor: bunch.descriptor,
+                        first_sequence: bunch.sequence,
+                        last_sequence: bunch.sequence,
+                        fragment_count: 1,
+                        data_bit_len: bunch.data_bit_len,
+                        data: bunch.data,
+                    });
+                }
+                // Initial, continuation, and final partial fragments.
+                0x08 | 0x09 | 0x0c => {
+                    self.insert_fragment(packet_order, channel, bunch);
+                    completed.extend(self.take_completed_streams());
+                }
+                _ => {}
+            }
+        }
+        self.drop_stale_fragments();
+        completed
+    }
+
+    pub fn known_channels(&self) -> impl Iterator<Item = u16> + '_ {
+        self.known_channels.iter().copied()
+    }
+
+    pub fn expected_continuations(&self) -> Vec<(u16, u16, u8)> {
+        let mut expected = self
+            .fragments
+            .iter()
+            .filter_map(|(&(channel, sequence), stored)| {
+                matches!(stored.bunch.partial_flags, 0x08 | 0x09).then_some((
+                    channel,
+                    (sequence + 1) & BUNCH_SEQUENCE_MASK,
+                    stored.bunch.descriptor,
+                ))
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        expected.dedup();
+        expected
+    }
+
+    pub fn verified_partial_profiles(&self) -> Vec<(u16, u8)> {
+        let mut profiles = self
+            .verified_partial_profiles
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        profiles.sort_unstable();
+        profiles
+    }
+
+    fn insert_fragment(&mut self, packet_order: i64, channel: u16, bunch: SingleBunch) {
+        let key = (channel, bunch.sequence);
+        if let Some(stored) = self.fragments.get(&key) {
+            if stored.bunch == bunch {
+                return;
+            }
+            if packet_order <= stored.packet_order {
+                return;
+            }
+        }
+        if self.fragments.remove(&key).is_some() {
+            self.fragment_order.retain(|stored| *stored != key);
+        }
+        while self.fragments.len() >= self.max_fragments {
+            let Some(oldest) = self.fragment_order.pop_front() else {
+                break;
+            };
+            self.fragments.remove(&oldest);
+        }
+        self.fragment_order.push_back(key);
+        self.fragments.insert(
+            key,
+            StoredBunch {
+                bunch,
+                packet_order,
+            },
+        );
+    }
+
+    fn take_completed_streams(&mut self) -> Vec<ReassembledBunch> {
+        let mut starts = self
+            .fragments
+            .iter()
+            .filter_map(|(key, stored)| (stored.bunch.partial_flags == 0x09).then_some(*key))
+            .collect::<Vec<_>>();
+        starts.sort_unstable();
+
+        let mut completed = Vec::new();
+        let mut consumed = HashSet::new();
+        for start @ (channel, first_sequence) in starts {
+            let Some(initial) = self.fragments.get(&start) else {
+                continue;
+            };
+            let descriptor = initial.bunch.descriptor;
+            let mut data = Vec::new();
+            let mut data_bit_len = 0;
+            let mut sequence = first_sequence;
+            let mut last_sequence = first_sequence;
+            let mut fragment_count = 0;
+            let mut min_packet_order = None;
+            let mut max_packet_order = None;
+            let mut chain_keys = Vec::new();
+            let mut is_complete = false;
+
+            for index in 0..=usize::from(BUNCH_SEQUENCE_MASK) {
+                let key = (channel, sequence);
+                let Some(stored) = self.fragments.get(&key) else {
+                    break;
+                };
+                let next_min = min_packet_order.map_or(stored.packet_order, |current: i64| {
+                    current.min(stored.packet_order)
+                });
+                let next_max = max_packet_order.map_or(stored.packet_order, |current: i64| {
+                    current.max(stored.packet_order)
+                });
+                if next_max - next_min > self.max_packet_span {
+                    break;
+                }
+                min_packet_order = Some(next_min);
+                max_packet_order = Some(next_max);
+
+                let fragment = &stored.bunch;
+                let valid_flag = if index == 0 {
+                    fragment.partial_flags == 0x09
+                } else {
+                    matches!(fragment.partial_flags, 0x08 | 0x0c)
+                };
+                if !valid_flag
+                    || fragment.descriptor != descriptor
+                    || append_bounded_bits(
+                        &mut data,
+                        &mut data_bit_len,
+                        &fragment.data,
+                        fragment.data_bit_len,
+                        self.max_stream_bits,
+                    )
+                    .is_none()
+                {
+                    break;
+                }
+                fragment_count += 1;
+                last_sequence = sequence;
+                chain_keys.push(key);
+                if fragment.partial_flags == 0x0c {
+                    is_complete = true;
+                    break;
+                }
+                sequence = (sequence + 1) & BUNCH_SEQUENCE_MASK;
+            }
+
+            if is_complete {
+                self.verified_partial_profiles.insert((channel, descriptor));
+                completed.push(ReassembledBunch {
+                    channel,
+                    descriptor,
+                    first_sequence,
+                    last_sequence,
+                    fragment_count,
+                    data_bit_len,
+                    data,
+                });
+                consumed.extend(chain_keys);
+            }
+        }
+        for key in &consumed {
+            self.fragments.remove(key);
+        }
+        self.fragment_order.retain(|key| !consumed.contains(key));
+        completed
+    }
+
+    fn drop_stale_fragments(&mut self) {
+        let Some(latest) = self.latest_packet_order else {
+            return;
+        };
+        let stale = self
+            .fragment_order
+            .iter()
+            .copied()
+            .filter(|key| {
+                self.fragments
+                    .get(key)
+                    .is_none_or(|stored| latest - stored.packet_order > self.max_packet_span)
+            })
+            .collect::<HashSet<_>>();
+        for key in &stale {
+            self.fragments.remove(key);
+        }
+        self.fragment_order.retain(|key| !stale.contains(key));
+    }
 }
 
 /// The scanned 13-bit prefix contains a 10-bit channel index and three header flags.
@@ -84,6 +372,346 @@ fn extract_bits(data: &[u8], bit_offset: usize, bit_len: usize) -> Option<Vec<u8
         }
     }
     Some(output)
+}
+
+fn is_supported_bunch_flags(partial_flags: u8) -> bool {
+    matches!(partial_flags, 0x04 | 0x05 | 0x08 | 0x09 | 0x0c | 0x0d)
+}
+
+#[derive(Clone, Copy)]
+struct BunchCandidate {
+    bit_offset: usize,
+    prefix: u16,
+    sequence: u16,
+    descriptor: u8,
+    partial_flags: u8,
+    data_bit_len: usize,
+}
+
+enum CandidateSlot {
+    Unique(BunchCandidate),
+    Ambiguous,
+}
+
+fn index_bunch_candidates(
+    packet: &SequencedPacket,
+    bunches_end: usize,
+) -> HashMap<usize, CandidateSlot> {
+    let mut candidates = HashMap::new();
+    let Some(last_start) = bunches_end.checked_sub(BUNCH_HEADER_BITS) else {
+        return candidates;
+    };
+    for bit_offset in 0..=last_start {
+        let Some(bunch_flags) = read_bits_le(&packet.payload, bit_offset + 23, 12) else {
+            continue;
+        };
+        let partial_flags = (bunch_flags & 0x0f) as u8;
+        if !is_supported_bunch_flags(partial_flags) {
+            continue;
+        }
+        let Some(data_bit_len) = read_bits_le(&packet.payload, bit_offset + 35, 13) else {
+            continue;
+        };
+        let Some(data_end) = bit_offset
+            .checked_add(BUNCH_HEADER_BITS)
+            .and_then(|header_end| header_end.checked_add(data_bit_len as usize))
+        else {
+            continue;
+        };
+        if data_end > bunches_end {
+            continue;
+        }
+        let Some(prefix) = read_bits_le(&packet.payload, bit_offset, 13) else {
+            continue;
+        };
+        let Some(sequence) = read_bits_le(&packet.payload, bit_offset + 13, 10) else {
+            continue;
+        };
+        let candidate = BunchCandidate {
+            bit_offset,
+            prefix: prefix as u16,
+            sequence: sequence as u16,
+            descriptor: (bunch_flags >> 4) as u8,
+            partial_flags,
+            data_bit_len: data_bit_len as usize,
+        };
+        candidates
+            .entry(data_end)
+            .and_modify(|slot| *slot = CandidateSlot::Ambiguous)
+            .or_insert(CandidateSlot::Unique(candidate));
+    }
+    candidates
+}
+
+fn materialize_bunch(packet: &SequencedPacket, candidate: BunchCandidate) -> Option<LocatedBunch> {
+    Some(LocatedBunch {
+        bit_offset: candidate.bit_offset,
+        bunch: SingleBunch {
+            prefix: candidate.prefix,
+            sequence: candidate.sequence,
+            descriptor: candidate.descriptor,
+            partial_flags: candidate.partial_flags,
+            data_bit_len: candidate.data_bit_len,
+            data: extract_bits(
+                &packet.payload,
+                candidate.bit_offset + BUNCH_HEADER_BITS,
+                candidate.data_bit_len,
+            )?,
+        },
+    })
+}
+
+/// Recovers continuation Bunches whose channel, reliable sequence and descriptor are all
+/// established by a previously observed fragment. This is deliberately narrower than the
+/// tail-anchored packet parser: payload bytes cannot create a new stream or change its identity.
+pub fn parse_expected_bunch_continuations(
+    packet: &SequencedPacket,
+    expected: &[(u16, u16, u8)],
+) -> Vec<SingleBunch> {
+    if packet.mode != 0 || expected.is_empty() || packet.payload_bit_len < BUNCH_HEADER_BITS + 1 {
+        return Vec::new();
+    }
+    let bunches_end = packet.payload_bit_len - 1;
+    if read_bits_le(&packet.payload, bunches_end, 1) != Some(1) {
+        return Vec::new();
+    }
+    let Some(last_start) = bunches_end.checked_sub(BUNCH_HEADER_BITS) else {
+        return Vec::new();
+    };
+    let expected = expected.iter().copied().collect::<HashSet<_>>();
+    let mut matches = Vec::new();
+    for bit_offset in 0..=last_start {
+        let Some(bunch_flags) = read_bits_le(&packet.payload, bit_offset + 23, 12) else {
+            continue;
+        };
+        let partial_flags = (bunch_flags & 0x0f) as u8;
+        if !matches!(partial_flags, 0x08 | 0x0c) {
+            continue;
+        }
+        let Some(prefix) = read_bits_le(&packet.payload, bit_offset, 13) else {
+            continue;
+        };
+        let Some(sequence) = read_bits_le(&packet.payload, bit_offset + 13, 10) else {
+            continue;
+        };
+        let descriptor = (bunch_flags >> 4) as u8;
+        let identity = (
+            reliable_bunch_channel(prefix as u16),
+            sequence as u16,
+            descriptor,
+        );
+        if !expected.contains(&identity) {
+            continue;
+        }
+        let Some(data_bit_len) = read_bits_le(&packet.payload, bit_offset + 35, 13) else {
+            continue;
+        };
+        let Some(data_end) = bit_offset
+            .checked_add(BUNCH_HEADER_BITS)
+            .and_then(|header_end| header_end.checked_add(data_bit_len as usize))
+        else {
+            continue;
+        };
+        if data_bit_len == 0 || data_end > bunches_end {
+            continue;
+        }
+        let candidate = BunchCandidate {
+            bit_offset,
+            prefix: prefix as u16,
+            sequence: sequence as u16,
+            descriptor,
+            partial_flags,
+            data_bit_len: data_bit_len as usize,
+        };
+        if let Some(located) = materialize_bunch(packet, candidate) {
+            matches.push((bit_offset, located.bunch));
+        }
+    }
+    matches.sort_by_key(|(bit_offset, _)| *bit_offset);
+    let mut seen = HashSet::new();
+    matches
+        .into_iter()
+        .filter_map(|(_, bunch)| {
+            let identity = (
+                reliable_bunch_channel(bunch.prefix),
+                bunch.sequence,
+                bunch.descriptor,
+            );
+            seen.insert(identity).then_some(bunch)
+        })
+        .collect()
+}
+
+/// Recovers initial partial Bunches only for channel/descriptor pairs that previously completed a
+/// full reliable fragment chain. A recovered start remains inert until the exact next reliable
+/// sequence arrives, so payload lookalikes cannot emit standalone application data.
+pub fn parse_verified_bunch_starts(
+    packet: &SequencedPacket,
+    verified_profiles: &[(u16, u8)],
+) -> Vec<SingleBunch> {
+    if packet.mode != 0
+        || verified_profiles.is_empty()
+        || packet.payload_bit_len < BUNCH_HEADER_BITS + 1
+    {
+        return Vec::new();
+    }
+    let bunches_end = packet.payload_bit_len - 1;
+    if read_bits_le(&packet.payload, bunches_end, 1) != Some(1) {
+        return Vec::new();
+    }
+    let Some(last_start) = bunches_end.checked_sub(BUNCH_HEADER_BITS) else {
+        return Vec::new();
+    };
+    let verified_profiles = verified_profiles.iter().copied().collect::<HashSet<_>>();
+    let mut matches = Vec::new();
+    for bit_offset in 0..=last_start {
+        let Some(bunch_flags) = read_bits_le(&packet.payload, bit_offset + 23, 12) else {
+            continue;
+        };
+        let partial_flags = (bunch_flags & 0x0f) as u8;
+        if partial_flags != 0x09 {
+            continue;
+        }
+        let Some(prefix) = read_bits_le(&packet.payload, bit_offset, 13) else {
+            continue;
+        };
+        let descriptor = (bunch_flags >> 4) as u8;
+        if !verified_profiles.contains(&(reliable_bunch_channel(prefix as u16), descriptor)) {
+            continue;
+        }
+        let Some(sequence) = read_bits_le(&packet.payload, bit_offset + 13, 10) else {
+            continue;
+        };
+        let Some(data_bit_len) = read_bits_le(&packet.payload, bit_offset + 35, 13) else {
+            continue;
+        };
+        let Some(data_end) = bit_offset
+            .checked_add(BUNCH_HEADER_BITS)
+            .and_then(|header_end| header_end.checked_add(data_bit_len as usize))
+        else {
+            continue;
+        };
+        if data_bit_len == 0 || data_end > bunches_end {
+            continue;
+        }
+        let candidate = BunchCandidate {
+            bit_offset,
+            prefix: prefix as u16,
+            sequence: sequence as u16,
+            descriptor,
+            partial_flags,
+            data_bit_len: data_bit_len as usize,
+        };
+        if let Some(located) = materialize_bunch(packet, candidate) {
+            matches.push((bit_offset, located.bunch));
+        }
+    }
+    matches.sort_by_key(|(bit_offset, _)| *bit_offset);
+    let mut seen = HashSet::new();
+    matches
+        .into_iter()
+        .filter_map(|(_, bunch)| {
+            let identity = (
+                reliable_bunch_channel(bunch.prefix),
+                bunch.sequence,
+                bunch.descriptor,
+            );
+            seen.insert(identity).then_some(bunch)
+        })
+        .collect()
+}
+
+/// Parses a packet-info prefix followed by one or more contiguous Bunches.
+///
+/// The trailing Bunch terminator is the anchor. Predecessors must end exactly where the next
+/// Bunch begins. Ambiguous headers fail closed instead of choosing a convenient bit offset from
+/// untrusted payload bytes.
+pub fn parse_bunch_packet(packet: &SequencedPacket) -> Result<BunchPacket, BunchParseError> {
+    if packet.mode != 0 {
+        return Err(BunchParseError::UnsupportedMode);
+    }
+    if packet.payload_bit_len < BUNCH_HEADER_BITS + 1 {
+        return Err(BunchParseError::PayloadTooShort);
+    }
+    let bunches_end = packet.payload_bit_len - 1;
+    if read_bits_le(&packet.payload, bunches_end, 1) != Some(1) {
+        return Err(BunchParseError::MissingTerminator);
+    }
+
+    let candidates = index_bunch_candidates(packet, bunches_end);
+    let mut cursor = bunches_end;
+    let mut reversed = Vec::new();
+    loop {
+        match candidates.get(&cursor) {
+            Some(CandidateSlot::Unique(candidate)) => {
+                if reversed.len() >= MAX_BUNCHES_PER_PACKET {
+                    return Err(BunchParseError::TooManyBunches);
+                }
+                reversed.push(
+                    materialize_bunch(packet, *candidate)
+                        .ok_or(BunchParseError::PayloadTooShort)?,
+                );
+                cursor = candidate.bit_offset;
+            }
+            Some(CandidateSlot::Ambiguous) if reversed.is_empty() => {
+                return Err(BunchParseError::AmbiguousTail);
+            }
+            Some(CandidateSlot::Ambiguous) => {
+                return Err(BunchParseError::AmbiguousPredecessor);
+            }
+            None if reversed.is_empty() => return Err(BunchParseError::NoTailBunch),
+            None => break,
+        }
+    }
+    reversed.reverse();
+    Ok(BunchPacket {
+        packet_info_bit_len: cursor,
+        bunches: reversed,
+    })
+}
+
+fn unwrap_packet_id(packet_id: u16, reference: Option<i64>) -> i64 {
+    const PACKET_ID_BITS: u32 = 14;
+    const PACKET_ID_MODULUS: i64 = 1 << PACKET_ID_BITS;
+    const PACKET_ID_HALF_RANGE: i64 = PACKET_ID_MODULUS / 2;
+    const PACKET_ID_MASK: u16 = (1 << PACKET_ID_BITS) - 1;
+
+    let raw = i64::from(packet_id & PACKET_ID_MASK);
+    let Some(reference) = reference else {
+        return raw;
+    };
+    let base = reference - reference.rem_euclid(PACKET_ID_MODULUS);
+    let mut unwrapped = base + raw;
+    if unwrapped - reference > PACKET_ID_HALF_RANGE {
+        unwrapped -= PACKET_ID_MODULUS;
+    } else if reference - unwrapped > PACKET_ID_HALF_RANGE {
+        unwrapped += PACKET_ID_MODULUS;
+    }
+    unwrapped
+}
+
+fn append_bounded_bits(
+    destination: &mut Vec<u8>,
+    destination_bit_len: &mut usize,
+    source: &[u8],
+    source_bit_len: usize,
+    max_bits: usize,
+) -> Option<()> {
+    if source_bit_len > source.len().checked_mul(8)? {
+        return None;
+    }
+    let new_bit_len = destination_bit_len.checked_add(source_bit_len)?;
+    if new_bit_len > max_bits {
+        return None;
+    }
+    destination.resize(new_bit_len.div_ceil(8), 0);
+    for index in 0..source_bit_len {
+        let bit = (source[index / 8] >> (index % 8)) & 1;
+        let target = *destination_bit_len + index;
+        destination[target / 8] |= bit << (target % 8);
+    }
+    *destination_bit_len = new_bit_len;
+    Some(())
 }
 
 pub fn parse_transport_packet(data: &[u8]) -> Option<TransportPacket> {
@@ -487,6 +1115,56 @@ mod tests {
     }
 
     #[test]
+    fn verified_profile_recovers_embedded_partial_start_and_expected_continuation() {
+        let start_offset = 9;
+        let start_data_end = start_offset + BUNCH_HEADER_BITS + 8;
+        let start_payload_bits = start_data_end + 13 + 1;
+        let mut start_payload = vec![0_u8; start_payload_bits.div_ceil(8)];
+        write_bunch(
+            &mut start_payload,
+            start_offset,
+            (4122, 200, INVENTORY_BUNCH_DESCRIPTOR, 0x09),
+            &[0x5a],
+            8,
+        );
+        write_bits(&mut start_payload, start_payload_bits - 1, 1, 1);
+        let start_packet = sequenced_packet(start_payload, start_payload_bits);
+
+        let starts =
+            parse_verified_bunch_starts(&start_packet, &[(26, INVENTORY_BUNCH_DESCRIPTOR)]);
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0].sequence, 200);
+        assert_eq!(starts[0].data, [0x5a]);
+
+        let continuation_offset = 7;
+        let continuation_data_end = continuation_offset + BUNCH_HEADER_BITS + 8;
+        let continuation_payload_bits = continuation_data_end + 17 + 1;
+        let mut continuation_payload = vec![0_u8; continuation_payload_bits.div_ceil(8)];
+        write_bunch(
+            &mut continuation_payload,
+            continuation_offset,
+            (4122, 201, INVENTORY_BUNCH_DESCRIPTOR, 0x0c),
+            &[0xa5],
+            8,
+        );
+        write_bits(
+            &mut continuation_payload,
+            continuation_payload_bits - 1,
+            1,
+            1,
+        );
+        let continuation_packet = sequenced_packet(continuation_payload, continuation_payload_bits);
+
+        let continuations = parse_expected_bunch_continuations(
+            &continuation_packet,
+            &[(26, 201, INVENTORY_BUNCH_DESCRIPTOR)],
+        );
+        assert_eq!(continuations.len(), 1);
+        assert_eq!(continuations[0].sequence, 201);
+        assert_eq!(continuations[0].data, [0xa5]);
+    }
+
+    #[test]
     fn rejects_invalid_inventory_flags_and_descriptor() {
         for (descriptor, partial_flags) in [(INVENTORY_BUNCH_DESCRIPTOR, 0x0a), (0xcb, 0x09)] {
             let payload_bit_len = BUNCH_HEADER_BITS + 8 + 1;
@@ -516,5 +1194,192 @@ mod tests {
         let packet = sequenced_packet(payload, payload_bit_len);
 
         assert!(parse_inventory_bunches(&packet, &[4122]).is_empty());
+    }
+
+    #[test]
+    fn parses_packet_info_and_multiple_non_byte_aligned_bunches() {
+        let packet_info_bits = 19;
+        let first_data = [0x5a, 0x01];
+        let second_data = [0xa5, 0x05];
+        let first_offset = packet_info_bits;
+        let second_offset = first_offset + BUNCH_HEADER_BITS + 9;
+        let payload_bit_len = second_offset + BUNCH_HEADER_BITS + 11 + 1;
+        let mut payload = vec![0_u8; payload_bit_len.div_ceil(8)];
+        write_bits(&mut payload, 0, packet_info_bits, 0x55aa);
+        write_bunch(
+            &mut payload,
+            first_offset,
+            (1027, 87, 0x38, 0x05),
+            &first_data,
+            9,
+        );
+        let data_end = write_bunch(
+            &mut payload,
+            second_offset,
+            (4122, 88, INVENTORY_BUNCH_DESCRIPTOR, 0x09),
+            &second_data,
+            11,
+        );
+        write_bits(&mut payload, data_end, 1, 1);
+
+        let parsed = parse_bunch_packet(&sequenced_packet(payload, payload_bit_len))
+            .expect("a packet-info prefix and two contiguous Bunches should parse");
+
+        assert_eq!(parsed.packet_info_bit_len, packet_info_bits);
+        assert_eq!(parsed.bunches.len(), 2);
+        assert_eq!(parsed.bunches[0].bit_offset, first_offset);
+        assert_eq!(parsed.bunches[0].bunch.sequence, 87);
+        assert_eq!(parsed.bunches[0].bunch.descriptor, 0x38);
+        assert_eq!(parsed.bunches[0].bunch.data_bit_len, 9);
+        assert_eq!(parsed.bunches[1].bit_offset, second_offset);
+        assert_eq!(parsed.bunches[1].bunch.sequence, 88);
+        assert_eq!(parsed.bunches[1].bunch.data_bit_len, 11);
+    }
+
+    #[test]
+    fn bunch_packet_rejects_missing_terminator_and_unsupported_mode() {
+        let mut packet = single_bunch_packet(0, 16, &[0x5a, 0xa5]);
+        let terminator = packet.payload_bit_len - 1;
+        packet.payload[terminator / 8] &= !(1 << (terminator % 8));
+        assert_eq!(
+            parse_bunch_packet(&packet),
+            Err(BunchParseError::MissingTerminator)
+        );
+
+        let packet = single_bunch_packet(1, 16, &[0x5a, 0xa5]);
+        assert_eq!(
+            parse_bunch_packet(&packet),
+            Err(BunchParseError::UnsupportedMode)
+        );
+    }
+
+    fn fragment(sequence: u16, descriptor: u8, partial_flags: u8, data: u8) -> SingleBunch {
+        SingleBunch {
+            prefix: 4122,
+            sequence,
+            descriptor,
+            partial_flags,
+            data_bit_len: 8,
+            data: vec![data],
+        }
+    }
+
+    #[test]
+    fn reassembles_out_of_order_partial_bunches_and_deduplicates_retransmission() {
+        let mut reassembler = BunchReassembler::new(16, 128, 8);
+
+        assert!(
+            reassembler
+                .observe_packet(11, [fragment(101, 0xcc, 0x08, 0x22)])
+                .is_empty()
+        );
+        assert!(
+            reassembler
+                .observe_packet(12, [fragment(102, 0xcc, 0x0c, 0x33)])
+                .is_empty()
+        );
+        let completed = reassembler.observe_packet(
+            13,
+            [
+                fragment(100, 0xcc, 0x09, 0x11),
+                fragment(101, 0xcc, 0x08, 0x22),
+            ],
+        );
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].channel, 26);
+        assert_eq!(completed[0].first_sequence, 100);
+        assert_eq!(completed[0].last_sequence, 102);
+        assert_eq!(completed[0].fragment_count, 3);
+        assert_eq!(completed[0].data_bit_len, 24);
+        assert_eq!(completed[0].data, [0x11, 0x22, 0x33]);
+        assert_eq!(reassembler.verified_partial_profiles(), [(26, 0xcc)]);
+        assert!(
+            reassembler
+                .observe_packet(14, [fragment(102, 0xcc, 0x0c, 0x33)])
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn completes_multiple_fragment_streams_from_one_packet() {
+        let mut reassembler = BunchReassembler::new(16, 128, 8);
+        assert!(
+            reassembler
+                .observe_packet(
+                    1,
+                    [
+                        fragment(10, 0xcb, 0x09, 0x11),
+                        fragment(20, 0xcc, 0x09, 0x22),
+                    ],
+                )
+                .is_empty()
+        );
+
+        let completed = reassembler.observe_packet(
+            2,
+            [
+                fragment(11, 0xcb, 0x0c, 0x33),
+                fragment(21, 0xcc, 0x0c, 0x44),
+            ],
+        );
+
+        assert_eq!(completed.len(), 2);
+        assert_eq!(completed[0].data, [0x11, 0x33]);
+        assert_eq!(completed[1].data, [0x22, 0x44]);
+    }
+
+    #[test]
+    fn replacing_fragment_at_capacity_keeps_other_streams() {
+        let mut reassembler = BunchReassembler::new(2, 128, 8);
+        assert!(
+            reassembler
+                .observe_packet(
+                    1,
+                    [
+                        fragment(10, 0xcb, 0x09, 0x11),
+                        fragment(20, 0xcc, 0x09, 0x22),
+                    ],
+                )
+                .is_empty()
+        );
+
+        assert!(
+            reassembler
+                .observe_packet(2, [fragment(10, 0xcb, 0x09, 0x33)])
+                .is_empty()
+        );
+
+        assert_eq!(
+            reassembler.expected_continuations(),
+            [(26, 11, 0xcb), (26, 21, 0xcc)]
+        );
+    }
+
+    #[test]
+    fn reassembler_fails_closed_on_descriptor_change_and_stream_limit() {
+        let mut reassembler = BunchReassembler::new(16, 16, 8);
+        assert!(
+            reassembler
+                .observe_packet(1, [fragment(10, 0xcc, 0x09, 0x11)])
+                .is_empty()
+        );
+        assert!(
+            reassembler
+                .observe_packet(2, [fragment(11, 0xcb, 0x0c, 0x22)])
+                .is_empty()
+        );
+
+        let mut reassembler = BunchReassembler::new(16, 8, 8);
+        assert!(
+            reassembler
+                .observe_packet(1, [fragment(10, 0xcc, 0x09, 0x11)])
+                .is_empty()
+        );
+        assert!(
+            reassembler
+                .observe_packet(2, [fragment(11, 0xcc, 0x0c, 0x22)])
+                .is_empty()
+        );
     }
 }

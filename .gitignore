@@ -5,6 +5,7 @@
 /NTE_Assets/
 /res/data/direct_export_report.json
 /nte-debug-tool/
+/UETools-NTE/
 /nte-resource-exporter/
 /SDK/
 /Dumper-7/
@@ -35,3 +36,6 @@ __pycache__/
 !src/bin/
 !src/bin/nte-core.rs
 **/obj/
+
+# Local Codex verification artifacts
+/.codex-transaction/
