@@ -276,6 +276,8 @@ mod tests {
                 attack_type: "Q技能".to_owned(),
                 damage_component: None,
                 owner_character_id: None,
+                use_server_damage: false,
+                max_hp_reduction_percent: 0,
             },
         )]))
     }

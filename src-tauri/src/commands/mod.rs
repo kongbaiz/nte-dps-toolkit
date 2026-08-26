@@ -14,7 +14,6 @@ pub(crate) mod island;
 pub(crate) mod main_dps;
 pub(crate) mod mod_studio;
 pub(crate) mod packets;
-pub(crate) mod resources;
 pub(crate) mod settings;
 pub(crate) mod skills;
 pub(crate) mod technical;

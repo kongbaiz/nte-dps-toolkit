@@ -532,9 +532,7 @@ fn collect_localized_abyss_season_names(document: &Value, names: &mut HashMap<u3
         return;
     };
     for (key, value) in object {
-        if let Some(season_text) = key
-            .strip_prefix("Abyss_")
-            .and_then(|value| value.strip_suffix("_name"))
+        if let Some(season_text) = key.strip_circumfix("Abyss_", "_name")
             && let Ok(season) = season_text.parse::<u32>()
             && let Some(name) = valid_abyss_season_name(value)
         {

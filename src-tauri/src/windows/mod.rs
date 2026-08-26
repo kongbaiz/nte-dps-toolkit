@@ -6,6 +6,7 @@ pub(crate) mod island;
 pub(crate) mod main_dps;
 #[cfg(windows)]
 pub(crate) mod passthrough_hotkey;
+pub(crate) mod window_position;
 
 use tauri::WebviewWindow;
 

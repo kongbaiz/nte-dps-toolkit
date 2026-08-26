@@ -20,6 +20,31 @@ export function damagePercent(damage: number, totalDamage: number): number {
   return totalDamage > 0 ? (damage / totalDamage) * 100 : 0;
 }
 
+export interface MaxHpCompression {
+  remainingMaxHp: number;
+  reductionPercent: number;
+  remainingPercent: number;
+}
+
+export function maxHpCompression(
+  previousMaxHp: number,
+  reduction: number,
+): MaxHpCompression {
+  if (!Number.isFinite(previousMaxHp) || previousMaxHp <= 0) {
+    return { remainingMaxHp: 0, reductionPercent: 0, remainingPercent: 0 };
+  }
+  const boundedReduction = Number.isFinite(reduction)
+    ? Math.max(0, Math.min(previousMaxHp, reduction))
+    : 0;
+  const remainingMaxHp = previousMaxHp - boundedReduction;
+  const reductionPercent = (boundedReduction / previousMaxHp) * 100;
+  return {
+    remainingMaxHp,
+    reductionPercent,
+    remainingPercent: 100 - reductionPercent,
+  };
+}
+
 export function roundLabel(round: MainDpsRound): string {
   if (round.live) return t("Live");
   const prefix =

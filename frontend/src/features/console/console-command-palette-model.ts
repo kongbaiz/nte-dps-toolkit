@@ -71,6 +71,7 @@ export function consoleCommandRowClasses(
 
 const pageMetadata: Record<ConsolePageId, [string, string]> = {
   settings: ["console.settings", "Open Settings"],
+  shortcuts: ["console.shortcuts", "Open Shortcuts"],
   history: ["console.history", "Open History"],
   timeline: ["console.timeline", "Open Timeline"],
   skills: ["console.skills", "Open Skills"],
@@ -78,7 +79,6 @@ const pageMetadata: Record<ConsolePageId, [string, string]> = {
   "character-data": ["console.characters", "Open Character Data"],
   "encrypted-ini": ["console.ini", "Open Encrypted INI"],
   packets: ["console.packets", "Open Packets"],
-  resources: ["console.resources", "Open Resources"],
   diagnostics: ["console.diagnostics", "Open Diagnostics"],
   "mod-studio": ["console.mods", "Open Mod Studio"],
 };

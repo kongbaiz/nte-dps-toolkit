@@ -10,7 +10,7 @@ use nte_dps_tool::{
         capture_logs::{CaptureLogStats, format_bytes},
         config::{
             AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX,
-            HUD_WIDTH_MIN, HotkeyBinding, PassthroughHotkey, ThemePreset, UiConfig, UiDensity,
+            HUD_WIDTH_MIN, HotkeyBinding, MainDpsDisplayConfig, ThemePreset, UiConfig, UiDensity,
         },
         i18n::Language,
         update::PreparedUpdate,
@@ -19,7 +19,7 @@ use nte_dps_tool::{
 
 use crate::contract::dps_time::DpsTimeRuntimeSnapshot;
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 6;
+pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +31,7 @@ pub(crate) struct SettingsSnapshot {
     pub updates: UpdateSettingsSnapshot,
     pub capture: CaptureSettingsSnapshot,
     pub hotkeys: GlobalHotkeysSnapshot,
+    pub main_dps: MainDpsDisplaySnapshot,
     pub capture_files: CaptureFilesSnapshot,
     pub team_data: TeamDataSnapshot,
     pub always_on_top: bool,
@@ -114,6 +115,7 @@ pub(crate) struct CaptureSettingsSnapshot {
     pub devices_available: bool,
     pub manual_capture_device: Option<String>,
     pub server_damage_calibration: bool,
+    pub include_max_hp_reduction_in_total_damage: bool,
     pub separate_reaction_damage: bool,
     pub auto_round_after_idle: bool,
     pub auto_round_idle_seconds: u32,
@@ -121,7 +123,7 @@ pub(crate) struct CaptureSettingsSnapshot {
     pub auto_round_idle_seconds_max: u32,
     pub dps_time_mode: &'static str,
     pub dps_time_runtime: DpsTimeRuntimeSnapshot,
-    pub passthrough_hotkey: &'static str,
+    pub passthrough_hotkey: HotkeyBindingSnapshot,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -179,6 +181,13 @@ pub(crate) struct HotkeyBindingSnapshot {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct MainDpsDisplaySnapshot {
+    pub metrics: Vec<&'static str>,
+    pub attributions: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureFilesSnapshot {
     pub count: usize,
     pub total_bytes: String,
@@ -219,11 +228,19 @@ pub(crate) struct CaptureSettingsInput {
     pub bpf_filter: String,
     pub manual_capture_device: Option<String>,
     pub server_damage_calibration: bool,
+    pub include_max_hp_reduction_in_total_damage: bool,
     pub separate_reaction_damage: bool,
     pub auto_round_after_idle: bool,
     pub auto_round_idle_seconds: u32,
     pub dps_time_mode: String,
-    pub passthrough_hotkey: String,
+    pub passthrough_hotkey: HotkeyBindingSnapshot,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MainDpsDisplayInput {
+    pub metrics: Vec<String>,
+    pub attributions: Vec<String>,
 }
 
 impl SettingsSnapshot {
@@ -262,6 +279,8 @@ impl SettingsSnapshot {
                 devices_available,
                 manual_capture_device: config.manual_capture_device.clone(),
                 server_damage_calibration: config.server_damage_calibration,
+                include_max_hp_reduction_in_total_damage: config
+                    .include_max_hp_reduction_in_total_damage,
                 separate_reaction_damage: config.separate_reaction_damage,
                 auto_round_after_idle: config.auto_round_after_idle,
                 auto_round_idle_seconds: config.auto_round_idle_seconds,
@@ -274,9 +293,10 @@ impl SettingsSnapshot {
                     config.dps_time_mode,
                     combat_clock_health,
                 ),
-                passthrough_hotkey: passthrough_hotkey_id(config.passthrough_hotkey),
+                passthrough_hotkey: hotkey_binding_snapshot(config.passthrough_hotkey),
             },
             hotkeys: hotkeys_snapshot(config.global_hotkeys),
+            main_dps: main_dps_display_snapshot(&config.main_dps_display),
             capture_files: CaptureFilesSnapshot {
                 count: capture_files.count,
                 total_bytes: capture_files.total_bytes.to_string(),
@@ -441,11 +461,23 @@ fn hotkey_binding_snapshot(binding: HotkeyBinding) -> HotkeyBindingSnapshot {
     }
 }
 
+fn main_dps_display_snapshot(display: &MainDpsDisplayConfig) -> MainDpsDisplaySnapshot {
+    MainDpsDisplaySnapshot {
+        metrics: display.metrics.iter().map(|value| value.id()).collect(),
+        attributions: display
+            .attributions
+            .iter()
+            .map(|value| value.id())
+            .collect(),
+    }
+}
+
 pub(crate) const fn global_hotkey_action_id(action: GlobalHotkeyAction) -> &'static str {
     match action {
         GlobalHotkeyAction::ToggleCapture => "capture",
         GlobalHotkeyAction::ResetSession => "reset",
         GlobalHotkeyAction::ToggleHud => "hud",
+        GlobalHotkeyAction::NewRound => "new-round",
     }
 }
 
@@ -479,15 +511,6 @@ const fn dps_time_mode_id(value: DpsTimeMode) -> &'static str {
     match value {
         DpsTimeMode::TimeStopAdjusted => "time-stop-adjusted",
         DpsTimeMode::RealTime => "real-time",
-    }
-}
-
-const fn passthrough_hotkey_id(value: PassthroughHotkey) -> &'static str {
-    match value {
-        PassthroughHotkey::Home => "home",
-        PassthroughHotkey::Insert => "insert",
-        PassthroughHotkey::F8 => "f8",
-        PassthroughHotkey::F9 => "f9",
     }
 }
 
@@ -538,8 +561,16 @@ mod tests {
         assert_eq!(value["updates"]["downloadedBytes"], "0");
         assert_eq!(value["capture"]["bpfFilter"], "udp");
         assert_eq!(value["capture"]["devicesAvailable"], true);
+        assert_eq!(
+            value["capture"]["includeMaxHpReductionInTotalDamage"],
+            false
+        );
         assert_eq!(value["teamData"]["available"], true);
         assert_eq!(value["hotkeys"]["bindings"][0]["action"], "capture");
+        assert_eq!(value["hotkeys"]["bindings"][3]["action"], "new-round");
+        assert_eq!(value["capture"]["passthroughHotkey"]["key"], "Home");
+        assert_eq!(value["mainDps"]["metrics"][0], "team-dps");
+        assert_eq!(value["mainDps"]["attributions"][4], "max-hp-reduction");
         assert_eq!(value["hud"]["width"], 512);
         assert_eq!(value["hud"]["moduleOrder"][0], "timeline");
         assert_eq!(

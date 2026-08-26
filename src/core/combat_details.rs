@@ -102,12 +102,7 @@ pub fn damage_digit_key_for_hit<'a>(
             .and_then(|character| character.attribute.as_deref())
     });
     let attack_type = hit.attack_type.as_deref();
-    if attack_type == Some("倾陷伤害")
-        || hit
-            .damage_name
-            .as_deref()
-            .is_some_and(|name| name.contains("倾陷"))
-    {
+    if attack_type == Some("倾陷伤害") {
         return Some("真实");
     }
     attack_type
@@ -117,11 +112,11 @@ pub fn damage_digit_key_for_hit<'a>(
 
 /// Stable resource key for the separately rendered follow-up damage digits.
 pub fn follow_up_damage_digit_key_for_hit(hit: &Hit) -> Option<&str> {
-    let source_attribute = hit.follow_up_damage_attribute.as_deref()?;
+    let source_attribute = hit.follow_up_damage_attribute.as_deref();
     hit.follow_up_attack_type
         .as_deref()
-        .and_then(|value| mixed_damage_digit_key(value, Some(source_attribute)))
-        .or(Some(source_attribute))
+        .and_then(|value| mixed_damage_digit_key(value, source_attribute))
+        .or(source_attribute)
 }
 
 pub fn mixed_damage_digit_key(
@@ -178,6 +173,7 @@ mod tests {
             target_hp_before: 1000.0,
             target_hp_after: 900.0,
             target_max_hp: 1000.0,
+            max_hp_reduction: 0.0,
             target_hp_percent: 90.0,
             target_id: None,
             target_name: None,
@@ -197,6 +193,8 @@ mod tests {
             follow_up_damage_name: None,
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
+            reconciled_overkill_damage: None,
+            wire_event: None,
         }
     }
 
@@ -235,6 +233,18 @@ mod tests {
         assert_eq!(
             damage_digit_key_for_hit(&value, &characters),
             Some("Guangling_G")
+        );
+    }
+
+    #[test]
+    fn follow_up_reaction_digits_do_not_require_optional_attribute_metadata() {
+        let mut value = hit(HitDirection::Outgoing, true, Some("普攻"));
+        value.follow_up_attack_type = Some("覆纹".to_owned());
+
+        assert_eq!(value.follow_up_damage_attribute, None);
+        assert_eq!(
+            follow_up_damage_digit_key_for_hit(&value),
+            Some("lingzhou_L")
         );
     }
 }

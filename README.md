@@ -221,7 +221,7 @@ cargo build --release --bin nte-core --no-default-features --features cli
 ### 环境
 
 - Windows 10 / 11
-- Rust 1.85+
+- Rust 1.98+
 - Node.js 24
 - pnpm 10
 - Npcap

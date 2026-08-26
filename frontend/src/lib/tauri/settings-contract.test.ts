@@ -48,6 +48,7 @@ function settingsFixture(): Record<string, unknown> {
       devices: [{ id: "device", label: "Ethernet · 192.0.2.1" }],
       manualCaptureDevice: null,
       serverDamageCalibration: false,
+      includeMaxHpReductionInTotalDamage: false,
       separateReactionDamage: false,
       autoRoundAfterIdle: false,
       autoRoundIdleSeconds: 30,
@@ -62,7 +63,12 @@ function settingsFixture(): Record<string, unknown> {
         warningMessageKey:
           "Time-stop adjustment has not been verified for this session.",
       },
-      passthroughHotkey: "home",
+      passthroughHotkey: {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        key: "Home",
+      },
     },
     hotkeys: {
       enabled: true,
@@ -94,6 +100,20 @@ function settingsFixture(): Record<string, unknown> {
             key: "F11",
           },
         },
+        {
+          action: "new-round",
+          binding: null,
+        },
+      ],
+    },
+    mainDps: {
+      metrics: ["team-dps", "total-damage", "total-damage-taken", "duration"],
+      attributions: [
+        "character",
+        "reaction",
+        "shared",
+        "unattributed",
+        "max-hp-reduction",
       ],
     },
     captureFiles: { count: 0, totalBytes: "0", formattedSize: "0 B" },
@@ -131,8 +151,33 @@ describe("settings contract", () => {
     expect(snapshot.hud.showTeamDps).toBe(true);
     expect(snapshot.capture.bpfFilter).toBe("udp");
     expect(snapshot.capture.devicesAvailable).toBe(true);
+    expect(snapshot.capture.includeMaxHpReductionInTotalDamage).toBe(false);
     expect(snapshot.teamData.available).toBe(true);
-    expect(snapshot.hotkeys.bindings).toHaveLength(3);
+    expect(snapshot.hotkeys.bindings).toHaveLength(4);
+    expect(snapshot.capture.passthroughHotkey.key).toBe("Home");
+    expect(snapshot.mainDps.attributions).toContain("max-hp-reduction");
+  });
+
+  it("accepts custom keys and rejects duplicate display identifiers", () => {
+    const custom = settingsFixture();
+    (custom.capture as Record<string, unknown>).passthroughHotkey = {
+      ctrl: true,
+      alt: false,
+      shift: true,
+      key: "K",
+    };
+    expect(parseSettingsSnapshot(custom).capture.passthroughHotkey.key).toBe(
+      "K",
+    );
+
+    const duplicate = settingsFixture();
+    (duplicate.mainDps as Record<string, unknown>).metrics = [
+      "team-dps",
+      "team-dps",
+    ];
+    expect(() => parseSettingsSnapshot(duplicate)).toThrow(
+      /display identifiers must be unique/,
+    );
   });
 
   it("requires explicit availability instead of treating failures as empty state", () => {

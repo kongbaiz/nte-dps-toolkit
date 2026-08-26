@@ -8,6 +8,7 @@ import {
   historyDurationFormat,
   nextHistoryRecordIndex,
   selectHistoryRecord,
+  validHistoryComparisonPair,
 } from "./history-view-model";
 
 const record = (id: string) => ({ id }) as HistoryRecord;
@@ -25,6 +26,16 @@ describe("History view model", () => {
     expect(adjacentHistoryRecordId(records, "a")).toBe("b");
     expect(adjacentHistoryRecordId(records, "c")).toBe("b");
     expect(adjacentHistoryRecordId([record("a")], "a")).toBeNull();
+  });
+
+  it("does not compare a record removed by the latest History snapshot", () => {
+    const records = [record("remaining"), record("older")];
+    expect(validHistoryComparisonPair(records, "deleted", "remaining")).toBe(
+      false,
+    );
+    expect(validHistoryComparisonPair(records, "remaining", "older")).toBe(
+      true,
+    );
   });
 
   it("keeps keyboard selection inside the record list", () => {
