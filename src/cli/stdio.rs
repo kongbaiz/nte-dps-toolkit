@@ -475,7 +475,10 @@ impl Runtime {
     }
 
     fn process_engine_event(&mut self, event: EngineEvent, outbound: &Sender<Value>) {
-        let appended_hit = matches!(&event, EngineEvent::Hit(_));
+        let expects_direct_hit_append = matches!(
+            &event,
+            EngineEvent::Hit(hit) if !hit.is_server_damage_reconciliation()
+        );
         let previous_hit_count = self.state.hits.len();
         let previous_hits_generation = self.state.hits_generation;
         let previous_abyss_event_count = self.state.abyss.event_count;
@@ -489,7 +492,7 @@ impl Runtime {
             _ => false,
         };
         let signal = apply_engine_event(&mut self.state, event);
-        let dropped_hits = if appended_hit {
+        let dropped_hits = if expects_direct_hit_append {
             previous_hit_count
                 .saturating_add(1)
                 .saturating_sub(self.state.hits.len()) as u64
@@ -2039,6 +2042,98 @@ mod tests {
     }
 
     #[test]
+    fn server_damage_reconciliation_in_place_keeps_the_cli_axis_complete() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, _) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        let (outbound, _) = bounded(4);
+
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(targeted_test_hit(105.0))),
+            &outbound,
+        );
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(server_reconciliation_marker(99.0))),
+            &outbound,
+        );
+
+        let record = runtime
+            .battle_record(BattleRecordParams {
+                battle_record_id: None,
+                subtract_time_stop: true,
+            })
+            .expect("record query")
+            .expect("record exists");
+        let axis = runtime
+            .battle_axis(BattleAxisParams {
+                battle_record_id: Some(record.battle_record_id.clone()),
+                cursor: None,
+                limit: 10,
+            })
+            .expect("axis query")
+            .expect("axis exists");
+
+        assert!(record.axis_complete);
+        assert!(axis.complete);
+        assert_eq!(axis.first_available_cursor, "1");
+        assert_eq!(axis.total_hits, "1");
+        assert_eq!(axis.rows.len(), 1);
+        assert_eq!(runtime.state.hits[0].overkill_damage(), 6.0);
+    }
+
+    #[test]
+    fn positive_server_damage_residual_appends_without_trimming_the_cli_axis() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, _) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        let (outbound, _) = bounded(4);
+
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(targeted_test_hit(80.0))),
+            &outbound,
+        );
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(server_reconciliation_marker(99.0))),
+            &outbound,
+        );
+
+        let record = runtime
+            .battle_record(BattleRecordParams {
+                battle_record_id: None,
+                subtract_time_stop: true,
+            })
+            .expect("record query")
+            .expect("record exists");
+        let axis = runtime
+            .battle_axis(BattleAxisParams {
+                battle_record_id: Some(record.battle_record_id.clone()),
+                cursor: None,
+                limit: 10,
+            })
+            .expect("axis query")
+            .expect("axis exists");
+
+        assert!(record.axis_complete);
+        assert!(axis.complete);
+        assert_eq!(axis.first_available_cursor, "1");
+        assert_eq!(axis.total_hits, "2");
+        assert_eq!(axis.rows.len(), 2);
+        assert_eq!(runtime.state.total_damage, 99.0);
+    }
+
+    #[test]
     fn unknown_and_duplicate_mod_responses_do_not_consume_pending_requests_or_stop_runtime() {
         let resources = RuntimeResources::load().expect("runtime resources");
         let (engine_sender, _) = unbounded();
@@ -2298,6 +2393,30 @@ mod tests {
             reconciled_overkill_damage: None,
             wire_event: None,
         }
+    }
+
+    fn targeted_test_hit(damage: f64) -> Hit {
+        let mut hit = test_hit(1.0, damage);
+        hit.target_id = Some("enemy-wire:test".to_owned());
+        hit.target_hp_before = 100.0;
+        hit.target_hp_after = (100.0 - damage).max(0.0);
+        hit.target_max_hp = 100.0;
+        hit.reconciled_overkill_damage = Some(0.0);
+        hit
+    }
+
+    fn server_reconciliation_marker(authoritative_damage: f64) -> Hit {
+        let mut hit = test_hit(1.1, 0.0);
+        hit.char_id = 0;
+        hit.char_name = "Unattributed".to_owned();
+        hit.char_known = false;
+        hit.target_id = Some("enemy-wire:test".to_owned());
+        hit.target_hp_before = authoritative_damage;
+        hit.target_hp_after = 0.0;
+        hit.target_max_hp = 100.0;
+        hit.damage_name = Some("Server settlement residual".to_owned());
+        hit.reconciled_overkill_damage = Some(0.0);
+        hit
     }
 
     #[derive(Clone, Default)]
