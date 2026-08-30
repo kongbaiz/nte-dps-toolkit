@@ -7,7 +7,6 @@ import {
   type StreamSubscriptionReceipt,
 } from "@/lib/tauri/stream-contract";
 
-export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
 export const MOD_STUDIO_CONTRACT_VERSION = 13;
 export const MOD_MARKET_CONTRACT_VERSION = 11;
 export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;

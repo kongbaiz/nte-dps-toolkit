@@ -134,44 +134,6 @@ pub fn save_encrypted_ini_document(
     Ok(EncryptedIniSaveOutcome::Saved)
 }
 
-pub fn encrypted_ini_search_matches(text: &str, query: &str) -> Vec<usize> {
-    let query = query.trim();
-    if query.is_empty() {
-        return Vec::new();
-    }
-    if query.is_ascii() {
-        let query = query.as_bytes();
-        let text_bytes = text.as_bytes();
-        if query.len() > text_bytes.len() {
-            return Vec::new();
-        }
-        return text_bytes
-            .windows(query.len())
-            .enumerate()
-            .filter_map(|(index, window)| {
-                (text.is_char_boundary(index) && window.eq_ignore_ascii_case(query))
-                    .then_some(index)
-            })
-            .collect();
-    }
-
-    let lower_text = text.to_lowercase();
-    let lower_query = query.to_lowercase();
-    lower_text
-        .match_indices(&lower_query)
-        .filter_map(|(index, _)| text.is_char_boundary(index).then_some(index))
-        .collect()
-}
-
-pub fn encrypted_ini_text_fingerprint(text: &str) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in text.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
 pub fn parse_encrypted_ini_text(
     text: &str,
 ) -> Result<

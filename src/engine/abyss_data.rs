@@ -113,13 +113,6 @@ impl AbyssMonsterDataset {
         Ok(dataset)
     }
 
-    pub fn first_floor_key(&self) -> Option<(u32, u32)> {
-        self.seasons
-            .first()
-            .and_then(|season| season.floors.first())
-            .map(|floor| (floor.season, floor.floor))
-    }
-
     pub fn season(&self, season: u32) -> Option<&AbyssSeason> {
         self.seasons.iter().find(|item| item.season == season)
     }

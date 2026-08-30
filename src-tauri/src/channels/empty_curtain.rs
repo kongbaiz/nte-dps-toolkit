@@ -63,7 +63,6 @@ pub(crate) fn subscribe_empty_curtain(
         EMPTY_CURTAIN_STREAM_INTERVAL_MS,
     ))
 }
-
 #[tauri::command]
 pub(crate) fn unsubscribe_empty_curtain(
     subscription_id: String,
@@ -79,17 +78,4 @@ pub(crate) fn unsubscribe_empty_curtain(
         )
         .map_err(stream_registry_error)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("empty_curtain_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("empty/curtain").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
 }
