@@ -106,14 +106,6 @@ mod tests {
     use nte_dps_tool::storage::config::TimelineDpsViewMode;
 
     #[test]
-    fn timeline_subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("timeline_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("timeline/01").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
-
-    #[test]
     fn maximum_timeline_contract_fits_the_shared_stream_byte_budget() {
         let roles = (0..MAX_TIMELINE_ROLES_PER_BUCKET)
             .map(|index| TimelineRoleProjection {

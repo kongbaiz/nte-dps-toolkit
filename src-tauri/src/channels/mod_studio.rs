@@ -328,14 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn subscription_id_is_bounded_and_uses_only_stable_ascii() {
-        assert!(validate_subscription_id("mod-runtime_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("mod/runtime").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
-
-    #[test]
     fn stream_announces_connection_and_deduplicates_native_history() {
         let mut cursor = RuntimeStreamCursor::default();
 

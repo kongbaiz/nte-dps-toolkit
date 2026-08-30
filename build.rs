@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use image::ImageEncoder;
-use image::codecs::webp::WebPEncoder;
 use serde_json::Value;
 
 const EXCLUDED_EMBEDDED_RESOURCES: &[&str] = &[
@@ -152,7 +150,6 @@ fn generate_embedded_resources(
     let mut json_source_bytes = 0_u64;
     let mut json_decoded_bytes = 0_u64;
     let mut json_compressed_bytes = 0_u64;
-    let mut webp_images = 0_usize;
     let mut frontend_images = 0_usize;
     let mut frontend_image_bytes = 0_u64;
 
@@ -183,7 +180,6 @@ fn generate_embedded_resources(
                 json_decoded_bytes += processed.decoded_len as u64;
                 json_compressed_bytes += processed.bytes.len() as u64;
             }
-            EmbeddedResourceKind::Webp => webp_images += 1,
             EmbeddedResourceKind::Original => {}
         }
         embedded_bytes += processed.bytes.len() as u64;
@@ -197,9 +193,7 @@ fn generate_embedded_resources(
         let absolute = generated_path.to_string_lossy();
         let encoding = match processed.kind {
             EmbeddedResourceKind::ZlibJson => "EmbeddedResourceEncoding::ZlibJson",
-            EmbeddedResourceKind::Original | EmbeddedResourceKind::Webp => {
-                "EmbeddedResourceEncoding::Original"
-            }
+            EmbeddedResourceKind::Original => "EmbeddedResourceEncoding::Original",
         };
         generated.push_str(&format!(
             "        {relative:?} => Some(EmbeddedResourceEntry {{ bytes: include_bytes!({absolute:?}), decoded_len: {}, encoding: {encoding} }}),\n",
@@ -214,7 +208,7 @@ fn generate_embedded_resources(
     fs::write(output_path, generated).expect("failed to generate embedded resource map");
     if env::var_os("NTE_EMBEDDED_RESOURCE_REPORT").is_some() {
         println!(
-            "cargo:warning=embedded resources: skipped {skipped}, frontend_images {frontend_images} ({frontend_image_bytes} bytes), compressed_json {compressed_json}, webp_images {webp_images}, bytes {} -> {}",
+            "cargo:warning=embedded resources: skipped {skipped}, frontend_images {frontend_images} ({frontend_image_bytes} bytes), compressed_json {compressed_json}, bytes {} -> {}",
             original_bytes, embedded_bytes
         );
         println!(
@@ -315,7 +309,6 @@ struct EmbeddedResource {
 enum EmbeddedResourceKind {
     Original,
     ZlibJson,
-    Webp,
 }
 
 fn process_embedded_resource(relative: &str, original: &[u8]) -> EmbeddedResource {
@@ -335,35 +328,9 @@ fn process_embedded_resource(relative: &str, original: &[u8]) -> EmbeddedResourc
         };
     }
 
-    if relative.ends_with(".png")
-        && let Some(webp) = png_to_lossless_webp(original)
-        && webp.len() < original.len()
-    {
-        return EmbeddedResource {
-            decoded_len: webp.len(),
-            bytes: webp,
-            kind: EmbeddedResourceKind::Webp,
-        };
-    }
-
     EmbeddedResource {
         bytes: original.to_vec(),
         decoded_len: original.len(),
         kind: EmbeddedResourceKind::Original,
     }
-}
-
-fn png_to_lossless_webp(original: &[u8]) -> Option<Vec<u8>> {
-    let image = image::load_from_memory(original).ok()?.to_rgba8();
-    let (width, height) = image.dimensions();
-    let mut bytes = Vec::new();
-    WebPEncoder::new_lossless(&mut bytes)
-        .write_image(
-            image.as_raw(),
-            width,
-            height,
-            image::ExtendedColorType::Rgba8,
-        )
-        .ok()?;
-    Some(bytes)
 }
