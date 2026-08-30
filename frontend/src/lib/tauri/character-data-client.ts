@@ -1,5 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-
 import {
   characterDataError,
   parseCharacterDataSnapshot,
@@ -8,30 +6,23 @@ import {
   type CharacterDataSnapshot,
 } from "@/lib/tauri/character-data-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
+import {
+  tauriInvokeTransport,
+  type InvokeTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   getSnapshot: "get_character_data_snapshot",
   saveRecord: "save_character_data_record",
 } as const;
 
-interface CharacterDataTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-}
-
 export interface CharacterDataClient {
   getSnapshot(): Promise<CharacterDataSnapshot>;
   saveRecord(input: CharacterDataRecordInput): Promise<CharacterDataSnapshot>;
 }
 
-const tauriTransport: CharacterDataTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-};
-
 export function createCharacterDataClient(
-  transport: CharacterDataTransport = tauriTransport,
+  transport: InvokeTransport = tauriInvokeTransport,
 ): CharacterDataClient {
   const request = async (
     command: string,

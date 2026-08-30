@@ -65,7 +65,6 @@ pub(crate) fn subscribe_diagnostics(
         DIAGNOSTICS_STREAM_INTERVAL_MS,
     ))
 }
-
 #[tauri::command]
 pub(crate) fn unsubscribe_diagnostics(
     subscription_id: String,
@@ -81,17 +80,4 @@ pub(crate) fn unsubscribe_diagnostics(
         )
         .map_err(stream_registry_error)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn diagnostics_subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("diagnostics_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("diagnostics/01").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
 }

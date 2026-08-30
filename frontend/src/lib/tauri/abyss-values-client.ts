@@ -1,5 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-
 import {
   abyssValuesError,
   parseAbyssPredictionTeams,
@@ -9,6 +7,7 @@ import {
   type AbyssValuesSnapshot,
 } from "./abyss-values-contract";
 import { TechnicalContractError } from "./technical-contract";
+import { tauriInvokeTransport, type InvokeTransport } from "./stream-client";
 
 const COMMANDS = {
   clearTeam: "clear_abyss_prediction_team",
@@ -18,13 +17,6 @@ const COMMANDS = {
   swapTeams: "swap_abyss_prediction_teams",
 } as const;
 
-interface AbyssValuesTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-}
-
 export interface AbyssValuesClient {
   getSnapshot(): Promise<AbyssValuesSnapshot>;
   importTeam(half: AbyssHalfId, json: string): Promise<AbyssPredictionTeams>;
@@ -33,12 +25,8 @@ export interface AbyssValuesClient {
   swapTeams(): Promise<AbyssPredictionTeams>;
 }
 
-const tauriTransport: AbyssValuesTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-};
-
 export function createAbyssValuesClient(
-  transport: AbyssValuesTransport = tauriTransport,
+  transport: InvokeTransport = tauriInvokeTransport,
 ): AbyssValuesClient {
   async function command<T>(
     name: string,

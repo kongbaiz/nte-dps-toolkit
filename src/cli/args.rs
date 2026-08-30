@@ -33,7 +33,6 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String
 fn parse_serve(args: &[OsString]) -> Result<Command, String> {
     let mut stdio = false;
     let mut data_dir = None;
-    let mut legacy_log_level = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].to_str() {
@@ -47,18 +46,6 @@ fn parse_serve(args: &[OsString]) -> Result<Command, String> {
                     return Err("error: --data-dir requires a non-empty value".to_owned());
                 }
                 data_dir = Some(PathBuf::from(value));
-            }
-            // Backward compatibility for launchers that still pass the retired no-op option.
-            Some("--log-level") if !legacy_log_level => {
-                index += 1;
-                let value = args
-                    .get(index)
-                    .and_then(|value| value.to_str())
-                    .ok_or_else(|| "error: --log-level requires a UTF-8 value".to_owned())?;
-                if value.is_empty() || value.starts_with("--") {
-                    return Err("error: --log-level requires a non-empty value".to_owned());
-                }
-                legacy_log_level = true;
             }
             _ => return Err(usage()),
         }
@@ -103,16 +90,6 @@ mod tests {
     }
 
     #[test]
-    fn accepts_legacy_log_level_for_backward_compatibility() {
-        assert_eq!(
-            parse(args(&["serve", "--stdio", "--log-level", "info"])),
-            Ok(Command::Serve(ServeOptions {
-                data_dir: PathBuf::from("logs")
-            }))
-        );
-    }
-
-    #[test]
     fn serve_requires_stdio_and_option_values() {
         assert_eq!(
             parse(args(&["serve"])).unwrap_err(),
@@ -122,26 +99,12 @@ mod tests {
             parse(args(&["serve", "--stdio", "--data-dir"])).unwrap_err(),
             "error: --data-dir requires a value"
         );
-        assert_eq!(
-            parse(args(&["serve", "--stdio", "--log-level"])).unwrap_err(),
-            "error: --log-level requires a UTF-8 value"
-        );
     }
 
     #[test]
     fn rejects_unknown_and_duplicate_options() {
         assert!(parse(args(&["unknown"])).is_err());
         assert!(parse(args(&["serve", "--stdio", "--stdio"])).is_err());
-        assert!(
-            parse(args(&[
-                "serve",
-                "--stdio",
-                "--log-level",
-                "info",
-                "--log-level",
-                "debug",
-            ]))
-            .is_err()
-        );
+        assert!(parse(args(&["serve", "--stdio", "--log-level", "info"])).is_err());
     }
 }

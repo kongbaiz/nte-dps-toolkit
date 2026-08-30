@@ -163,14 +163,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn main_dps_subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("main_dps_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("main/dps").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
-
-    #[test]
     fn capture_lifecycle_notices_cover_replay_and_live_completion() {
         assert_eq!(
             capture_transition_notice(

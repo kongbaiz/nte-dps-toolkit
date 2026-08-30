@@ -24,6 +24,7 @@ import {
 import {
   subscribeStream,
   tauriStreamTransport,
+  type StreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -55,14 +56,6 @@ const COMMANDS = {
   subscribe: "subscribe_settings",
   unsubscribe: "unsubscribe_settings",
 } as const;
-
-interface SettingsTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
 
 export interface SettingsClient {
   getSnapshot(): Promise<SettingsSnapshot>;
@@ -111,10 +104,8 @@ export interface SettingsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: SettingsTransport = tauriStreamTransport;
-
 export function createSettingsClient(
-  transport: SettingsTransport = tauriTransport,
+  transport: StreamTransport = tauriStreamTransport,
   createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): SettingsClient {
   async function snapshotCommand(

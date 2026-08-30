@@ -28,6 +28,7 @@ import {
 import {
   subscribeStream,
   tauriStreamTransport,
+  type StreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -56,14 +57,6 @@ const COMMANDS = {
   subscribeRuntime: "subscribe_mod_studio_runtime",
   unsubscribeRuntime: "unsubscribe_mod_studio_runtime",
 } as const;
-
-interface ModStudioTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
 
 export interface ModStudioClient {
   acknowledgeRisk(): Promise<ModStudioLoadingMethodPreferenceSnapshot>;
@@ -113,10 +106,8 @@ export interface ModStudioClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: ModStudioTransport = tauriStreamTransport;
-
 export function createModStudioClient(
-  transport: ModStudioTransport = tauriTransport,
+  transport: StreamTransport = tauriStreamTransport,
   createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): ModStudioClient {
   async function request<T>(
