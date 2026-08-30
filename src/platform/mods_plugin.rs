@@ -1721,13 +1721,6 @@ fn decode_mod_logs(
 }
 
 #[cfg(feature = "desktop")]
-pub fn inspect_plugin_deployment(
-    current_plugin: Option<&[u8]>,
-) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
-    inspect_plugin_deployment_with_manual(current_plugin, None)
-}
-
-#[cfg(feature = "desktop")]
 pub fn inspect_plugin_deployment_with_manual(
     current_plugin: Option<&[u8]>,
     manual: Option<(ModsPluginGameRegion, &Path)>,
@@ -1739,14 +1732,6 @@ pub fn inspect_plugin_deployment_with_manual(
         Err(error) => return Err(error),
     };
     inspect_game_installations(&installations, current_plugin)
-}
-
-#[cfg(feature = "desktop")]
-pub fn install_mods_plugin(
-    region: ModsPluginGameRegion,
-    plugin: &[u8],
-) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
-    install_mods_plugin_with_manual(region, plugin, None)
 }
 
 #[cfg(feature = "desktop")]
@@ -1764,13 +1749,6 @@ pub fn install_mods_plugin_with_manual(
     migrate_legacy_mod_workspace(std::slice::from_ref(directory), &workspace)?;
     install_plugin_to_directories(std::slice::from_ref(directory), plugin)?;
     inspect_game_installations(&installations, Some(plugin))
-}
-
-#[cfg(feature = "desktop")]
-pub fn remove_mods_plugin(
-    region: ModsPluginGameRegion,
-) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
-    remove_mods_plugin_with_manual(region, None)
 }
 
 #[cfg(feature = "desktop")]

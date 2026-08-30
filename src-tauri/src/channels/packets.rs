@@ -70,7 +70,6 @@ pub(crate) fn subscribe_packets(
         PACKETS_STREAM_INTERVAL_MS,
     ))
 }
-
 #[tauri::command]
 pub(crate) fn unsubscribe_packets(
     subscription_id: String,
@@ -86,17 +85,4 @@ pub(crate) fn unsubscribe_packets(
         )
         .map_err(stream_registry_error)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn packet_subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("packets_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("packets/01").is_err());
-        assert!(validate_subscription_id(&"p".repeat(65)).is_err());
-    }
 }

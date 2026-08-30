@@ -82,6 +82,5 @@ debug = false
 
 [build-dependencies]
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
-image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 serde_json = "1.0"
 winresource = "0.1.31"

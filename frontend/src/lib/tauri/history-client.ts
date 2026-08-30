@@ -20,6 +20,7 @@ import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
   subscribeStream,
   tauriStreamTransport,
+  type StreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -36,14 +37,6 @@ const COMMANDS = {
   subscribe: "subscribe_history",
   unsubscribe: "unsubscribe_history",
 } as const;
-
-interface HistoryTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
 
 export interface HistoryClient {
   getSnapshot(): Promise<HistorySnapshot>;
@@ -62,10 +55,8 @@ export interface HistoryClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: HistoryTransport = tauriStreamTransport;
-
 export function createHistoryClient(
-  transport: HistoryTransport = tauriTransport,
+  transport: StreamTransport = tauriStreamTransport,
   createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): HistoryClient {
   async function run<T>(
