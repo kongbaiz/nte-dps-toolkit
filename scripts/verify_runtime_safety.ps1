@@ -22,20 +22,6 @@ $script:RuleIds = @{
     SourceTest      = "RUNTIME-SOURCE-TEST"
 }
 
-# Baselines use counts so a line move does not silently make a finding
-# disappear. Added-line fingerprints are checked separately, so replacing an
-# allowlisted occurrence while keeping the count unchanged is still blocked.
-# If an occurrence is removed, the script reports a stale baseline so the
-# table can be trimmed in the same PR.
-$script:Baseline = @{
-    CloneProjection = @{
-        # The original main presentation clone was removed in the current
-        # working tree; keep this empty so a regression is a new violation.
-    }
-    ChannelWorker = @{}
-    ContractSlice = @{}
-}
-
 function Assert-Policy {
     param(
         [Parameter(Mandatory)]
@@ -71,8 +57,7 @@ function New-Diagnostic {
         [string]$Path,
         [int]$Line = 0,
         [Parameter(Mandatory)]
-        [string]$Message,
-        [bool]$Baseline = $false
+        [string]$Message
     )
 
     return [pscustomobject]@{
@@ -81,7 +66,6 @@ function New-Diagnostic {
         Path     = $Path
         Line     = $Line
         Message  = $Message
-        Baseline = $Baseline
     }
 }
 
@@ -480,29 +464,6 @@ function Get-GitAddedLines {
     return @($added)
 }
 
-function Test-AddedOccurrence {
-    param(
-        [Parameter(Mandatory)]
-        [string]$Path,
-        [Parameter(Mandatory)]
-        [int]$Line,
-        [Parameter(Mandatory)]
-        [AllowNull()]
-        [AllowEmptyCollection()]
-        [object[]]$AddedLines,
-        [int]$Radius = 0
-    )
-
-    if ($null -eq $AddedLines -or $AddedLines.Count -eq 0) {
-        return $false
-    }
-
-    return @($AddedLines | Where-Object {
-            $_.Path -eq $Path -and
-            [Math]::Abs(([int]$_.Line) - $Line) -le $Radius
-        }).Count -gt 0
-}
-
 function Test-IsExternalBoundaryPath {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -574,50 +535,6 @@ function Get-AllBoundaryLines {
     return @($lines.ToArray())
 }
 
-function Add-CountRuleDiagnostics {
-    param(
-        [Parameter(Mandatory)]
-        [AllowEmptyCollection()]
-        [System.Collections.Generic.List[object]]$Diagnostics,
-        [Parameter(Mandatory)]
-        [AllowEmptyCollection()]
-        [string]$Rule,
-        [Parameter(Mandatory)]
-        [AllowEmptyCollection()]
-        [hashtable]$CurrentCounts,
-        [Parameter(Mandatory)]
-        [AllowEmptyCollection()]
-        [hashtable]$BaselineCounts,
-        [Parameter(Mandatory)]
-        [string]$Description
-    )
-
-    foreach ($key in $CurrentCounts.Keys) {
-        $current = [int]$CurrentCounts[$key]
-        $baseline = if ($BaselineCounts.ContainsKey($key)) { [int]$BaselineCounts[$key] } else { 0 }
-        if ($current -gt $baseline) {
-            $parts = $key.Split("|", 2)
-            $path = $parts[0]
-            $where = if ($parts.Count -gt 1) { " ($($parts[1]))" } else { "" }
-            $Diagnostics.Add((New-Diagnostic -Severity Error -Rule $Rule -Path $path -Message "${Description}: found $current occurrence(s), baseline allows $baseline$where."))
-        } elseif ($current -eq $baseline -and $current -gt 0) {
-            $parts = $key.Split("|", 2)
-            $path = $parts[0]
-            $where = if ($parts.Count -gt 1) { " ($($parts[1]))" } else { "" }
-            $Diagnostics.Add((New-Diagnostic -Severity Warning -Rule $Rule -Path $path -Message "${Description}: $current existing occurrence(s) are allowlisted$where." -Baseline $true))
-        }
-    }
-
-    foreach ($key in $BaselineCounts.Keys) {
-        $current = if ($CurrentCounts.ContainsKey($key)) { [int]$CurrentCounts[$key] } else { 0 }
-        $baseline = [int]$BaselineCounts[$key]
-        if ($current -lt $baseline) {
-            $path = $key.Split("|", 2)[0]
-            $Diagnostics.Add((New-Diagnostic -Severity Info -Rule $Rule -Path $path -Message "Baseline entry is stale: expected $baseline occurrence(s), found $current. Remove/update the allowlist after review." -Baseline $true))
-        }
-    }
-}
-
 function Test-PolicyHelpers {
     Assert-Policy (Test-HotProjectionContext "src-tauri/src/state.rs" "main_presented_combat_state") `
         "Hot projection helper must classify the main presented state"
@@ -655,14 +572,6 @@ function Test-PolicyHelpers {
     Assert-Policy (-not (Test-RequiredContractSliceWindow -Lines @('const title = value.slice(0, 1);') -Index 0)) `
         "Contract helper must ignore unrelated string slices"
 
-    $addedOccurrences = @(
-        [pscustomobject]@{ Path = "frontend/src/lib/tauri/example-contract.ts"; Line = 12; Text = ".slice(0, 1)" }
-    )
-    Assert-Policy (Test-AddedOccurrence -Path "frontend/src/lib/tauri/example-contract.ts" -Line 12 -AddedLines $addedOccurrences) `
-        "Added occurrence helper must detect an exact replacement line"
-    Assert-Policy (-not (Test-AddedOccurrence -Path "frontend/src/lib/tauri/example-contract.ts" -Line 10 -AddedLines $addedOccurrences)) `
-        "Added occurrence helper must not match an unrelated line"
-
     $cfgAllTestLines = @(
         '#[cfg(all(test, feature = "cli"))]',
         'fn install_test_capture() {',
@@ -672,14 +581,6 @@ function Test-PolicyHelpers {
     Assert-Policy (Test-RustTestRegion -Lines $cfgAllTestLines -Index 2) `
         "Rust test-region helper must recognize cfg(all(test, ...)) functions"
 
-    $added = @(
-        "diff --git a/src/core/live_capture.rs b/src/core/live_capture.rs",
-        "@@ -1 +1 @@",
-        "+    value.unwrap();"
-    )
-    # The parser is exercised by a no-op diff here; repository runs exercise
-    # the full git-backed path.  Keep this assertion to catch parser regressions.
-    Assert-Policy ($added.Count -eq 3) "Self-test fixture must remain well-formed"
 }
 
 Test-PolicyHelpers
@@ -731,19 +632,14 @@ try {
     }
 
     $hotOccurrences = @(Find-HotCloneOccurrences $rustFiles)
-    $hotCounts = @{}
     foreach ($occurrence in $hotOccurrences) {
-        $key = "$($occurrence.Path)|$($occurrence.Function)"
-        if (-not $hotCounts.ContainsKey($key)) { $hotCounts[$key] = 0 }
-        $hotCounts[$key] = [int]$hotCounts[$key] + 1
+        $diagnostics.Add((New-Diagnostic `
+                    -Severity Error `
+                    -Rule $script:RuleIds['CloneProjection'] `
+                    -Path $occurrence.Path `
+                    -Line $occurrence.Line `
+                    -Message "High-frequency projection '$($occurrence.Function)' contains a full-state clone."))
     }
-    $cloneBaseline = [hashtable]$script:Baseline['CloneProjection']
-    Add-CountRuleDiagnostics `
-        -Diagnostics $diagnostics `
-        -Rule $script:RuleIds['CloneProjection'] `
-        -CurrentCounts $hotCounts `
-        -BaselineCounts $cloneBaseline `
-        -Description "High-frequency projection contains with_state(Clone::clone)"
 
     $channelOccurrences = @(Find-ChannelThreadSleepOccurrences $rustFiles)
     foreach ($occurrence in $channelOccurrences) {
@@ -759,43 +655,20 @@ try {
     foreach ($diagnostic in $replayViolations) { $diagnostics.Add($diagnostic) }
 
     $sliceOccurrences = @(Find-ContractSilentSlices $frontendFiles)
-    $sliceCounts = @{}
     foreach ($occurrence in $sliceOccurrences) {
-        if (-not $sliceCounts.ContainsKey($occurrence.Path)) { $sliceCounts[$occurrence.Path] = 0 }
-        $sliceCounts[$occurrence.Path] = [int]$sliceCounts[$occurrence.Path] + 1
+        $diagnostics.Add((New-Diagnostic `
+                    -Severity Error `
+                    -Rule $script:RuleIds['ContractSlice'] `
+                    -Path $occurrence.Path `
+                    -Line $occurrence.Line `
+                    -Message "Required contract list is silently sliced; validate the server-bounded list instead."))
     }
-    $contractBaseline = [hashtable]$script:Baseline['ContractSlice']
-    Add-CountRuleDiagnostics `
-        -Diagnostics $diagnostics `
-        -Rule $script:RuleIds['ContractSlice'] `
-        -CurrentCounts $sliceCounts `
-        -BaselineCounts $contractBaseline `
-        -Description "Required contract list is silently sliced"
 
     $sourceMap = @{}
     foreach ($file in $rustFiles) {
         $sourceMap[(ConvertTo-RelativePath $file.FullName)] = @(Get-Content -LiteralPath $file.FullName)
     }
     $addedLines = @(Get-GitAddedLines)
-
-    foreach ($occurrence in $hotOccurrences) {
-        $key = "$($occurrence.Path)|$($occurrence.Function)"
-        $current = if ($hotCounts.ContainsKey($key)) { [int]$hotCounts[$key] } else { 0 }
-        $baseline = if ($cloneBaseline.ContainsKey($key)) { [int]$cloneBaseline[$key] } else { 0 }
-        if ($current -le $baseline -and
-            (Test-AddedOccurrence -Path $occurrence.Path -Line $occurrence.Line -AddedLines $addedLines -Radius 2)) {
-            $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['CloneProjection'] -Path $occurrence.Path -Line $occurrence.Line -Message "This diff adds an occurrence hidden by the count baseline; remove the full-state clone or review a new fingerprint explicitly."))
-        }
-    }
-
-    foreach ($occurrence in $sliceOccurrences) {
-        $current = if ($sliceCounts.ContainsKey($occurrence.Path)) { [int]$sliceCounts[$occurrence.Path] } else { 0 }
-        $baseline = if ($contractBaseline.ContainsKey($occurrence.Path)) { [int]$contractBaseline[$occurrence.Path] } else { 0 }
-        if ($current -le $baseline -and
-            (Test-AddedOccurrence -Path $occurrence.Path -Line $occurrence.Line -AddedLines $addedLines)) {
-            $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['ContractSlice'] -Path $occurrence.Path -Line $occurrence.Line -Message "This diff adds a silent contract slice hidden by the count baseline; validate the server-bounded list instead."))
-        }
-    }
 
     $boundaryLines = if ($Strict) {
         Get-AllBoundaryLines $sourceMap
@@ -809,15 +682,14 @@ try {
     $ordered = @($diagnostics | Sort-Object Severity, Rule, Path, Line)
     foreach ($diagnostic in $ordered) {
         $location = if ($diagnostic.Line -gt 0) { "$($diagnostic.Path):$($diagnostic.Line)" } else { $diagnostic.Path }
-        $suffix = if ($diagnostic.Baseline) { " [baseline]" } else { "" }
-        Write-Output ("RUNTIME-SAFETY [{0}] [{1}] {2}{3} - {4}" -f $diagnostic.Severity.ToUpperInvariant(), $diagnostic.Rule, $location, $suffix, $diagnostic.Message)
+        Write-Output ("RUNTIME-SAFETY [{0}] [{1}] {2} - {3}" -f $diagnostic.Severity.ToUpperInvariant(), $diagnostic.Rule, $location, $diagnostic.Message)
     }
 
     $errors = @($ordered | Where-Object { $_.Severity -eq "Error" })
     $warnings = @($ordered | Where-Object { $_.Severity -eq "Warning" })
     if ($Strict) {
         $errors += @($warnings | ForEach-Object {
-                New-Diagnostic -Severity Error -Rule $_.Rule -Path $_.Path -Line $_.Line -Message "Strict mode: $($_.Message)" -Baseline $_.Baseline
+                New-Diagnostic -Severity Error -Rule $_.Rule -Path $_.Path -Line $_.Line -Message "Strict mode: $($_.Message)"
             })
     }
     if ($errors.Count -gt 0) {

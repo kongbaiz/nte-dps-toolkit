@@ -88,18 +88,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn subscription_id_accepts_stable_ascii_identifier() {
-        assert!(validate_subscription_id("hud_spike-01").is_ok());
-    }
-
-    #[test]
-    fn subscription_id_rejects_empty_oversized_and_reserved_characters() {
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-        assert!(validate_subscription_id("hud/spike").is_err());
-    }
-
-    #[test]
     fn unchanged_revision_skips_idle_snapshot_work() {
         let state = AppState::default();
         let revision = state.stream_revision();

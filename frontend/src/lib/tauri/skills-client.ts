@@ -10,6 +10,7 @@ import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
   subscribeStream,
   tauriStreamTransport,
+  type StreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -17,14 +18,6 @@ const COMMANDS = {
   subscribe: "subscribe_skills",
   unsubscribe: "unsubscribe_skills",
 } as const;
-
-interface SkillsTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
 
 export interface SkillsClient {
   getSnapshot(scope: SkillsScope): Promise<SkillsSnapshot>;
@@ -35,10 +28,8 @@ export interface SkillsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: SkillsTransport = tauriStreamTransport;
-
 export function createSkillsClient(
-  transport: SkillsTransport = tauriTransport,
+  transport: StreamTransport = tauriStreamTransport,
   createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): SkillsClient {
   return {

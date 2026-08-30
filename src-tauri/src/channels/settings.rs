@@ -122,14 +122,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("settings_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("settings/01").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
-
-    #[test]
     fn settings_stream_emits_initial_and_changed_revisions_only() {
         assert!(should_emit_snapshot(None, 0));
         assert!(!should_emit_snapshot(Some(3), 3));

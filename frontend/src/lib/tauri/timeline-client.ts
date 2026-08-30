@@ -11,6 +11,7 @@ import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
   subscribeStream,
   tauriStreamTransport,
+  type StreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -19,14 +20,6 @@ const COMMANDS = {
   subscribe: "subscribe_timeline",
   unsubscribe: "unsubscribe_timeline",
 } as const;
-
-interface TimelineTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
 
 export interface TimelineClient {
   getSnapshot(scope: TimelineScope): Promise<TimelineSnapshot>;
@@ -42,10 +35,8 @@ export interface TimelineClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: TimelineTransport = tauriStreamTransport;
-
 export function createTimelineClient(
-  transport: TimelineTransport = tauriTransport,
+  transport: StreamTransport = tauriStreamTransport,
   createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): TimelineClient {
   const run = async (
