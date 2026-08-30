@@ -31,9 +31,6 @@ export function resolveCharacterAvatar(charId: number): string | null {
   return avatar ? characterAvatarPathUrl(avatar) : null;
 }
 
-/** @deprecated Use `resolveCharacterAvatar` (or `useCharacterAvatar` in React). */
-export const characterAvatarUrl = resolveCharacterAvatar;
-
 export async function bootstrapCharacterAvatarCatalog(): Promise<void> {
   const snapshot = await characterDataClient.getSnapshot();
   replaceCharacterAvatarCatalog(snapshot.records);

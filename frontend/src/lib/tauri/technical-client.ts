@@ -10,6 +10,7 @@ import {
 import {
   subscribeStream,
   tauriStreamTransport,
+  type StreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -25,14 +26,6 @@ const COMMANDS = {
   subscribe: "subscribe_technical_state",
   unsubscribe: "unsubscribe_technical_state",
 } as const;
-
-interface TechnicalTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
 
 export interface TechnicalClient {
   getSnapshot(): Promise<TechnicalSnapshot>;
@@ -57,10 +50,8 @@ export interface TechnicalClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: TechnicalTransport = tauriStreamTransport;
-
 export function createTechnicalClient(
-  transport: TechnicalTransport = tauriTransport,
+  transport: StreamTransport = tauriStreamTransport,
   createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): TechnicalClient {
   async function snapshotCommand(

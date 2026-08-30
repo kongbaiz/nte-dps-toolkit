@@ -16,6 +16,7 @@ import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
   subscribeStream,
   tauriStreamTransport,
+  type StreamTransport,
 } from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
@@ -29,14 +30,6 @@ const COMMANDS = {
   exportLoadout: "export_empty_curtain_loadout",
   importLoadout: "import_empty_curtain_loadout",
 } as const;
-
-interface EmptyCurtainTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
 
 export interface ManageItemInput {
   item: ItemUid;
@@ -65,10 +58,8 @@ export interface EmptyCurtainClient {
   importLoadout(): Promise<EmptyCurtainFileResult>;
 }
 
-const tauriTransport: EmptyCurtainTransport = tauriStreamTransport;
-
 export function createEmptyCurtainClient(
-  transport: EmptyCurtainTransport = tauriTransport,
+  transport: StreamTransport = tauriStreamTransport,
   createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): EmptyCurtainClient {
   const command = async <T>(

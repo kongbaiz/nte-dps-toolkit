@@ -171,18 +171,6 @@ struct HistoryHitChunkWrite<'a> {
 }
 
 #[derive(Serialize)]
-struct HistoryRecordExport<'a> {
-    version: u32,
-    id: &'a str,
-    saved_at: &'a DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    recorded_at: Option<&'a DateTime<Utc>>,
-    summary: &'a CombatSessionSummary,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<&'a HistoryCombatDetails>,
-}
-
-#[derive(Serialize)]
 struct HistoryRecordDisk<'a> {
     version: u32,
     id: &'a str,
@@ -1139,10 +1127,6 @@ pub fn history_dir() -> PathBuf {
     software_dir().join("history")
 }
 
-pub fn load_history() -> HistoryLoadResult {
-    load_history_from_dir(&history_dir())
-}
-
 /// Loads bounded History row metadata without opening or materializing detail
 /// chunks. Use this for list/stream projections; hydrate one selected record
 /// with [`load_history_record_by_id_for_interactive_selection`] only when its
@@ -1159,11 +1143,6 @@ pub fn load_history_record_from_path(path: &Path) -> Result<HistoryRecord, Strin
 
 /// Resolves and hydrates exactly one retained record instead of loading every
 /// record's potentially large detail stream.
-pub fn load_history_record_by_id(record_id: &str) -> Result<Option<HistoryRecord>, String> {
-    load_history_record_by_id_with_max_detail_bytes(record_id, MAX_HISTORY_DETAILS_BYTES)
-        .map_err(|error| error.to_string())
-}
-
 /// Preflights the trusted on-disk detail footprint from the lightweight index
 /// before any chunk is opened or any `Hit` is materialized.
 pub fn load_history_record_by_id_with_max_detail_bytes(
@@ -1253,32 +1232,6 @@ fn load_indexed_history_record_with_limits(
         }
     }
     Ok(loaded)
-}
-
-/// Atomically writes a hydrated record as a self-contained JSON export without
-/// first materializing a second record-sized `String`. The record is trusted
-/// runtime state, so this output path deliberately has no import-size ceiling;
-/// importing the resulting file still goes through the independent external
-/// file and hit-count budgets.
-pub fn export_history_record_to_path(
-    record: &HistoryRecord,
-    destination: &Path,
-) -> Result<(), String> {
-    if let Some(details) = &record.details {
-        details.validate()?;
-    }
-    let export = HistoryRecordExport {
-        version: record.version,
-        id: &record.id,
-        saved_at: &record.saved_at,
-        recorded_at: record.recorded_at.as_ref(),
-        summary: &record.summary,
-        details: record.details.as_ref(),
-    };
-    atomic_write_file(destination, |writer| {
-        serde_json::to_writer_pretty(&mut *writer, &export).map_err(|error| error.to_string())?;
-        writer.write_all(b"\n").map_err(|error| error.to_string())
-    })
 }
 
 /// Prepares a hit-free export descriptor from the local History index and main
@@ -1379,14 +1332,6 @@ pub fn export_prepared_history_record_to_path(
         return Err(error);
     }
     result.map_err(|_| HistoryRecordExportError::DestinationWriteFailed)
-}
-
-pub fn export_history_record_by_id_to_path(
-    record_id: &str,
-    destination: &Path,
-) -> Result<(), HistoryRecordExportError> {
-    let prepared = prepare_history_record_export(record_id)?;
-    export_prepared_history_record_to_path(&prepared, destination)
 }
 
 pub fn export_history_record_by_id_from_dir_to_path(
@@ -1959,19 +1904,6 @@ pub fn save_summary_with_details(
     save_summary_with_details_to_dir(&history_dir(), summary, details)
 }
 
-pub fn save_summary_outcome(
-    summary: CombatSessionSummary,
-) -> Result<HistorySaveOutcome, HistorySaveError> {
-    save_summary_to_dir_outcome(&history_dir(), summary)
-}
-
-pub fn save_summary_with_details_outcome(
-    summary: CombatSessionSummary,
-    details: HistoryCombatDetails,
-) -> Result<HistorySaveOutcome, HistorySaveError> {
-    save_summary_with_details_to_dir_outcome(&history_dir(), summary, details)
-}
-
 /// Persists a prepared archive by reference. This is the retry-safe path used
 /// by the desktop History owner: success drops the caller's archive, while a
 /// pre-commit failure leaves the exact same owned hit vectors available for a
@@ -2343,10 +2275,6 @@ fn write_borrowed_record_to_dir_with_maintenance(
     Ok(maintain(directory).err())
 }
 
-pub fn delete_record(record_id: &str) -> Result<bool, String> {
-    delete_record_from_dir(&history_dir(), record_id)
-}
-
 pub fn tombstone_record(
     record_id: &str,
 ) -> Result<Option<HistoryDeleteTombstone>, HistoryDeleteError> {
@@ -2363,10 +2291,6 @@ pub fn discard_tombstoned_record(
     tombstone: &HistoryDeleteTombstone,
 ) -> Result<(), HistoryDeleteError> {
     discard_tombstoned_record_from_dir(tombstone)
-}
-
-pub fn restore_record(record: &HistoryRecord) -> Result<(), String> {
-    restore_record_to_dir(&history_dir(), record)
 }
 
 pub fn restore_record_to_dir(directory: &Path, record: &HistoryRecord) -> Result<(), String> {

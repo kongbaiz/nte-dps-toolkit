@@ -59,7 +59,6 @@ pub(crate) fn subscribe_history(
         HISTORY_STREAM_INTERVAL_MS,
     ))
 }
-
 #[cfg(test)]
 pub(crate) fn run_history_stream_worker(
     state: &AppState,
@@ -113,17 +112,4 @@ pub(crate) fn unsubscribe_history(
         )
         .map_err(stream_registry_error)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn history_subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("history_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("history/01").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
 }

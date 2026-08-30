@@ -16,17 +16,9 @@ use crate::engine::capture::{
 use crate::engine::model::CharacterInfo;
 use crate::engine::parser::AbilityCatalog;
 use crate::platform::network::{
-    GameNetwork, GameNetworkProbe, GameNetworkUnavailable, NetworkProbeFailure,
-    detect_game_network, game_process_is_running,
+    GameNetwork, GameNetworkProbe, GameNetworkUnavailable, NetworkProbeFailure, detect_game_network,
 };
 use crate::storage::paths::capture_log_dir;
-
-/// Probe whether the game process is running. `Err` means the OS process
-/// query itself failed, not that the game is absent.
-pub fn probe_game_process() -> Result<bool, CoreError> {
-    game_process_is_running()
-        .map_err(|detail| CoreError::new(CoreErrorCode::SystemProbeFailed, detail))
-}
 
 pub fn enumerate_devices() -> Result<Vec<CaptureDevice>, CoreError> {
     list_devices().map_err(|detail| CoreError::new(CoreErrorCode::NpcapNotFound, detail))
