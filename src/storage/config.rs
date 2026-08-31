@@ -785,16 +785,6 @@ impl HitDetailColumnsConfig {
         }
     }
 
-    pub fn set_visible(&mut self, column: HitDetailColumn, visible: bool) {
-        match column {
-            HitDetailColumn::Time => self.show_time = visible,
-            HitDetailColumn::Character => self.show_character = visible,
-            HitDetailColumn::Type => self.show_type = visible,
-            HitDetailColumn::Damage => self.show_damage = visible,
-            HitDetailColumn::TargetHp => self.show_target_hp = visible,
-        }
-    }
-
     pub fn width(self, column: HitDetailColumn) -> u16 {
         match column {
             HitDetailColumn::Time => self.time_width,
@@ -1854,7 +1844,7 @@ mod tests {
             type_width: u16::MAX,
             ..HitDetailColumnsConfig::default()
         };
-        columns.set_visible(HitDetailColumn::TargetHp, false);
+        columns.show_target_hp = false;
         let config = UiConfig {
             hit_detail_columns: columns,
             ..UiConfig::default()

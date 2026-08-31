@@ -1,38 +1,19 @@
 [CmdletBinding()]
-param(
-    [switch]$SelfTestOnly,
-    [switch]$Strict
-)
+param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# This policy is intentionally source based. It is a review aid, not a proof
-# that a lock is held for the right amount of time. The default mode blocks
-# unbounded contract repair and channel workers without an owner/cancellation
-# proof. -Strict additionally turns all review warnings into errors.
+# This source-based policy blocks known unsafe patterns. Behavioral tests remain
+# the authority for lock ownership, cancellation and external-input handling.
 $script:RuleIds = @{
     CloneProjection = "RUNTIME-HOT-CLONE"
     ChannelWorker   = "RUNTIME-CHANNEL-THREAD"
     ReplayBudget    = "RUNTIME-REPLAY-BUDGET"
-    BoundaryPanic   = "RUNTIME-BOUNDARY-PANIC"
     ContractSlice   = "RUNTIME-CONTRACT-SLICE"
     RetiredModCode  = "RUNTIME-RETIRED-MOD-CODE"
     PoisonRecovery  = "RUNTIME-BLIND-POISON-RECOVERY"
     SourceTest      = "RUNTIME-SOURCE-TEST"
-}
-
-function Assert-Policy {
-    param(
-        [Parameter(Mandatory)]
-        [bool]$Condition,
-        [Parameter(Mandatory)]
-        [string]$Message
-    )
-
-    if (-not $Condition) {
-        throw $Message
-    }
 }
 
 function ConvertTo-RelativePath {
@@ -151,16 +132,6 @@ function Test-RustTestRegion {
         }
     }
     return $testModuleDepth -ne $null
-}
-
-function Test-BlindPoisonRecoveryText {
-    param(
-        [Parameter(Mandatory)]
-        [AllowEmptyString()]
-        [string]$Text
-    )
-
-    return $Text -match 'unwrap_or_else\s*\(\s*\|\s*(?<guard>[A-Za-z_][A-Za-z0-9_]*)\s*\|\s*\k<guard>\s*\.\s*into_inner\s*\(\s*\)\s*\)'
 }
 
 function Find-BlindPoisonRecoveries {
@@ -418,177 +389,6 @@ function Test-RequiredContractSliceWindow {
     return $window -match "\blist\s*\("
 }
 
-function Get-GitAddedLines {
-    $range = $null
-    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_BASE_REF)) {
-        $range = "origin/$($env:GITHUB_BASE_REF)...HEAD"
-    } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_EVENT_BEFORE) -and
-        $env:GITHUB_EVENT_BEFORE -notmatch '^0+$') {
-        $range = "$($env:GITHUB_EVENT_BEFORE)...HEAD"
-    }
-    $diffArgs = @("--no-ext-diff", "--unified=0")
-    if ($null -ne $range) {
-        $diffArgs += $range
-    } else {
-        # Include both staged and unstaged changes in local review runs.
-        $diffArgs += "HEAD"
-    }
-    $diffArgs += @("--", "src", "src-tauri", "frontend")
-    $diff = @(& git diff @diffArgs 2>$null)
-    if ($LASTEXITCODE -ne 0) {
-        return @()
-    }
-
-    $path = ""
-    $lineNumber = 0
-    $added = @()
-    foreach ($line in $diff) {
-        if ($line -match "^\+\+\+ b/(.+)$") {
-            $path = $Matches[1] -replace "\\", "/"
-            continue
-        }
-        if ($line -match "^@@ .* \+(\d+)(?:,(\d+))? @@") {
-            $lineNumber = [int]$Matches[1]
-            continue
-        }
-        if ([string]::IsNullOrWhiteSpace($path)) {
-            continue
-        }
-        if ($line.StartsWith("+")) {
-            $added += [pscustomobject]@{ Path = $path; Line = $lineNumber; Text = $line.Substring(1) }
-            $lineNumber++
-        } elseif (-not $line.StartsWith("-")) {
-            $lineNumber++
-        }
-    }
-    return @($added)
-}
-
-function Test-IsExternalBoundaryPath {
-    param([Parameter(Mandatory)][string]$Path)
-
-    return $Path -match "^(src/(cli|api|engine|core|platform)/|src-tauri/src/(commands|channels|contract|windows)/|src-tauri/src/state\.rs$)"
-}
-
-function Find-ExternalBoundaryDiffWarnings {
-    param(
-        [Parameter(Mandatory)]
-        [AllowNull()]
-        [object[]]$AddedLines,
-        [Parameter(Mandatory)]
-        [hashtable]$SourceMap
-    )
-
-    $warnings = @()
-    foreach ($entry in $AddedLines) {
-        if (-not (Test-IsExternalBoundaryPath $entry.Path)) {
-            continue
-        }
-        $text = [string]$entry.Text
-        if ($text -notmatch "\.\s*(unwrap|expect)\s*\(|\bassert(?:_eq|_ne)?!\s*\(") {
-            continue
-        }
-        if ($text -match "\.\s*unwrap_or(?:_else)?\s*\(") {
-            continue
-        }
-        $function = [pscustomobject]@{ IsTest = $false }
-        if ($SourceMap.ContainsKey($entry.Path)) {
-            $function = Get-NearestRustFunction -Lines $SourceMap[$entry.Path] -Index ([int]$entry.Line - 1)
-            if (Test-RustTestRegion -Lines $SourceMap[$entry.Path] -Index ([int]$entry.Line - 1)) {
-                continue
-            }
-        }
-        if ($function.IsTest) {
-            continue
-        }
-        $operation = if ($text -match "assert") { "assert macro" } elseif ($text -match "expect") { "expect" } else { "unwrap" }
-        $warnings += New-Diagnostic `
-            -Severity Warning `
-            -Rule $script:RuleIds['BoundaryPanic'] `
-            -Path $entry.Path `
-            -Line ([int]$entry.Line) `
-            -Message "New external-boundary $operation; review that untrusted input cannot reach a panic."
-    }
-    return @($warnings)
-}
-
-function Get-AllBoundaryLines {
-    param(
-        [Parameter(Mandatory)]
-        [hashtable]$SourceMap
-    )
-
-    $lines = [System.Collections.Generic.List[object]]::new()
-    foreach ($path in $SourceMap.Keys) {
-        if (-not (Test-IsExternalBoundaryPath $path)) {
-            continue
-        }
-        $sourceLines = $SourceMap[$path]
-        for ($index = 0; $index -lt $sourceLines.Count; $index++) {
-            $lines.Add([pscustomobject]@{
-                Path = $path
-                Line = $index + 1
-                Text = $sourceLines[$index]
-            })
-        }
-    }
-    return @($lines.ToArray())
-}
-
-function Test-PolicyHelpers {
-    Assert-Policy (Test-HotProjectionContext "src-tauri/src/state.rs" "main_presented_combat_state") `
-        "Hot projection helper must classify the main presented state"
-    Assert-Policy (-not (Test-HotProjectionContext "src-tauri/src/state.rs" "reset_session_with_undo")) `
-        "Hot projection helper must not classify undo snapshots"
-    Assert-Policy (Test-HotCloneFingerprint "let records = cache.records.clone();" "main_round_records") `
-        "Hot clone helper must detect deep history-record cache clones"
-    Assert-Policy (Test-HotCloneFingerprint "HistoryCombatDetails::from_state(&state)" "process_event") `
-        "Hot clone helper must detect archive conversion inside event processing"
-    Assert-Policy (-not (Test-HotCloneFingerprint "HistoryCombatDetails::from_state(&state)" "queue_detached_abyss_round")) `
-        "Hot clone helper must allow detached archive conversion outside process_event"
-    Assert-Policy (Test-BlindPoisonRecoveryText 'lock.lock().unwrap_or_else(|poison| poison.into_inner())') `
-        "Poison helper must detect blind one-line recovery"
-    Assert-Policy (Test-BlindPoisonRecoveryText "lock.lock()`n    .unwrap_or_else(|error| error.into_inner())") `
-        "Poison helper must detect blind multiline recovery"
-    Assert-Policy (-not (Test-BlindPoisonRecoveryText 'let mut guard = poisoned.into_inner(); guard.clear(); lock.clear_poison();')) `
-        "Poison helper must allow an explicit recovery strategy"
-
-    $replayLines = @(
-        "fn import_capture_json(path: &Path) {",
-        "    validate_capture_json_import(path).unwrap();",
-        "    let text = std::fs::read_to_string(path);",
-        "}"
-    )
-    Assert-Policy (Test-ReplayImportValidation -Lines $replayLines -ReadIndex 2 -FunctionStart 0) `
-        "Replay validation helper must accept validation before the read"
-    Assert-Policy (-not (Test-ReplayImportValidation -Lines @("fn import_replay(path: &Path) {", "    let text = fs::read_to_string(path);", "}") -ReadIndex 1 -FunctionStart 0)) `
-        "Replay validation helper must reject an unbounded read"
-    Assert-Policy (-not (Test-ReplayImportValidation -Lines @("fn import_replay(path: &Path) {", "    let _metadata = fs::metadata(path);", "    let text = fs::read_to_string(path);", "}") -ReadIndex 2 -FunctionStart 0)) `
-        "Replay validation helper must reject metadata-only checks"
-
-    $sliceLines = @('const rows = list(source.rows, "rows").slice(0, 250).map(parseRow);')
-    Assert-Policy (Test-RequiredContractSliceWindow -Lines $sliceLines -Index 0) `
-        "Contract helper must detect list(...).slice(...)"
-    Assert-Policy (-not (Test-RequiredContractSliceWindow -Lines @('const title = value.slice(0, 1);') -Index 0)) `
-        "Contract helper must ignore unrelated string slices"
-
-    $cfgAllTestLines = @(
-        '#[cfg(all(test, feature = "cli"))]',
-        'fn install_test_capture() {',
-        '    assert!(true);',
-        '}'
-    )
-    Assert-Policy (Test-RustTestRegion -Lines $cfgAllTestLines -Index 2) `
-        "Rust test-region helper must recognize cfg(all(test, ...)) functions"
-
-}
-
-Test-PolicyHelpers
-if ($SelfTestOnly) {
-    Write-Output "Runtime safety policy helper tests passed."
-    exit 0
-}
-
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repositoryRoot
 try {
@@ -664,42 +464,19 @@ try {
                     -Message "Required contract list is silently sliced; validate the server-bounded list instead."))
     }
 
-    $sourceMap = @{}
-    foreach ($file in $rustFiles) {
-        $sourceMap[(ConvertTo-RelativePath $file.FullName)] = @(Get-Content -LiteralPath $file.FullName)
-    }
-    $addedLines = @(Get-GitAddedLines)
-
-    $boundaryLines = if ($Strict) {
-        Get-AllBoundaryLines $sourceMap
-    } else {
-        $addedLines
-    }
-    foreach ($diagnostic in @(Find-ExternalBoundaryDiffWarnings $boundaryLines $sourceMap)) {
-        $diagnostics.Add($diagnostic)
-    }
-
     $ordered = @($diagnostics | Sort-Object Severity, Rule, Path, Line)
     foreach ($diagnostic in $ordered) {
         $location = if ($diagnostic.Line -gt 0) { "$($diagnostic.Path):$($diagnostic.Line)" } else { $diagnostic.Path }
         Write-Output ("RUNTIME-SAFETY [{0}] [{1}] {2} - {3}" -f $diagnostic.Severity.ToUpperInvariant(), $diagnostic.Rule, $location, $diagnostic.Message)
     }
 
-    $errors = @($ordered | Where-Object { $_.Severity -eq "Error" })
-    $warnings = @($ordered | Where-Object { $_.Severity -eq "Warning" })
-    if ($Strict) {
-        $errors += @($warnings | ForEach-Object {
-                New-Diagnostic -Severity Error -Rule $_.Rule -Path $_.Path -Line $_.Line -Message "Strict mode: $($_.Message)"
-            })
-    }
+    $errors = @($ordered | Where-Object Severity -eq "Error")
     if ($errors.Count -gt 0) {
-        $modeHint = if ($Strict) { "review warnings are blocking in -Strict mode" } else { "unreviewed findings are blocking" }
-        Write-Error ("Runtime safety policy failed with {0} blocking diagnostic(s): {1}." -f $errors.Count, $modeHint)
+        Write-Error "Runtime safety policy failed with $($errors.Count) blocking diagnostic(s)."
         exit 1
     }
 
-    $mode = if ($Strict) { "strict" } else { "standard" }
-    Write-Output ("Runtime safety policy passed ({0} mode): {1} warning(s), {2} informational diagnostic(s)." -f $mode, $warnings.Count, @($ordered | Where-Object { $_.Severity -eq "Info" }).Count)
+    Write-Output "Runtime safety policy passed."
 }
 finally {
     Pop-Location

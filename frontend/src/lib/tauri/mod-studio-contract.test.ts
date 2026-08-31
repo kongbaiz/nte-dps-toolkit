@@ -15,7 +15,6 @@ import {
   parseModStudioLoadingMethodPreference,
   parseModStudioRuntimeEvent,
   parseModStudioSdkSchema,
-  parseModStudioSubscriptionReceipt,
   parseModStudioWorkspace,
 } from "./mod-studio-contract";
 
@@ -580,21 +579,6 @@ describe("Mod Studio contract", () => {
   });
 
   it("parses runtime connection receipts", () => {
-    expect(
-      parseModStudioSubscriptionReceipt({
-        subscriptionId: "runtime-01",
-        streamKind: "modStudioRuntime",
-        streamIntervalMs: 250,
-        streamProtocolVersion: 1,
-        streamGeneration: "3",
-      }),
-    ).toEqual({
-      subscriptionId: "runtime-01",
-      streamKind: "modStudioRuntime",
-      streamIntervalMs: 250,
-      streamProtocolVersion: 1,
-      streamGeneration: "3",
-    });
     expect(
       parseModStudioRuntimeEvent({
         event: "connection",

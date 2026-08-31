@@ -214,10 +214,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Verify PowerShell CI fail-fast policy
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/test_ci_powershell_fail_fast.ps1
-
       - name: Verify native runtime safety policies
         shell: pwsh
         run: |

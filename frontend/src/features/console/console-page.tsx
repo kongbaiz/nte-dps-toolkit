@@ -26,7 +26,6 @@ import { ShortcutsPage } from "@/features/shortcuts/shortcuts-page";
 import { SkillsPage } from "@/features/skills/skills-page";
 import { TimelinePage } from "@/features/timeline/timeline-page";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { t, useTranslationRevision } from "@/lib/i18n";
 import { startMotionViewTransition } from "@/lib/motion";
 import { applySettingsPresentation } from "@/lib/settings-presentation";
@@ -429,9 +428,9 @@ export function ConsolePage() {
       {replayConfirmation !== null && (
         <AlertDialog
           open
-          onOpenChange={(open) =>
-            dismissLayerWhenClosed(open, () => setReplayConfirmation(null))
-          }
+          onOpenChange={(open) => {
+            if (!open) setReplayConfirmation(null);
+          }}
         >
           <AlertDialogPortal>
             <AlertDialogBackdrop className="z-[80] bg-black/45" />

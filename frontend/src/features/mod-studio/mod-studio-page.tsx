@@ -47,7 +47,6 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { t, tf, useTranslationRevision } from "@/lib/i18n";
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import type {
   ModStudioCommandError,
@@ -730,7 +729,9 @@ function ModLoaderRiskDialog({
   return (
     <AlertDialog
       open
-      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
     >
       <AlertDialogPortal>
         <AlertDialogBackdrop />
@@ -786,7 +787,9 @@ function ModLoaderProcessDialog({
   return (
     <AlertDialog
       open
-      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
     >
       <AlertDialogPortal>
         <AlertDialogBackdrop />
@@ -1113,7 +1116,9 @@ function DeleteModDialog({
   return (
     <AlertDialog
       open
-      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
     >
       <AlertDialogPortal>
         <AlertDialogBackdrop />

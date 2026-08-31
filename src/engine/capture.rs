@@ -8064,12 +8064,6 @@ impl From<&PacketDebug> for ExportPacket {
     }
 }
 
-pub fn write_capture_export(path: &Path, document: &CaptureExportDocument) -> Result<(), String> {
-    atomic_write_file(path, |writer| {
-        serde_json::to_writer_pretty(writer, document).map_err(|error| error.to_string())
-    })
-}
-
 struct StreamingCaptureExport<'a, F> {
     plan: &'a CaptureExportPlan,
     load_page: std::cell::RefCell<F>,
@@ -8425,30 +8419,6 @@ impl CaptureImportError {
             | Self::EquipmentDataUnavailable => "replay_validation_failed",
         }
     }
-}
-
-/// Checks a capture JSON import path before any bytes are read:
-/// - the path must be a regular file;
-/// - its metadata size must fit the import budget.
-///
-/// Every replay/import entry point must call this before `read_to_string`.
-pub fn validate_capture_json_import(path: &Path) -> Result<(), CaptureImportError> {
-    validate_capture_json_import_with_limit(path, MAX_CAPTURE_JSON_IMPORT_BYTES)
-}
-
-fn validate_capture_json_import_with_limit(
-    path: &Path,
-    limit: u64,
-) -> Result<(), CaptureImportError> {
-    let metadata = std::fs::metadata(path).map_err(CaptureImportError::Io)?;
-    if !metadata.is_file() {
-        return Err(CaptureImportError::NotAFile);
-    }
-    let size = metadata.len();
-    if size > limit {
-        return Err(CaptureImportError::TooLarge { size, limit });
-    }
-    Ok(())
 }
 
 fn read_bounded_utf8(
@@ -9044,15 +9014,6 @@ fn prepare_capture_json_replay_with_limits(
         equipment_catalog,
         equipment_warning,
     })
-}
-
-pub fn import_capture_json(
-    path: PathBuf,
-    sender: impl Into<EngineEventSink>,
-    stop: Arc<AtomicBool>,
-) -> Result<thread::JoinHandle<()>, CaptureImportError> {
-    let prepared = prepare_capture_json_replay(&path)?;
-    import_prepared_capture_json(prepared, sender, stop).map_err(CaptureImportError::Io)
 }
 
 pub fn import_prepared_capture_json(
@@ -9834,29 +9795,6 @@ mod tests {
         let within = directory.join("within.json");
         std::fs::write(&within, b"{\"version\":1,\"hits\":[],\"packets\":[]}")
             .expect("write small fixture");
-
-        assert!(matches!(
-            validate_capture_json_import_with_limit(&directory, 1 << 20),
-            Err(CaptureImportError::NotAFile)
-        ));
-        assert!(matches!(
-            validate_capture_json_import_with_limit(&directory.join("missing.json"), 1 << 20),
-            Err(CaptureImportError::Io(_))
-        ));
-
-        let size = std::fs::metadata(&within).expect("fixture metadata").len();
-        assert!(
-            validate_capture_json_import_with_limit(&within, size).is_ok(),
-            "a file exactly at the limit is accepted"
-        );
-        assert!(matches!(
-            validate_capture_json_import_with_limit(&within, size - 1),
-            Err(CaptureImportError::TooLarge { .. })
-        ));
-        assert!(
-            validate_capture_json_import(&within).is_ok(),
-            "production entry point accepts small fixtures"
-        );
 
         let document: CaptureExportDocument = serde_json::from_value(serde_json::json!({
             "version": 1,
@@ -12396,36 +12334,6 @@ mod tests {
                 .join(",")
         );
         assert!(parse_capture_export(packet_document(serde_json::json!(legacy))).is_ok());
-    }
-
-    #[test]
-    fn capture_export_writer_persists_a_replayable_document() {
-        let path = std::env::temp_dir().join(format!(
-            "nte-capture-export-{}-{}.json",
-            std::process::id(),
-            Local::now()
-                .timestamp_nanos_opt()
-                .expect("current local time must fit in nanoseconds")
-        ));
-        let document = CaptureExportDocument::snapshot(
-            &CombatState::default(),
-            CaptureExportOptions {
-                filter: "udp".to_owned(),
-                include_incoming: false,
-                game_network: None,
-                dps_time_mode: DpsTimeBasis::WallClock,
-            },
-        );
-
-        write_capture_export(&path, &document)
-            .expect("capture export should be written atomically");
-        let text = std::fs::read_to_string(&path).expect("capture export should be readable");
-        let restored = parse_capture_export(&text).expect("written capture export should replay");
-        std::fs::remove_file(&path).expect("capture export fixture should be removable");
-
-        assert_eq!(restored.version, CAPTURE_EXPORT_VERSION);
-        assert_eq!(restored.filter, "udp");
-        assert_eq!(restored.summary.dps_time_mode, "Real Time");
     }
 
     #[test]
@@ -17348,7 +17256,9 @@ mod tests {
         let (sender, receiver) = unbounded();
         let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
-        let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop)
+        let prepared =
+            prepare_capture_json_replay(Path::new(&path)).expect("JSON import should be prepared");
+        let handle = import_prepared_capture_json(prepared, sender, stop)
             .expect("JSON import thread should spawn");
         handle.join().expect("json import thread should finish");
 

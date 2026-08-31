@@ -20,18 +20,6 @@ const command = (name: string, arguments_?: Record<string, unknown>) =>
 const snapshot = async (name: string, arguments_?: Record<string, unknown>) =>
   parseMainDpsSnapshot(await command(name, arguments_));
 
-interface DraggableWindow {
-  startDragging(): Promise<void>;
-}
-
-type CurrentWindowProvider = () => DraggableWindow;
-
-export function startMainDpsWindowDragging(
-  currentWindow: CurrentWindowProvider = getCurrentWindow,
-): Promise<void> {
-  return currentWindow().startDragging();
-}
-
 export const mainDpsClient = {
   getSnapshot: () => snapshot("get_main_dps_snapshot"),
   startCapture: (replaceCurrent = false) =>
