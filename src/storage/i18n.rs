@@ -61,26 +61,6 @@ impl Language {
         }
     }
 
-    /// Endonym shown in the language dropdown, written in the language itself so a
-    /// user can find their language without already reading the current one.
-    pub fn native_name(self) -> &'static str {
-        match self {
-            Self::English => "English",
-            Self::Japanese => "日本語",
-            Self::SimplifiedChinese => "简体中文",
-        }
-    }
-
-    /// Folder name used by localized reaction-text images under
-    /// `res/images/font/tiaozi1/<folder>/`.
-    pub fn reaction_text_folder(self) -> &'static str {
-        match self {
-            Self::English => "en",
-            Self::Japanese => "ja",
-            Self::SimplifiedChinese => "zh",
-        }
-    }
-
     /// Resource path of the overlay map, or `None` for the key language (English).
     fn resource_path(self) -> Option<String> {
         match self {
@@ -427,10 +407,6 @@ mod tests {
         assert_eq!(Language::English.code(), "en");
         assert_eq!(Language::Japanese.code(), "ja");
         assert_eq!(Language::SimplifiedChinese.code(), "zh-CN");
-        assert_eq!(Language::English.native_name(), "English");
-        assert_eq!(Language::Japanese.native_name(), "日本語");
-        assert_eq!(Language::SimplifiedChinese.native_name(), "简体中文");
-        assert_eq!(Language::SimplifiedChinese.reaction_text_folder(), "zh");
         assert_eq!(Language::default(), Language::SimplifiedChinese);
     }
 

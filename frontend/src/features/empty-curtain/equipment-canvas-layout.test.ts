@@ -4,9 +4,7 @@ import {
   equipmentCanvasBackingStore,
   equipmentCanvasCell,
   equipmentCanvasHeaderMetrics,
-  equipmentCanvasIndexAt,
   equipmentCanvasIndexAtContent,
-  equipmentCanvasItemTop,
   equipmentCanvasLayout,
   equipmentCanvasPointerIntent,
   equipmentCanvasRenderWindow,
@@ -33,23 +31,6 @@ describe("equipment canvas layout", () => {
       visibleEquipmentCanvasCells(layout, 331, layout.totalHeight - 700, 700)
         .length,
     ).toBeLessThanOrEqual(12);
-  });
-
-  it("maps pointer coordinates through the virtual scroll offset", () => {
-    const layout = equipmentCanvasLayout(900, 20);
-    const thirdRowTop = equipmentCanvasItemTop(layout, layout.columns * 2);
-    expect(
-      equipmentCanvasIndexAt(layout, 20, layout.padding + 1, 1, thirdRowTop),
-    ).toBe(layout.columns * 2);
-    expect(
-      equipmentCanvasIndexAt(
-        layout,
-        20,
-        layout.padding + layout.cardWidth + 1,
-        1,
-        0,
-      ),
-    ).toBeNull();
   });
 
   it("maps a hover overlay to stable content coordinates", () => {

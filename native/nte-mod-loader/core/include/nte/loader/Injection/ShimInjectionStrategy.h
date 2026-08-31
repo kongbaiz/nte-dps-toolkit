@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "nte/loader/Injection/IInjectionStrategy.h"
+#include "nte/loader/Config/LoaderConfig.h"
 
 #include <Windows.h>
 
@@ -9,9 +9,18 @@
 
 namespace nte::loader {
 
-class ShimInjectionStrategy final : public IInjectionStrategy {
+class Logger;
+class ProcessLocator;
+
+struct StrategyContext {
+    const LoaderConfig& config;
+    Logger& logger;
+    const ProcessLocator& processes;
+};
+
+class ShimInjectionStrategy {
 public:
-    int Execute(const StrategyContext& context) override;
+    int Execute(const StrategyContext& context);
 
     static std::wstring TemporaryFilePattern();
     static bool ShouldTerminateInjectedLauncher(

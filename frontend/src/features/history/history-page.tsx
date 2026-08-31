@@ -32,7 +32,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import {
   ContextMenu,
   ContextMenuItem,
@@ -181,9 +180,9 @@ export function HistoryPage() {
   return (
     <ContextMenu
       open={contextMenu !== null}
-      onOpenChange={(open) =>
-        dismissLayerWhenClosed(open, () => setContextMenu(null))
-      }
+      onOpenChange={(open) => {
+        if (!open) setContextMenu(null);
+      }}
     >
       <ContextMenuTrigger
         render={

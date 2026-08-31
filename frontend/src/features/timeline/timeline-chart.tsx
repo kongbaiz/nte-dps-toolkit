@@ -7,7 +7,6 @@ import {
   type PointerEvent,
 } from "react";
 
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import {
   ContextMenu,
   ContextMenuItem,
@@ -249,9 +248,9 @@ export function TimelineChart({
   return (
     <ContextMenu
       open={contextMenu !== null}
-      onOpenChange={(open) =>
-        dismissLayerWhenClosed(open, () => setContextMenu(null))
-      }
+      onOpenChange={(open) => {
+        if (!open) setContextMenu(null);
+      }}
     >
       <ContextMenuTrigger
         render={

@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Write as _;
 
 const ABYSS_RESTART_STAGE_WINDOW_SECONDS: f64 = 10.0;
 
@@ -569,30 +568,6 @@ impl HitDirectionSummary {
             0.0
         }
     }
-}
-
-pub fn summarize_hit_directions<'a>(
-    hits: impl IntoIterator<Item = &'a Hit>,
-) -> HitDirectionSummary {
-    let mut summary = HitDirectionSummary::default();
-    for hit in hits {
-        let damage = hit.total_damage();
-        match hit.direction {
-            HitDirection::Incoming => {
-                summary.incoming_damage += damage;
-                summary.incoming_hits += 1;
-            }
-            HitDirection::Outgoing => {
-                summary.outgoing_damage += damage;
-                summary.outgoing_hits += 1;
-            }
-            HitDirection::Unknown => {
-                summary.unknown_damage += damage;
-                summary.unknown_hits += 1;
-            }
-        }
-    }
-    summary
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2947,17 +2922,6 @@ pub enum CaptureQualitySource {
     Unknown,
 }
 
-impl CaptureQualitySource {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Live => "实时抓包",
-            Self::PcapngReplay => "PCAPNG 回放",
-            Self::JsonReplay => "JSON 回放",
-            Self::Unknown => "当前会话",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CaptureQualitySummary {
@@ -2982,78 +2946,6 @@ pub struct CaptureQualitySummary {
     pub server_damage_corrections: u64,
     pub unattributed_server_damage_events: u64,
     pub unattributed_server_damage: f64,
-}
-
-/// Compact scalar snapshot retained for exact time-stop regression tests and
-/// low-level adapters. Live diagnostics no longer use it to reconstruct hit
-/// attribution; that data now comes from the reducer-maintained index.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg(feature = "desktop")]
-#[allow(dead_code)]
-pub(crate) struct CaptureQualityScalars {
-    pub hits_generation: u64,
-    pub packet_count: usize,
-    pub packets_with_hits: usize,
-    pub hit_count: usize,
-    pub time_stop_event_count: u64,
-    pub time_stop_interval_count: usize,
-    pub abyss_event_count: u64,
-    pub server_damage_corrections: u64,
-    pub unattributed_server_damage_events: u64,
-    pub unattributed_server_damage_bits: u64,
-}
-
-impl CaptureQualitySummary {
-    pub fn redacted_text(&self) -> String {
-        let mut text = String::new();
-        let _ = writeln!(text, "NTE DPS TOOL 解析质量报告");
-        let _ = writeln!(text, "统计来源：{}", self.source.label());
-        let _ = writeln!(
-            text,
-            "封包：{} 个（含命中 {} 个）",
-            self.packet_count, self.packets_with_hits
-        );
-        let _ = writeln!(text, "命中：{} 条", self.hit_count);
-        let _ = writeln!(
-            text,
-            "方向：输出 {} 条 / 候选 {} 条 / 受击 {} 条",
-            self.outgoing_hits, self.unknown_direction_hits, self.incoming_hits
-        );
-        let _ = writeln!(
-            text,
-            "伤害：输出 {:.0} / 候选 {:.0} / 受击 {:.0}",
-            self.outgoing_damage, self.unknown_direction_damage, self.incoming_damage
-        );
-        let _ = writeln!(
-            text,
-            "未知角色：{} 个，{} 条命中",
-            self.unknown_character_count, self.unknown_character_hits
-        );
-        let _ = writeln!(
-            text,
-            "待映射技能：{} 类，{} 条命中",
-            self.unmapped_skill_rows, self.unmapped_skill_hits
-        );
-        let _ = writeln!(
-            text,
-            "未映射 GE：{} 个",
-            self.unmapped_gameplay_effect_count
-        );
-        let _ = writeln!(
-            text,
-            "时停事件：{} 个，合并区间 {} 段",
-            self.time_stop_event_count, self.time_stop_interval_count
-        );
-        let _ = writeln!(text, "深渊事件：{} 个", self.abyss_event_count);
-        let _ = write!(
-            text,
-            "服务端伤害校准：{} 条；未归因观测：{} 条 / {:.0} 伤害",
-            self.server_damage_corrections,
-            self.unattributed_server_damage_events,
-            self.unattributed_server_damage,
-        );
-        text
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -3177,36 +3069,6 @@ pub struct CombatSessionAbyssHalfSummary {
     pub damage_attribution: DamageAttributionSummary,
     pub characters: Vec<CombatSessionCharacterSummary>,
     pub skills: Vec<CombatSessionSkillSummary>,
-}
-
-#[allow(dead_code)]
-pub fn summarize_timeline<'a, I>(hits: I, bucket_seconds: f64) -> TimelineSeries
-where
-    I: IntoIterator<Item = &'a Hit> + Clone,
-{
-    let mut start = None::<f64>;
-    let mut end = None::<f64>;
-    for hit in hits.clone() {
-        if hit.direction.is_incoming() || !hit.timestamp.is_finite() {
-            continue;
-        }
-        start = Some(start.map_or(hit.timestamp, |value| value.min(hit.timestamp)));
-        end = Some(end.map_or(hit.timestamp, |value| value.max(hit.timestamp)));
-    }
-    summarize_timeline_with_time_stop(
-        hits,
-        &TimeStopTracker::default(),
-        start,
-        end,
-        Vec::new(),
-        TimelineAggregationOptions {
-            bucket_seconds,
-            subtract_time_stop: false,
-            max_buckets: DEFAULT_MAX_TIMELINE_BUCKETS,
-            max_roles_per_bucket: DEFAULT_MAX_TIMELINE_ROLES_PER_BUCKET,
-            max_characters: DEFAULT_MAX_TIMELINE_CHARACTERS,
-        },
-    )
 }
 
 /// Default idle span (no outgoing damage) that separates one capture into
@@ -4315,108 +4177,6 @@ impl TimeStopTracker {
             .filter_map(|interval| Self::clip_interval(interval, start, end))
             .collect::<Vec<_>>();
         Self::merge_intervals(intervals)
-    }
-
-    /// Counts the same clipped union as [`Self::intervals_between`] without
-    /// allocating or sorting a temporary vector. Capture events normally
-    /// arrive in timestamp order, so the first pass is linear. The allocation-
-    /// free fallback preserves exact semantics for older or out-of-order
-    /// replay fixtures.
-    #[cfg(feature = "desktop")]
-    #[allow(dead_code)]
-    fn interval_count_between(&self, start: f64, end: f64) -> usize {
-        if !start.is_finite() || !end.is_finite() || end <= start {
-            return 0;
-        }
-
-        let visit = |visitor: &mut dyn FnMut(TimeStopInterval)| {
-            if let Some(interval) = self
-                .archived
-                .and_then(|archived| archived.projected_interval(start, end))
-            {
-                visitor(interval);
-            }
-            for interval in self.intervals.iter().copied() {
-                if let Some(interval) = Self::clip_interval(interval, start, end) {
-                    visitor(interval);
-                }
-            }
-            if let Some((active_start, _)) = self.active_game_pause
-                && let Some(interval) = Self::clip_interval(
-                    TimeStopInterval {
-                        start: active_start,
-                        end,
-                    },
-                    start,
-                    end,
-                )
-            {
-                visitor(interval);
-            }
-        };
-
-        let mut previous_start = None;
-        let mut sorted = true;
-        visit(&mut |interval| {
-            if previous_start.is_some_and(|previous| interval.start < previous) {
-                sorted = false;
-            }
-            previous_start = Some(interval.start);
-        });
-        if sorted {
-            let mut count = 0_usize;
-            let mut merged_end = None::<f64>;
-            visit(&mut |interval| match merged_end {
-                Some(current_end) if interval.start <= current_end => {
-                    merged_end = Some(current_end.max(interval.end));
-                }
-                Some(_) => {
-                    count = count.saturating_add(1);
-                    merged_end = Some(interval.end);
-                }
-                None => merged_end = Some(interval.end),
-            });
-            return count.saturating_add(usize::from(merged_end.is_some()));
-        }
-
-        // No-allocation union count for out-of-order input. Find the next
-        // component seed, then repeatedly extend its right edge until every
-        // touching/overlapping interval has been consumed.
-        let mut count = 0_usize;
-        let mut previous_component_end = None::<f64>;
-        loop {
-            let mut seed = None::<TimeStopInterval>;
-            visit(&mut |interval| {
-                if previous_component_end.is_some_and(|end| interval.start <= end) {
-                    return;
-                }
-                let replace = seed.is_none_or(|current| {
-                    interval.start < current.start
-                        || (interval.start == current.start && interval.end > current.end)
-                });
-                if replace {
-                    seed = Some(interval);
-                }
-            });
-            let Some(seed) = seed else {
-                break;
-            };
-            let mut component_end = seed.end;
-            loop {
-                let before = component_end;
-                visit(&mut |interval| {
-                    if interval.start <= component_end && interval.end > component_end {
-                        component_end = interval.end;
-                    }
-                });
-                if component_end == before {
-                    break;
-                }
-            }
-            count = count.saturating_add(1);
-            previous_component_end = Some(component_end);
-        }
-        count
     }
 
     fn clip_interval(interval: TimeStopInterval, start: f64, end: f64) -> Option<TimeStopInterval> {
@@ -5844,10 +5604,6 @@ impl CombatState {
         }
     }
 
-    pub fn active_elapsed_between(&self, start: f64, end: f64) -> f64 {
-        (end - start - self.time_stop.frozen_between(start, end)).max(0.0)
-    }
-
     pub fn dps_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         self.total_damage / self.duration_with_time_stop(subtract_time_stop).max(1.0)
     }
@@ -6140,25 +5896,6 @@ impl CombatState {
     ) -> IndexedCombatDetailPage<'_> {
         self.combat_detail_index
             .query(&self.hits, character_id, filter, skill, offset, limit)
-    }
-
-    #[cfg(feature = "desktop")]
-    #[allow(dead_code)]
-    pub(crate) fn capture_quality_scalars(&self) -> CaptureQualityScalars {
-        let start = self.started_at.unwrap_or_default();
-        let end = self.ended_at.unwrap_or_default();
-        CaptureQualityScalars {
-            hits_generation: self.hits_generation,
-            packet_count: self.packet_count,
-            packets_with_hits: self.packets_with_hits,
-            hit_count: self.hits.len(),
-            time_stop_event_count: self.time_stop.event_count,
-            time_stop_interval_count: self.time_stop.interval_count_between(start, end),
-            abyss_event_count: self.abyss.event_count,
-            server_damage_corrections: self.damage_correction_count,
-            unattributed_server_damage_events: self.unattributed_server_damage_events,
-            unattributed_server_damage_bits: self.unattributed_server_damage.to_bits(),
-        }
     }
 
     pub fn capture_quality_summary(&self, source: CaptureQualitySource) -> CaptureQualitySummary {
@@ -6488,158 +6225,6 @@ fn summarize_indexed_timeline(
         total_damage: cumulative_damage,
         omitted_role_damage: compact.omitted_role_damage,
         omitted_role_hits: compact.omitted_role_hits,
-        buckets,
-        time_stop_intervals: relative_time_stop_intervals(time_stop, start, end),
-        compacted_time_stop_intervals: time_stop.compacted_interval_count(),
-        markers,
-    }
-}
-
-fn summarize_timeline_with_time_stop<'a, I>(
-    hits: I,
-    time_stop: &TimeStopTracker,
-    start: Option<f64>,
-    end: Option<f64>,
-    markers: Vec<TimelineMarker>,
-    options: TimelineAggregationOptions,
-) -> TimelineSeries
-where
-    I: IntoIterator<Item = &'a Hit>,
-{
-    let requested_bucket_seconds =
-        if options.bucket_seconds.is_finite() && options.bucket_seconds > 0.0 {
-            options.bucket_seconds
-        } else {
-            1.0
-        };
-    let _subtract_time_stop = options.subtract_time_stop;
-    let max_buckets = options.max_buckets.max(1);
-    let max_roles_per_bucket = options.max_roles_per_bucket.max(1);
-    let max_characters = options.max_characters.max(1);
-    let (Some(start), Some(end)) = (start, end) else {
-        return TimelineSeries {
-            bucket_seconds: requested_bucket_seconds,
-            markers,
-            ..Default::default()
-        };
-    };
-    // Subtracting two finite timestamps can still overflow to +infinity (for
-    // example -f64::MAX..f64::MAX). Keep every subsequent count/allocation
-    // calculation saturating and use a finite representable chart span.
-    let raw_span = end - start;
-    let span = if raw_span.is_finite() {
-        raw_span.max(0.0)
-    } else {
-        f64::MAX
-    };
-    let requested_bucket_ratio = span / requested_bucket_seconds;
-    let requested_bucket_count =
-        if !requested_bucket_ratio.is_finite() || requested_bucket_ratio >= usize::MAX as f64 {
-            usize::MAX
-        } else {
-            (requested_bucket_ratio.floor() as usize).saturating_add(1)
-        };
-    let (bucket_seconds, bucket_count) = if requested_bucket_count <= max_buckets {
-        (requested_bucket_seconds, requested_bucket_count)
-    } else {
-        // The right edge belongs to the last bucket. Dividing the complete span
-        // by the output budget ensures allocation is bounded before any bucket
-        // or per-role HashMap is created, while retaining every hit in the
-        // aggregate projection.
-        (
-            (span / max_buckets as f64).max(requested_bucket_seconds),
-            max_buckets,
-        )
-    };
-    let mut buckets = (0..bucket_count)
-        .map(|index| TimelineBucket {
-            start_offset: finite_timeline_offset(index, bucket_seconds),
-            end_offset: finite_timeline_offset(index.saturating_add(1), bucket_seconds),
-            ..Default::default()
-        })
-        .collect::<Vec<_>>();
-    let mut role_buckets = vec![HashMap::<u32, (String, f64)>::new(); bucket_count];
-    let mut retained_characters = HashSet::<u32>::with_capacity(max_characters);
-    let mut omitted_role_damage = 0.0;
-    let mut omitted_role_hits = 0_u64;
-
-    for hit in hits {
-        if hit.direction.is_incoming() || !hit.timestamp.is_finite() {
-            continue;
-        }
-        let damage = hit.total_damage();
-        if !damage.is_finite() {
-            continue;
-        }
-        let raw_offset = hit.timestamp - start;
-        let bucket_index = if raw_offset.is_finite() {
-            ((raw_offset.max(0.0) / bucket_seconds).floor() as usize).min(bucket_count - 1)
-        } else {
-            // Halving before subtraction keeps the full finite f64 domain
-            // representable, then maps the relative position into the already
-            // bounded bucket set without allocating an intermediate axis.
-            let scaled_span = end / 2.0 - start / 2.0;
-            let relative = if scaled_span.is_finite() && scaled_span > 0.0 {
-                ((hit.timestamp / 2.0 - start / 2.0) / scaled_span).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            ((relative * bucket_count as f64).floor() as usize).min(bucket_count - 1)
-        };
-        let bucket = &mut buckets[bucket_index];
-        bucket.damage += damage;
-        bucket.hits += 1;
-        let roles = &mut role_buckets[bucket_index];
-        if let Some(role) = roles.get_mut(&hit.char_id) {
-            role.0.clone_from(&hit.char_name);
-            role.1 += damage;
-        } else if roles.len() < max_roles_per_bucket
-            && (retained_characters.contains(&hit.char_id)
-                || retained_characters.len() < max_characters)
-        {
-            retained_characters.insert(hit.char_id);
-            roles.insert(hit.char_id, (hit.char_name.clone(), damage));
-        } else {
-            omitted_role_damage += damage;
-            omitted_role_hits = omitted_role_hits.saturating_add(1);
-        }
-    }
-
-    let mut total_damage = 0.0;
-    for (index, bucket) in buckets.iter_mut().enumerate() {
-        total_damage += bucket.damage;
-        bucket.cumulative_damage = total_damage;
-        // Timeline buckets stay on real wall-clock seconds. Time-stop periods
-        // are drawn as bands; subtracting them inside a fixed 1s bucket can
-        // shrink the divisor to almost zero and produce unusable peak spikes.
-        let duration = bucket_seconds.max(0.001);
-        bucket.dps = bucket.damage / duration;
-        let mut roles = role_buckets[index]
-            .drain()
-            .map(|(char_id, (char_name, damage))| TimelineRoleBucket {
-                char_id,
-                char_name,
-                damage,
-                dps: damage / duration,
-            })
-            .collect::<Vec<_>>();
-        roles.sort_by(|left, right| {
-            right
-                .damage
-                .total_cmp(&left.damage)
-                .then_with(|| left.char_name.cmp(&right.char_name))
-                .then_with(|| left.char_id.cmp(&right.char_id))
-        });
-        bucket.role_damage = roles;
-    }
-
-    TimelineSeries {
-        bucket_seconds,
-        start_timestamp: Some(start),
-        end_timestamp: Some(end),
-        total_damage,
-        omitted_role_damage,
-        omitted_role_hits,
         buckets,
         time_stop_intervals: relative_time_stop_intervals(time_stop, start, end),
         compacted_time_stop_intervals: time_stop.compacted_interval_count(),
@@ -7797,7 +7382,7 @@ mod tests {
 
         assert_eq!(state.total_damage, 140.0);
         assert_eq!(state.total_damage_taken, 25.0);
-        let summary = summarize_hit_directions(&state.hits);
+        let summary = state.skill_breakdown_index.directions;
         assert_eq!(summary.outgoing_damage, 100.0);
         assert_eq!(summary.outgoing_hits, 1);
         assert_eq!(summary.unknown_damage, 40.0);
@@ -7809,8 +7394,7 @@ mod tests {
 
     #[test]
     fn timeline_handles_empty_hits() {
-        let hits = Vec::<Hit>::new();
-        let timeline = summarize_timeline(hits.iter(), 1.0);
+        let timeline = CombatState::default().timeline(1.0, false);
 
         assert_eq!(timeline.bucket_seconds, 1.0);
         assert!(timeline.buckets.is_empty());
@@ -7826,9 +7410,11 @@ mod tests {
         let mut next_bucket = test_hit(11.0, 1, "outgoing", 200.0);
         next_bucket.char_name = "一号".to_owned();
         let incoming = test_hit(11.2, 3, "incoming", 999.0);
-        let hits = Vec::from([first, same_bucket, next_bucket, incoming]);
-
-        let timeline = summarize_timeline(hits.iter(), 1.0);
+        let mut state = CombatState::default();
+        for hit in [first, same_bucket, next_bucket, incoming] {
+            state.push_hit(hit);
+        }
+        let timeline = state.timeline(1.0, false);
 
         assert_eq!(timeline.buckets.len(), 2);
         assert_eq!(timeline.total_damage, 350.0);
@@ -7848,22 +7434,6 @@ mod tests {
         state.push_hit(test_hit(f64::MAX, 1, "outgoing", 200.0));
 
         let timeline = state.timeline_bounded(f64::MIN_POSITIVE, false, 8, 8, 8);
-        let legacy = summarize_timeline_with_time_stop(
-            state.hits.iter(),
-            &state.time_stop,
-            state.started_at,
-            state.ended_at,
-            Vec::new(),
-            TimelineAggregationOptions {
-                bucket_seconds: f64::MIN_POSITIVE,
-                subtract_time_stop: false,
-                max_buckets: 8,
-                max_roles_per_bucket: 8,
-                max_characters: 8,
-            },
-        );
-
-        assert_eq!(timeline, legacy);
         assert_eq!(timeline.buckets.len(), 8);
         assert!(timeline.bucket_seconds.is_finite());
         assert!(timeline.bucket_seconds > 0.0);
@@ -8161,11 +7731,6 @@ mod tests {
             summarize_skill_breakdown(&state.hits, None),
             "push, correction, and follow-up deltas must preserve skill aggregation parity"
         );
-        assert_eq!(
-            state.skill_breakdown_index.directions,
-            summarize_hit_directions(&state.hits),
-            "diagnostic direction aggregates must match the authoritative hits"
-        );
         // Combat clock semantics include a pause transition after the final
         // hit. The indexed projection must retain that trailing empty range.
         apply_test_pause(&mut state, 13.0, 15.0);
@@ -8177,14 +7742,6 @@ mod tests {
             max_roles_per_bucket: 2,
             max_characters: 5,
         };
-        let legacy = summarize_timeline_with_time_stop(
-            state.hits.iter(),
-            &state.time_stop,
-            state.started_at,
-            state.ended_at,
-            Vec::new(),
-            options,
-        );
         let indexed = state.timeline_bounded(
             options.bucket_seconds,
             options.subtract_time_stop,
@@ -8193,7 +7750,6 @@ mod tests {
             options.max_characters,
         );
 
-        assert_eq!(indexed, legacy);
         assert_eq!(indexed.end_timestamp, Some(15.0));
         assert_eq!(indexed.buckets.len(), 7);
     }
@@ -8757,130 +8313,14 @@ mod tests {
         });
 
         let summary = state.capture_quality_summary(CaptureQualitySource::PcapngReplay);
-        let text = summary.redacted_text();
+        let json = serde_json::to_string(&summary).expect("quality summary should serialize");
 
         assert_eq!(summary.packet_count, 1);
         assert_eq!(summary.packets_with_hits, 1);
         assert_eq!(summary.abyss_event_count, 1);
-        assert!(text.contains("PCAPNG 回放"));
-        assert!(!text.contains("deadbeef"));
-        assert!(!text.contains("192.0.2.1"));
-        assert!(!text.contains("decoded text"));
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn allocation_free_quality_scalars_match_legacy_out_of_order_time_stops() {
-        let mut state = CombatState::default();
-        state.push_hit(test_hit(0.0, 1, "outgoing", 1.0));
-        state.push_hit(test_hit(30.0, 1, "outgoing", 1.0));
-        for event in [
-            TimeStopEvent::GamePauseStarted {
-                timestamp: 10.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp: 20.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseStarted {
-                timestamp: 1.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp: 5.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseStarted {
-                timestamp: 4.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp: 12.0,
-                pause_type_mask: 1,
-            },
-        ] {
-            state.apply_time_stop_event(event);
-        }
-
-        let legacy = state.capture_quality_summary(CaptureQualitySource::Live);
-        let scalars = state.capture_quality_scalars();
-
-        assert_eq!(scalars.hits_generation, state.hits_generation);
-        assert_eq!(scalars.hit_count, legacy.hit_count);
-        assert_eq!(scalars.packet_count, legacy.packet_count);
-        assert_eq!(scalars.packets_with_hits, legacy.packets_with_hits);
-        assert_eq!(scalars.time_stop_event_count, legacy.time_stop_event_count);
-        assert_eq!(
-            scalars.time_stop_interval_count,
-            legacy.time_stop_interval_count
-        );
-        assert_eq!(scalars.abyss_event_count, legacy.abyss_event_count);
-        assert_eq!(
-            scalars.server_damage_corrections,
-            legacy.server_damage_corrections
-        );
-        assert_eq!(scalars.time_stop_event_count, 3);
-        assert_eq!(scalars.time_stop_interval_count, 1);
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn allocation_free_interval_count_matches_materialized_union_cases() {
-        let trackers = [
-            TimeStopTracker::default(),
-            TimeStopTracker {
-                intervals: vec![
-                    TimeStopInterval {
-                        start: 1.0,
-                        end: 3.0,
-                    },
-                    TimeStopInterval {
-                        start: 3.0,
-                        end: 4.0,
-                    },
-                    TimeStopInterval {
-                        start: 8.0,
-                        end: 9.0,
-                    },
-                ]
-                .into(),
-                active_game_pause: Some((10.0, 1)),
-                ..TimeStopTracker::default()
-            },
-            TimeStopTracker {
-                intervals: vec![
-                    TimeStopInterval {
-                        start: 10.0,
-                        end: 20.0,
-                    },
-                    TimeStopInterval {
-                        start: 1.0,
-                        end: 5.0,
-                    },
-                    TimeStopInterval {
-                        start: 4.0,
-                        end: 12.0,
-                    },
-                    TimeStopInterval {
-                        start: 30.0,
-                        end: 40.0,
-                    },
-                ]
-                .into(),
-                active_game_pause: Some((39.0, 1)),
-                ..TimeStopTracker::default()
-            },
-        ];
-        for (case, tracker) in trackers.iter().enumerate() {
-            for (start, end) in [(0.0, 50.0), (2.0, 11.0), (11.0, 35.0), (5.0, 5.0)] {
-                assert_eq!(
-                    tracker.interval_count_between(start, end),
-                    tracker.intervals_between(start, end).len(),
-                    "case {case}, window {start}..{end}"
-                );
-            }
-        }
+        assert!(!json.contains("deadbeef"));
+        assert!(!json.contains("192.0.2.1"));
+        assert!(!json.contains("decoded text"));
     }
 
     #[test]
@@ -9465,7 +8905,6 @@ mod tests {
 
         assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
         assert!((state.duration_with_time_stop(true) - 6.5).abs() < 1e-9);
-        assert!((state.active_elapsed_between(10.0, 20.0) - 6.5).abs() < 1e-9);
         assert!((state.dps_with_time_stop(true) - (300.0 / 6.5)).abs() < 1e-9);
     }
 
@@ -9484,8 +8923,6 @@ mod tests {
         assert!(state.time_stop.intervals.len() <= MAX_RETAINED_TIME_STOP_INTERVALS);
         assert!(state.time_stop.archived.is_some());
         assert!(state.time_stop_events.len() <= MAX_RETAINED_TIME_STOP_EVENTS);
-        let projected = state.time_stop_intervals_between(0.0, end);
-        assert!(projected.len() <= MAX_PROJECTED_TIME_STOP_INTERVALS);
         let timeline = state.timeline_bounded(1.0, true, 32, 8, 8);
         assert!(timeline.time_stop_intervals.len() <= MAX_PROJECTED_TIME_STOP_INTERVALS);
         assert!(timeline.compacted_time_stop_intervals > 0);

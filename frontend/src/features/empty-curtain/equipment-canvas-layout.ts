@@ -228,21 +228,6 @@ export function equipmentCanvasCell(
   };
 }
 
-export function equipmentCanvasIndexAt(
-  layout: EquipmentCanvasLayout,
-  itemCount: number,
-  x: number,
-  viewportY: number,
-  scrollTop: number,
-): number | null {
-  return equipmentCanvasIndexAtContent(
-    layout,
-    itemCount,
-    x,
-    viewportY + scrollTop,
-  );
-}
-
 export function equipmentCanvasIndexAtContent(
   layout: EquipmentCanvasLayout,
   itemCount: number,

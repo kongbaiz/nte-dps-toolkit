@@ -32,7 +32,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
 import type { EncryptedIniKey } from "@/lib/tauri/encrypted-ini-contract";
@@ -401,7 +400,9 @@ function EncryptedIniConfirmation({
   return (
     <AlertDialog
       open
-      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
     >
       <AlertDialogPortal>
         <AlertDialogBackdrop className="z-[110] bg-black/15 backdrop-blur-[1px]" />

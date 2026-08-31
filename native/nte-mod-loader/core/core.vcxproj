@@ -21,7 +21,6 @@
     <ClInclude Include="include\nte\loader\App\LoaderApp.h" />
     <ClInclude Include="include\nte\loader\Config\LoaderConfig.h" />
     <ClInclude Include="include\nte\loader\Diagnostics\Logger.h" />
-    <ClInclude Include="include\nte\loader\Injection\IInjectionStrategy.h" />
     <ClInclude Include="include\nte\loader\Injection\ShimInjectionStrategy.h" />
     <ClInclude Include="include\nte\loader\Platform\LauncherLocator.h" />
     <ClInclude Include="include\nte\loader\Platform\ProcessLocator.h" />

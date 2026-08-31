@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 
 import { WindowMotionBoundary } from "@/components/nte/window-motion-boundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { installBrowserContextMenuSuppression } from "@/lib/browser-context-menu";
 import { bootstrapCharacterAvatarCatalog } from "@/lib/character-avatar";
 import { bootstrapSettingsPresentation } from "@/lib/settings-presentation";
 import { revealPrimaryWindowAfterFirstPaint } from "@/lib/tauri/window-ready";
@@ -21,10 +20,16 @@ export function renderWindow(
 ): void {
   document.documentElement.dataset.windowRoute = options.windowRoute;
   bootstrapSettingsPresentation();
-  const uninstallBrowserContextMenuSuppression =
-    installBrowserContextMenuSuppression();
+  const suppressBrowserContextMenu = (event: Event) => event.preventDefault();
+  window.addEventListener("contextmenu", suppressBrowserContextMenu, true);
   if (import.meta.hot) {
-    import.meta.hot.dispose(uninstallBrowserContextMenuSuppression);
+    import.meta.hot.dispose(() =>
+      window.removeEventListener(
+        "contextmenu",
+        suppressBrowserContextMenu,
+        true,
+      ),
+    );
   }
 
   createRoot(document.getElementById("root")!).render(

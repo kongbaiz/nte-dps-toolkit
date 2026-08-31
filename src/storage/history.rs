@@ -392,13 +392,6 @@ impl HistorySaveOutcome {
         }
     }
 
-    pub fn maintenance_warning(&self) -> Option<HistoryMaintenanceWarning> {
-        match self {
-            Self::Committed(_) => None,
-            Self::CommittedWithMaintenanceWarning { warning, .. } => Some(*warning),
-        }
-    }
-
     pub fn into_record(self) -> HistoryRecord {
         match self {
             Self::Committed(record) | Self::CommittedWithMaintenanceWarning { record, .. } => {
@@ -4332,7 +4325,6 @@ mod tests {
         .expect("History record commit");
 
         assert!(matches!(&outcome, HistorySaveOutcome::Committed(_)));
-        assert_eq!(outcome.maintenance_warning(), None);
         assert_eq!(outcome.record().summary.total_damage, 21.0);
         assert_eq!(load_history_from_dir(&directory).records.len(), 1);
         let _ = fs::remove_dir_all(directory);

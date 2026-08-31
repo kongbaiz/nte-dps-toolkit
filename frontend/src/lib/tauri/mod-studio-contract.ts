@@ -2,10 +2,6 @@ import {
   createContractPrimitives,
   isCanonicalSemver,
 } from "@/lib/tauri/contract-primitives";
-import {
-  parseStreamSubscriptionReceipt,
-  type StreamSubscriptionReceipt,
-} from "@/lib/tauri/stream-contract";
 
 export const MOD_STUDIO_CONTRACT_VERSION = 13;
 export const MOD_MARKET_CONTRACT_VERSION = 11;
@@ -284,8 +280,6 @@ export interface ModStudioRuntimeBatchEvent {
 
 export type ModStudioRuntimeEvent =
   ModStudioRuntimeConnectionEvent | ModStudioRuntimeBatchEvent;
-
-export type ModStudioSubscriptionReceipt = StreamSubscriptionReceipt;
 
 export function parseModStudioWorkspace(
   value: unknown,
@@ -798,20 +792,6 @@ export function parseModStudioRuntimeEvent(
     event: "batch",
     payload: { contractVersion, generation, entries: parsedEntries },
   };
-}
-
-export function parseModStudioSubscriptionReceipt(
-  value: unknown,
-): ModStudioSubscriptionReceipt {
-  try {
-    return parseStreamSubscriptionReceipt(value);
-  } catch (error) {
-    throw new ModStudioContractError(
-      error instanceof Error
-        ? error.message
-        : "Invalid Mod runtime subscription receipt",
-    );
-  }
 }
 
 export function compareModStudioSequence(left: string, right: string): number {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  appearancePanelPosition,
   characterAccent,
   damagePercent,
   formatMainMetric,
@@ -85,21 +84,5 @@ describe("main DPS view model", () => {
     expect(mainCharacterListState(10, 2, 1)).toBe("rows");
     expect(mainDpsContentState(true)).toBe("replay-loading");
     expect(mainDpsContentState(false)).toBe("ready");
-  });
-
-  it("keeps the appearance panel inside a compact main window", () => {
-    expect(
-      appearancePanelPosition(
-        { left: 350, right: 412, top: 48, bottom: 76 },
-        { width: 420, height: 360 },
-      ),
-    ).toEqual({ left: 236, top: 82 });
-
-    expect(
-      appearancePanelPosition(
-        { left: 350, right: 412, top: 320, bottom: 348 },
-        { width: 420, height: 360 },
-      ),
-    ).toEqual({ left: 236, top: 154 });
   });
 });
