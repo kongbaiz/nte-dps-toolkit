@@ -200,12 +200,6 @@ pub fn parse_encrypted_ini_text(
     ))
 }
 
-#[cfg(test)]
-pub fn decrypt_encrypted_ini_text(text: &str) -> Result<(EncryptedIniKey, String, usize), String> {
-    let (key, plaintext, records, _, _) = parse_encrypted_ini_text(text)?;
-    Ok((key, plaintext, records.len()))
-}
-
 fn decrypt_encrypted_ini_line(line: &str) -> Result<Option<(EncryptedIniKey, String)>, String> {
     let Ok(encrypted) = BASE64.decode(line) else {
         return Ok(None);

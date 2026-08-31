@@ -1,7 +1,6 @@
 ﻿#include "nte/loader/App/LoaderApp.h"
 
 #include "nte/loader/Diagnostics/Logger.h"
-#include "nte/loader/Injection/IInjectionStrategy.h"
 #include "nte/loader/Injection/ShimInjectionStrategy.h"
 #include "nte/loader/Injection/ShimPayload.h"
 #include "nte/loader/Platform/ProcessLocator.h"
@@ -11,7 +10,6 @@
 
 #include <chrono>
 #include <filesystem>
-#include <memory>
 
 namespace nte::loader {
 
@@ -72,10 +70,8 @@ int LoaderApp::Run(const LoaderConfig& config) {
 		logger.Write(LogLevel::Info, L"dry-run enabled; cleanup and injection are suppressed");
     }
 
-    std::unique_ptr<IInjectionStrategy> strategy = std::make_unique<ShimInjectionStrategy>();
-
     const StrategyContext context{config, logger, processes};
-    const int result = strategy->Execute(context);
+    const int result = ShimInjectionStrategy().Execute(context);
     logger.Write(LogLevel::Info, L"nte-mod-loader finished");
     return result;
 }

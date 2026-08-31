@@ -24,15 +24,6 @@ pub(crate) fn validate_window(window: &WebviewWindow) -> Result<(), CommandError
     }
 }
 
-#[tauri::command]
-pub(crate) fn show_console_when_ready(window: WebviewWindow) -> Result<(), CommandError> {
-    validate_window(&window)?;
-    window.show().map_err(|error| {
-        log::error!("show Console after the frontend first paint failed: {error}");
-        CommandError::window_operation_failed()
-    })
-}
-
 /// The main DPS window owns the desktop lifetime. Closing Console only hides
 /// it so toolbar state and subscriptions can be restored without rebuilding.
 pub(crate) fn initialize(window: &WebviewWindow, state: &AppState) -> Result<(), String> {

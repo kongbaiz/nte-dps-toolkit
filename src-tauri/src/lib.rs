@@ -295,7 +295,6 @@ pub fn run() {
             commands::technical::set_hud_width,
             commands::technical::start_hud_capture,
             commands::technical::stop_hud_capture,
-            windows::console::show_console_when_ready,
             windows::main_dps::show_main_dps_when_ready,
             channels::technical::subscribe_technical_state,
             channels::technical::unsubscribe_technical_state,

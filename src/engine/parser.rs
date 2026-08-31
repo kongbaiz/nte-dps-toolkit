@@ -1343,12 +1343,6 @@ fn decode_shifted_bytes(
     Some(output)
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn aligned_bytes_for_test(data: &[u8], bit_shift: u8) -> Option<Vec<u8>> {
-    decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
-}
-
 fn read_field(
     data: &[u8],
     byte_offset: usize,
@@ -3253,21 +3247,6 @@ pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
         }
     }
     effects
-}
-
-pub fn matches_shifted_bytes_at(
-    data: &[u8],
-    bit_shift: u8,
-    byte_offset: usize,
-    expected: &[u8],
-) -> bool {
-    let Some(decoded) = decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
-    else {
-        return false;
-    };
-    decoded
-        .get(byte_offset..byte_offset + expected.len())
-        .is_some_and(|bytes| bytes == expected)
 }
 
 pub fn find_declared_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {

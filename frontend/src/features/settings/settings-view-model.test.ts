@@ -5,7 +5,6 @@ import type { HudConfigSnapshot } from "@/lib/tauri/technical-contract";
 import {
   adjacentHudModuleMove,
   hudModuleVisible,
-  hudOptionEnabled,
   settingsSectionPending,
   shouldAcceptSettingsGeneration,
   shouldAcceptSettingsRefresh,
@@ -28,14 +27,6 @@ function hudFixture(): HudConfigSnapshot {
 }
 
 describe("Settings view model", () => {
-  it("maps stable option identifiers onto the projected HUD config", () => {
-    const hud = hudFixture();
-
-    expect(hudOptionEnabled(hud, "team_dps")).toBe(true);
-    expect(hudOptionEnabled(hud, "duration")).toBe(false);
-    expect(hudOptionEnabled(hud, "character_rows")).toBe(true);
-  });
-
   it("derives grouped module visibility without rewriting Rust rules", () => {
     const hud = hudFixture();
 
