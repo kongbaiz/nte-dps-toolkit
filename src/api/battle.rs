@@ -17,10 +17,10 @@ use crate::{
 
 use super::dto::{BattleQualityDto, BattleSummaryDto};
 
-/// Version 4 adds aggregate and per-hit maximum-HP reduction alongside the
-/// ordinary and overkill damage axes. All battle read DTOs share one version
-/// so a CLI consumer can reject mixed semantics.
-pub const BATTLE_READ_CONTRACT_VERSION: u32 = 4;
+/// Version 5 adds exact pause-type masks to time-stop interval segments while
+/// retaining their global time-union semantics. All battle read DTOs share one
+/// version so a CLI consumer can reject mixed semantics.
+pub const BATTLE_READ_CONTRACT_VERSION: u32 = 5;
 pub const BATTLE_TIMELINE_BUCKET_LIMIT: usize = 10_000;
 pub const BATTLE_TIMELINE_ROLE_LIMIT: usize = 100_000;
 
@@ -68,6 +68,7 @@ pub struct BattleRecordDto {
 pub struct BattleTimeStopIntervalDto {
     pub start_offset_seconds: f64,
     pub end_offset_seconds: f64,
+    pub pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -99,6 +100,7 @@ pub fn battle_record(
             .map(|interval| BattleTimeStopIntervalDto {
                 start_offset_seconds: finite_non_negative(interval.start_offset),
                 end_offset_seconds: finite_non_negative(interval.end_offset),
+                pause_type_mask: interval.pause_type_mask,
             })
             .collect(),
         _ => Vec::new(),
@@ -334,6 +336,7 @@ pub struct BattleTimelineDto {
 pub struct BattleTimelineIntervalDto {
     pub start_offset_seconds: f64,
     pub end_offset_seconds: f64,
+    pub pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -440,6 +443,7 @@ pub fn battle_timeline(
             .map(|interval| BattleTimelineIntervalDto {
                 start_offset_seconds: interval.start,
                 end_offset_seconds: interval.end,
+                pause_type_mask: interval.pause_type_mask,
             })
             .collect(),
         compacted_time_stop_intervals: projection.compacted_time_stop_intervals,
@@ -669,6 +673,76 @@ mod tests {
             battle_axis(&state, context(5), Some(9), 10),
             Err(BattleReadError::AxisCursorInvalid { last_available: 7 })
         ));
+    }
+
+    #[test]
+    fn battle_record_exposes_exact_pause_masks_without_changing_global_pause_time() {
+        use crate::engine::model::TimeStopEvent;
+
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(9.0, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1 << 6,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 11.0,
+            pause_type_mask: (1 << 6) | (1 << 2),
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 12.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(test_hit(15.0, 200.0));
+
+        let record = battle_record(&state, context(0), true);
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["contract_version"], 5);
+        assert_eq!(json["summary"]["duration_seconds"], 2.0);
+        assert_eq!(
+            json["time_stop_intervals"],
+            serde_json::json!([
+                {
+                    "start_offset_seconds": 1.0,
+                    "end_offset_seconds": 2.0,
+                    "pause_type_mask": 64
+                },
+                {
+                    "start_offset_seconds": 2.0,
+                    "end_offset_seconds": 3.0,
+                    "pause_type_mask": 68
+                },
+                {
+                    "start_offset_seconds": 3.0,
+                    "end_offset_seconds": 5.0,
+                    "pause_type_mask": 4
+                }
+            ])
+        );
+
+        let timeline = battle_timeline(
+            &state,
+            &HashMap::new(),
+            context(0),
+            TimelineScope::Whole,
+            1.0,
+            true,
+        )
+        .unwrap();
+        assert_eq!(timeline.contract_version, 5);
+        assert_eq!(
+            timeline
+                .time_stop_intervals
+                .iter()
+                .map(|interval| interval.pause_type_mask)
+                .collect::<Vec<_>>(),
+            [Some(1 << 6), Some((1 << 6) | (1 << 2)), Some(1 << 2)]
+        );
+        assert!((timeline.time_stop_duration_seconds - 4.0).abs() < 1e-9);
     }
 
     #[test]

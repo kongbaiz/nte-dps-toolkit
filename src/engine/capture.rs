@@ -87,6 +87,7 @@ const NTE_MOD_SCRIPT_BLOCK_SIZE: usize = 120;
 const NTE_MOD_SCRIPT_STRING_CAPACITY: usize = 32;
 const NTE_MOD_SCRIPT_VALUE_CAPACITY: usize = 3;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
+const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
 const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -1168,7 +1169,7 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
         u32::from_le_bytes(value[32..36].try_into().expect("fixed clock state flags"));
     if reserved_value != 0
         || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
-        || pause_type_mask & !0x1c != 0
+        || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
         || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
     {
         return None;
@@ -1293,25 +1294,28 @@ fn current_filetime_100ns() -> u64 {
 
 #[derive(Default)]
 struct GamePauseIntervalTracker {
-    active_type_mask: u32,
     pause_type_mask: u32,
 }
 
 impl GamePauseIntervalTracker {
     fn apply_transition(&mut self, timestamp: f64, pause_type_mask: u32) -> Option<TimeStopEvent> {
-        let event = if self.pause_type_mask == 0 && pause_type_mask != 0 {
-            self.active_type_mask = pause_type_mask;
+        let previous_pause_type_mask = self.pause_type_mask;
+        let event = if previous_pause_type_mask == 0 && pause_type_mask != 0 {
             Some(TimeStopEvent::GamePauseStarted {
                 timestamp,
                 pause_type_mask,
             })
-        } else if self.pause_type_mask != 0 && pause_type_mask == 0 {
+        } else if previous_pause_type_mask != 0 && pause_type_mask == 0 {
             Some(TimeStopEvent::GamePauseEnded {
                 timestamp,
-                pause_type_mask: self.active_type_mask,
+                pause_type_mask: previous_pause_type_mask,
+            })
+        } else if previous_pause_type_mask != pause_type_mask {
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
             })
         } else {
-            self.active_type_mask |= pause_type_mask;
             None
         };
         self.pause_type_mask = pause_type_mask;
@@ -4593,10 +4597,10 @@ struct PacketDecoder {
     use_server_damage_calibration: bool,
     character_declarations: HashMap<u32, f64>,
     pending_ambiguous_hits: Vec<Hit>,
-    /// Confirmed outgoing hits without a wire target wait for the following
-    /// server target-state response. FIFO, bounded to
-    /// `MAX_PENDING_FOLLOW_UP_HITS`; full policy emits the oldest hit without
-    /// inventing a target, and capture shutdown flushes the remaining hits.
+    /// Confirmed outgoing hits without a direct wire target wait for the
+    /// following server target-state response and then briefly for a matching
+    /// direct-target record. FIFO, bounded to `MAX_PENDING_FOLLOW_UP_HITS`;
+    /// full policy emits the oldest hit, and capture shutdown flushes the rest.
     pending_targetless_hits: VecDeque<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     target_snapshots: HashMap<String, HitTargetSnapshot>,
@@ -4883,6 +4887,7 @@ impl PacketDecoder {
         &mut self,
         timestamp: f64,
         updates: &[crate::engine::parser::ParsedBossHpUpdate],
+        settlements: &[crate::engine::parser::ParsedServerDamageSettlement],
     ) -> Vec<Hit> {
         let mut update_candidates = Vec::new();
         let mut candidate_handles = HashMap::<PendingTargetLocation, HashSet<[u8; 29]>>::new();
@@ -4946,12 +4951,22 @@ impl PacketDecoder {
         targetless.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(*index));
         let mut resolved = Vec::with_capacity(targetless.len());
         for (index, target_handle) in targetless {
-            let Some(mut hit) = self.pending_targetless_hits.remove(index) else {
+            let target_id = target_id_from_wire_handle(&target_handle);
+            let Some(snapshot) = self.target_snapshots.get(&target_id).cloned() else {
                 continue;
             };
-            let target_id = target_id_from_wire_handle(&target_handle);
-            if let Some(snapshot) = self.target_snapshots.get(&target_id) {
-                apply_target_snapshot(&mut hit, target_id, snapshot);
+            let has_matching_settlement = settlements.iter().any(|settlement| {
+                settlement.target_handle == target_handle
+                    && f64::from(settlement.current_hp).to_bits() == snapshot.current_hp.to_bits()
+            });
+            if !has_matching_settlement {
+                if let Some(hit) = self.pending_targetless_hits.get_mut(index) {
+                    apply_target_snapshot(hit, target_id, &snapshot);
+                }
+                continue;
+            }
+            if let Some(mut hit) = self.pending_targetless_hits.remove(index) {
+                apply_target_snapshot(&mut hit, target_id, &snapshot);
                 resolved.push(hit);
             }
         }
@@ -5045,6 +5060,8 @@ impl PacketDecoder {
                 hit.direction = HitDirection::Outgoing;
                 hit.char_source = HitCharacterSource::GameplayEffect;
             }
+            prepared.suppressed_ambiguous +=
+                self.suppress_matching_hp_resolved_targetless_hit(&hit);
             if is_recent_confirmed_duplicate(&hit, &self.recent_confirmed_hits) {
                 prepared.suppressed_ambiguous += 1;
                 continue;
@@ -5371,6 +5388,21 @@ impl PacketDecoder {
             .retain(|pending| !same_damage_event(pending, confirmed_hit));
         before - self.pending_ambiguous_hits.len()
     }
+
+    fn suppress_matching_hp_resolved_targetless_hit(&mut self, confirmed_hit: &Hit) -> usize {
+        if !is_confirmed_packet_hit(confirmed_hit) || !has_direct_wire_target(confirmed_hit) {
+            return 0;
+        }
+        let Some(index) = self
+            .pending_targetless_hits
+            .iter()
+            .position(|pending| same_hp_resolved_damage_event(pending, confirmed_hit))
+        else {
+            return 0;
+        };
+        self.pending_targetless_hits.remove(index);
+        1
+    }
 }
 
 fn is_ambiguous_session_hit(hit: &Hit, declared_ids: &[u32]) -> bool {
@@ -5432,6 +5464,31 @@ fn same_damage_event(left: &Hit, right: &Hit) -> bool {
         && nearly_same(left.target_hp_before, right.target_hp_before)
         && nearly_same(left.target_hp_after, right.target_hp_after)
         && nearly_same(left.target_max_hp, right.target_max_hp)
+}
+
+fn has_direct_wire_target(hit: &Hit) -> bool {
+    let Some(encoded) = hit
+        .target_id
+        .as_deref()
+        .and_then(|target_id| target_id.strip_prefix("enemy-wire:"))
+    else {
+        return false;
+    };
+    hit.target_context.iter().any(|context| {
+        context
+            .strip_prefix("enemy_target_wire=")
+            .is_some_and(|wire| wire == encoded)
+    })
+}
+
+fn same_hp_resolved_damage_event(pending: &Hit, confirmed: &Hit) -> bool {
+    pending.target_id.is_some()
+        && pending.target_id == confirmed.target_id
+        && pending.gameplay_effect_index.is_some()
+        && pending.gameplay_effect_index == confirmed.gameplay_effect_index
+        && (pending.timestamp - confirmed.timestamp).abs()
+            <= AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS
+        && same_exact_wire_damage_event(pending, confirmed)
 }
 
 fn is_recent_confirmed_duplicate(hit: &Hit, confirmed_hits: &[Hit]) -> bool {
@@ -5669,7 +5726,6 @@ fn unattributed_display_damage_hit(
 
 fn is_enemy_death_settlement_hit(hit: &Hit) -> bool {
     hit.direction.is_outgoing()
-        && hit.target_id.is_some()
         && hit.damage == 1.0
         && hit.target_hp_before == 1.0
         && hit.target_hp_after == 0.0
@@ -6611,7 +6667,11 @@ impl PacketDecoder {
                 target_evidence.push(update);
             }
         }
-        let resolved_target_hits = self.resolve_pending_hit_targets(timestamp, &target_evidence);
+        let resolved_target_hits = self.resolve_pending_hit_targets(
+            timestamp,
+            &target_evidence,
+            &server_damage_settlements,
+        );
         accepted += resolved_target_hits.len();
         let inventory_result = if !outgoing {
             match &transport_packet {
@@ -7596,6 +7656,10 @@ enum CaptureTimeStopEvent {
         timestamp: f64,
         pause_type_mask: u32,
     },
+    GamePauseMaskChanged {
+        timestamp: f64,
+        pause_type_mask: u32,
+    },
     GamePause {
         start_timestamp: f64,
         end_timestamp: f64,
@@ -7649,6 +7713,16 @@ where
                     pause_type_mask,
                 });
             }
+            CaptureTimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
+            } => {
+                validate_saved_pause_state(timestamp, pause_type_mask).map_err(D::Error::custom)?;
+                events.push(TimeStopEvent::GamePauseMaskChanged {
+                    timestamp,
+                    pause_type_mask,
+                });
+            }
             CaptureTimeStopEvent::GamePause {
                 start_timestamp,
                 end_timestamp,
@@ -7680,7 +7754,10 @@ where
 }
 
 fn validate_saved_pause_state(timestamp: f64, pause_type_mask: u32) -> Result<(), &'static str> {
-    if !timestamp.is_finite() || pause_type_mask == 0 || pause_type_mask & !0x1c != 0 {
+    if !timestamp.is_finite()
+        || pause_type_mask == 0
+        || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
+    {
         return Err("invalid saved game pause state");
     }
     Ok(())
@@ -8843,7 +8920,8 @@ fn validate_capture_export_structure_with_limits(
     for event in &document.time_stop_events {
         let timestamp = match event {
             TimeStopEvent::GamePauseStarted { timestamp, .. }
-            | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+            | TimeStopEvent::GamePauseEnded { timestamp, .. }
+            | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
         };
         validate_capture_number(
             "time_stop_events[].timestamp",
@@ -9304,7 +9382,8 @@ fn send_export_packet(
 fn time_stop_event_timestamp(event: &TimeStopEvent) -> f64 {
     match event {
         TimeStopEvent::GamePauseStarted { timestamp, .. }
-        | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+        | TimeStopEvent::GamePauseEnded { timestamp, .. }
+        | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
     }
 }
 
@@ -10158,11 +10237,11 @@ mod tests {
     }
 
     #[test]
-    fn combat_clock_block_round_trips_authoritative_pause_state() {
+    fn combat_clock_block_round_trips_linko_pause_state() {
         let transition = CombatClockTransitionSnapshot {
             sequence: 9,
             timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 87 * FILETIME_TICKS_PER_SECOND,
-            pause_type_mask: 1 << 3,
+            pause_type_mask: 1 << 6,
             reserved_value: 0,
             state_flags: COMBAT_CLOCK_PAUSE_VALID,
         };
@@ -10373,7 +10452,44 @@ mod tests {
     }
 
     #[test]
-    fn game_pause_tracker_unions_nested_authoritative_pause_types() {
+    fn capture_export_accepts_saved_linko_mask_changes() {
+        let document: CaptureExportDocument = serde_json::from_str(
+            r#"{
+                "time_stop_events": [
+                    {"GamePauseStarted":{"timestamp":10.0,"pause_type_mask":64}},
+                    {"GamePauseMaskChanged":{"timestamp":11.0,"pause_type_mask":68}},
+                    {"GamePauseMaskChanged":{"timestamp":12.0,"pause_type_mask":4}},
+                    {"GamePauseEnded":{"timestamp":13.0,"pause_type_mask":4}}
+                ]
+            }"#,
+        )
+        .expect("Linko and Q pause masks should be accepted");
+
+        assert_eq!(
+            document.time_stop_events,
+            vec![
+                TimeStopEvent::GamePauseStarted {
+                    timestamp: 10.0,
+                    pause_type_mask: 1 << 6,
+                },
+                TimeStopEvent::GamePauseMaskChanged {
+                    timestamp: 11.0,
+                    pause_type_mask: (1 << 6) | (1 << 2),
+                },
+                TimeStopEvent::GamePauseMaskChanged {
+                    timestamp: 12.0,
+                    pause_type_mask: 1 << 2,
+                },
+                TimeStopEvent::GamePauseEnded {
+                    timestamp: 13.0,
+                    pause_type_mask: 1 << 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn game_pause_tracker_preserves_nonzero_mask_changes() {
         let mut tracker = GamePauseIntervalTracker::default();
         assert_eq!(
             tracker.apply_transition(10.0, 1 << 2),
@@ -10382,13 +10498,25 @@ mod tests {
                 pause_type_mask: 1 << 2,
             })
         );
-        assert_eq!(tracker.apply_transition(11.0, (1 << 2) | (1 << 4)), None);
-        assert_eq!(tracker.apply_transition(12.0, 1 << 4), None);
+        assert_eq!(
+            tracker.apply_transition(11.0, (1 << 2) | (1 << 6)),
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp: 11.0,
+                pause_type_mask: (1 << 2) | (1 << 6),
+            })
+        );
+        assert_eq!(
+            tracker.apply_transition(12.0, 1 << 6),
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp: 12.0,
+                pause_type_mask: 1 << 6,
+            })
+        );
         assert_eq!(
             tracker.apply_transition(13.0, 0),
             Some(TimeStopEvent::GamePauseEnded {
                 timestamp: 13.0,
-                pause_type_mask: (1 << 2) | (1 << 4),
+                pause_type_mask: 1 << 6,
             })
         );
         assert_eq!(tracker.apply_transition(14.0, 0), None);
@@ -15011,12 +15139,114 @@ mod tests {
         decoder.pending_targetless_hits.push_back(hit);
         let update = boss_hp_update_for(target, 1_900.0);
         decoder.observe_target_hp_update(10.1, &update);
+        let settlement = server_damage_settlement_for(target, 1_900.0, 0, 100);
 
-        let resolved = decoder.resolve_pending_hit_targets(10.1, &[update]);
+        let resolved =
+            decoder.resolve_pending_hit_targets(10.1, &[update], std::slice::from_ref(&settlement));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(wire_handle_from_hit(&resolved[0]), Some(target));
         assert!(decoder.pending_targetless_hits.is_empty());
+    }
+
+    #[test]
+    fn hp_resolved_hit_waits_for_and_yields_to_matching_direct_target_record() {
+        let mut decoder = PacketDecoder::default();
+        let target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.char_id = 1051;
+        provisional.char_source = HitCharacterSource::Packet;
+        provisional.damage = 1_350.0;
+        provisional.target_hp_before = 5_276_334.0;
+        provisional.target_hp_after = 5_274_984.0;
+        provisional.target_max_hp = 5_417_573.0;
+        provisional.gameplay_effect_index = Some(2417);
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(target, 5_274_984.0);
+        decoder.observe_target_hp_update(10.01, &update);
+
+        assert!(
+            decoder
+                .resolve_pending_hit_targets(10.01, &[update], &[])
+                .is_empty()
+        );
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(target)
+        );
+
+        let mut direct = decoder.pending_targetless_hits[0].clone();
+        direct.timestamp = 10.066_759;
+        set_wire_target(&mut direct, target);
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![direct], &[1051], false, &HashMap::new());
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 1);
+        assert!(decoder.pending_targetless_hits.is_empty());
+        assert!(has_direct_wire_target(&prepared.emit[0]));
+    }
+
+    #[test]
+    fn direct_record_for_another_target_does_not_suppress_hp_resolved_hit() {
+        let mut decoder = PacketDecoder::default();
+        let resolved_target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.char_id = 1051;
+        provisional.char_source = HitCharacterSource::Packet;
+        provisional.target_hp_before = 2_000.0;
+        provisional.target_hp_after = 1_900.0;
+        provisional.target_max_hp = 2_500.0;
+        provisional.gameplay_effect_index = Some(2417);
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(resolved_target, 1_900.0);
+        decoder.observe_target_hp_update(10.01, &update);
+        assert!(
+            decoder
+                .resolve_pending_hit_targets(10.01, &[update], &[])
+                .is_empty()
+        );
+
+        let mut other_target = decoder.pending_targetless_hits[0].clone();
+        other_target.timestamp = 10.066_759;
+        set_wire_target(&mut other_target, [5_u8; 29]);
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![other_target], &[1051], false, &HashMap::new());
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 0);
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(resolved_target)
+        );
+    }
+
+    #[test]
+    fn unrelated_server_settlement_does_not_release_hp_resolved_hit() {
+        let mut decoder = PacketDecoder::default();
+        let resolved_target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.target_hp_before = 2_000.0;
+        provisional.target_hp_after = 1_900.0;
+        provisional.target_max_hp = 2_500.0;
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(resolved_target, 1_900.0);
+        decoder.observe_target_hp_update(10.01, &update);
+        let unrelated = server_damage_settlement_for([5_u8; 29], 900.0, 0, 100);
+
+        let resolved = decoder.resolve_pending_hit_targets(10.01, &[update], &[unrelated]);
+
+        assert!(resolved.is_empty());
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(resolved_target)
+        );
     }
 
     #[test]
@@ -15036,7 +15266,7 @@ mod tests {
 
         assert!(
             decoder
-                .resolve_pending_hit_targets(10.1, &[update])
+                .resolve_pending_hit_targets(10.1, &[update], &[])
                 .is_empty()
         );
 
@@ -15068,7 +15298,7 @@ mod tests {
         decoder.observe_target_hp_update(10.1, &second);
         assert!(
             decoder
-                .resolve_pending_hit_targets(10.1, &[first, second])
+                .resolve_pending_hit_targets(10.1, &[first, second], &[])
                 .is_empty()
         );
 
@@ -15111,7 +15341,8 @@ mod tests {
         };
         decoder.observe_target_hp_update(10.1, &update);
 
-        let resolved = decoder.resolve_pending_hit_targets(10.1, &[update]);
+        let resolved =
+            decoder.resolve_pending_hit_targets(10.1, &[update], std::slice::from_ref(&settlement));
         let (_, _, residual_hits) = decoder.reconcile_current_packet_server_damage_settlements(
             10.1,
             &[settlement],
@@ -15139,7 +15370,7 @@ mod tests {
 
         assert!(
             multiple_targets
-                .resolve_pending_hit_targets(10.1, &[first, second])
+                .resolve_pending_hit_targets(10.1, &[first, second], &[])
                 .is_empty()
         );
         assert_eq!(multiple_targets.pending_targetless_hits.len(), 1);
@@ -15156,7 +15387,7 @@ mod tests {
 
         assert!(
             multiple_hits
-                .resolve_pending_hit_targets(10.1, &[update])
+                .resolve_pending_hit_targets(10.1, &[update], &[])
                 .is_empty()
         );
         assert_eq!(multiple_hits.pending_targetless_hits.len(), 2);
@@ -15179,7 +15410,7 @@ mod tests {
     }
 
     #[test]
-    fn emission_drops_only_targeted_outgoing_death_settlement_marker() {
+    fn emission_drops_outgoing_death_settlement_marker() {
         let mut decoder = PacketDecoder::default();
         let characters = HashMap::new();
         let (sender, receiver) = bounded(4);
@@ -15194,9 +15425,12 @@ mod tests {
         decoder.emit_hits(std::iter::once(marker.clone()), &characters, &sink);
         assert!(receiver.try_recv().is_err());
 
-        marker.direction = HitDirection::Incoming;
         marker.target_id = None;
         marker.target_context.clear();
+        decoder.emit_hits(std::iter::once(marker.clone()), &characters, &sink);
+        assert!(receiver.try_recv().is_err());
+
+        marker.direction = HitDirection::Incoming;
         decoder.emit_hits(std::iter::once(marker), &characters, &sink);
         assert!(matches!(receiver.try_recv(), Ok(EngineEvent::Hit(_))));
     }
