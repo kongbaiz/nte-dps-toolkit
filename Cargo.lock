@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "nte-dps-tool"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "aes",
  "anyhow",
