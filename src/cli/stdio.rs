@@ -483,9 +483,10 @@ impl Runtime {
         let previous_hits_generation = self.state.hits_generation;
         let previous_abyss_event_count = self.state.abyss.event_count;
         let time_stop_state_may_change = match &event {
-            EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted { timestamp, .. }) => {
-                timestamp.is_finite()
-            }
+            EngineEvent::TimeStop(
+                TimeStopEvent::GamePauseStarted { timestamp, .. }
+                | TimeStopEvent::GamePauseMaskChanged { timestamp, .. },
+            ) => timestamp.is_finite(),
             EngineEvent::TimeStop(TimeStopEvent::GamePauseEnded { .. }) => {
                 self.state.is_game_paused()
             }

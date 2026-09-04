@@ -574,6 +574,9 @@ impl HitDirectionSummary {
 pub struct TimelineTimeStopInterval {
     pub start_offset: f64,
     pub end_offset: f64,
+    /// Exact `EPausedGameType` bitset for this segment. `None` means an old
+    /// compacted prefix no longer has lossless per-type attribution.
+    pub pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -3981,6 +3984,10 @@ pub enum TimeStopEvent {
         timestamp: f64,
         pause_type_mask: u32,
     },
+    GamePauseMaskChanged {
+        timestamp: f64,
+        pause_type_mask: u32,
+    },
 }
 
 /// Runtime health of the authoritative game-side combat-clock provider. This
@@ -4012,6 +4019,7 @@ impl CombatClockRuntimeHealth {
 struct TimeStopInterval {
     start: f64,
     end: f64,
+    pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -4058,7 +4066,74 @@ impl ArchivedTimeStopIntervals {
         Some(TimeStopInterval {
             start: (projected_end - duration).max(start),
             end: projected_end,
+            pause_type_mask: None,
         })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct TimeStopEventSegmenter {
+    active_game_pause: Option<(f64, u32)>,
+}
+
+impl TimeStopEventSegmenter {
+    pub(crate) fn apply_event(&mut self, event: &TimeStopEvent) -> Option<(f64, f64, u32)> {
+        match event {
+            TimeStopEvent::GamePauseStarted {
+                timestamp,
+                pause_type_mask,
+            } => {
+                if !timestamp.is_finite() {
+                    return None;
+                }
+                match self.active_game_pause.take() {
+                    Some((start, active_mask)) => {
+                        let next_mask = active_mask | *pause_type_mask;
+                        if next_mask != active_mask && *timestamp > start {
+                            self.active_game_pause = Some((*timestamp, next_mask));
+                            Some((start, *timestamp, active_mask))
+                        } else {
+                            self.active_game_pause = Some((start.min(*timestamp), next_mask));
+                            None
+                        }
+                    }
+                    None => {
+                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
+                        None
+                    }
+                }
+            }
+            TimeStopEvent::GamePauseEnded { timestamp, .. } => self
+                .active_game_pause
+                .take()
+                .map(|(start, pause_type_mask)| (start, *timestamp, pause_type_mask)),
+            TimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
+            } => {
+                if !timestamp.is_finite() || *pause_type_mask == 0 {
+                    return None;
+                }
+                match self.active_game_pause.take() {
+                    Some((start, active_mask)) if *timestamp > start => {
+                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
+                        Some((start, *timestamp, active_mask))
+                    }
+                    Some((start, _)) => {
+                        self.active_game_pause = Some((start.min(*timestamp), *pause_type_mask));
+                        None
+                    }
+                    None => {
+                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn active_game_pause(&self) -> Option<(f64, u32)> {
+        self.active_game_pause
     }
 }
 
@@ -4066,40 +4141,33 @@ impl ArchivedTimeStopIntervals {
 struct TimeStopTracker {
     intervals: VecDeque<TimeStopInterval>,
     archived: Option<ArchivedTimeStopIntervals>,
-    active_game_pause: Option<(f64, u32)>,
+    event_segmenter: TimeStopEventSegmenter,
     latest_game_pause_transition: Option<f64>,
     event_count: u64,
 }
 
 impl TimeStopTracker {
     fn apply_event(&mut self, event: &TimeStopEvent) {
-        match event {
-            TimeStopEvent::GamePauseStarted {
+        let had_active_pause = self.event_segmenter.active_game_pause().is_some();
+        let transition_timestamp = match event {
+            TimeStopEvent::GamePauseStarted { timestamp, .. } if timestamp.is_finite() => {
+                Some(*timestamp)
+            }
+            TimeStopEvent::GamePauseEnded { timestamp, .. } if had_active_pause => Some(*timestamp),
+            TimeStopEvent::GamePauseMaskChanged {
                 timestamp,
                 pause_type_mask,
-            } => {
-                if !timestamp.is_finite() {
-                    return;
-                }
-                match &mut self.active_game_pause {
-                    Some((start, active_mask)) => {
-                        *start = start.min(*timestamp);
-                        *active_mask |= *pause_type_mask;
-                    }
-                    None => {
-                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
-                    }
-                }
-                self.record_game_pause_transition(*timestamp);
-            }
-            TimeStopEvent::GamePauseEnded { timestamp, .. } => {
-                let Some((start, _)) = self.active_game_pause.take() else {
-                    return;
-                };
-                self.event_count = self.event_count.saturating_add(1);
-                self.push_interval(start, *timestamp);
-                self.record_game_pause_transition(*timestamp);
-            }
+            } if timestamp.is_finite() && *pause_type_mask != 0 => Some(*timestamp),
+            _ => None,
+        };
+        if matches!(event, TimeStopEvent::GamePauseEnded { .. }) && had_active_pause {
+            self.event_count = self.event_count.saturating_add(1);
+        }
+        if let Some((start, end, pause_type_mask)) = self.event_segmenter.apply_event(event) {
+            self.push_interval(start, end, pause_type_mask);
+        }
+        if let Some(timestamp) = transition_timestamp {
+            self.record_game_pause_transition(timestamp);
         }
     }
 
@@ -4112,12 +4180,13 @@ impl TimeStopTracker {
         }
     }
 
-    fn push_interval(&mut self, start: f64, end: f64) {
+    fn push_interval(&mut self, start: f64, end: f64, pause_type_mask: u32) {
         if !start.is_finite() || !end.is_finite() || end <= start {
             return;
         }
         if let Some(last) = self.intervals.back_mut()
             && start <= last.end
+            && last.pause_type_mask == known_pause_type_mask(pause_type_mask)
         {
             last.end = last.end.max(end);
             return;
@@ -4136,7 +4205,11 @@ impl TimeStopTracker {
             archived.frozen_duration += expired.end - expired.start;
             archived.count = archived.count.saturating_add(1);
         }
-        self.intervals.push_back(TimeStopInterval { start, end });
+        self.intervals.push_back(TimeStopInterval {
+            start,
+            end,
+            pause_type_mask: known_pause_type_mask(pause_type_mask),
+        });
     }
 
     fn frozen_between(&self, start: f64, end: f64) -> f64 {
@@ -4155,28 +4228,29 @@ impl TimeStopTracker {
     }
 
     fn intervals_between(&self, start: f64, end: f64) -> Vec<TimeStopInterval> {
+        Self::merge_intervals(self.typed_intervals_between(start, end))
+    }
+
+    fn typed_intervals_between(&self, start: f64, end: f64) -> Vec<TimeStopInterval> {
         if !start.is_finite() || !end.is_finite() || end <= start {
             return Vec::new();
         }
-        let intervals = self
-            .archived
-            .and_then(|archived| archived.projected_interval(start, end))
-            .into_iter()
-            .chain(
-                self.intervals
-                    .iter()
-                    .copied()
-                    .chain(
-                        self.active_game_pause
-                            .map(|(active_start, _)| TimeStopInterval {
-                                start: active_start,
-                                end,
-                            }),
+        let intervals =
+            self.archived
+                .and_then(|archived| archived.projected_interval(start, end))
+                .into_iter()
+                .chain(self.intervals.iter().copied().chain(
+                    self.event_segmenter.active_game_pause().map(
+                        |(active_start, pause_type_mask)| TimeStopInterval {
+                            start: active_start,
+                            end,
+                            pause_type_mask: known_pause_type_mask(pause_type_mask),
+                        },
                     ),
-            )
-            .filter_map(|interval| Self::clip_interval(interval, start, end))
-            .collect::<Vec<_>>();
-        Self::merge_intervals(intervals)
+                ))
+                .filter_map(|interval| Self::clip_interval(interval, start, end))
+                .collect::<Vec<_>>();
+        Self::merge_typed_intervals(intervals)
     }
 
     fn clip_interval(interval: TimeStopInterval, start: f64, end: f64) -> Option<TimeStopInterval> {
@@ -4185,6 +4259,7 @@ impl TimeStopTracker {
         (clipped_end > clipped_start).then_some(TimeStopInterval {
             start: clipped_start,
             end: clipped_end,
+            pause_type_mask: interval.pause_type_mask,
         })
     }
 
@@ -4196,6 +4271,36 @@ impl TimeStopTracker {
         for interval in intervals {
             match merged {
                 Some(mut current) if interval.start <= current.end => {
+                    current.end = current.end.max(interval.end);
+                    if current.pause_type_mask != interval.pause_type_mask {
+                        current.pause_type_mask = None;
+                    }
+                    merged = Some(current);
+                }
+                Some(current) => {
+                    merged_intervals.push(current);
+                    merged = Some(interval);
+                }
+                None => merged = Some(interval),
+            }
+        }
+        if let Some(current) = merged {
+            merged_intervals.push(current);
+        }
+        merged_intervals
+    }
+
+    fn merge_typed_intervals(mut intervals: Vec<TimeStopInterval>) -> Vec<TimeStopInterval> {
+        intervals.sort_by(|left, right| left.start.total_cmp(&right.start));
+
+        let mut merged_intervals = Vec::new();
+        let mut merged: Option<TimeStopInterval> = None;
+        for interval in intervals {
+            match merged {
+                Some(mut current)
+                    if interval.start <= current.end
+                        && interval.pause_type_mask == current.pause_type_mask =>
+                {
                     current.end = current.end.max(interval.end);
                     merged = Some(current);
                 }
@@ -4210,6 +4315,16 @@ impl TimeStopTracker {
             merged_intervals.push(current);
         }
         merged_intervals
+    }
+}
+
+const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
+
+const fn known_pause_type_mask(pause_type_mask: u32) -> Option<u32> {
+    if pause_type_mask == 0 || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0 {
+        None
+    } else {
+        Some(pause_type_mask)
     }
 }
 
@@ -4241,7 +4356,7 @@ fn compact_time_stop_event_prefix(events: &mut Vec<TimeStopEvent>) {
             pause_type_mask: 0,
         });
     }
-    if let Some((active_start, active_mask)) = tracker.active_game_pause {
+    if let Some((active_start, active_mask)) = tracker.event_segmenter.active_game_pause() {
         prefix.push(TimeStopEvent::GamePauseStarted {
             timestamp: active_start,
             pause_type_mask: active_mask,
@@ -4689,7 +4804,8 @@ impl AbyssRunState {
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
         let timestamp = match event {
             TimeStopEvent::GamePauseStarted { timestamp, .. }
-            | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+            | TimeStopEvent::GamePauseEnded { timestamp, .. }
+            | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
         };
         let half = if self
             .second_half_at
@@ -5775,7 +5891,7 @@ impl CombatState {
     }
 
     pub fn is_game_paused(&self) -> bool {
-        self.time_stop.active_game_pause.is_some()
+        self.time_stop.event_segmenter.active_game_pause().is_some()
     }
 
     pub fn rebuild_global_from_abyss(&mut self) {
@@ -6243,11 +6359,12 @@ fn relative_time_stop_intervals(
     end: f64,
 ) -> Vec<TimelineTimeStopInterval> {
     time_stop
-        .intervals_between(start, end)
+        .typed_intervals_between(start, end)
         .into_iter()
         .map(|interval| TimelineTimeStopInterval {
             start_offset: interval.start - start,
             end_offset: interval.end - start,
+            pause_type_mask: interval.pause_type_mask,
         })
         .collect()
 }
@@ -8909,6 +9026,42 @@ mod tests {
     }
 
     #[test]
+    fn pause_mask_changes_split_typed_intervals_without_double_counting_time() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(9.0, 1021, "outgoing", 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1 << 6,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 11.0,
+            pause_type_mask: (1 << 6) | (1 << 2),
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 12.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(test_hit(15.0, 1021, "outgoing", 200.0));
+
+        let intervals = state.time_stop_intervals_between(9.0, 15.0);
+        assert_eq!(intervals.len(), 3);
+        assert_eq!(intervals[0].pause_type_mask, Some(1 << 6));
+        assert_eq!(intervals[1].pause_type_mask, Some((1 << 6) | (1 << 2)));
+        assert_eq!(intervals[2].pause_type_mask, Some(1 << 2));
+        assert!((intervals[0].start_offset - 1.0).abs() < 1e-9);
+        assert!((intervals[0].end_offset - 2.0).abs() < 1e-9);
+        assert!((intervals[1].start_offset - 2.0).abs() < 1e-9);
+        assert!((intervals[1].end_offset - 3.0).abs() < 1e-9);
+        assert!((intervals[2].start_offset - 3.0).abs() < 1e-9);
+        assert!((intervals[2].end_offset - 5.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn time_stop_authority_and_export_events_compact_to_bounded_state() {
         let pause_count = MAX_RETAINED_TIME_STOP_INTERVALS + 1_000;
         let mut state = CombatState::default();
@@ -8926,6 +9079,12 @@ mod tests {
         let timeline = state.timeline_bounded(1.0, true, 32, 8, 8);
         assert!(timeline.time_stop_intervals.len() <= MAX_PROJECTED_TIME_STOP_INTERVALS);
         assert!(timeline.compacted_time_stop_intervals > 0);
+        assert!(
+            timeline
+                .time_stop_intervals
+                .iter()
+                .any(|interval| interval.pause_type_mask.is_none())
+        );
         assert!((state.time_stop.frozen_between(0.0, end) - pause_count as f64).abs() < 1e-9);
 
         // The bounded event projection remains self-contained for JSON/history

@@ -87,6 +87,7 @@ const NTE_MOD_SCRIPT_BLOCK_SIZE: usize = 120;
 const NTE_MOD_SCRIPT_STRING_CAPACITY: usize = 32;
 const NTE_MOD_SCRIPT_VALUE_CAPACITY: usize = 3;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
+const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
 const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -1168,7 +1169,7 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
         u32::from_le_bytes(value[32..36].try_into().expect("fixed clock state flags"));
     if reserved_value != 0
         || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
-        || pause_type_mask & !0x1c != 0
+        || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
         || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
     {
         return None;
@@ -1293,25 +1294,28 @@ fn current_filetime_100ns() -> u64 {
 
 #[derive(Default)]
 struct GamePauseIntervalTracker {
-    active_type_mask: u32,
     pause_type_mask: u32,
 }
 
 impl GamePauseIntervalTracker {
     fn apply_transition(&mut self, timestamp: f64, pause_type_mask: u32) -> Option<TimeStopEvent> {
-        let event = if self.pause_type_mask == 0 && pause_type_mask != 0 {
-            self.active_type_mask = pause_type_mask;
+        let previous_pause_type_mask = self.pause_type_mask;
+        let event = if previous_pause_type_mask == 0 && pause_type_mask != 0 {
             Some(TimeStopEvent::GamePauseStarted {
                 timestamp,
                 pause_type_mask,
             })
-        } else if self.pause_type_mask != 0 && pause_type_mask == 0 {
+        } else if previous_pause_type_mask != 0 && pause_type_mask == 0 {
             Some(TimeStopEvent::GamePauseEnded {
                 timestamp,
-                pause_type_mask: self.active_type_mask,
+                pause_type_mask: previous_pause_type_mask,
+            })
+        } else if previous_pause_type_mask != pause_type_mask {
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
             })
         } else {
-            self.active_type_mask |= pause_type_mask;
             None
         };
         self.pause_type_mask = pause_type_mask;
@@ -7653,6 +7657,10 @@ enum CaptureTimeStopEvent {
         timestamp: f64,
         pause_type_mask: u32,
     },
+    GamePauseMaskChanged {
+        timestamp: f64,
+        pause_type_mask: u32,
+    },
     GamePause {
         start_timestamp: f64,
         end_timestamp: f64,
@@ -7706,6 +7714,16 @@ where
                     pause_type_mask,
                 });
             }
+            CaptureTimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
+            } => {
+                validate_saved_pause_state(timestamp, pause_type_mask).map_err(D::Error::custom)?;
+                events.push(TimeStopEvent::GamePauseMaskChanged {
+                    timestamp,
+                    pause_type_mask,
+                });
+            }
             CaptureTimeStopEvent::GamePause {
                 start_timestamp,
                 end_timestamp,
@@ -7737,7 +7755,10 @@ where
 }
 
 fn validate_saved_pause_state(timestamp: f64, pause_type_mask: u32) -> Result<(), &'static str> {
-    if !timestamp.is_finite() || pause_type_mask == 0 || pause_type_mask & !0x1c != 0 {
+    if !timestamp.is_finite()
+        || pause_type_mask == 0
+        || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
+    {
         return Err("invalid saved game pause state");
     }
     Ok(())
@@ -8900,7 +8921,8 @@ fn validate_capture_export_structure_with_limits(
     for event in &document.time_stop_events {
         let timestamp = match event {
             TimeStopEvent::GamePauseStarted { timestamp, .. }
-            | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+            | TimeStopEvent::GamePauseEnded { timestamp, .. }
+            | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
         };
         validate_capture_number(
             "time_stop_events[].timestamp",
@@ -9361,7 +9383,8 @@ fn send_export_packet(
 fn time_stop_event_timestamp(event: &TimeStopEvent) -> f64 {
     match event {
         TimeStopEvent::GamePauseStarted { timestamp, .. }
-        | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+        | TimeStopEvent::GamePauseEnded { timestamp, .. }
+        | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
     }
 }
 
@@ -10215,11 +10238,11 @@ mod tests {
     }
 
     #[test]
-    fn combat_clock_block_round_trips_authoritative_pause_state() {
+    fn combat_clock_block_round_trips_linko_pause_state() {
         let transition = CombatClockTransitionSnapshot {
             sequence: 9,
             timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 87 * FILETIME_TICKS_PER_SECOND,
-            pause_type_mask: 1 << 3,
+            pause_type_mask: 1 << 6,
             reserved_value: 0,
             state_flags: COMBAT_CLOCK_PAUSE_VALID,
         };
@@ -10430,7 +10453,44 @@ mod tests {
     }
 
     #[test]
-    fn game_pause_tracker_unions_nested_authoritative_pause_types() {
+    fn capture_export_accepts_saved_linko_mask_changes() {
+        let document: CaptureExportDocument = serde_json::from_str(
+            r#"{
+                "time_stop_events": [
+                    {"GamePauseStarted":{"timestamp":10.0,"pause_type_mask":64}},
+                    {"GamePauseMaskChanged":{"timestamp":11.0,"pause_type_mask":68}},
+                    {"GamePauseMaskChanged":{"timestamp":12.0,"pause_type_mask":4}},
+                    {"GamePauseEnded":{"timestamp":13.0,"pause_type_mask":4}}
+                ]
+            }"#,
+        )
+        .expect("Linko and Q pause masks should be accepted");
+
+        assert_eq!(
+            document.time_stop_events,
+            vec![
+                TimeStopEvent::GamePauseStarted {
+                    timestamp: 10.0,
+                    pause_type_mask: 1 << 6,
+                },
+                TimeStopEvent::GamePauseMaskChanged {
+                    timestamp: 11.0,
+                    pause_type_mask: (1 << 6) | (1 << 2),
+                },
+                TimeStopEvent::GamePauseMaskChanged {
+                    timestamp: 12.0,
+                    pause_type_mask: 1 << 2,
+                },
+                TimeStopEvent::GamePauseEnded {
+                    timestamp: 13.0,
+                    pause_type_mask: 1 << 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn game_pause_tracker_preserves_nonzero_mask_changes() {
         let mut tracker = GamePauseIntervalTracker::default();
         assert_eq!(
             tracker.apply_transition(10.0, 1 << 2),
@@ -10439,13 +10499,25 @@ mod tests {
                 pause_type_mask: 1 << 2,
             })
         );
-        assert_eq!(tracker.apply_transition(11.0, (1 << 2) | (1 << 4)), None);
-        assert_eq!(tracker.apply_transition(12.0, 1 << 4), None);
+        assert_eq!(
+            tracker.apply_transition(11.0, (1 << 2) | (1 << 6)),
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp: 11.0,
+                pause_type_mask: (1 << 2) | (1 << 6),
+            })
+        );
+        assert_eq!(
+            tracker.apply_transition(12.0, 1 << 6),
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp: 12.0,
+                pause_type_mask: 1 << 6,
+            })
+        );
         assert_eq!(
             tracker.apply_transition(13.0, 0),
             Some(TimeStopEvent::GamePauseEnded {
                 timestamp: 13.0,
-                pause_type_mask: (1 << 2) | (1 << 4),
+                pause_type_mask: 1 << 6,
             })
         );
         assert_eq!(tracker.apply_transition(14.0, 0), None);
