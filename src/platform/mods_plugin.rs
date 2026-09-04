@@ -101,6 +101,7 @@ const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
+const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const MAX_PLUGIN_STATUS: u32 = 13;
 const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
@@ -1534,7 +1535,7 @@ fn decode_combat_clock_transitions(
         if reserved != 0
             || reserved_value != 0
             || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
-            || pause_type_mask & !0x1c != 0
+            || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
             || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
         {
             return Err(CombatClockQueryError::InvalidResponse);
@@ -3129,7 +3130,7 @@ mod tests {
     }
 
     #[test]
-    fn combat_clock_response_uses_the_v7_transition_layout() {
+    fn combat_clock_response_accepts_the_linko_pause_type_in_the_v7_layout() {
         let mut bytes = [0_u8; RESPONSE_SIZE];
         bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
         bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
@@ -3138,7 +3139,7 @@ mod tests {
         bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
         bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
         bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
-        bytes[40..44].copy_from_slice(&(1_u32 << 2).to_le_bytes());
+        bytes[40..44].copy_from_slice(&((1_u32 << 2) | (1_u32 << 6)).to_le_bytes());
         bytes[48..52].copy_from_slice(&COMBAT_CLOCK_PAUSE_VALID.to_le_bytes());
 
         assert_eq!(
@@ -3146,7 +3147,7 @@ mod tests {
             Ok(vec![CombatClockTransitionSnapshot {
                 sequence: 7,
                 timestamp_100ns: 133_000_000_000_000_000,
-                pause_type_mask: 1 << 2,
+                pause_type_mask: (1 << 2) | (1 << 6),
                 reserved_value: 0,
                 state_flags: COMBAT_CLOCK_PAUSE_VALID,
             }])

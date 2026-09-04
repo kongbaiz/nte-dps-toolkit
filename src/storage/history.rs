@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize, de::IgnoredAny};
 use crate::engine::model::{
     AbyssHalf, CaptureQualitySummary, CombatSessionAbyssHalfSummary, CombatSessionCharacterSummary,
     CombatSessionSkillSummary, CombatSessionSummary, CombatState, DamageAttributionSummary, Hit,
-    TeamDps, TeamDpsMember, TimeStopEvent,
+    TeamDps, TeamDpsMember, TimeStopEvent, TimeStopEventSegmenter,
 };
 use crate::storage::io_util::{atomic_write_file, atomic_write_text};
 use crate::storage::paths::software_dir;
@@ -682,7 +682,8 @@ impl HistoryCombatDetails {
         if self.time_stop_events.iter().any(|event| {
             let timestamp = match event {
                 TimeStopEvent::GamePauseStarted { timestamp, .. }
-                | TimeStopEvent::GamePauseEnded { timestamp, .. } => timestamp,
+                | TimeStopEvent::GamePauseEnded { timestamp, .. }
+                | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => timestamp,
             };
             !timestamp.is_finite()
         }) {
@@ -747,44 +748,7 @@ fn clipped_time_stop_events(
     range_start: f64,
     range_end: f64,
 ) -> Vec<TimeStopEvent> {
-    let mut clipped = Vec::new();
-    let mut active_pause: Option<(f64, u32)> = None;
-    for event in events {
-        match event {
-            TimeStopEvent::GamePauseStarted {
-                timestamp,
-                pause_type_mask,
-            } => match &mut active_pause {
-                Some((start, active_mask)) => {
-                    *start = start.min(*timestamp);
-                    *active_mask |= *pause_type_mask;
-                }
-                None => active_pause = Some((*timestamp, *pause_type_mask)),
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp,
-                pause_type_mask,
-            } => {
-                let Some((start, active_mask)) = active_pause.take() else {
-                    continue;
-                };
-                let start = start.max(range_start);
-                let end = timestamp.min(range_end);
-                if end <= start {
-                    continue;
-                }
-                clipped.push(TimeStopEvent::GamePauseStarted {
-                    timestamp: start,
-                    pause_type_mask: active_mask,
-                });
-                clipped.push(TimeStopEvent::GamePauseEnded {
-                    timestamp: end,
-                    pause_type_mask: *pause_type_mask,
-                });
-            }
-        }
-    }
-    clipped
+    clipped_time_stop_events_iter(events.iter().cloned(), range_start, range_end)
 }
 
 fn clipped_time_stop_events_owned(
@@ -792,42 +756,68 @@ fn clipped_time_stop_events_owned(
     range_start: f64,
     range_end: f64,
 ) -> Vec<TimeStopEvent> {
-    let mut clipped = Vec::new();
-    let mut active_pause: Option<(f64, u32)> = None;
+    clipped_time_stop_events_iter(events, range_start, range_end)
+}
+
+fn clipped_time_stop_events_iter(
+    events: impl IntoIterator<Item = TimeStopEvent>,
+    range_start: f64,
+    range_end: f64,
+) -> Vec<TimeStopEvent> {
+    let mut segments = Vec::new();
+    let mut segmenter = TimeStopEventSegmenter::default();
     for event in events {
-        match event {
-            TimeStopEvent::GamePauseStarted {
-                timestamp,
-                pause_type_mask,
-            } => match &mut active_pause {
-                Some((start, active_mask)) => {
-                    *start = start.min(timestamp);
-                    *active_mask |= pause_type_mask;
-                }
-                None => active_pause = Some((timestamp, pause_type_mask)),
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp,
-                pause_type_mask,
-            } => {
-                let Some((start, active_mask)) = active_pause.take() else {
-                    continue;
-                };
-                let start = start.max(range_start);
-                let end = timestamp.min(range_end);
-                if end <= start {
-                    continue;
-                }
+        if let Some(segment) = segmenter.apply_event(&event) {
+            segments.push(segment);
+        }
+    }
+    if let Some((start, active_mask)) = segmenter.active_game_pause()
+        && range_end > start
+    {
+        segments.push((start, range_end, active_mask));
+    }
+
+    let mut clipped = Vec::new();
+    let mut output_active: Option<(f64, u32)> = None;
+    for (start, end, pause_type_mask) in segments {
+        let start = start.max(range_start);
+        let end = end.min(range_end);
+        if end <= start {
+            continue;
+        }
+        match output_active.take() {
+            None => {
                 clipped.push(TimeStopEvent::GamePauseStarted {
                     timestamp: start,
+                    pause_type_mask,
+                });
+            }
+            Some((active_end, active_mask)) if start <= active_end => {
+                if active_mask != pause_type_mask {
+                    clipped.push(TimeStopEvent::GamePauseMaskChanged {
+                        timestamp: start,
+                        pause_type_mask,
+                    });
+                }
+            }
+            Some((active_end, active_mask)) => {
+                clipped.push(TimeStopEvent::GamePauseEnded {
+                    timestamp: active_end,
                     pause_type_mask: active_mask,
                 });
-                clipped.push(TimeStopEvent::GamePauseEnded {
-                    timestamp: end,
+                clipped.push(TimeStopEvent::GamePauseStarted {
+                    timestamp: start,
                     pause_type_mask,
                 });
             }
         }
+        output_active = Some((end, pause_type_mask));
+    }
+    if let Some((end, pause_type_mask)) = output_active {
+        clipped.push(TimeStopEvent::GamePauseEnded {
+            timestamp: end,
+            pause_type_mask,
+        });
     }
     clipped
 }
@@ -4005,6 +3995,39 @@ mod tests {
         );
         assert!((restored.duration_with_time_stop(false) - 7.0).abs() < 1e-9);
         assert!((restored.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn detailed_record_preserves_pause_mask_changes_inside_the_damage_window() {
+        let mut state = CombatState::default();
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1 << 6,
+        });
+        state.push_hit(history_hit(11.0, 1, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 12.0,
+            pause_type_mask: (1 << 6) | (1 << 2),
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 13.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(history_hit(15.0, 2, 200.0));
+
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        let restored = details.to_combat_state();
+        let intervals = restored.time_stop_intervals_between(11.0, 15.0);
+
+        assert_eq!(intervals.len(), 3);
+        assert_eq!(intervals[0].pause_type_mask, Some(1 << 6));
+        assert_eq!(intervals[1].pause_type_mask, Some((1 << 6) | (1 << 2)));
+        assert_eq!(intervals[2].pause_type_mask, Some(1 << 2));
+        assert!((restored.duration_with_time_stop(true) - 1.0).abs() < 1e-9);
     }
 
     #[test]

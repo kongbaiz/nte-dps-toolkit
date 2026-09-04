@@ -220,6 +220,15 @@ Require-Pattern $hostApi `
 Require-Pattern $hostApi `
     'definition_snapshot[\s\S]+HashEffectName\(definition_snapshot\.name[\s\S]+definition_snapshot\.index' `
     "Party effect sampling still dereferences a definition after an advisory range check."
+Require-Pattern $hostApi `
+    'PAUSED_GAME_TYPE_LINKO_EFFECT\s*=\s*6' `
+    "Lingke pause type no longer matches EPausedGameType::PG_LinkoEffect."
+Require-Pattern $hostApi `
+    'COMBAT_CLOCK_RELEVANT_PAUSE_MASK[\s\S]+1u\s*<<\s*PAUSED_GAME_TYPE_LINKO_EFFECT' `
+    "Lingke pause events are rejected by the combat-clock forwarding mask."
+Require-Pattern $hostApi `
+    'std::array<uint8_t,\s*4>\s+PAUSE_TYPES[\s\S]+PAUSED_GAME_TYPE_LINKO_EFFECT' `
+    "Combat-clock sampling does not query the Lingke pause type."
 
 $modRuntime = Get-Content -LiteralPath (Join-Path $sourceRoot "mod_runtime.cpp") -Raw
 Require-Pattern $modRuntime `
