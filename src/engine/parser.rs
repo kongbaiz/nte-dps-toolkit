@@ -32,6 +32,8 @@ const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 
 const CLIENT_FIGHT_TARGET_WIRE_BITS: usize = 227;
 const CLIENT_FIGHT_TARGET_WIRE_BYTES: usize = CLIENT_FIGHT_TARGET_WIRE_BITS.div_ceil(8);
 const COMPACT_CLIENT_FIGHT_IDENTITY_BYTES: usize = 28;
+const CLIENT_FIGHT_TARGET_WIRE_PADDING_BITS: usize =
+    CLIENT_FIGHT_TARGET_WIRE_BITS - COMPACT_CLIENT_FIGHT_IDENTITY_BYTES * 8;
 const COMPACT_CLIENT_FIGHT_RECORD_BYTES: usize = 52;
 // Current SDK damage replication places the compact 28-byte
 // `FCharacterForNet` target exactly 160 bytes after the decoded damage value.
@@ -2579,6 +2581,14 @@ fn parse_compact_client_fight_target_identity(
     Some(identity)
 }
 
+fn full_identity_three_bits_before_compact(
+    data: &[u8],
+    compact_bit_offset: usize,
+) -> Option<[u8; CLIENT_FIGHT_TARGET_WIRE_BYTES]> {
+    let full_bit_offset = compact_bit_offset.checked_sub(CLIENT_FIGHT_TARGET_WIRE_PADDING_BITS)?;
+    parse_client_fight_target_wire_identity(data, full_bit_offset)
+}
+
 /// Decodes SDK `ClientSetReplicatedTargetData.ClientFightDataArray` directly
 /// from the external transport payload.
 ///
@@ -2731,10 +2741,10 @@ fn parse_compact_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpd
             }
 
             let identity = &decoded[8..8 + COMPACT_CLIENT_FIGHT_IDENTITY_BYTES];
-            let mut actor_value = [0_u8; 16];
-            actor_value.copy_from_slice(&identity[..16]);
-            if !actor_value.iter().any(|byte| *byte != 0)
-                || identity[20..].iter().any(|byte| *byte != 0)
+            let mut compact_identity = [0_u8; COMPACT_CLIENT_FIGHT_IDENTITY_BYTES];
+            compact_identity.copy_from_slice(identity);
+            if !compact_identity[..16].iter().any(|byte| *byte != 0)
+                || compact_identity[20..].iter().any(|byte| *byte != 0)
             {
                 continue;
             }
@@ -2757,8 +2767,16 @@ fn parse_compact_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpd
                 continue;
             }
 
-            let mut target_handle = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
-            target_handle[..COMPACT_CLIENT_FIGHT_IDENTITY_BYTES].copy_from_slice(identity);
+            let compact_bit_offset = byte_offset * 8 + usize::from(bit_shift) + 64;
+            let target_handle = full_identity_three_bits_before_compact(data, compact_bit_offset)
+                .unwrap_or_else(|| {
+                    let mut target_handle = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+                    target_handle[..COMPACT_CLIENT_FIGHT_IDENTITY_BYTES]
+                        .copy_from_slice(&compact_identity);
+                    target_handle
+                });
+            let mut actor_value = [0_u8; 16];
+            actor_value.copy_from_slice(&target_handle[..16]);
             candidates.push(Candidate {
                 update: ParsedBossHpUpdate {
                     target_handle,
@@ -2811,6 +2829,10 @@ fn parse_compact_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpd
 }
 
 pub fn parse_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
+    // The compact and bitpacked layouts are alternative SDK encodings. Both
+    // parsers scan every bit position, so running both on every live payload
+    // doubles the hottest target-update path. Compact recognition already
+    // canonicalizes a shifted shadow back to its full wire identity.
     let compact = parse_compact_client_fight_target_updates(data);
     if compact.is_empty() {
         parse_bitpacked_client_fight_target_updates(data)
@@ -4723,6 +4745,23 @@ mod character_tests {
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].target_handle, handle);
         assert_eq!(updates[0].current_hp, 1_927_891.0);
+    }
+
+    #[test]
+    fn normalizes_three_bit_shifted_compact_shadow_to_full_target_identity() {
+        let mut target = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+        target[..17].copy_from_slice(&[
+            0xb8, 0xe6, 0x11, 0xf2, 0xfc, 0xfe, 0x0c, 0x41, 0x7a, 0xcc, 0x29, 0xf1, 0xd0, 0x86,
+            0x8e, 0x51, 0x07,
+        ]);
+        let mut payload = vec![0_u8; 64];
+        write_client_fight_array(&mut payload, 1, false, &[(target, 5_274_984.0, 0)]);
+
+        let updates = parse_client_fight_target_updates(&payload);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target_handle, target);
+        assert_eq!(updates[0].current_hp, 5_274_984.0);
     }
 
     #[test]
