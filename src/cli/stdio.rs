@@ -65,6 +65,7 @@ const OUTBOUND_QUEUE_CAPACITY: usize = 1024;
 ///   accumulated while stdout is backpressured.
 const ENGINE_EVENT_QUEUE_CAPACITY: usize = 16_384;
 const BATTLE_SUMMARY_INTERVAL: Duration = Duration::from_millis(250);
+const LIVE_BATTLE_READ_EVENT_DRAIN_LIMIT: usize = 512;
 
 enum ReaderEvent {
     Request(ValidatedRequest),
@@ -1130,14 +1131,14 @@ fn handle_request(
             }
         }
         Request::BattleGetSummary(BattleSummaryParams { subtract_time_stop }) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             send(
                 outbound,
                 success(id, runtime.battle_summary(subtract_time_stop)),
             )
         }
         Request::BattleGetRecord(params) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             let message = match runtime.battle_record(params) {
                 Ok(record) => success(id, record),
                 Err(error) => failure(id, battle_read_error(error)),
@@ -1145,7 +1146,7 @@ fn handle_request(
             send(outbound, message)
         }
         Request::BattleGetAxis(params) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             let message = match runtime.battle_axis(params) {
                 Ok(axis) => success(id, axis),
                 Err(error) => failure(id, battle_read_error(error)),
@@ -1153,7 +1154,7 @@ fn handle_request(
             send(outbound, message)
         }
         Request::BattleGetTimeline(params) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             let message = match runtime.battle_timeline(params) {
                 Ok(timeline) => success(id, timeline),
                 Err(error) => failure(id, battle_read_error(error)),
@@ -1315,6 +1316,23 @@ fn drain_engine_events(
     outbound: &Sender<Value>,
 ) {
     while let Ok(event) = engine_receiver.try_recv() {
+        runtime.process_engine_event(event, outbound);
+    }
+}
+
+fn drain_engine_events_for_battle_read(
+    runtime: &mut Runtime,
+    engine_receiver: &Receiver<EngineEvent>,
+    outbound: &Sender<Value>,
+) {
+    if !runtime.capture.is_running() {
+        drain_engine_events(runtime, engine_receiver, outbound);
+        return;
+    }
+    for _ in 0..LIVE_BATTLE_READ_EVENT_DRAIN_LIMIT {
+        let Ok(event) = engine_receiver.try_recv() else {
+            break;
+        };
         runtime.process_engine_event(event, outbound);
     }
 }
@@ -1836,6 +1854,65 @@ mod tests {
         assert_eq!(reset["result"]["reset"], true);
         assert!(runtime.state.hits.is_empty());
         assert!(runtime.battle_summary(true).is_none());
+    }
+
+    #[test]
+    fn live_battle_record_bounds_event_catch_up_before_responding() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, engine_receiver) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender.clone(),
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime.handshaken = true;
+        runtime.active_operation_id = Some("capture-live-read".to_owned());
+        runtime.latest_operation_id = runtime.active_operation_id.clone();
+        runtime.running_notified = true;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let producer_stop = Arc::clone(&stop);
+        let sink = crate::engine::capture::EngineEventSink::reliable(engine_sender.clone());
+        let producer = thread::spawn(move || {
+            while !producer_stop.load(Ordering::Relaxed) {
+                thread::yield_now();
+            }
+            let _ = sink.send(EngineEvent::CaptureStopped);
+        });
+        runtime.capture.install_test_capture(
+            crate::engine::capture::CaptureHandle::from_test_thread(stop, producer),
+            CaptureProfile::Combat,
+        );
+
+        let (outbound, receiver) = bounded(4);
+        runtime.process_engine_event(EngineEvent::Hit(Box::new(test_hit(1.0, 100.0))), &outbound);
+        for index in 0..=LIVE_BATTLE_READ_EVENT_DRAIN_LIMIT {
+            engine_sender
+                .send(EngineEvent::Status(index.to_string()))
+                .expect("queue live event");
+        }
+
+        assert!(!handle_request(
+            ValidatedRequest {
+                id: serde_json::json!(3),
+                request: Request::BattleGetRecord(BattleRecordParams {
+                    battle_record_id: None,
+                    subtract_time_stop: true,
+                }),
+            },
+            &mut runtime,
+            &engine_receiver,
+            &outbound,
+        ));
+
+        let record = receiver.recv().expect("record response");
+        assert_eq!(record["result"]["summary"]["total_damage"], 100.0);
+        assert_eq!(engine_receiver.len(), 1);
+        runtime
+            .stop_capture_with_drain(&engine_receiver)
+            .expect("stop test capture");
     }
 
     #[test]
