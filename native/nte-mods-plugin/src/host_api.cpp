@@ -23,10 +23,12 @@ namespace nte::mods
 		constexpr uint8_t PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO = 2;
 		constexpr uint8_t PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT = 3;
 		constexpr uint8_t PAUSED_GAME_TYPE_JIN_EFFECT = 4;
+		constexpr uint8_t PAUSED_GAME_TYPE_LINKO_EFFECT = 6;
 		constexpr uint32_t COMBAT_CLOCK_RELEVANT_PAUSE_MASK =
 			(1u << PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO) |
 			(1u << PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT) |
-			(1u << PAUSED_GAME_TYPE_JIN_EFFECT);
+			(1u << PAUSED_GAME_TYPE_JIN_EFFECT) |
+			(1u << PAUSED_GAME_TYPE_LINKO_EFFECT);
 		constexpr size_t PLAYER_STATE_EQUIPPED_PLAYERS_OFFSET = 0x27E0;
 		constexpr size_t PLAYER_CHARACTER_ASC_OFFSET = 0x08A0;
 		constexpr size_t ASC_ACTIVE_EFFECTS_ARRAY_OFFSET = 0x09C8;
@@ -759,10 +761,11 @@ namespace nte::mods
 				return false;
 
 			pause_type_mask = 0;
-			constexpr std::array<uint8_t, 3> PAUSE_TYPES{
+			constexpr std::array<uint8_t, 4> PAUSE_TYPES{
 				PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO,
 				PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT,
 				PAUSED_GAME_TYPE_JIN_EFFECT,
+				PAUSED_GAME_TYPE_LINKO_EFFECT,
 			};
 			for (const uint8_t paused_type : PAUSE_TYPES)
 			{
