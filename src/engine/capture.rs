@@ -5726,7 +5726,6 @@ fn unattributed_display_damage_hit(
 
 fn is_enemy_death_settlement_hit(hit: &Hit) -> bool {
     hit.direction.is_outgoing()
-        && hit.target_id.is_some()
         && hit.damage == 1.0
         && hit.target_hp_before == 1.0
         && hit.target_hp_after == 0.0
@@ -15411,7 +15410,7 @@ mod tests {
     }
 
     #[test]
-    fn emission_drops_only_targeted_outgoing_death_settlement_marker() {
+    fn emission_drops_outgoing_death_settlement_marker() {
         let mut decoder = PacketDecoder::default();
         let characters = HashMap::new();
         let (sender, receiver) = bounded(4);
@@ -15426,9 +15425,12 @@ mod tests {
         decoder.emit_hits(std::iter::once(marker.clone()), &characters, &sink);
         assert!(receiver.try_recv().is_err());
 
-        marker.direction = HitDirection::Incoming;
         marker.target_id = None;
         marker.target_context.clear();
+        decoder.emit_hits(std::iter::once(marker.clone()), &characters, &sink);
+        assert!(receiver.try_recv().is_err());
+
+        marker.direction = HitDirection::Incoming;
         decoder.emit_hits(std::iter::once(marker), &characters, &sink);
         assert!(matches!(receiver.try_recv(), Ok(EngineEvent::Hit(_))));
     }
