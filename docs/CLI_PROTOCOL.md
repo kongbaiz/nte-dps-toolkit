@@ -449,6 +449,11 @@ so JavaScript clients do not lose 64-bit integer precision. The generation
 advances only when an exposed battle read model changes or the record is
 finalized.
 
+While capture is live, battle read methods process a bounded batch of queued
+engine events before responding; remaining events stay ordered for the core
+loop or a later read. After capture stops, the stop path still joins producers
+and drains every already-produced event before the record becomes finalized.
+
 ### `battle.get_axis`
 
 ```json
