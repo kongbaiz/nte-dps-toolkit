@@ -4593,10 +4593,10 @@ struct PacketDecoder {
     use_server_damage_calibration: bool,
     character_declarations: HashMap<u32, f64>,
     pending_ambiguous_hits: Vec<Hit>,
-    /// Confirmed outgoing hits without a wire target wait for the following
-    /// server target-state response. FIFO, bounded to
-    /// `MAX_PENDING_FOLLOW_UP_HITS`; full policy emits the oldest hit without
-    /// inventing a target, and capture shutdown flushes the remaining hits.
+    /// Confirmed outgoing hits without a direct wire target wait for the
+    /// following server target-state response and then briefly for a matching
+    /// direct-target record. FIFO, bounded to `MAX_PENDING_FOLLOW_UP_HITS`;
+    /// full policy emits the oldest hit, and capture shutdown flushes the rest.
     pending_targetless_hits: VecDeque<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     target_snapshots: HashMap<String, HitTargetSnapshot>,
@@ -4883,6 +4883,7 @@ impl PacketDecoder {
         &mut self,
         timestamp: f64,
         updates: &[crate::engine::parser::ParsedBossHpUpdate],
+        settlements: &[crate::engine::parser::ParsedServerDamageSettlement],
     ) -> Vec<Hit> {
         let mut update_candidates = Vec::new();
         let mut candidate_handles = HashMap::<PendingTargetLocation, HashSet<[u8; 29]>>::new();
@@ -4946,12 +4947,22 @@ impl PacketDecoder {
         targetless.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(*index));
         let mut resolved = Vec::with_capacity(targetless.len());
         for (index, target_handle) in targetless {
-            let Some(mut hit) = self.pending_targetless_hits.remove(index) else {
+            let target_id = target_id_from_wire_handle(&target_handle);
+            let Some(snapshot) = self.target_snapshots.get(&target_id).cloned() else {
                 continue;
             };
-            let target_id = target_id_from_wire_handle(&target_handle);
-            if let Some(snapshot) = self.target_snapshots.get(&target_id) {
-                apply_target_snapshot(&mut hit, target_id, snapshot);
+            let has_matching_settlement = settlements.iter().any(|settlement| {
+                settlement.target_handle == target_handle
+                    && f64::from(settlement.current_hp).to_bits() == snapshot.current_hp.to_bits()
+            });
+            if !has_matching_settlement {
+                if let Some(hit) = self.pending_targetless_hits.get_mut(index) {
+                    apply_target_snapshot(hit, target_id, &snapshot);
+                }
+                continue;
+            }
+            if let Some(mut hit) = self.pending_targetless_hits.remove(index) {
+                apply_target_snapshot(&mut hit, target_id, &snapshot);
                 resolved.push(hit);
             }
         }
@@ -5045,6 +5056,8 @@ impl PacketDecoder {
                 hit.direction = HitDirection::Outgoing;
                 hit.char_source = HitCharacterSource::GameplayEffect;
             }
+            prepared.suppressed_ambiguous +=
+                self.suppress_matching_hp_resolved_targetless_hit(&hit);
             if is_recent_confirmed_duplicate(&hit, &self.recent_confirmed_hits) {
                 prepared.suppressed_ambiguous += 1;
                 continue;
@@ -5371,6 +5384,21 @@ impl PacketDecoder {
             .retain(|pending| !same_damage_event(pending, confirmed_hit));
         before - self.pending_ambiguous_hits.len()
     }
+
+    fn suppress_matching_hp_resolved_targetless_hit(&mut self, confirmed_hit: &Hit) -> usize {
+        if !is_confirmed_packet_hit(confirmed_hit) || !has_direct_wire_target(confirmed_hit) {
+            return 0;
+        }
+        let Some(index) = self
+            .pending_targetless_hits
+            .iter()
+            .position(|pending| same_hp_resolved_damage_event(pending, confirmed_hit))
+        else {
+            return 0;
+        };
+        self.pending_targetless_hits.remove(index);
+        1
+    }
 }
 
 fn is_ambiguous_session_hit(hit: &Hit, declared_ids: &[u32]) -> bool {
@@ -5432,6 +5460,31 @@ fn same_damage_event(left: &Hit, right: &Hit) -> bool {
         && nearly_same(left.target_hp_before, right.target_hp_before)
         && nearly_same(left.target_hp_after, right.target_hp_after)
         && nearly_same(left.target_max_hp, right.target_max_hp)
+}
+
+fn has_direct_wire_target(hit: &Hit) -> bool {
+    let Some(encoded) = hit
+        .target_id
+        .as_deref()
+        .and_then(|target_id| target_id.strip_prefix("enemy-wire:"))
+    else {
+        return false;
+    };
+    hit.target_context.iter().any(|context| {
+        context
+            .strip_prefix("enemy_target_wire=")
+            .is_some_and(|wire| wire == encoded)
+    })
+}
+
+fn same_hp_resolved_damage_event(pending: &Hit, confirmed: &Hit) -> bool {
+    pending.target_id.is_some()
+        && pending.target_id == confirmed.target_id
+        && pending.gameplay_effect_index.is_some()
+        && pending.gameplay_effect_index == confirmed.gameplay_effect_index
+        && (pending.timestamp - confirmed.timestamp).abs()
+            <= AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS
+        && same_exact_wire_damage_event(pending, confirmed)
 }
 
 fn is_recent_confirmed_duplicate(hit: &Hit, confirmed_hits: &[Hit]) -> bool {
@@ -6611,7 +6664,11 @@ impl PacketDecoder {
                 target_evidence.push(update);
             }
         }
-        let resolved_target_hits = self.resolve_pending_hit_targets(timestamp, &target_evidence);
+        let resolved_target_hits = self.resolve_pending_hit_targets(
+            timestamp,
+            &target_evidence,
+            &server_damage_settlements,
+        );
         accepted += resolved_target_hits.len();
         let inventory_result = if !outgoing {
             match &transport_packet {
@@ -15011,12 +15068,114 @@ mod tests {
         decoder.pending_targetless_hits.push_back(hit);
         let update = boss_hp_update_for(target, 1_900.0);
         decoder.observe_target_hp_update(10.1, &update);
+        let settlement = server_damage_settlement_for(target, 1_900.0, 0, 100);
 
-        let resolved = decoder.resolve_pending_hit_targets(10.1, &[update]);
+        let resolved =
+            decoder.resolve_pending_hit_targets(10.1, &[update], std::slice::from_ref(&settlement));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(wire_handle_from_hit(&resolved[0]), Some(target));
         assert!(decoder.pending_targetless_hits.is_empty());
+    }
+
+    #[test]
+    fn hp_resolved_hit_waits_for_and_yields_to_matching_direct_target_record() {
+        let mut decoder = PacketDecoder::default();
+        let target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.char_id = 1051;
+        provisional.char_source = HitCharacterSource::Packet;
+        provisional.damage = 1_350.0;
+        provisional.target_hp_before = 5_276_334.0;
+        provisional.target_hp_after = 5_274_984.0;
+        provisional.target_max_hp = 5_417_573.0;
+        provisional.gameplay_effect_index = Some(2417);
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(target, 5_274_984.0);
+        decoder.observe_target_hp_update(10.01, &update);
+
+        assert!(
+            decoder
+                .resolve_pending_hit_targets(10.01, &[update], &[])
+                .is_empty()
+        );
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(target)
+        );
+
+        let mut direct = decoder.pending_targetless_hits[0].clone();
+        direct.timestamp = 10.066_759;
+        set_wire_target(&mut direct, target);
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![direct], &[1051], false, &HashMap::new());
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 1);
+        assert!(decoder.pending_targetless_hits.is_empty());
+        assert!(has_direct_wire_target(&prepared.emit[0]));
+    }
+
+    #[test]
+    fn direct_record_for_another_target_does_not_suppress_hp_resolved_hit() {
+        let mut decoder = PacketDecoder::default();
+        let resolved_target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.char_id = 1051;
+        provisional.char_source = HitCharacterSource::Packet;
+        provisional.target_hp_before = 2_000.0;
+        provisional.target_hp_after = 1_900.0;
+        provisional.target_max_hp = 2_500.0;
+        provisional.gameplay_effect_index = Some(2417);
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(resolved_target, 1_900.0);
+        decoder.observe_target_hp_update(10.01, &update);
+        assert!(
+            decoder
+                .resolve_pending_hit_targets(10.01, &[update], &[])
+                .is_empty()
+        );
+
+        let mut other_target = decoder.pending_targetless_hits[0].clone();
+        other_target.timestamp = 10.066_759;
+        set_wire_target(&mut other_target, [5_u8; 29]);
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![other_target], &[1051], false, &HashMap::new());
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 0);
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(resolved_target)
+        );
+    }
+
+    #[test]
+    fn unrelated_server_settlement_does_not_release_hp_resolved_hit() {
+        let mut decoder = PacketDecoder::default();
+        let resolved_target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.target_hp_before = 2_000.0;
+        provisional.target_hp_after = 1_900.0;
+        provisional.target_max_hp = 2_500.0;
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(resolved_target, 1_900.0);
+        decoder.observe_target_hp_update(10.01, &update);
+        let unrelated = server_damage_settlement_for([5_u8; 29], 900.0, 0, 100);
+
+        let resolved = decoder.resolve_pending_hit_targets(10.01, &[update], &[unrelated]);
+
+        assert!(resolved.is_empty());
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(resolved_target)
+        );
     }
 
     #[test]
@@ -15036,7 +15195,7 @@ mod tests {
 
         assert!(
             decoder
-                .resolve_pending_hit_targets(10.1, &[update])
+                .resolve_pending_hit_targets(10.1, &[update], &[])
                 .is_empty()
         );
 
@@ -15068,7 +15227,7 @@ mod tests {
         decoder.observe_target_hp_update(10.1, &second);
         assert!(
             decoder
-                .resolve_pending_hit_targets(10.1, &[first, second])
+                .resolve_pending_hit_targets(10.1, &[first, second], &[])
                 .is_empty()
         );
 
@@ -15111,7 +15270,8 @@ mod tests {
         };
         decoder.observe_target_hp_update(10.1, &update);
 
-        let resolved = decoder.resolve_pending_hit_targets(10.1, &[update]);
+        let resolved =
+            decoder.resolve_pending_hit_targets(10.1, &[update], std::slice::from_ref(&settlement));
         let (_, _, residual_hits) = decoder.reconcile_current_packet_server_damage_settlements(
             10.1,
             &[settlement],
@@ -15139,7 +15299,7 @@ mod tests {
 
         assert!(
             multiple_targets
-                .resolve_pending_hit_targets(10.1, &[first, second])
+                .resolve_pending_hit_targets(10.1, &[first, second], &[])
                 .is_empty()
         );
         assert_eq!(multiple_targets.pending_targetless_hits.len(), 1);
@@ -15156,7 +15316,7 @@ mod tests {
 
         assert!(
             multiple_hits
-                .resolve_pending_hit_targets(10.1, &[update])
+                .resolve_pending_hit_targets(10.1, &[update], &[])
                 .is_empty()
         );
         assert_eq!(multiple_hits.pending_targetless_hits.len(), 2);
