@@ -328,6 +328,8 @@ stdout 永远不会输出 `PacketDebug`、payload preview、payload hex、decode
 
 响应契约版本为 5。版本 5 为每个 `time_stop_intervals` 项新增可空的 `pause_type_mask`；版本 4 新增聚合摘要和逐击 `max_hp_reduction`，版本 3 新增权威逐击 `overkill_damage`。响应包含共享 `generation`、抓包 operation ID、状态/来源、战斗时间边界、裁剪后的时停区间、深渊标记、聚合摘要、质量计数和逐击数据完整性。已知掩码按 `EPausedGameType` 位编码：类型 2、3、4 合计为 `0x1c`，类型 6（`PG_LinkoEffect`）为 `0x40`。非零掩码切换为另一个非零掩码时，旧分段在该时间戳闭合，新分段同时开启；消费方因此可用 `pause_type_mask & 0x1c != 0` 精确锚定普通 Q，不会把仅 Linko 的分段开头当成 Q 开头。相邻或重叠分段在 DPS 扣时中仍按全局时间并集计算。掩码为 null 表示旧归档压缩区间已无法无损恢复类型，不得按零值处理或猜测类型。`generation`、`axis_first_sequence`、`axis_total_hits` 使用十进制字符串，避免 JavaScript 丢失 64 位整数精度。只有公开战斗读取模型发生变化或记录完成时才推进 generation。
 
+抓包活动期间，战报读取方法只处理一批有界的待处理 EngineEvent 后就返回；余下事件保持原顺序，交给 Core 主循环或后续读取继续处理。抓包停止后，停止路径仍会等待生产者退出并完整排空所有已产生事件，再把记录标记为 `finalized`。
+
 ### `battle.get_axis`
 
 ```json
