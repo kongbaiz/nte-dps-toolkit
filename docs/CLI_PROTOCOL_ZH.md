@@ -205,6 +205,8 @@ Core 领域错误使用 code `-32000`、message `Core error`，并提供稳定�
 
 返回最新完整背包快照，不会自行开始抓包，也不会写业务背包文件。首次完整快照出现前返回 `INVENTORY_NOT_READY`。
 
+背包分片的过期判断仅使用受支持的 Bunch 包模式；其他模式不初始化或推进其序号时钟，其中可独立识别的原始角色与物品记录仍按原逻辑处理。受支持模式中不含背包分片的包仍推进过期判断。
+
 背包结果和 `event.inventory.snapshot` 都包含 `generation`、`observed_at_unix_ms`、`complete`、`character_count`、`characters`、`item_count` 和 `items`；事件还包含全局 `sequence`。抓包得到的角色实例独立于装备归属映射：
 
 ```json
