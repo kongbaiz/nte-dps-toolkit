@@ -12092,12 +12092,16 @@ mod tests {
                         .is_none()
                 );
                 let result = decoder.process_packet(connection.clone(), &tail);
-                let snapshot = result.snapshot.expect("both fragments must produce the item");
+                let snapshot = result
+                    .snapshot
+                    .expect("both fragments must produce the item");
                 assert_eq!(snapshot.len(), 1);
                 assert_eq!(snapshot[0].id, id);
                 assert_eq!(snapshot[0].item_id, "Cosmos_purple");
                 // Only the fragment clock is gated: raw character declarations still survive.
-                let characters = result.characters.expect("character instances should publish");
+                let characters = result
+                    .characters
+                    .expect("character instances should publish");
                 assert_eq!(characters.len(), 1);
                 assert_eq!(characters[0].net_id, owner);
                 assert_eq!(characters[0].character_id, 1020);
