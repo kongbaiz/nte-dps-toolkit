@@ -347,6 +347,13 @@ fn reconcile_latest_overkill_interval(hits: &mut VecDeque<Hit>) {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HitFollowUp {
+    /// Original decoded hit location; absent only in older serialized events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_byte_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bit_shift: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_target_id: Option<String>,
     pub source_timestamp: f64,
     pub source_char_id: u32,
     pub source_damage: f64,
@@ -369,6 +376,13 @@ pub struct HitFollowUp {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HitDamageCorrection {
+    /// Original decoded hit location; absent only in older serialized events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_byte_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bit_shift: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_target_id: Option<String>,
     pub source_timestamp: f64,
     pub source_char_id: u32,
     pub source_damage: f64,
@@ -4430,7 +4444,7 @@ impl PartyCombatState {
         self.sync_clock_with_time_stops();
     }
 
-    fn apply_follow_up_at(&mut self, locator: HitLocator, follow_up: &HitFollowUp) -> bool {
+    fn apply_follow_up_at(&mut self, locator: &HitLocator, follow_up: &HitFollowUp) -> bool {
         let position = find_recent_hit_position(&self.hits, locator);
         let before = find_recent_hit(&self.hits, locator).cloned();
         let mutation = apply_follow_up_to_recent_hit(&mut self.hits, locator, follow_up);
@@ -4461,7 +4475,7 @@ impl PartyCombatState {
 
     fn apply_damage_correction_at(
         &mut self,
-        locator: HitLocator,
+        locator: &HitLocator,
         correction: &HitDamageCorrection,
     ) -> bool {
         let position = find_recent_hit_position(&self.hits, locator);
@@ -5357,6 +5371,9 @@ impl CombatState {
             let effective = (source.damage - source.overkill_damage()).max(0.0);
             let adjustment = excess.min(effective);
             let correction = HitDamageCorrection {
+                source_byte_offset: Some(source.byte_offset),
+                source_bit_shift: Some(source.bit_shift),
+                source_target_id: source.target_id.clone(),
                 source_timestamp: source.timestamp,
                 source_char_id: source.char_id,
                 source_damage: source.damage,
@@ -5382,24 +5399,31 @@ impl CombatState {
     }
 
     pub fn push_hit(&mut self, mut hit: Hit) {
+        let source_target_id = hit.target_id.clone();
         if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
             project_enemy_hit_target(&mut hit, &target);
         }
         let abyss_half = self.abyss.push_hit(hit.clone());
-        self.finish_push_hit(hit, abyss_half);
+        self.finish_push_hit(hit, abyss_half, source_target_id);
     }
 
     fn push_hit_at_recorded_half(&mut self, mut hit: Hit, abyss_half: Option<AbyssHalf>) {
+        let source_target_id = hit.target_id.clone();
         if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
             project_enemy_hit_target(&mut hit, &target);
         }
         if let Some(half) = abyss_half {
             self.abyss.half_mut(half).push_hit(hit.clone());
         }
-        self.finish_push_hit(hit, abyss_half);
+        self.finish_push_hit(hit, abyss_half, source_target_id);
     }
 
-    fn finish_push_hit(&mut self, hit: Hit, abyss_half: Option<AbyssHalf>) {
+    fn finish_push_hit(
+        &mut self,
+        hit: Hit,
+        abyss_half: Option<AbyssHalf>,
+        source_target_id: Option<String>,
+    ) {
         let position = self.hits.len();
         update_combat_totals(
             &mut self.stats,
@@ -5419,7 +5443,9 @@ impl CombatState {
             self.combat_detail_index.promote_stable_hit(stable_hit);
         }
         self.combat_detail_index.observe_hit(position, &hit);
-        remember_recent_hit(&mut self.recent_hit_records, &hit, abyss_half);
+        let mut record = RecentHitRecord::from_hit(&hit, abyss_half);
+        record.source_target_id = source_target_id;
+        push_recent_hit_record(&mut self.recent_hit_records, record);
         self.hits.push_back(hit);
         reconcile_latest_overkill_interval(&mut self.hits);
         self.global_hit_abyss_halves.push_back(abyss_half);
@@ -5461,30 +5487,32 @@ impl CombatState {
     fn locate_recent_hit(
         &mut self,
         source: HitSourceIdentity,
+        target_id: Option<&str>,
     ) -> Option<(usize, HitLocator, Option<AbyssHalf>)> {
-        if let Some(index) = self
-            .recent_hit_records
-            .iter()
-            .rposition(|record| record.matches_source(source))
-        {
-            let record = self.recent_hit_records[index];
-            return Some((index, record.locator, record.abyss_half));
+        if let Some(index) = self.recent_hit_records.iter().rposition(|record| {
+            target_id.is_none_or(|id| {
+                record.source_target_id.as_deref() == Some(id)
+                    || record.locator.target_id.as_deref() == Some(id)
+            }) && record.matches_source(source)
+        }) {
+            let record = &self.recent_hit_records[index];
+            return Some((index, record.locator.clone(), record.abyss_half));
         }
 
         // Recovery path for states constructed by older in-memory fixtures or
         // an internal index invariant failure. The scan is deliberately capped;
         // an unbounded miss must not stall the capture reducer under its hot
         // event/state locks.
-        let locator = find_recent_hit_locator(&self.hits, source)?;
-        let abyss_half = if recent_hits_contain_locator(&self.abyss.first_half.hits, locator) {
+        let locator = find_recent_hit_locator(&self.hits, source, target_id)?;
+        let abyss_half = if recent_hits_contain_locator(&self.abyss.first_half.hits, &locator) {
             Some(AbyssHalf::First)
-        } else if recent_hits_contain_locator(&self.abyss.second_half.hits, locator) {
+        } else if recent_hits_contain_locator(&self.abyss.second_half.hits, &locator) {
             Some(AbyssHalf::Second)
         } else {
             None
         };
-        let mut record = RecentHitRecord::from_source(locator, source, abyss_half);
-        if let Some(hit) = find_recent_hit(&self.hits, locator) {
+        let mut record = RecentHitRecord::from_source(locator.clone(), source, abyss_half);
+        if let Some(hit) = find_recent_hit(&self.hits, &locator) {
             record.remember_source(HitSourceIdentity::from(hit));
         }
         push_recent_hit_record(&mut self.recent_hit_records, record);
@@ -5494,16 +5522,18 @@ impl CombatState {
 
     pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) -> bool {
         let source = HitSourceIdentity::from(&follow_up);
-        let Some((record_index, locator, abyss_half)) = self.locate_recent_hit(source) else {
-            return false;
-        };
-        let position = find_recent_hit_position(&self.hits, locator);
-        let before = find_recent_hit(&self.hits, locator).cloned();
-        let Some(mutation) = apply_follow_up_to_recent_hit(&mut self.hits, locator, &follow_up)
+        let Some((record_index, locator, abyss_half)) =
+            self.locate_recent_hit(source, follow_up.source_target_id.as_deref())
         else {
             return false;
         };
-        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, locator)) {
+        let position = find_recent_hit_position(&self.hits, &locator);
+        let before = find_recent_hit(&self.hits, &locator).cloned();
+        let Some(mutation) = apply_follow_up_to_recent_hit(&mut self.hits, &locator, &follow_up)
+        else {
+            return false;
+        };
+        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, &locator)) {
             self.skill_breakdown_index.replace_hit(&before, after);
             if let Some(position) = position {
                 self.combat_detail_index
@@ -5527,24 +5557,26 @@ impl CombatState {
         if let Some(half) = abyss_half {
             self.abyss
                 .half_mut(half)
-                .apply_follow_up_at(locator, &follow_up);
+                .apply_follow_up_at(&locator, &follow_up);
         }
         true
     }
 
     pub fn apply_damage_correction(&mut self, correction: HitDamageCorrection) -> bool {
         let source = HitSourceIdentity::from(&correction);
-        let Some((record_index, locator, abyss_half)) = self.locate_recent_hit(source) else {
-            return false;
-        };
-        let position = find_recent_hit_position(&self.hits, locator);
-        let before = find_recent_hit(&self.hits, locator).cloned();
-        let Some(mutation) =
-            apply_damage_correction_to_recent_hit(&mut self.hits, locator, &correction)
+        let Some((record_index, locator, abyss_half)) =
+            self.locate_recent_hit(source, correction.source_target_id.as_deref())
         else {
             return false;
         };
-        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, locator)) {
+        let position = find_recent_hit_position(&self.hits, &locator);
+        let before = find_recent_hit(&self.hits, &locator).cloned();
+        let Some(mutation) =
+            apply_damage_correction_to_recent_hit(&mut self.hits, &locator, &correction)
+        else {
+            return false;
+        };
+        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, &locator)) {
             self.skill_breakdown_index.replace_hit(&before, after);
             if let Some(position) = position {
                 self.combat_detail_index
@@ -5569,7 +5601,7 @@ impl CombatState {
         if let Some(half) = abyss_half {
             self.abyss
                 .half_mut(half)
-                .apply_damage_correction_at(locator, &correction);
+                .apply_damage_correction_at(&locator, &correction);
         }
         true
     }
@@ -5667,6 +5699,13 @@ impl CombatState {
             return ModScriptApplyOutcome::Unchanged;
         };
         self.enemy_telemetry.consume_hit_target(target.sequence);
+        if let Some(after) = self.hits.get(position) {
+            for record in &mut self.recent_hit_records {
+                if record.locator.matches(&before) {
+                    record.locator.target_id = after.target_id.clone();
+                }
+            }
+        }
         let mut outcome = outcome_of_projection(result);
         let promoted_hit = result
             .direction_changed
@@ -6544,8 +6583,9 @@ impl HitAggregateMutation {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct HitLocator {
+    target_id: Option<String>,
     char_id: u32,
     timestamp_bits: u64,
     byte_offset: usize,
@@ -6555,8 +6595,9 @@ struct HitLocator {
 }
 
 impl HitLocator {
-    fn matches(self, hit: &Hit) -> bool {
-        hit.char_id == self.char_id
+    fn matches(&self, hit: &Hit) -> bool {
+        hit.target_id == self.target_id
+            && hit.char_id == self.char_id
             && hit.timestamp.to_bits() == self.timestamp_bits
             && hit.byte_offset == self.byte_offset
             && hit.bit_shift == self.bit_shift
@@ -6568,6 +6609,7 @@ impl HitLocator {
 impl From<&Hit> for HitLocator {
     fn from(hit: &Hit) -> Self {
         Self {
+            target_id: hit.target_id.clone(),
             char_id: hit.char_id,
             timestamp_bits: hit.timestamp.to_bits(),
             byte_offset: hit.byte_offset,
@@ -6578,9 +6620,12 @@ impl From<&Hit> for HitLocator {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct RecentHitRecord {
     locator: HitLocator,
+    // Mod telemetry may refine the visible target after the decoder emitted
+    // the source hit. Pending mutations still carry that original target.
+    source_target_id: Option<String>,
     sources: [Option<HitSourceIdentity>; RECENT_HIT_SOURCE_ALIASES],
     next_source: usize,
     abyss_half: Option<AbyssHalf>,
@@ -6603,6 +6648,7 @@ impl RecentHitRecord {
         let mut sources = [None; RECENT_HIT_SOURCE_ALIASES];
         sources[0] = Some(source);
         Self {
+            source_target_id: locator.target_id.clone(),
             locator,
             sources,
             next_source: 1,
@@ -6610,7 +6656,7 @@ impl RecentHitRecord {
         }
     }
 
-    fn matches_source(self, source: HitSourceIdentity) -> bool {
+    fn matches_source(&self, source: HitSourceIdentity) -> bool {
         self.sources
             .iter()
             .flatten()
@@ -6646,14 +6692,14 @@ fn remember_recent_hit(
     push_recent_hit_record(records, RecentHitRecord::from_hit(hit, abyss_half));
 }
 
-fn find_recent_hit(hits: &VecDeque<Hit>, locator: HitLocator) -> Option<&Hit> {
+fn find_recent_hit<'a>(hits: &'a VecDeque<Hit>, locator: &HitLocator) -> Option<&'a Hit> {
     hits.iter()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
         .find(|hit| locator.matches(hit))
 }
 
-fn find_recent_hit_position(hits: &VecDeque<Hit>, locator: HitLocator) -> Option<usize> {
+fn find_recent_hit_position(hits: &VecDeque<Hit>, locator: &HitLocator) -> Option<usize> {
     hits.iter()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
@@ -6661,28 +6707,38 @@ fn find_recent_hit_position(hits: &VecDeque<Hit>, locator: HitLocator) -> Option
         .map(|reverse_index| hits.len().saturating_sub(reverse_index + 1))
 }
 
-fn find_recent_hit_mut(hits: &mut VecDeque<Hit>, locator: HitLocator) -> Option<&mut Hit> {
+fn find_recent_hit_mut<'a>(
+    hits: &'a mut VecDeque<Hit>,
+    locator: &HitLocator,
+) -> Option<&'a mut Hit> {
     hits.iter_mut()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
         .find(|hit| locator.matches(hit))
 }
 
-fn recent_hits_contain_locator(hits: &VecDeque<Hit>, locator: HitLocator) -> bool {
+fn recent_hits_contain_locator(hits: &VecDeque<Hit>, locator: &HitLocator) -> bool {
     find_recent_hit(hits, locator).is_some()
 }
 
-fn find_recent_hit_locator(hits: &VecDeque<Hit>, source: HitSourceIdentity) -> Option<HitLocator> {
+fn find_recent_hit_locator(
+    hits: &VecDeque<Hit>,
+    source: HitSourceIdentity,
+    target_id: Option<&str>,
+) -> Option<HitLocator> {
     hits.iter()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
-        .find(|hit| source.matches_hit(hit))
+        .find(|hit| {
+            target_id.is_none_or(|id| hit.target_id.as_deref() == Some(id))
+                && source.matches_hit(hit)
+        })
         .map(HitLocator::from)
 }
 
 fn apply_follow_up_to_recent_hit(
     hits: &mut VecDeque<Hit>,
-    locator: HitLocator,
+    locator: &HitLocator,
     follow_up: &HitFollowUp,
 ) -> Option<HitAggregateMutation> {
     let hit = find_recent_hit_mut(hits, locator)?;
@@ -6711,7 +6767,7 @@ fn apply_follow_up_to_recent_hit(
 
 fn apply_damage_correction_to_recent_hit(
     hits: &mut VecDeque<Hit>,
-    locator: HitLocator,
+    locator: &HitLocator,
     correction: &HitDamageCorrection,
 ) -> Option<HitAggregateMutation> {
     let hit = find_recent_hit_mut(hits, locator)?;
@@ -6769,19 +6825,15 @@ fn apply_damage_correction_to_recent_hit(
     Some(HitAggregateMutation::new(before, hit))
 }
 
-/// Identifies the `Hit` a follow-up or damage correction was derived from.
-///
-/// Requires every field to still match, including `gameplay_effect_index`
-/// when both sides have one: that index is a per-application identifier, not
-/// a per-hit one, so an AoE or multi-tick effect can hand out the same index
-/// to several hits with different targets/HP in the same packet. Matching on
-/// the index alone (without the HP/damage identity) risked picking whichever
-/// same-index hit happened to be found first instead of the right one — the
-/// damage/HP reconciliation mechanisms are now mutually exclusive per boss-HP
-/// update (see `PacketDecoder::reconcile_boss_hp_updates`) specifically so a
-/// hit's fields never get mutated out from under a still-pending match.
+/// Identifies the original hit before a server correction mutates damage/HP.
+/// New events require the exact packet timestamp, byte offset and bit shift;
+/// the owning locator additionally checks target identity. Source aliases keep
+/// the original and reconciled HP signatures usable for successive mutations.
+/// Older serialized events without a wire location retain their original match.
 #[derive(Clone, Copy, Debug)]
 struct HitSourceIdentity {
+    byte_offset: Option<usize>,
+    bit_shift: Option<u8>,
     char_id: u32,
     timestamp: f64,
     gameplay_effect_index: Option<u32>,
@@ -6793,18 +6845,21 @@ struct HitSourceIdentity {
 
 impl HitSourceIdentity {
     fn matches_hit(self, hit: &Hit) -> bool {
-        hit.char_id == self.char_id
-            && (hit.timestamp - self.timestamp).abs() <= 0.001
-            && hit.gameplay_effect_index == self.gameplay_effect_index
-            && (hit.damage - self.damage).abs() <= 0.5
-            && (hit.target_hp_before - self.target_hp_before).abs() <= 0.5
-            && (hit.target_hp_after - self.target_hp_after).abs() <= 0.5
-            && (hit.target_max_hp - self.target_max_hp).abs() <= 0.5
+        Self::from(hit).matches_source(self)
     }
 
     fn matches_source(self, other: Self) -> bool {
-        self.char_id == other.char_id
-            && (self.timestamp - other.timestamp).abs() <= 0.001
+        let location_matches = match (other.byte_offset, other.bit_shift) {
+            (Some(offset), Some(shift)) => {
+                self.byte_offset == Some(offset)
+                    && self.bit_shift == Some(shift)
+                    && self.timestamp.to_bits() == other.timestamp.to_bits()
+            }
+            (None, None) => (self.timestamp - other.timestamp).abs() <= 0.001,
+            _ => false,
+        };
+        location_matches
+            && self.char_id == other.char_id
             && self.gameplay_effect_index == other.gameplay_effect_index
             && (self.damage - other.damage).abs() <= 0.5
             && (self.target_hp_before - other.target_hp_before).abs() <= 0.5
@@ -6816,6 +6871,8 @@ impl HitSourceIdentity {
 impl From<&Hit> for HitSourceIdentity {
     fn from(hit: &Hit) -> Self {
         Self {
+            byte_offset: Some(hit.byte_offset),
+            bit_shift: Some(hit.bit_shift),
             char_id: hit.char_id,
             timestamp: hit.timestamp,
             gameplay_effect_index: hit.gameplay_effect_index,
@@ -6830,6 +6887,8 @@ impl From<&Hit> for HitSourceIdentity {
 impl From<&HitFollowUp> for HitSourceIdentity {
     fn from(follow_up: &HitFollowUp) -> Self {
         Self {
+            byte_offset: follow_up.source_byte_offset,
+            bit_shift: follow_up.source_bit_shift,
             char_id: follow_up.source_char_id,
             timestamp: follow_up.source_timestamp,
             gameplay_effect_index: follow_up.source_gameplay_effect_index,
@@ -6844,6 +6903,8 @@ impl From<&HitFollowUp> for HitSourceIdentity {
 impl From<&HitDamageCorrection> for HitSourceIdentity {
     fn from(correction: &HitDamageCorrection) -> Self {
         Self {
+            byte_offset: correction.source_byte_offset,
+            bit_shift: correction.source_bit_shift,
             char_id: correction.source_char_id,
             timestamp: correction.source_timestamp,
             gameplay_effect_index: correction.source_gameplay_effect_index,
@@ -7168,6 +7229,9 @@ mod tests {
         let mut state = CombatState::default();
         state.push_hit(interval_hit(10.0, 20.0, 55_477.0));
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 10.0,
             source_char_id: 1010,
             source_damage: 55_477.0,
@@ -7811,6 +7875,9 @@ mod tests {
         source.gameplay_effect_index = Some(42);
         state.push_hit(source);
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 12.0,
             source_char_id: 2,
             source_damage: 100.0,
@@ -7828,6 +7895,9 @@ mod tests {
             reconciled_overkill_damage: None,
         }));
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 12.0,
             source_char_id: 2,
             source_damage: 100.0,
@@ -8120,6 +8190,9 @@ mod tests {
         state.push_hit(test_hit(3.0, 8, "incoming", 25.0));
 
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -8146,6 +8219,9 @@ mod tests {
             425.0
         );
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -8576,6 +8652,179 @@ mod tests {
     }
 
     #[test]
+    fn target_telemetry_preserves_pending_hit_mutations() {
+        for telemetry_first in [true, false] {
+            for precise_source in [true, false] {
+                let mut state = CombatState::default();
+                state.apply_abyss_event(AbyssEvent::Stage {
+                    timestamp: 0.0,
+                    cycle: Some(1),
+                    floor: Some(1),
+                    half: AbyssHalf::First,
+                    allow_late_backfill: false,
+                });
+                let mut source = test_hit(1.0, 7, "unknown", 1_000.0);
+                source.byte_offset = 100;
+                source.target_id = Some("enemy:0000000000005678".to_owned());
+                source.target_hp_before = 10_000.0;
+                source.target_hp_after = 9_000.0;
+                source.target_max_hp = 10_000.0;
+                let event = ModScriptEvent::from_bridge(
+                    1,
+                    FILETIME_UNIX_EPOCH_100NS
+                        .saturating_add((1.05 * FILETIME_TICKS_PER_SECOND) as u64),
+                    ENEMY_TELEMETRY_MOD_ID.to_owned(),
+                    "post.enemy.hit_target".to_owned(),
+                    vec![0x1234, 0x5678, 1],
+                );
+                if telemetry_first {
+                    state.apply_mod_script_event(&event);
+                }
+                state.push_hit(source.clone());
+                if !telemetry_first {
+                    state.apply_mod_script_event(&event);
+                }
+                assert_eq!(
+                    state.hits[0].target_id.as_deref(),
+                    Some("enemy-instance:0000000000001234")
+                );
+                assert!(state.apply_follow_up(HitFollowUp {
+                    source_byte_offset: precise_source.then_some(source.byte_offset),
+                    source_bit_shift: precise_source.then_some(source.bit_shift),
+                    source_target_id: precise_source.then(|| source.target_id.clone()).flatten(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    timestamp: 1.1,
+                    damage: 250.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: None,
+                    attack_type: None,
+                    damage_attribute: None,
+                }));
+                assert!(state.apply_damage_correction(HitDamageCorrection {
+                    source_byte_offset: precise_source.then_some(source.byte_offset),
+                    source_bit_shift: precise_source.then_some(source.bit_shift),
+                    source_target_id: precise_source.then(|| source.target_id.clone()).flatten(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    damage: 1_100.0,
+                    target_hp_before: 10_100.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: None,
+                    attack_type: None,
+                    max_hp_reduction: None,
+                    reconciled_overkill_damage: None,
+                }));
+                for hits in [&state.hits, &state.abyss.first_half.hits] {
+                    assert_eq!(hits[0].damage, 1_100.0);
+                    assert_eq!(hits[0].follow_up_damage, 250.0);
+                    assert_eq!(hits[0].direction, HitDirection::Outgoing);
+                }
+                assert_eq!(state.total_damage, 1_350.0);
+                assert_eq!(state.abyss.first_half.total_damage, 1_350.0);
+            }
+        }
+    }
+
+    #[test]
+    fn follow_up_and_correction_keep_equal_same_frame_hits_separate() {
+        // Separate byte/bit locations on one target, then equal coordinates
+        // on separate targets: all used to resolve to the last matching hit.
+        for distinction in ["byte", "bit", "target"] {
+            let mut state = CombatState::default();
+            let mut first = test_hit(1.0, 7, "outgoing", 1_000.0);
+            first.byte_offset = 100;
+            first.bit_shift = 3;
+            first.target_id = Some("target-a".to_owned());
+            first.target_hp_before = 10_000.0;
+            first.target_hp_after = 9_000.0;
+            first.target_max_hp = 10_000.0;
+            first.gameplay_effect_index = Some(42);
+            let mut second = first.clone();
+            match distinction {
+                "byte" => second.byte_offset = 200,
+                "bit" => second.bit_shift = 4,
+                _ => second.target_id = Some("target-b".to_owned()),
+            }
+            state.push_hit(first.clone());
+            state.push_hit(second.clone());
+            if distinction == "target" {
+                // Also cover the bounded recovery path used by restored state.
+                state.recent_hit_records.clear();
+            }
+            for source in [&first, &second] {
+                let follow_up = HitFollowUp {
+                    source_byte_offset: Some(source.byte_offset),
+                    source_bit_shift: Some(source.bit_shift),
+                    source_target_id: source.target_id.clone(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    timestamp: 1.1,
+                    damage: 250.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: Some("覆纹追加攻击".to_owned()),
+                    attack_type: Some("覆纹".to_owned()),
+                    damage_attribute: None,
+                };
+                // A supplied but unknown/partial wire location must not fall
+                // back to the otherwise equal damage and HP signature.
+                let mut missing = follow_up.clone();
+                missing.source_byte_offset = Some(999);
+                assert!(!state.apply_follow_up(missing));
+                let mut partial = follow_up.clone();
+                partial.source_bit_shift = None;
+                assert!(!state.apply_follow_up(partial));
+                assert!(state.apply_follow_up(follow_up));
+                assert!(state.apply_damage_correction(HitDamageCorrection {
+                    source_byte_offset: Some(source.byte_offset),
+                    source_bit_shift: Some(source.bit_shift),
+                    source_target_id: source.target_id.clone(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    damage: 1_100.0,
+                    target_hp_before: 10_100.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: None,
+                    attack_type: None,
+                    max_hp_reduction: None,
+                    reconciled_overkill_damage: None,
+                }));
+            }
+            assert_eq!(state.hits.len(), 2);
+            for hit in &state.hits {
+                assert_eq!(hit.follow_up_damage, 250.0);
+                assert_eq!(hit.damage, 1_100.0);
+            }
+            assert_eq!(state.total_damage, 2_700.0);
+            assert_eq!(state.damage_correction_count, 2);
+        }
+    }
+
+    #[test]
     fn follow_up_damage_merges_into_source_hit_totals() {
         let mut state = CombatState::default();
         let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
@@ -8586,6 +8835,9 @@ mod tests {
         state.push_hit(hit);
 
         state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 1_000.0,
@@ -8624,6 +8876,9 @@ mod tests {
         state.push_hit(hit);
 
         state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 1_000.0,
@@ -8688,6 +8943,9 @@ mod tests {
         reset_combat_total_rebuild_count();
 
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 3_000.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -8707,6 +8965,9 @@ mod tests {
         // The follow-up still names the original hit. The bounded record keeps
         // that source alias even though the correction changed damage/HP.
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 3_000.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -8763,6 +9024,9 @@ mod tests {
         // that hit specifically, not on the second (more recently pushed, so
         // checked first by the reverse search) one sharing the same index.
         state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 1_000.0,
@@ -9354,6 +9618,9 @@ mod tests {
         state.push_hit(last_hit);
 
         state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 10.0,
             source_char_id: 1010,
             source_damage: 100.0,

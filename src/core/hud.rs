@@ -770,6 +770,9 @@ mod tests {
         assert_eq!(before.characters.len(), 1);
 
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 77,
             source_damage: 100.0,
@@ -796,6 +799,9 @@ mod tests {
 
         state.push_hit(hit(2.0, 78, 100.0));
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 2.0,
             source_char_id: 78,
             source_damage: 100.0,
@@ -824,6 +830,9 @@ mod tests {
         assert_eq!(timeline.buckets[0].hits, "1");
 
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 2.0,
             source_char_id: 78,
             source_damage: 100.0,

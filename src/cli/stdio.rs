@@ -2044,6 +2044,9 @@ mod tests {
         );
         runtime.process_engine_event(
             EngineEvent::HitFollowUp(HitFollowUp {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 99.0,
                 source_char_id: 999,
                 source_damage: 1.0,
