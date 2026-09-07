@@ -700,6 +700,9 @@ mod tests {
             EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
         );
         let follow_up = HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -729,6 +732,9 @@ mod tests {
             EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
         );
         let correction = HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -789,6 +795,9 @@ mod tests {
         apply_engine_event(&mut deficit, EngineEvent::Hit(Box::new(targeted_hit(80.0))));
         apply_engine_event(&mut deficit, EngineEvent::Hit(Box::new(marker())));
         let correction = HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 80.0,
@@ -830,6 +839,9 @@ mod tests {
         apply_engine_event(
             &mut state,
             EngineEvent::HitFollowUp(HitFollowUp {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 1.0,
                 source_char_id: 7,
                 source_damage: 80.0,
@@ -992,6 +1004,9 @@ mod tests {
         let unmatched = apply_engine_event(
             &mut state,
             EngineEvent::HitFollowUp(HitFollowUp {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 99.0,
                 source_char_id: 7,
                 source_damage: 100.0,
@@ -1013,6 +1028,9 @@ mod tests {
         let identical = apply_engine_event(
             &mut state,
             EngineEvent::HitDamageCorrection(HitDamageCorrection {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 1.0,
                 source_char_id: 7,
                 source_damage: 100.0,
