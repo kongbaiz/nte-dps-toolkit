@@ -263,6 +263,11 @@ Returns the latest complete inventory snapshot without starting capture or
 writing a business inventory file. Before the first complete snapshot it returns
 `INVENTORY_NOT_READY`.
 
+Inventory fragment expiry follows only the supported Bunch packet mode. Other
+packet modes do not seed or advance its sequence clock; independently recognized
+raw character and item records retain their existing handling. Supported packets
+without inventory fragments still advance expiry.
+
 Inventory results and `event.inventory.snapshot` contain `generation`,
 `observed_at_unix_ms`, `complete`, `character_count`, `characters`, `item_count`,
 and `items`. Event notifications also contain the global event `sequence`.
