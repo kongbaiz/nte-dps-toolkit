@@ -3721,7 +3721,10 @@ impl EmptyCurtainDecoder {
         if activated_by_raw_items {
             self.active_connection = Some(connection.clone());
         }
-        let (streams, bunches_recognized) = {
+        // Unsupported Bunch modes may still carry raw records, but their packet IDs
+        // must not seed or advance the inventory fragment clock. Supported packets
+        // without inventory Bunches still advance that clock and expire stale fragments.
+        let (streams, bunches_recognized) = if packet.mode == 0 {
             let state = self
                 .connections
                 .get_mut(&connection)
@@ -3730,6 +3733,8 @@ impl EmptyCurtainDecoder {
             let bunches = parse_inventory_bunches(packet, &known_channels);
             let recognized = !bunches.is_empty();
             (state.push_bunches(packet.packet_id, bunches), recognized)
+        } else {
+            (Vec::new(), false)
         };
 
         let mut items_changed = false;
@@ -12019,6 +12024,120 @@ mod tests {
         assert!(result.snapshot.is_some());
         assert!(!decoder.items.contains_key(&removed));
         assert!(decoder.items.contains_key(&retained));
+    }
+
+    fn split_inventory_item_packets(
+        catalog: &EquipmentCatalog,
+        id: HtItemNetId,
+    ) -> (SequencedPacket, SequencedPacket) {
+        let raw = raw_inventory_item_packet(catalog, id, "Cosmos_purple", None, false, false);
+        let split = raw.payload_bit_len / 2;
+        let mut parts = Vec::new();
+        for (start, end, sequence, flags) in [
+            (0, split, 700, 0x09),
+            (split, raw.payload_bit_len, 701, 0x0c),
+        ] {
+            let mut record = InventoryTestBitWriter::default();
+            for index in start..end {
+                record.push_bits(u64::from((raw.payload[index / 8] >> (index % 8)) & 1), 1);
+            }
+            parts.push(inventory_fragment_packet(record, sequence, flags));
+        }
+        let tail = parts.pop().expect("tail fragment");
+        let start = parts.pop().expect("start fragment");
+        (start, tail)
+    }
+
+    #[test]
+    fn inventory_mode_mismatch_does_not_seed_or_advance_fragment_clock() {
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let owner = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        // Exercise initial clock poisoning, in-flight poisoning, and 14-bit wrap.
+        // Each item spans both fragments, so raw per-packet scanning cannot mask a loss.
+        for mode in [1, 2, 3] {
+            for (first_id, last_id) in [(13_775, 13_776), (16_383, 0), (100, 101)] {
+                let (mut start, mut tail) = split_inventory_item_packets(&catalog, id);
+                start.packet_id = first_id;
+                tail.packet_id = last_id;
+                let mut decoder = EmptyCurtainDecoder::new(catalog.clone());
+                let mut other_mode = raw_character_owner_packet(1020, owner);
+                other_mode.mode = mode;
+                other_mode.packet_id = 257;
+                assert!(
+                    decoder
+                        .process_packet(connection.clone(), &other_mode)
+                        .snapshot
+                        .is_none()
+                );
+                assert!(
+                    decoder
+                        .process_packet(connection.clone(), &start)
+                        .snapshot
+                        .is_none()
+                );
+                other_mode.packet_id = 1_000;
+                assert!(
+                    decoder
+                        .process_packet(connection.clone(), &other_mode)
+                        .snapshot
+                        .is_none()
+                );
+                let result = decoder.process_packet(connection.clone(), &tail);
+                let snapshot = result
+                    .snapshot
+                    .expect("both fragments must produce the item");
+                assert_eq!(snapshot.len(), 1);
+                assert_eq!(snapshot[0].id, id);
+                assert_eq!(snapshot[0].item_id, "Cosmos_purple");
+                // Only the fragment clock is gated: raw character declarations still survive.
+                let characters = result
+                    .characters
+                    .expect("character instances should publish");
+                assert_eq!(characters.len(), 1);
+                assert_eq!(characters[0].net_id, owner);
+                assert_eq!(characters[0].character_id, 1020);
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_supported_empty_packet_still_expires_old_fragments() {
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let (mut start, mut tail) = split_inventory_item_packets(&catalog, id);
+        start.packet_id = 100;
+        let empty = SequencedPacket {
+            packet_id: 197,
+            payload: Vec::new(),
+            payload_bit_len: 0,
+            ..start.clone()
+        };
+        // The retransmitted tail has an in-window sequence relative to the start.
+        // Only the intervening supported empty packet proves that the start has expired.
+        tail.packet_id = 101;
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        for packet in [&start, &empty, &tail] {
+            assert!(
+                decoder
+                    .process_packet(connection.clone(), packet)
+                    .snapshot
+                    .is_none()
+            );
+        }
     }
 
     #[test]
