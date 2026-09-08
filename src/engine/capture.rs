@@ -2850,6 +2850,9 @@ impl ServerDamageCalibrationTracker {
         let source_hit = source.hit;
         Some(HitDamageCorrection {
             source_timestamp: source_hit.timestamp,
+            source_byte_offset: Some(source_hit.byte_offset),
+            source_bit_shift: Some(source_hit.bit_shift),
+            source_target_id: source_hit.target_id.clone(),
             source_char_id: source_hit.char_id,
             source_damage: source_hit.damage,
             source_target_hp_before: source_hit.target_hp_before,
@@ -2999,8 +3002,9 @@ impl ServerDamageCalibrationTracker {
         // whole batch before falling back to wire order, so an earlier fuzzy
         // settlement cannot steal a later exact source. Duplicate hits remain
         // distinct by index and are therefore consumed one at a time. Fuzzy
-        // FIFO assignments still calibrate server damage, but only exact,
-        // unique HP-bridge, or unique recent matches may attribute a follow-up.
+        // FIFO assignments still calibrate server damage. A container's role
+        // declaration constrains every candidate before the existing exact,
+        // unique HP-bridge and unique recent source matching rules run.
         let mut candidate_rows = Vec::new();
         let mut hp_bridge_counts = vec![0_usize; settlements.len()];
         let mut recent_counts = vec![0_usize; settlements.len()];
@@ -3010,6 +3014,9 @@ impl ServerDamageCalibrationTracker {
             for (pending_index, pending) in self.pending_hits.iter().enumerate() {
                 if pending.target_handle != Some(settlement.target_handle)
                     || pending.hit.timestamp > timestamp + f64::EPSILON
+                    || settlement
+                        .source_character_id
+                        .is_some_and(|id| id != pending.hit.char_id)
                 {
                     continue;
                 }
@@ -3041,14 +3048,16 @@ impl ServerDamageCalibrationTracker {
                 |(settlement_index, pending_index, exact_damage, hp_bridge, recent)| {
                     let unique_hp_bridge = hp_bridge && hp_bridge_counts[settlement_index] == 1;
                     let unique_recent = recent && recent_counts[settlement_index] == 1;
-                    let priority = if exact_damage {
+                    let priority = if exact_damage && hp_bridge {
                         0_u8
-                    } else if hp_bridge {
+                    } else if exact_damage {
                         1
-                    } else if unique_recent {
+                    } else if hp_bridge {
                         2
-                    } else {
+                    } else if unique_recent {
                         3
+                    } else {
+                        4
                     };
                     (
                         priority,
@@ -3146,6 +3155,9 @@ impl ServerDamageCalibrationTracker {
                 .unwrap_or(source_hit.target_max_hp);
             let correction = HitDamageCorrection {
                 source_timestamp: source_hit.timestamp,
+                source_byte_offset: Some(source_hit.byte_offset),
+                source_bit_shift: Some(source_hit.bit_shift),
+                source_target_id: source_hit.target_id.clone(),
                 source_char_id: source_hit.char_id,
                 source_damage: source_hit.damage,
                 source_target_hp_before: source_hit.target_hp_before,
@@ -3335,6 +3347,9 @@ impl ServerDamageCalibrationTracker {
         let source_hit = &source.hit;
         let correction = HitDamageCorrection {
             source_timestamp: source_hit.timestamp,
+            source_byte_offset: Some(source_hit.byte_offset),
+            source_bit_shift: Some(source_hit.bit_shift),
+            source_target_id: source_hit.target_id.clone(),
             source_char_id: source_hit.char_id,
             source_damage: source_hit.damage,
             source_target_hp_before: source_hit.target_hp_before,
@@ -5199,7 +5214,15 @@ impl PacketDecoder {
             ) else {
                 continue;
             };
-            let Some(source) = sources.get(settlement_index).and_then(Option::as_ref) else {
+            let source = sources
+                .get(settlement_index)
+                .and_then(Option::as_ref)
+                .filter(|hit| {
+                    settlement
+                        .source_character_id
+                        .is_none_or(|id| id == hit.char_id)
+                });
+            let Some(source) = source else {
                 let target_max_hp = self
                     .server_damage_calibration
                     .target_max_hp_by_handle
@@ -5217,6 +5240,9 @@ impl PacketDecoder {
             };
             follow_ups.push(HitFollowUp {
                 source_timestamp: source.timestamp,
+                source_byte_offset: Some(source.byte_offset),
+                source_bit_shift: Some(source.bit_shift),
+                source_target_id: source.target_id.clone(),
                 source_char_id: source.char_id,
                 source_damage: source.damage,
                 source_target_hp_before: source.target_hp_before,
@@ -5407,6 +5433,93 @@ impl PacketDecoder {
         };
         self.pending_targetless_hits.remove(index);
         1
+    }
+}
+
+// Direct packet and reassembled views may expose different amounts of the
+// same source header. Preserve occurrence counts and prefer exact role matches
+// before using a missing declaration as a wildcard. Queues are packet-local;
+// each direct occurrence is visited a bounded number of times.
+fn merge_reassembled_server_damage_settlements(
+    settlements: &mut Vec<ParsedServerDamageSettlement>,
+    reassembled: Vec<ParsedServerDamageSettlement>,
+) {
+    let key = |row: &ParsedServerDamageSettlement| {
+        (
+            row.target_handle,
+            row.current_hp.to_bits(),
+            row.dead_state,
+            row.raw_damage,
+            row.display_type,
+            row.additional_damage,
+            row.additional_display_type,
+        )
+    };
+    let mut by_source = HashMap::new();
+    let mut by_value = HashMap::new();
+    for (index, row) in settlements.iter().enumerate() {
+        by_source
+            .entry((key(row), row.source_character_id))
+            .or_insert_with(VecDeque::new)
+            .push_back(index);
+        by_value
+            .entry(key(row))
+            .or_insert_with(VecDeque::new)
+            .push_back(index);
+    }
+    let mut used = vec![false; settlements.len()];
+    let mut assignments = vec![None; reassembled.len()];
+    // Reserve known-to-known matches before using a missing declaration.
+    for (index, row) in reassembled.iter().enumerate() {
+        if row.source_character_id.is_none() {
+            continue;
+        }
+        if let Some(original) = by_source
+            .get_mut(&(key(row), row.source_character_id))
+            .and_then(VecDeque::pop_front)
+        {
+            used[original] = true;
+            assignments[index] = Some(original);
+        }
+    }
+    // Known reassembled roles get the remaining unknown direct occurrences
+    // before an unknown reassembled row can consume those occurrences.
+    for (index, row) in reassembled.iter().enumerate() {
+        if row.source_character_id.is_none() || assignments[index].is_some() {
+            continue;
+        }
+        if let Some(original) = by_source
+            .get_mut(&(key(row), None))
+            .and_then(VecDeque::pop_front)
+        {
+            used[original] = true;
+            assignments[index] = Some(original);
+        }
+    }
+    for (index, row) in reassembled.iter().enumerate() {
+        if row.source_character_id.is_some() {
+            continue;
+        }
+        if let Some(original) = by_value.get_mut(&key(row)).and_then(|indices| {
+            while let Some(index) = indices.pop_front() {
+                if !used[index] {
+                    return Some(index);
+                }
+            }
+            None
+        }) {
+            used[original] = true;
+            assignments[index] = Some(original);
+        }
+    }
+    for (row, original) in reassembled.into_iter().zip(assignments) {
+        if let Some(original) = original {
+            if settlements[original].source_character_id.is_none() {
+                settlements[original].source_character_id = row.source_character_id;
+            }
+        } else {
+            settlements.push(row);
+        }
     }
 }
 
@@ -6576,39 +6689,14 @@ impl PacketDecoder {
             parse_server_damage_settlements(payload)
         };
         if !outgoing {
-            let settlement_key = |settlement: &ParsedServerDamageSettlement| {
-                (
-                    settlement.target_handle,
-                    settlement.current_hp.to_bits(),
-                    settlement.dead_state,
-                    settlement.raw_damage,
-                    settlement.display_type,
-                    settlement.additional_damage,
-                    settlement.additional_display_type,
-                )
-            };
-            let mut packet_occurrences = HashMap::new();
-            for settlement in &server_damage_settlements {
-                *packet_occurrences
-                    .entry(settlement_key(settlement))
-                    .or_insert(0_usize) += 1;
-            }
-            for observation in &reassembled_bunches {
-                for settlement in parse_server_damage_settlements(&observation.bunch.data) {
-                    let key = settlement_key(&settlement);
-                    if packet_occurrences.get_mut(&key).is_some_and(|remaining| {
-                        if *remaining == 0 {
-                            false
-                        } else {
-                            *remaining -= 1;
-                            true
-                        }
-                    }) {
-                        continue;
-                    }
-                    server_damage_settlements.push(settlement);
-                }
-            }
+            let reassembled_settlements = reassembled_bunches
+                .iter()
+                .flat_map(|observation| parse_server_damage_settlements(&observation.bunch.data))
+                .collect();
+            merge_reassembled_server_damage_settlements(
+                &mut server_damage_settlements,
+                reassembled_settlements,
+            );
         }
         let target_hp_keys = target_hp_updates
             .iter()
@@ -14924,6 +15012,7 @@ mod tests {
     ) -> ParsedServerDamageSettlement {
         ParsedServerDamageSettlement {
             target_handle,
+            source_character_id: None,
             current_hp,
             dead_state,
             raw_damage,
@@ -14933,6 +15022,78 @@ mod tests {
             byte_offset: 0,
             bit_shift: 0,
         }
+    }
+
+    #[test]
+    fn reassembled_settlement_completes_source_without_double_counting() {
+        let mut unknown = server_damage_settlement_for([1; 29], 900.0, 0, 100);
+        unknown.additional_damage = Some(33);
+        unknown.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let mut known = unknown.clone();
+        known.source_character_id = Some(1036);
+        known.byte_offset = 100; // Reassembly shifts the containing buffer.
+        for (direct, reassembled) in [
+            (unknown.clone(), known.clone()),
+            (known.clone(), unknown.clone()),
+        ] {
+            let offset = direct.byte_offset;
+            let mut rows = vec![direct];
+            merge_reassembled_server_damage_settlements(&mut rows, vec![reassembled]);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].source_character_id, Some(1036));
+            assert_eq!(rows[0].additional_damage, Some(33));
+            assert_eq!(rows[0].byte_offset, offset);
+        }
+        let mut rows = vec![unknown];
+        merge_reassembled_server_damage_settlements(&mut rows, vec![known.clone(), known]);
+        assert_eq!(rows.len(), 2); // Two real occurrences must not collapse.
+        assert!(rows.iter().all(|row| row.source_character_id == Some(1036)));
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.additional_damage.unwrap_or(0))
+                .sum::<u32>(),
+            66
+        );
+    }
+
+    #[test]
+    fn reassembled_settlement_reserves_exact_roles_before_missing_sources() {
+        let unknown = server_damage_settlement_for([1; 29], 900.0, 0, 100);
+        let mut first = unknown.clone();
+        first.source_character_id = Some(1036);
+        let mut second = unknown.clone();
+        second.source_character_id = Some(1075);
+        for (direct, reassembled) in [
+            (
+                vec![first.clone(), second.clone()],
+                vec![unknown.clone(), first.clone()],
+            ),
+            (
+                vec![unknown.clone(), first.clone()],
+                vec![second.clone(), first.clone()],
+            ),
+            (
+                vec![unknown.clone(), first.clone()],
+                vec![unknown.clone(), second.clone()],
+            ),
+            (
+                vec![unknown.clone(), first.clone()],
+                vec![second.clone(), unknown.clone()],
+            ),
+        ] {
+            let mut rows = direct;
+            merge_reassembled_server_damage_settlements(&mut rows, reassembled);
+            assert_eq!(rows.len(), 2);
+            let mut roles = rows
+                .iter()
+                .filter_map(|row| row.source_character_id)
+                .collect::<Vec<_>>();
+            roles.sort_unstable();
+            assert_eq!(roles, vec![1036, 1075]);
+        }
+        let mut rows = vec![first];
+        merge_reassembled_server_damage_settlements(&mut rows, vec![second]);
+        assert_eq!(rows.len(), 2); // Conflicting known declarations remain distinct.
     }
 
     fn set_wire_target(hit: &mut Hit, target_handle: [u8; 29]) {
@@ -16490,6 +16651,100 @@ mod tests {
     }
 
     #[test]
+    fn declared_weave_role_constrains_existing_source_matching() {
+        // Even an exact damage/HP match from a different role cannot steal
+        // the declared role's exact, HP-bridge or unique recent candidate.
+        for matching_rule in ["exact", "hp_bridge", "recent"] {
+            let mut decoder = PacketDecoder::default();
+            let target = [7_u8; 29];
+            let mut other = targetless_hit();
+            other.timestamp = 10.0;
+            other.char_id = 1004;
+            other.damage = 1_000.0;
+            other.target_hp_before = 10_000.0;
+            other.target_hp_after = 9_000.0;
+            other.target_max_hp = 10_000.0;
+            other.byte_offset = 100;
+            set_wire_target(&mut other, target);
+            let mut source = other.clone();
+            source.char_id = 1036;
+            source.byte_offset = 200;
+            if matching_rule != "exact" {
+                source.damage = 700.0;
+            }
+            if matching_rule == "recent" {
+                source.target_hp_after = 9_300.0;
+            }
+            let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+            settlement.source_character_id = Some(source.char_id);
+            settlement.additional_damage = Some(250);
+            settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+            let settlements = [settlement];
+            let reconciliation = decoder
+                .reconcile_current_packet_server_damage_settlements_with_sources(
+                    10.05,
+                    &settlements,
+                    [&other, &source],
+                );
+            let (follow_ups, shared_hits) = decoder
+                .reconcile_authoritative_additional_damage_settlements(
+                    10.05,
+                    &settlements,
+                    &reconciliation.sources,
+                );
+
+            assert_eq!(reconciliation.corrections.len(), 1, "{matching_rule}");
+            assert_eq!(reconciliation.corrections[0].source_char_id, source.char_id);
+            assert_eq!(follow_ups.len(), 1, "{matching_rule}");
+            assert_eq!(follow_ups[0].source_char_id, source.char_id);
+            assert_eq!(follow_ups[0].source_byte_offset, Some(source.byte_offset));
+            assert_eq!(follow_ups[0].source_target_id, source.target_id);
+            assert_eq!(follow_ups[0].damage, 250.0);
+            assert!(shared_hits.is_empty(), "{matching_rule}");
+        }
+    }
+
+    #[test]
+    fn declared_weave_role_does_not_link_to_another_role_when_source_hit_is_missing() {
+        let mut decoder = PacketDecoder::default();
+        let target = [7_u8; 29];
+        let mut other = targetless_hit();
+        other.timestamp = 10.0;
+        other.char_id = 1004;
+        other.damage = 1_000.0;
+        other.target_hp_before = 10_000.0;
+        other.target_hp_after = 9_000.0;
+        other.target_max_hp = 10_000.0;
+        set_wire_target(&mut other, target);
+        let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+        settlement.source_character_id = Some(1036);
+        settlement.additional_damage = Some(250);
+        settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let settlements = [settlement];
+        let reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.05,
+                &settlements,
+                [&other],
+            );
+        assert!(reconciliation.corrections.is_empty());
+        assert!(reconciliation.sources[0].is_none());
+        let (follow_ups, shared_hits) = decoder
+            .reconcile_authoritative_additional_damage_settlements(
+                10.05,
+                &settlements,
+                &reconciliation.sources,
+            );
+        assert!(follow_ups.is_empty());
+        // Exhausted source matching retains the existing unknown record;
+        // a role declaration alone does not create a known independent hit.
+        assert_eq!(shared_hits.len(), 1);
+        assert_eq!(shared_hits[0].char_id, 0);
+        assert!(!shared_hits[0].char_known);
+        assert_eq!(shared_hits[0].damage, 250.0);
+    }
+
+    #[test]
     fn authoritative_four_wrapper_display_type_pairs_identical_burst_hits_in_wire_order() {
         let mut decoder = PacketDecoder::default();
         let target = [7_u8; 29];
@@ -16500,9 +16755,10 @@ mod tests {
         first.target_hp_before = 11_140_138.0;
         first.target_hp_after = 11_137_652.0;
         first.target_max_hp = 11_245_012.0;
+        first.byte_offset = 100;
         set_wire_target(&mut first, target);
         let mut second = first.clone();
-        second.timestamp = 10.025;
+        second.byte_offset = 200;
 
         let mut first_settlement = server_damage_settlement_for(target, 11_137_155.0, 0, 2_486);
         first_settlement.additional_damage = Some(497);
@@ -16541,6 +16797,31 @@ mod tests {
         assert!(second_shared.is_empty());
         assert_eq!(first_follow_ups[0].source_timestamp, first.timestamp);
         assert_eq!(second_follow_ups[0].source_timestamp, second.timestamp);
+        assert_eq!(
+            first_follow_ups[0].source_byte_offset,
+            Some(first.byte_offset)
+        );
+        assert_eq!(
+            second_follow_ups[0].source_byte_offset,
+            Some(second.byte_offset)
+        );
+        let mut state = CombatState::default();
+        state.push_hit(first);
+        state.push_hit(second);
+        for (follow_ups, corrections) in [
+            (first_follow_ups, first_reconciliation.corrections),
+            (second_follow_ups, second_reconciliation.corrections),
+        ] {
+            for follow_up in follow_ups {
+                assert!(state.apply_follow_up(follow_up));
+            }
+            for correction in corrections {
+                assert!(state.apply_damage_correction(correction));
+            }
+        }
+        assert_eq!(state.hits.len(), 2);
+        assert_eq!(state.hits[0].follow_up_damage, 497.0);
+        assert_eq!(state.hits[1].follow_up_damage, 497.0);
     }
 
     #[test]
