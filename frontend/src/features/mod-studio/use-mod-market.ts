@@ -20,7 +20,6 @@ export type ModMarketState =
 export type ModMarketInstallState =
   | { status: "idle" }
   | { status: "installing" }
-  | { status: "enabling" }
   | { status: "installed" }
   | {
       status: "error";
@@ -88,38 +87,6 @@ export function useModMarket(
     [client, onInstalled, refresh],
   );
 
-  const enable = useCallback(
-    async (id: string) => {
-      if (installing.current.has(id)) {
-        return;
-      }
-      installing.current.add(id);
-      setInstallStates((current) => ({
-        ...current,
-        [id]: { status: "enabling" },
-      }));
-      try {
-        await client.setEnabled(id, true);
-        setInstallStates((current) => ({
-          ...current,
-          [id]: { status: "installed" },
-        }));
-        await Promise.all([onInstalled(), refresh()]);
-      } catch (error) {
-        setInstallStates((current) => ({
-          ...current,
-          [id]: {
-            status: "error",
-            error: parseModStudioCommandError(error),
-          },
-        }));
-      } finally {
-        installing.current.delete(id);
-      }
-    },
-    [client, onInstalled, refresh],
-  );
-
   useEffect(() => {
     void refresh();
     return () => {
@@ -127,5 +94,5 @@ export function useModMarket(
     };
   }, [refresh]);
 
-  return { state, installStates, refresh, install, enable };
+  return { state, installStates, refresh, install };
 }

@@ -373,7 +373,10 @@ impl LiveCaptureService {
     }
 
     pub fn replay_running(&self) -> Result<bool, CoreError> {
-        self.checked(|inner| Ok(checked_lock(&inner.replay)?.is_some()))
+        self.checked(|inner| {
+            let source = *checked_lock(&inner.quality_source)?;
+            Ok(checked_lock(&inner.replay)?.is_some() && source != CaptureQualitySource::Plugin)
+        })
     }
 
     pub fn active_capture_filter(&self) -> Result<Option<String>, CoreError> {
@@ -694,6 +697,15 @@ impl LiveCaptureService {
             inner.bump_packet_session();
             inner.bump_revision();
             Ok(())
+        })
+    }
+
+    #[cfg(feature = "desktop")]
+    pub fn request_plugin_start(&self, pid: u32) -> Result<(), CoreError> {
+        self.start_replay(CaptureQualitySource::Plugin, move |sender, stop| {
+            thread::Builder::new()
+                .name("nte-plugin-session".into())
+                .spawn(move || super::toolkit::run(pid, sender, stop))
         })
     }
 
@@ -1677,6 +1689,64 @@ mod tests {
         AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, Hit, HitCharacterSource, HitDirection,
         HtItemNetId, PacketObservation,
     };
+
+    #[test]
+    fn plugin_stream_uses_owned_session_without_packet_capture() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        service
+            .start_replay(CaptureQualitySource::Plugin, |sender, stop| {
+                Ok(thread::spawn(move || {
+                    if sender.send(hit(123.456789)).is_err() {
+                        return;
+                    }
+                    while !stop.load(Ordering::Acquire) {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    let _ = sender.send(EngineEvent::CaptureStopped);
+                }))
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while service.with_state(|s| s.hits.is_empty()).unwrap() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            service.quality_source().unwrap(),
+            CaptureQualitySource::Plugin
+        );
+        assert!(!service.replay_running().unwrap());
+        assert!(service.active_capture_filter().unwrap().is_none());
+        assert_eq!(
+            service
+                .with_state(|s| s.hits.front().unwrap().damage)
+                .unwrap(),
+            123.456789
+        );
+        assert!(
+            service
+                .request_start(CaptureControllerOptions {
+                    profile: super::super::capture::CaptureProfile::Combat,
+                    device: super::super::capture::CaptureDeviceSelector::Auto,
+                    filter: String::new(),
+                    include_incoming: true,
+                    server_damage_calibration: false,
+                    raw_capture: super::super::capture::RawCaptureMode::Disabled,
+                    raw_capture_directory: std::env::temp_dir(),
+                    expose_raw_capture_path: false,
+                    packet_emission: crate::engine::capture::PacketEmissionMode::FullDebug,
+                })
+                .is_err()
+        );
+        service.request_stop().unwrap();
+        while service.status().phase != LiveCapturePhase::Stopped && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(service.status().phase, LiveCapturePhase::Stopped);
+        assert_eq!(service.with_state(|s| s.hits.len()).unwrap(), 1);
+        println!(
+            "PLUGIN_SESSION_PASS: native event -> reducer; Npcap absent; mixed start rejected; stop drained; data retained"
+        );
+    }
 
     fn hit(damage: f64) -> EngineEvent {
         EngineEvent::Hit(Box::new(Hit {

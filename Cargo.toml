@@ -62,6 +62,8 @@ windows-sys = { version = "0.60", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
     "Win32_System_Pipes",
     "Win32_System_Registry",
     "Win32_System_SystemServices",

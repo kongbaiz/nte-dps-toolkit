@@ -30,7 +30,7 @@ export type DiagnosticsStatus = "passed" | "warning" | "failed";
 export type DiagnosticsCapturePhase =
   "idle" | "starting" | "running" | "stopping" | "stopped" | "failed";
 export type DiagnosticsQualitySource =
-  "live" | "pcapng_replay" | "json_replay" | "unknown";
+  "live" | "plugin" | "pcapng_replay" | "json_replay" | "unknown";
 
 export interface DiagnosticsMessageSnapshot {
   messageKey: string;
@@ -326,7 +326,7 @@ function parseQuality(value: unknown): DiagnosticsQualitySnapshot {
   return {
     source: enumValue(
       item.source,
-      ["live", "pcapng_replay", "json_replay", "unknown"] as const,
+      ["live", "plugin", "pcapng_replay", "json_replay", "unknown"] as const,
       "diagnostics.quality.source",
     ),
     packetCount: nonNegativeInteger(

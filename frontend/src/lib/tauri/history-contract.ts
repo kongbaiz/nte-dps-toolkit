@@ -82,7 +82,7 @@ export interface HistorySummary {
     secondHalf: HistoryHalf | null;
   };
   quality: {
-    source: "live" | "pcapng_replay" | "json_replay" | "unknown";
+    source: "live" | "plugin" | "pcapng_replay" | "json_replay" | "unknown";
     packetCount: string;
     hitCount: string;
     unmappedSkillHits: string;
@@ -407,7 +407,13 @@ function parseRecord(value: unknown, field: string): HistoryRecord {
       quality: {
         source: enumValue(
           quality.source,
-          ["live", "pcapng_replay", "json_replay", "unknown"] as const,
+          [
+            "live",
+            "plugin",
+            "pcapng_replay",
+            "json_replay",
+            "unknown",
+          ] as const,
           `${field}.summary.quality.source`,
         ),
         packetCount: decimal(
