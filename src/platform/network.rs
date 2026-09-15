@@ -91,6 +91,10 @@ pub enum GameNetworkProbe {
     ProbeFailed(NetworkProbeFailure),
 }
 
+pub fn game_process_id() -> Result<Option<u32>, NetworkProbeFailure> {
+    find_process_id(GAME_PROCESS)
+}
+
 pub fn game_process_is_running() -> Result<bool, String> {
     find_process_id(GAME_PROCESS)
         .map(|pid| pid.is_some())

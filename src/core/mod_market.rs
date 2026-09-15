@@ -8,11 +8,16 @@ use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::storage::mod_scripts::{MAX_MOD_SOURCE_BYTES, mod_source_bindings, validate_mod_id};
+use crate::storage::mod_scripts::validate_mod_id;
+use std::{
+    io::{Read, Write},
+    path::Path,
+};
+pub const MAX_PLUGIN_BYTES: usize = 64 * 1024 * 1024;
 
-pub const MOD_MARKET_SCHEMA_VERSION: u32 = 4;
-pub const MOD_MARKET_CATALOG_URL: &str = "https://dps.o-na-ni.com/mods/v1/catalog.json";
-pub const MOD_MARKET_PACKAGE_URL_PREFIX: &str = "https://dps.o-na-ni.com/mods/v1/packages/";
+pub const MOD_MARKET_SCHEMA_VERSION: u32 = 5;
+pub const MOD_MARKET_CATALOG_URL: &str = "https://dps.o-na-ni.com/mods/v2/catalog.json";
+pub const MOD_MARKET_PACKAGE_URL_PREFIX: &str = "https://dps.o-na-ni.com/mods/v2/packages/";
 pub const MAX_MOD_MARKET_CATALOG_BYTES: usize = 128 * 1024;
 pub const MAX_MOD_MARKET_ITEMS: usize = 64;
 pub const MAX_MOD_MARKET_VERSION_BYTES: usize = 128;
@@ -204,10 +209,10 @@ pub fn parse_mod_market_catalog(bytes: &[u8]) -> Result<ModMarketCatalog, ModMar
                 return Err(invalid_catalog("catalog contains duplicate capabilities"));
             }
         }
-        let expected_url = format!("{MOD_MARKET_PACKAGE_URL_PREFIX}{}-{}.nte", item.id, version);
+        let expected_url = format!("{MOD_MARKET_PACKAGE_URL_PREFIX}{}-{}.dll", item.id, version);
         if item.artifact.url != expected_url
             || item.artifact.size == 0
-            || item.artifact.size > MAX_MOD_SOURCE_BYTES as u64
+            || item.artifact.size > MAX_PLUGIN_BYTES as u64
         {
             return Err(invalid_catalog("catalog package metadata is invalid"));
         }
@@ -252,7 +257,7 @@ pub fn find_mod_market_item<'a>(
 pub fn verify_mod_market_package(
     item: &ModMarketItem,
     bytes: &[u8],
-) -> Result<String, ModMarketError> {
+) -> Result<Vec<u8>, ModMarketError> {
     if bytes.len() as u64 != item.package_size {
         return Err(ModMarketError::new(
             ModMarketErrorCode::InvalidPackage,
@@ -266,34 +271,77 @@ pub fn verify_mod_market_package(
             "market package checksum does not match the signed catalog",
         ));
     }
-    let source = String::from_utf8(bytes.to_vec()).map_err(|_| {
-        ModMarketError::new(
-            ModMarketErrorCode::InvalidPackage,
-            "market package is not UTF-8 source",
-        )
-    })?;
-    let source_bindings = mod_source_bindings(&item.id, &source).map_err(|_| {
-        ModMarketError::new(
-            ModMarketErrorCode::InvalidPackage,
-            "market package did not pass the local Mod validator",
-        )
-    })?;
-    if source_bindings.len() != item.bindings.len()
-        || source_bindings
-            .iter()
-            .any(|binding| !item.bindings.contains(binding))
-    {
-        return Err(ModMarketError::new(
-            ModMarketErrorCode::InvalidPackage,
-            "market package bindings do not match the signed catalog",
-        ));
-    }
-    Ok(source)
+    validate_plugin_binary(bytes)?;
+    Ok(bytes.to_vec())
 }
 
-pub fn mod_market_package_is_current(item: &ModMarketItem, source: &str) -> bool {
-    let actual: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+pub fn mod_market_package_is_current(item: &ModMarketItem, bytes: &[u8]) -> bool {
+    let actual: [u8; 32] = Sha256::digest(bytes).into();
     actual == item.package_sha256
+}
+
+pub fn validate_plugin_binary(bytes: &[u8]) -> Result<(), ModMarketError> {
+    let fail = || {
+        ModMarketError::new(
+            ModMarketErrorCode::InvalidPackage,
+            "expected a compiled x64 PE DLL",
+        )
+    };
+    if bytes.len() < 64 || bytes.len() > MAX_PLUGIN_BYTES || &bytes[..2] != b"MZ" {
+        return Err(fail());
+    }
+    let pe = u32::from_le_bytes(bytes[60..64].try_into().map_err(|_| fail())?) as usize;
+    let header = bytes
+        .get(pe..pe.checked_add(26).ok_or_else(fail)?)
+        .ok_or_else(fail)?;
+    if &header[..4] != b"PE\0\0"
+        || u16::from_le_bytes([header[4], header[5]]) != 0x8664
+        || u16::from_le_bytes([header[22], header[23]]) & 0x2000 == 0
+        || u16::from_le_bytes([header[24], header[25]]) != 0x20b
+    {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+pub fn read_installed_plugin(
+    directory: &Path,
+    id: &str,
+) -> Result<Option<Vec<u8>>, ModMarketError> {
+    validate_mod_id(id).map_err(|_| invalid_catalog("invalid plugin id"))?;
+    let path = directory.join(format!("{id}.dll"));
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(invalid_catalog("plugin read failed")),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|_| invalid_catalog("plugin metadata failed"))?;
+    if !metadata.is_file() || metadata.len() > MAX_PLUGIN_BYTES as u64 {
+        return Err(invalid_catalog("plugin size invalid"));
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(MAX_PLUGIN_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid_catalog("plugin read failed"))?;
+    validate_plugin_binary(&bytes)?;
+    Ok(Some(bytes))
+}
+
+pub fn install_plugin(directory: &Path, id: &str, bytes: &[u8]) -> Result<(), ModMarketError> {
+    validate_mod_id(id).map_err(|_| invalid_catalog("invalid plugin id"))?;
+    validate_plugin_binary(bytes)?;
+    crate::storage::io_util::atomic_write_file(&directory.join(format!("{id}.dll")), |writer| {
+        writer.write_all(bytes).map_err(|e| e.to_string())
+    })
+    .map_err(|_| {
+        ModMarketError::new(
+            ModMarketErrorCode::InvalidPackage,
+            "plugin replacement failed; previous DLL retained",
+        )
+    })
 }
 
 fn verify_catalog_signature(payload: &[u8], encoded: &str) -> Result<(), ModMarketError> {
@@ -398,12 +446,13 @@ mod tests {
 
     #[test]
     fn package_verification_checks_hash_and_local_source_policy() {
-        let source = crate::storage::mod_scripts::new_mod_script_template("sample")
-            .unwrap()
-            .replace(
-                "NTE_MOD(\"sample\");",
-                "NTE_MOD(\"sample\");\nNTE_BIND(\"feature.sample\");",
-            );
+        let mut source = vec![0u8; 128];
+        source[..2].copy_from_slice(b"MZ");
+        source[60..64].copy_from_slice(&64u32.to_le_bytes());
+        source[64..68].copy_from_slice(b"PE\0\0");
+        source[68..70].copy_from_slice(&0x8664u16.to_le_bytes());
+        source[86..88].copy_from_slice(&0x2000u16.to_le_bytes());
+        source[88..90].copy_from_slice(&0x20bu16.to_le_bytes());
         let item = ModMarketItem {
             id: "sample".to_owned(),
             bindings: vec!["feature.sample".to_owned()],
@@ -424,41 +473,42 @@ mod tests {
             version: Version::new(1, 0, 0),
             author: "NTE".to_owned(),
             capabilities: vec!["viewport.tick".to_owned()],
-            package_url: format!("{MOD_MARKET_PACKAGE_URL_PREFIX}sample-1.0.0.nte"),
+            package_url: format!("{MOD_MARKET_PACKAGE_URL_PREFIX}sample-1.0.0.dll"),
             package_size: source.len() as u64,
-            package_sha256: Sha256::digest(source.as_bytes()).into(),
+            package_sha256: Sha256::digest(source.as_slice()).into(),
         };
 
         assert_eq!(
-            verify_mod_market_package(&item, source.as_bytes()).unwrap(),
+            verify_mod_market_package(&item, source.as_slice()).unwrap(),
             source
         );
-        let mut changed = source.as_bytes().to_vec();
+        let mut changed = source.as_slice().to_vec();
         changed[0] ^= 1;
         assert_eq!(
             verify_mod_market_package(&item, &changed).unwrap_err().code,
             ModMarketErrorCode::InvalidPackage
         );
 
-        let source_without_binding = source.replace("NTE_BIND(\"feature.sample\");\n", "");
+        let source_text = b"#include <nte/mod.hpp>";
         let mismatched_item = ModMarketItem {
-            package_size: source_without_binding.len() as u64,
-            package_sha256: Sha256::digest(source_without_binding.as_bytes()).into(),
+            package_size: source_text.len() as u64,
+            package_sha256: Sha256::digest(source_text).into(),
             ..item
         };
         assert_eq!(
-            verify_mod_market_package(&mismatched_item, source_without_binding.as_bytes())
+            verify_mod_market_package(&mismatched_item, source_text)
                 .unwrap_err()
                 .code,
             ModMarketErrorCode::InvalidPackage
         );
+        println!("MARKET_BINARY_PASS: signed hash and x64 PE checks; scripts rejected");
     }
 
     #[test]
     fn package_urls_are_derived_from_id_and_semver() {
         assert_eq!(
-            format!("{MOD_MARKET_PACKAGE_URL_PREFIX}sample-1.2.3.nte"),
-            "https://dps.o-na-ni.com/mods/v1/packages/sample-1.2.3.nte"
+            format!("{MOD_MARKET_PACKAGE_URL_PREFIX}sample-1.2.3.dll"),
+            "https://dps.o-na-ni.com/mods/v2/packages/sample-1.2.3.dll"
         );
     }
 

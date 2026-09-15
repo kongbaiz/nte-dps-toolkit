@@ -28,7 +28,7 @@ export function modMarketSearchText(
 
 export interface ModMarketLocalStatus {
   installed: boolean;
-  enabled: boolean;
+  enabled: boolean | null;
   current: boolean;
   unreadable: { code: string; messageKey: string } | null;
 }

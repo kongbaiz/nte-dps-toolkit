@@ -4,7 +4,7 @@ import {
 } from "@/lib/tauri/contract-primitives";
 
 export const MOD_STUDIO_CONTRACT_VERSION = 13;
-export const MOD_MARKET_CONTRACT_VERSION = 11;
+export const MOD_MARKET_CONTRACT_VERSION = 12;
 export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;
 export const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION = 1;
 export const MOD_LOADER_RUNTIME_CONTRACT_VERSION = 1;
@@ -138,7 +138,7 @@ export type ModMarketUnreadableMessageKey =
 
 export type ModMarketLocalState =
   | { status: "notInstalled" }
-  | { status: "installed"; enabled: boolean; current: boolean }
+  | { status: "installed"; enabled: boolean | null; current: boolean }
   | {
       status: "unreadable";
       code: ModMarketUnreadableCode;
@@ -565,7 +565,10 @@ function parseModMarketLocalState(
       exactFields(state, field, ["status", "enabled", "current"]);
       return {
         status,
-        enabled: boolean(state.enabled, `${field}.enabled`),
+        enabled:
+          state.enabled === null
+            ? null
+            : boolean(state.enabled, `${field}.enabled`),
         current: boolean(state.current, `${field}.current`),
       };
     case "unreadable":

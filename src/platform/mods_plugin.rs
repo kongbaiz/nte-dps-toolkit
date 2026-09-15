@@ -70,6 +70,7 @@ const IPC_MOVE_MODULE_TO_CHARACTER: u16 = 7;
 const IPC_MOVE_CORE_TO_CHARACTER: u16 = 8;
 const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
+#[cfg(test)]
 const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_QUERY_MOD_EVENTS: u16 = 12;
 #[cfg(any(feature = "desktop", test))]
@@ -100,12 +101,13 @@ const MOD_LOG_ID_SIZE: usize = 32;
 const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
+#[cfg(test)]
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
+#[cfg(test)]
 const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const MAX_PLUGIN_STATUS: u32 = 13;
 const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
-static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static IPC_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
 static IPC_CLIENT_QUARANTINED: AtomicBool = AtomicBool::new(false);
@@ -761,12 +763,14 @@ pub(crate) fn call_plugin(request: &ModsPluginRequest) -> Result<u32, String> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum CombatClockQueryError {
     ProviderUnavailable,
     ModDisabled,
     InvalidResponse,
 }
 
+#[cfg(test)]
 impl std::fmt::Display for CombatClockQueryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -775,21 +779,6 @@ impl std::fmt::Display for CombatClockQueryError {
             Self::InvalidResponse => "combat clock provider returned an invalid response",
         })
     }
-}
-
-pub(crate) fn query_combat_clock_transitions()
--> Result<Vec<CombatClockTransitionSnapshot>, CombatClockQueryError> {
-    let request_id = COMBAT_CLOCK_QUERY_SEQUENCE
-        .fetch_add(1, Ordering::Relaxed)
-        .max(1);
-    let mut request = [0_u8; REQUEST_SIZE];
-    request[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
-    request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
-    request[6..8].copy_from_slice(&IPC_QUERY_COMBAT_CLOCK_TRANSITIONS.to_le_bytes());
-    request[8..16].copy_from_slice(&request_id.to_le_bytes());
-    let response =
-        call_plugin_request(&request).map_err(|_| CombatClockQueryError::ProviderUnavailable)?;
-    decode_combat_clock_transitions(&response, request_id)
 }
 
 pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
@@ -1496,6 +1485,7 @@ fn decode_response_header(
     Ok((status, record_count))
 }
 
+#[cfg(test)]
 fn decode_combat_clock_transitions(
     bytes: &[u8; RESPONSE_SIZE],
     request_id: u64,

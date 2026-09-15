@@ -1,3 +1,11 @@
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataMode {
+    #[default]
+    PacketCapture,
+    Plugin,
+}
+
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -996,6 +1004,8 @@ pub struct UiConfig {
     pub mod_studio_loading_method: ModStudioLoadingMethod,
     #[serde(default)]
     pub mod_studio_risk_acknowledged: bool,
+    #[serde(default)]
+    pub data_mode: DataMode,
     pub always_on_top: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main_dps_always_on_top: Option<bool>,
@@ -1096,6 +1106,7 @@ impl Default for UiConfig {
             mod_studio_global_game_directory: None,
             mod_studio_loading_method: ModStudioLoadingMethod::default(),
             mod_studio_risk_acknowledged: false,
+            data_mode: DataMode::default(),
             always_on_top: true,
             main_dps_always_on_top: None,
             hud_always_on_top: None,

@@ -20,7 +20,7 @@ import {
 
 function marketCatalogFixture() {
   return {
-    contractVersion: 11,
+    contractVersion: 12,
     publishedAt: "2026-08-03T00:00:00Z",
     privacyMode: "anonymous-read-only",
     mods: [
@@ -175,7 +175,7 @@ describe("Mod Studio contract", () => {
   it("parses privacy-bounded Mod Market catalog items", () => {
     expect(
       parseModMarketCatalog({
-        contractVersion: 11,
+        contractVersion: 12,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "anonymous-read-only",
         mods: [
@@ -235,7 +235,7 @@ describe("Mod Studio contract", () => {
     });
     expect(() =>
       parseModMarketCatalog({
-        contractVersion: 11,
+        contractVersion: 12,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "tracks-device",
         mods: [],
@@ -245,7 +245,7 @@ describe("Mod Studio contract", () => {
 
   it("preserves unreadable local Mod state without accepting private detail", () => {
     const parsed = parseModMarketCatalog({
-      contractVersion: 11,
+      contractVersion: 12,
       publishedAt: "2026-08-03T00:00:00Z",
       privacyMode: "anonymous-read-only",
       mods: [
@@ -293,7 +293,7 @@ describe("Mod Studio contract", () => {
       packageSize: 2048,
     };
     const catalog = (localState: unknown) => ({
-      contractVersion: 11,
+      contractVersion: 12,
       publishedAt: "2026-08-03T00:00:00Z",
       privacyMode: "anonymous-read-only",
       mods: [{ ...item, localState }],

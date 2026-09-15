@@ -1,3 +1,5 @@
+#[cfg(test)]
+use nte_dps_tool::storage::config::ModStudioLoadingMethod;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
@@ -29,10 +31,6 @@ use nte_dps_tool::{
             CaptureReplayKind, LiveCapturePhase, LiveCaptureResources, LiveCaptureService,
             LiveCaptureStatus, ReplayStartError,
         },
-        mod_studio::{
-            ModStudioError, ModStudioRuntimeEvent, ModStudioRuntimeLog, ModStudioWorkspaceService,
-            poll_mod_studio_runtime_events, poll_mod_studio_runtime_logs,
-        },
         packets::{
             PacketStreamRevision, PacketsProjection, project_packets_since, project_recent_packets,
         },
@@ -57,16 +55,13 @@ use nte_dps_tool::{
             CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_equipment_catalog,
         },
     },
-    platform::{
-        mod_loader::ModLoaderRuntimeService,
-        mods_plugin::{ModsPluginGameRegion, ModsPluginOperation},
-    },
+    platform::mods_plugin::ModsPluginGameRegion,
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
         config::{
             self, AccentColor, DpsTimeMode, GlobalHotkeys, HotkeyBinding, HudConfig, HudModule,
-            MainDpsDisplayConfig, ModStudioLoadingMethod, ThemePreset, TimelineDpsViewMode,
-            UiConfig, UiDensity, sanitize_timeline_bucket_seconds,
+            MainDpsDisplayConfig, ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
+            sanitize_timeline_bucket_seconds,
         },
         history::{
             BorrowedHistorySaveOutcome, HistoryCombatDetails, HistoryDeleteTombstone,
@@ -1089,8 +1084,6 @@ struct AppStateInner {
     replay_import: ReplayImportRuntime,
     streams: StreamRegistry,
     live_capture: LiveCaptureService,
-    mod_studio: ModStudioWorkspaceService,
-    mod_loader: ModLoaderRuntimeService,
     equipment_catalog: Arc<EquipmentCatalog>,
     equipment_operation: EquipmentOperationService,
     settings: SettingsService,
@@ -1392,10 +1385,8 @@ impl AppState {
             replay_import: ReplayImportRuntime::default(),
             streams: StreamRegistry::default(),
             live_capture,
-            mod_studio: ModStudioWorkspaceService::default(),
-            mod_loader: ModLoaderRuntimeService::default(),
             equipment_catalog: Arc::new(equipment_catalog),
-            equipment_operation: EquipmentOperationService::default(),
+            equipment_operation: EquipmentOperationService,
             settings: SettingsService::new(config, config_path, capture_devices),
             team_import: TeamImportService::default(),
             update_runtime: UpdateRuntimeService::default(),
@@ -2374,6 +2365,22 @@ impl AppState {
                 ));
             }
             let config = self.ui_config();
+            if config.data_mode == nte_dps_tool::core::toolkit::DataMode::Plugin {
+                let pid = nte_dps_tool::platform::network::game_process_id()
+                    .map_err(|_| {
+                        CoreError::new(
+                            CoreErrorCode::SystemProbeFailed,
+                            "plugin process probe failed",
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        CoreError::new(
+                            CoreErrorCode::GameProcessNotFound,
+                            "plugin host not running",
+                        )
+                    })?;
+                return self.0.live_capture.request_plugin_start(pid);
+            }
             let device = config
                 .manual_capture_device
                 .clone()
@@ -3041,18 +3048,6 @@ impl AppState {
                 imported.lower,
             )
         })?)
-    }
-
-    pub(crate) fn poll_mod_studio_runtime_logs(
-        &self,
-    ) -> Result<Vec<ModStudioRuntimeLog>, ModStudioError> {
-        poll_mod_studio_runtime_logs()
-    }
-
-    pub(crate) fn poll_mod_studio_runtime_events(
-        &self,
-    ) -> Result<Vec<ModStudioRuntimeEvent>, ModStudioError> {
-        poll_mod_studio_runtime_events()
     }
 
     pub(crate) fn set_hud_option(
@@ -3824,14 +3819,6 @@ impl AppState {
         })
     }
 
-    pub(crate) fn submit_empty_curtain_operation(
-        &self,
-        character: nte_dps_tool::engine::model::HtItemNetId,
-        operation: ModsPluginOperation,
-    ) -> Result<u64, EquipmentOperationError> {
-        self.0.equipment_operation.submit(character, operation)
-    }
-
     pub(crate) fn timeline_projection(
         &self,
         scope: TimelineScope,
@@ -4194,12 +4181,39 @@ impl AppState {
         }
     }
 
-    pub(crate) fn mod_studio(&self) -> ModStudioWorkspaceService {
-        self.0.mod_studio.clone()
+    pub(crate) fn data_mode(&self) -> nte_dps_tool::core::toolkit::DataMode {
+        self.ui_config().data_mode
     }
 
-    pub(crate) fn mod_loader(&self) -> ModLoaderRuntimeService {
-        self.0.mod_loader.clone()
+    pub(crate) fn set_data_mode(
+        &self,
+        mode: nte_dps_tool::core::toolkit::DataMode,
+    ) -> Result<(), CoreError> {
+        self.0
+            .replay_import
+            .reserve(ReplayImportReservationState::CaptureStart)
+            .map_err(ReplayImportError::into_core)?;
+        let result = (|| {
+            if self.data_mode() == mode {
+                return Ok(());
+            }
+            self.stop_active_capture_and_wait(Duration::from_secs(15))?;
+            self.update_ui_config(|config| {
+                config.data_mode = mode;
+            })
+            .map_err(|_| {
+                CoreError::new(
+                    CoreErrorCode::SystemProbeFailed,
+                    "mode settings save failed",
+                )
+            })?;
+            Ok(())
+        })();
+        self.0
+            .replay_import
+            .release(ReplayImportReservationState::CaptureStart)
+            .map_err(ReplayImportError::into_core)?;
+        result
     }
 
     pub(crate) fn mod_studio_game_directory(&self, region: ModsPluginGameRegion) -> Option<String> {
@@ -4221,10 +4235,12 @@ impl AppState {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn mod_studio_loading_method(&self) -> ModStudioLoadingMethod {
         self.ui_config().mod_studio_loading_method
     }
 
+    #[cfg(test)]
     pub(crate) fn set_mod_studio_loading_method(
         &self,
         method: ModStudioLoadingMethod,
@@ -4234,10 +4250,12 @@ impl AppState {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn mod_studio_risk_acknowledged(&self) -> bool {
         self.ui_config().mod_studio_risk_acknowledged
     }
 
+    #[cfg(test)]
     pub(crate) fn acknowledge_mod_studio_risk(&self) -> Result<bool, SettingsServiceError> {
         self.update_ui_config_with_effects(SettingsMutationEffects::NONE, |config| {
             config.mod_studio_risk_acknowledged = true;
@@ -4387,6 +4405,33 @@ mod tests {
             reconciled_overkill_damage: None,
             wire_event: None,
         }
+    }
+
+    #[test]
+    fn data_modes_default_switch_noop_and_preserve_records() {
+        use nte_dps_tool::core::toolkit::DataMode;
+        let path = temporary_config_path("data_modes");
+        let live = LiveCaptureService::new(LiveCaptureResources::default());
+        let state = AppState::new_with_config_path(UiConfig::default(), live.clone(), path.clone());
+        assert_eq!(state.data_mode(), DataMode::PacketCapture);
+        let before = state.0.presentation.revision.load(Ordering::Acquire);
+        state.set_data_mode(DataMode::PacketCapture).unwrap();
+        assert_eq!(
+            state.0.presentation.revision.load(Ordering::Acquire),
+            before
+        );
+        state.set_data_mode(DataMode::Plugin).unwrap();
+        assert_eq!(state.data_mode(), DataMode::Plugin);
+        assert_eq!(live.status().phase, LiveCapturePhase::Idle);
+        assert!(state.0.presentation.revision.load(Ordering::Acquire) > before);
+        let saved: UiConfig = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.data_mode, DataMode::Plugin);
+        state.set_data_mode(DataMode::PacketCapture).unwrap();
+        assert_eq!(state.data_mode(), DataMode::PacketCapture);
+        println!(
+            "MODE_PASS: default packet_capture; plugin switch; no-op revision stable; no automatic source start"
+        );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     fn temporary_config_path(tag: &str) -> PathBuf {

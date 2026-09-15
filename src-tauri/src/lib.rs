@@ -149,11 +149,6 @@ pub fn run() {
             let managed = app.manage(history_runtime);
             debug_assert!(managed, "History runtime is managed once");
 
-            let mod_studio_monitor =
-                channels::mod_studio_runtime::ModStudioMonitorRuntime::start(state.inner().clone());
-            let managed = app.manage(mod_studio_monitor);
-            debug_assert!(managed, "Mod runtime monitor is managed once");
-
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -164,6 +159,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::toolkit::get_plugin_panel,
+            commands::toolkit::set_data_mode,
+            commands::toolkit::control_plugin,
+            commands::toolkit::select_plugin_directory,
             commands::abyss_values::clear_abyss_prediction_team,
             commands::abyss_values::get_abyss_values_snapshot,
             commands::abyss_values::import_abyss_prediction_team,
@@ -235,28 +234,8 @@ pub fn run() {
             commands::main_dps::stop_main_dps_capture,
             commands::main_dps::toggle_main_dps_maximized,
             commands::main_dps::undo_main_dps_reset,
-            commands::mod_studio::get_mod_studio_document,
             commands::mod_studio::get_mod_market_catalog,
             commands::mod_studio::install_mod_market_item,
-            commands::mod_studio::get_mod_studio_sdk_schema,
-            commands::mod_studio::get_mod_studio_workspace,
-            commands::mod_studio::create_mod_studio_document,
-            commands::mod_studio::delete_mod_studio_document,
-            commands::mod_studio::open_mod_studio_folder,
-            commands::mod_studio::get_mod_loader_runtime,
-            commands::mod_studio::get_mod_loader_game_running,
-            commands::mod_studio::set_mod_loader_running,
-            commands::mod_studio::open_mod_loader_directory,
-            commands::mod_studio::get_mod_studio_deployment,
-            commands::mod_studio::get_mod_studio_game_directory,
-            commands::mod_studio::choose_mod_studio_game_directory,
-            commands::mod_studio::set_mod_studio_game_directory,
-            commands::mod_studio::get_mod_studio_loading_method,
-            commands::mod_studio::set_mod_studio_loading_method,
-            commands::mod_studio::acknowledge_mod_studio_risk,
-            commands::mod_studio::set_mod_studio_loader_enabled,
-            commands::mod_studio::save_mod_studio_document,
-            commands::mod_studio::set_mod_studio_document_enabled,
             commands::packets::get_packets_snapshot,
             commands::settings::apply_settings_hud_preset,
             commands::settings::apply_settings_layout_profile,
@@ -308,8 +287,6 @@ pub fn run() {
             channels::main_dps_detail::unsubscribe_main_dps_detail,
             channels::empty_curtain::subscribe_empty_curtain,
             channels::empty_curtain::unsubscribe_empty_curtain,
-            channels::mod_studio::subscribe_mod_studio_runtime,
-            channels::mod_studio::unsubscribe_mod_studio_runtime,
             channels::packets::subscribe_packets,
             channels::packets::unsubscribe_packets,
             channels::settings::subscribe_settings,
@@ -327,11 +304,6 @@ pub fn run() {
                     log::warn!("Stream registry reset during application shutdown");
                 }
                 if let Some(runtime) = app.try_state::<history_runtime::HistoryRuntime>() {
-                    runtime.shutdown();
-                }
-                if let Some(runtime) =
-                    app.try_state::<channels::mod_studio_runtime::ModStudioMonitorRuntime>()
-                {
                     runtime.shutdown();
                 }
             }

@@ -10,6 +10,8 @@ pub mod network;
 #[cfg(windows)]
 pub mod passthrough_hotkey;
 #[cfg(feature = "desktop")]
+pub mod toolkit;
+#[cfg(feature = "desktop")]
 pub mod update_http;
 #[cfg(feature = "desktop")]
 pub mod update_install;

@@ -28,6 +28,8 @@ pub mod snapshot;
 pub mod team_data;
 pub mod timeline;
 #[cfg(feature = "desktop")]
+pub mod toolkit;
+#[cfg(feature = "desktop")]
 pub mod update;
 
 /// Stable machine-readable error category shared by both frontends. Tauri
