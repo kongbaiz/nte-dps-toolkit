@@ -12,7 +12,6 @@ use std::{
 
 use nte_dps_tool::{
     core::{
-        mod_studio::MOD_BINDING_DPS_TIME_STOP,
         team_data::{MAX_TEAM_DPS_EXPORT_BYTES, parse_team_data},
         update::{
             AvailableComponentUpdate, MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint,
@@ -390,15 +389,6 @@ pub(crate) fn set_settings_capture(
         } else {
             CommandError::hotkey_conflict()
         });
-    }
-    if dps_time_mode == DpsTimeMode::TimeStopAdjusted
-        && state
-            .mod_studio()
-            .enabled_binding_provider(MOD_BINDING_DPS_TIME_STOP)
-            .map_err(CommandError::from_mod_studio)?
-            .is_none()
-    {
-        return Err(CommandError::required_mod_binding());
     }
     state
         .update_capture_settings(
@@ -1009,13 +999,19 @@ fn check_for_updates() -> Result<Vec<AvailableComponentUpdate>, CheckSettingsUpd
     let installed = installed_component_versions(app)
         .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))?;
     verify_manifest(&manifest, &endpoint, &installed)
+        .map(|updates| {
+            updates
+                .into_iter()
+                .filter(|u| u.component == UpdateComponent::App)
+                .collect()
+        })
         .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))
 }
 
 pub(crate) fn parse_update_component(value: &str) -> Result<UpdateComponent, CommandError> {
     match value {
         "app" => Ok(UpdateComponent::App),
-        "mods-plugin" => Ok(UpdateComponent::ModsPlugin),
+        "mods-plugin" => Err(super::toolkit::unsupported()),
         _ => Err(CommandError::invalid_settings_input()),
     }
 }
@@ -1339,10 +1335,7 @@ mod tests {
             parse_update_component("app").expect("application update"),
             UpdateComponent::App
         );
-        assert_eq!(
-            parse_update_component("mods-plugin").expect("Mods Plugin update"),
-            UpdateComponent::ModsPlugin
-        );
+        assert!(parse_update_component("mods-plugin").is_err());
         assert!(parse_update_component("../app").is_err());
         assert!(parse_update_component("future").is_err());
     }

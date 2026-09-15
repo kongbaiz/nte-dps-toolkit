@@ -5,7 +5,6 @@ use nte_dps_tool::{
         empty_curtain::{
             RecommendedLoadoutError, build_drive_calculator_inventory, recommended_loadout,
         },
-        mod_studio::MOD_BINDING_EMPTY_CURTAIN_EQUIPMENT,
         snapshot::{
             CHARACTER_LOADOUT_MAX_JSON_BYTES, CharacterLoadoutError, export_character_loadout_json,
             parse_character_loadout_json, validate_character_loadout,
@@ -397,22 +396,11 @@ pub(crate) fn snapshot_with_operation(
 }
 
 fn submit(
-    state: &AppState,
-    character: HtItemNetId,
-    operation: ModsPluginOperation,
+    _state: &AppState,
+    _character: HtItemNetId,
+    _operation: ModsPluginOperation,
 ) -> Result<(), CommandError> {
-    if state
-        .mod_studio()
-        .enabled_binding_provider(MOD_BINDING_EMPTY_CURTAIN_EQUIPMENT)
-        .map_err(CommandError::from_mod_studio)?
-        .is_none()
-    {
-        return Err(CommandError::required_mod_binding());
-    }
-    state
-        .submit_empty_curtain_operation(character, operation)
-        .map(|_| ())
-        .map_err(equipment_operation_error)
+    Err(super::toolkit::unsupported())
 }
 
 pub(crate) fn empty_curtain_runtime_error(error: EmptyCurtainRuntimeError) -> CommandError {
@@ -423,23 +411,7 @@ pub(crate) fn empty_curtain_runtime_error(error: EmptyCurtainRuntimeError) -> Co
 }
 
 fn equipment_operation_error(error: EquipmentOperationError) -> CommandError {
-    match error {
-        EquipmentOperationError::Busy => CommandError::empty_curtain(
-            "empty_curtain_operation_busy",
-            "Mod loader is busy; try again shortly",
-            Vec::new(),
-        ),
-        EquipmentOperationError::Disconnected => CommandError::empty_curtain(
-            "empty_curtain_operation_unavailable",
-            "Mod loader is unavailable; restart the Mod loader and try again",
-            Vec::new(),
-        ),
-        EquipmentOperationError::Unavailable => CommandError::empty_curtain(
-            "empty_curtain_operation_state_unavailable",
-            "Equipment operation state is unavailable",
-            Vec::new(),
-        ),
-    }
+    match error {}
 }
 
 async fn save_json(
@@ -665,21 +637,10 @@ mod tests {
     }
 
     #[test]
-    fn operation_errors_keep_stable_codes_without_details() {
-        let busy = equipment_operation_error(EquipmentOperationError::Busy);
-        let disconnected = equipment_operation_error(EquipmentOperationError::Disconnected);
-        let unavailable = equipment_operation_error(EquipmentOperationError::Unavailable);
-        assert_eq!(busy.code, "empty_curtain_operation_busy");
-        assert_eq!(disconnected.code, "empty_curtain_operation_unavailable");
-        assert_eq!(
-            unavailable.code,
-            "empty_curtain_operation_state_unavailable"
-        );
-        assert!(busy.message_arguments.is_empty());
-        assert!(disconnected.message_arguments.is_empty());
-        assert!(unavailable.message_arguments.is_empty());
-        assert!(busy.diagnostic_line.is_none());
-        assert!(disconnected.diagnostic_line.is_none());
-        assert!(unavailable.diagnostic_line.is_none());
+    fn retired_equipment_is_explicitly_unsupported() {
+        let error = super::super::toolkit::unsupported();
+        assert_eq!(error.code, "plugin_unsupported");
+        assert!(error.message_arguments.is_empty());
+        assert!(error.diagnostic_line.is_none());
     }
 }

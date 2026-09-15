@@ -569,6 +569,7 @@ pub const fn abyss_half_code(half: AbyssHalf) -> &'static str {
 const fn capture_source_code(source: CaptureQualitySource) -> &'static str {
     match source {
         CaptureQualitySource::Live => "live",
+        CaptureQualitySource::Plugin => "plugin",
         CaptureQualitySource::PcapngReplay => "pcapng_replay",
         CaptureQualitySource::JsonReplay => "json_replay",
         CaptureQualitySource::Unknown => "unknown",
@@ -578,6 +579,7 @@ const fn capture_source_code(source: CaptureQualitySource) -> &'static str {
 const fn character_source_code(source: HitCharacterSource) -> &'static str {
     match source {
         HitCharacterSource::Packet => "packet",
+        HitCharacterSource::Plugin => "plugin",
         HitCharacterSource::Session => "session",
         HitCharacterSource::GameplayEffect => "gameplay_effect",
         HitCharacterSource::ExportJson => "export_json",

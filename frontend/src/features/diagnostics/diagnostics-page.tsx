@@ -68,6 +68,7 @@ const STATUS_LABELS = {
 
 const SOURCE_LABELS = {
   live: "Live capture",
+  plugin: "Plugin mode",
   pcapng_replay: "PCAPNG replay",
   json_replay: "JSON replay",
   unknown: "No capture data",

@@ -39,8 +39,7 @@ export function ModMarketPanel({
 }: {
   onInstalled: () => void | Promise<void>;
 }) {
-  const { state, installStates, refresh, install, enable } =
-    useModMarket(onInstalled);
+  const { state, installStates, refresh, install } = useModMarket(onInstalled);
   useTranslationRevision();
   const language = currentFrontendLanguage();
   const [query, setQuery] = useState("");
@@ -87,6 +86,9 @@ export function ModMarketPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <p className="mb-3 text-sm text-muted-foreground">
+          {t("Compiled plugin packages only")}
+        </p>
         <Alert className="mb-4 border-[var(--console-success)]/40 bg-[var(--console-success)]/5">
           <ShieldCheck aria-hidden="true" />
           <AlertTitle>{t("Privacy-protected downloads")}</AlertTitle>
@@ -137,7 +139,6 @@ export function ModMarketPanel({
                 language={language}
                 installState={installStates[item.id] ?? { status: "idle" }}
                 onInstall={() => void install(item.id)}
-                onEnable={() => void enable(item.id)}
               />
             ))}
           </div>
@@ -152,21 +153,17 @@ function MarketItem({
   language,
   installState,
   onInstall,
-  onEnable,
 }: {
   item: ModMarketItem;
   language: ReturnType<typeof currentFrontendLanguage>;
   installState: ModMarketInstallState;
   onInstall: () => void;
-  onEnable: () => void;
 }) {
   const local = modMarketLocalStatus(item);
   const installed = local.installed || installState.status === "installed";
-  const enabled = local.enabled || installState.status === "installed";
-  const active = installed && local.current && enabled;
+  const active = installed && local.current;
   const unreadable = local.unreadable;
-  const working =
-    installState.status === "installing" || installState.status === "enabling";
+  const working = installState.status === "installing";
   const localized = localizedModMarketText(item, language);
   const installError =
     installState.status === "error"
@@ -206,13 +203,8 @@ function MarketItem({
       <Button
         className="mt-4 w-full"
         variant={active ? "outline" : "default"}
-        disabled={
-          unreadable !== null ||
-          active ||
-          working ||
-          (installed && !local.current)
-        }
-        onClick={installed ? onEnable : onInstall}
+        disabled={unreadable !== null || active || working}
+        onClick={onInstall}
       >
         {unreadable !== null ? (
           <TriangleAlert aria-hidden="true" />
@@ -225,16 +217,12 @@ function MarketItem({
           unreadable !== null
             ? "Local Mod state unavailable"
             : active
-              ? "Installed and enabled"
-              : installed && !local.current
-                ? "Already in workspace"
-                : installState.status === "installing"
-                  ? "Downloading and verifying..."
-                  : installState.status === "enabling"
-                    ? "Enabling required Mod..."
-                    : installed
-                      ? "Enable required Mod"
-                      : "Download and enable",
+              ? "Installed"
+              : installState.status === "installing"
+                ? "Downloading and verifying..."
+                : installed
+                  ? "Update plugin"
+                  : "Download plugin",
         )}
       </Button>
       {unreadable !== null ? (

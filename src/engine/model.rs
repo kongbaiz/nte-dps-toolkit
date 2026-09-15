@@ -129,6 +129,7 @@ pub struct CharacterInfo {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HitCharacterSource {
+    Plugin,
     Packet,
     Session,
     GameplayEffect,
@@ -2932,6 +2933,7 @@ fn remove_inline_detail_aggregate(row: &mut IndexedDetailAggregate, hits: u64, d
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureQualitySource {
+    Plugin,
     Live,
     PcapngReplay,
     JsonReplay,

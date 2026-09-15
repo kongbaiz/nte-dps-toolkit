@@ -39,7 +39,6 @@ pub(crate) fn stream_registry_error(_: StreamRegistryError) -> CommandError {
 pub(crate) enum PollingStreamOutput<T> {
     NoChange,
     Event(T),
-    Events(Vec<T>),
     Stop,
 }
 
@@ -98,7 +97,6 @@ where
             let events = match output {
                 Ok(PollingStreamOutput::NoChange) => continue,
                 Ok(PollingStreamOutput::Event(event)) => vec![event],
-                Ok(PollingStreamOutput::Events(events)) => events,
                 Ok(PollingStreamOutput::Stop) => break,
                 Err(_) => {
                     log::error!("{stream_name} stream projection panicked; subscription stopped");

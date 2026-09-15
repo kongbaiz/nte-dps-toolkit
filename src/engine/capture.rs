@@ -14,7 +14,9 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
@@ -23,6 +25,7 @@ use pcap_file::pcapng::blocks::enhanced_packet::EnhancedPacketBlock;
 use pcap_file::pcapng::blocks::interface_description::{
     InterfaceDescriptionBlock, InterfaceDescriptionOption,
 };
+#[cfg(test)]
 use pcap_file::pcapng::blocks::unknown::UnknownBlock;
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use pcap_file::{DataLink, PcapError};
@@ -55,10 +58,9 @@ use crate::engine::parser::{
     parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects,
     parse_server_damage_settlements, valid_item_net_id, validate_empty_curtain_snapshot,
 };
-use crate::platform::mods_plugin::{
-    CombatClockQueryError, CombatClockTransitionSnapshot, query_combat_clock_transitions,
-    query_mod_events,
-};
+#[cfg(test)]
+use crate::platform::mods_plugin::CombatClockQueryError;
+use crate::platform::mods_plugin::CombatClockTransitionSnapshot;
 use crate::storage::io_util::atomic_write_file;
 
 use crate::engine::protocol::{
@@ -90,7 +92,7 @@ const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
 const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
-const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(test)]
 const COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD: u8 = 3;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS: usize = 256 * 1024 * 8;
@@ -935,32 +937,6 @@ impl RawCaptureBuffer {
         }
     }
 
-    fn push_combat_clock_transition(&self, transition: &CombatClockTransitionSnapshot) {
-        if let Ok(mut capture) = self.inner.lock() {
-            let result = capture
-                .writer
-                .as_mut()
-                .map(|writer| writer.write_combat_clock_transition(transition));
-            if let Some(Err(error)) = result {
-                capture.write_error = Some(error);
-                capture.writer = None;
-            }
-        }
-    }
-
-    fn push_mod_script_event(&self, event: &ModScriptEvent) {
-        if let Ok(mut capture) = self.inner.lock() {
-            let result = capture
-                .writer
-                .as_mut()
-                .map(|writer| writer.write_mod_script_event(event));
-            if let Some(Err(error)) = result {
-                capture.write_error = Some(error);
-                capture.writer = None;
-            }
-        }
-    }
-
     pub fn packet_count(&self) -> usize {
         self.inner
             .lock()
@@ -1112,26 +1088,6 @@ impl RawCaptureWriter {
         Ok(())
     }
 
-    fn write_combat_clock_transition(
-        &mut self,
-        transition: &CombatClockTransitionSnapshot,
-    ) -> Result<(), String> {
-        let payload = encode_combat_clock_block(transition);
-        self.writer
-            .write_pcapng_block(UnknownBlock::new(NTE_COMBAT_CLOCK_BLOCK_TYPE, 0, &payload))
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    fn write_mod_script_event(&mut self, event: &ModScriptEvent) -> Result<(), String> {
-        let payload = encode_mod_script_block(event)
-            .ok_or_else(|| "invalid ModScript event for raw capture".to_owned())?;
-        self.writer
-            .write_pcapng_block(UnknownBlock::new(NTE_MOD_SCRIPT_BLOCK_TYPE, 0, &payload))
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
     fn finish(mut self) -> Result<(u64, u64), String> {
         self.writer
             .get_mut()
@@ -1141,6 +1097,7 @@ impl RawCaptureWriter {
     }
 }
 
+#[cfg(test)]
 fn encode_combat_clock_block(
     transition: &CombatClockTransitionSnapshot,
 ) -> [u8; NTE_COMBAT_CLOCK_BLOCK_SIZE] {
@@ -1187,6 +1144,7 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
     })
 }
 
+#[cfg(test)]
 fn encode_mod_script_block(event: &ModScriptEvent) -> Option<[u8; NTE_MOD_SCRIPT_BLOCK_SIZE]> {
     if !valid_mod_script_block_identifier(&event.mod_id)
         || !valid_mod_script_block_identifier(&event.name)
@@ -1283,6 +1241,7 @@ fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
     Some(timestamp_ticks as f64 / FILETIME_TICKS_PER_SECOND as f64)
 }
 
+#[cfg(test)]
 fn current_filetime_100ns() -> u64 {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1330,6 +1289,7 @@ fn send_game_pause_transition(
     sender.send(EngineEvent::TimeStop(event))
 }
 
+#[cfg(test)]
 fn combat_clock_error_health(error: CombatClockQueryError) -> CombatClockRuntimeHealth {
     match error {
         CombatClockQueryError::ProviderUnavailable => CombatClockRuntimeHealth::ProviderUnavailable,
@@ -1361,6 +1321,7 @@ fn publish_combat_clock_health(
     Ok(())
 }
 
+#[cfg(test)]
 fn stable_combat_clock_error_health(
     error: CombatClockQueryError,
     consecutive_provider_failures: &mut u8,
@@ -1374,6 +1335,7 @@ fn stable_combat_clock_error_health(
         .then_some(CombatClockRuntimeHealth::ProviderUnavailable)
 }
 
+#[cfg(test)]
 fn publish_combat_clock_snapshot_health(
     sender: &EngineEventSink,
     previous: &mut Option<CombatClockRuntimeHealth>,
@@ -1387,196 +1349,6 @@ fn publish_combat_clock_snapshot_health(
         previous,
         combat_clock_sample_health(transition.state_flags, false),
     )
-}
-
-fn run_plugin_monitor(
-    stop: &AtomicBool,
-    capture_started_100ns: u64,
-    raw_capture: &RawCaptureBuffer,
-    sender: &EngineEventSink,
-) {
-    let mut resource_warnings = Vec::new();
-    let enemy_catalog = load_resource(
-        ENEMY_CATALOG_PATH,
-        &mut resource_warnings,
-        load_enemy_catalog,
-    );
-    if !resource_warnings.is_empty() {
-        let _ = sender.send(EngineEvent::Warning(format!(
-            "enemy telemetry catalog: {}",
-            resource_warnings.join("; ")
-        )));
-    }
-    let mut last_sequence = 0;
-    let mut last_mod_event_sequence = 0;
-    let mut tracker = GamePauseIntervalTracker::default();
-    let capture_started = filetime_100ns_to_unix_seconds(capture_started_100ns)
-        .expect("capture FILETIME must be after Unix epoch");
-    let mut initialized = false;
-    let mut pause_state_valid = false;
-    let mut previous_pause_type_mask = 0;
-    let mut previous_combat_clock_health = None;
-    let mut consecutive_combat_clock_provider_failures = 0;
-    while !stop.load(Ordering::Relaxed) {
-        match query_combat_clock_transitions() {
-            Ok(transitions) => {
-                consecutive_combat_clock_provider_failures = 0;
-                // Every response is a bounded authoritative history snapshot.
-                // Re-publish health from its newest sample even when its
-                // sequence was already consumed; otherwise one transient IPC
-                // failure leaves time-stop adjustment degraded until the next
-                // real pause transition.
-                if publish_combat_clock_snapshot_health(
-                    sender,
-                    &mut previous_combat_clock_health,
-                    &transitions,
-                )
-                .is_err()
-                {
-                    return;
-                }
-                let mut current = Vec::new();
-                for transition in transitions {
-                    if transition.sequence <= last_sequence {
-                        continue;
-                    }
-                    last_sequence = transition.sequence;
-                    current.push(transition);
-                }
-                for transition in current {
-                    if transition.timestamp_100ns < capture_started_100ns {
-                        pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
-                        previous_pause_type_mask = if pause_state_valid {
-                            transition.pause_type_mask
-                        } else {
-                            0
-                        };
-                        continue;
-                    }
-                    if !initialized {
-                        initialized = true;
-                        raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
-                            sequence: 0,
-                            timestamp_100ns: capture_started_100ns,
-                            pause_type_mask: if pause_state_valid {
-                                previous_pause_type_mask
-                            } else {
-                                0
-                            },
-                            reserved_value: 0,
-                            state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
-                        });
-                        if pause_state_valid
-                            && let Some(event) =
-                                tracker.apply_transition(capture_started, previous_pause_type_mask)
-                            && send_game_pause_transition(sender, event).is_err()
-                        {
-                            return;
-                        }
-                    }
-                    raw_capture.push_combat_clock_transition(&transition);
-                    let Some(timestamp) =
-                        filetime_100ns_to_unix_seconds(transition.timestamp_100ns)
-                    else {
-                        continue;
-                    };
-                    pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
-                    let pause_type_mask = if pause_state_valid {
-                        transition.pause_type_mask
-                    } else {
-                        0
-                    };
-                    if let Some(event) = tracker.apply_transition(timestamp, pause_type_mask)
-                        && send_game_pause_transition(sender, event).is_err()
-                    {
-                        return;
-                    }
-                }
-                if !initialized {
-                    initialized = true;
-                    raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
-                        sequence: 0,
-                        timestamp_100ns: capture_started_100ns,
-                        pause_type_mask: if pause_state_valid {
-                            previous_pause_type_mask
-                        } else {
-                            0
-                        },
-                        reserved_value: 0,
-                        state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
-                    });
-                    if pause_state_valid
-                        && let Some(event) =
-                            tracker.apply_transition(capture_started, previous_pause_type_mask)
-                        && send_game_pause_transition(sender, event).is_err()
-                    {
-                        return;
-                    }
-                }
-            }
-            Err(error) => {
-                if let Some(health) = stable_combat_clock_error_health(
-                    error,
-                    &mut consecutive_combat_clock_provider_failures,
-                ) && publish_combat_clock_health(
-                    sender,
-                    &mut previous_combat_clock_health,
-                    health,
-                )
-                .is_err()
-                {
-                    return;
-                }
-            }
-        }
-        if let Ok(events) = query_mod_events() {
-            for event in events {
-                if event.sequence <= last_mod_event_sequence {
-                    continue;
-                }
-                last_mod_event_sequence = event.sequence;
-                if event.mod_id == "enemy-telemetry"
-                    && event.timestamp_100ns < capture_started_100ns
-                {
-                    continue;
-                }
-                let mut event = crate::engine::model::ModScriptEvent::from_bridge(
-                    event.sequence,
-                    event.timestamp_100ns,
-                    event.mod_id,
-                    event.name,
-                    event.values,
-                );
-                if event.mod_id == "enemy-telemetry"
-                    && matches!(event.name.as_str(), "enemy.identity" | "enemy.hit_target")
-                    && let [_, config_hash, _] = event.values.as_slice()
-                {
-                    event.enemy_identity = enemy_catalog.get(*config_hash).cloned();
-                }
-                raw_capture.push_mod_script_event(&event);
-                if sender.send(EngineEvent::ModScript(event)).is_err() {
-                    return;
-                }
-            }
-        }
-        thread::sleep(COMBAT_CLOCK_POLL_INTERVAL);
-    }
-    if tracker.pause_type_mask != 0 {
-        let ended_100ns = current_filetime_100ns();
-        let transition = CombatClockTransitionSnapshot {
-            sequence: last_sequence.saturating_add(1),
-            timestamp_100ns: ended_100ns,
-            pause_type_mask: 0,
-            reserved_value: 0,
-            state_flags: COMBAT_CLOCK_PAUSE_VALID,
-        };
-        raw_capture.push_combat_clock_transition(&transition);
-        if let Some(timestamp) = filetime_100ns_to_unix_seconds(ended_100ns)
-            && let Some(event) = tracker.apply_transition(timestamp, 0)
-        {
-            let _ = send_game_pause_transition(sender, event);
-        }
-    }
 }
 
 fn npcap_library_path() -> PathBuf {
@@ -7347,19 +7119,6 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         raw_capture_status
     )));
 
-    // The plugin monitor starts only after the capture link type has been frozen and the raw
-    // writer has emitted its matching interface block, so no custom block can precede it.
-    let monitor_stop = Arc::new(AtomicBool::new(false));
-    let monitor_thread = {
-        let stop = Arc::clone(&monitor_stop);
-        let raw_capture = raw_capture.clone();
-        let sender = sender.clone();
-        let capture_started_100ns = current_filetime_100ns();
-        thread::spawn(move || {
-            run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
-        })
-    };
-
     // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
     // the FIFO parser queue. Both the frame count and payload-byte high-water are reliable
     // backpressure bounds: full blocks the acquisition producer, no frame is dropped, and a
@@ -7440,13 +7199,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
     }
     let frame_queue_high_water = frame_sender.byte_high_water_mark();
     drop(frame_sender);
-    monitor_stop.store(true, Ordering::Relaxed);
-    let monitor_panicked = monitor_thread.join().is_err();
     if parser_thread.join().is_err() && loop_result.is_ok() {
         loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
-    }
-    if monitor_panicked && loop_result.is_ok() {
-        loop_result = Err("capture plugin monitor stopped unexpectedly".to_owned());
     }
     if frame_queue_high_water > CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER && loop_result.is_ok() {
         loop_result = Err("capture parser queue exceeded its byte budget".to_owned());

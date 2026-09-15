@@ -368,6 +368,7 @@ impl From<&CaptureQualitySummary> for BattleQualityDto {
         Self {
             source: match summary.source {
                 CaptureQualitySource::Live => "live",
+                CaptureQualitySource::Plugin => "plugin",
                 CaptureQualitySource::PcapngReplay => "pcapng_replay",
                 CaptureQualitySource::JsonReplay => "json_replay",
                 CaptureQualitySource::Unknown => "unknown",
