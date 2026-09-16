@@ -172,7 +172,7 @@ function SkillsReady({
 
   return (
     <>
-      <div className="grid grid-cols-2 border-y border-border/70 bg-background/25 [&>*:nth-child(odd)]:border-r [&>*:nth-child(-n+2)]:border-b min-[880px]:grid-cols-4 min-[880px]:[&>*]:border-b-0 min-[880px]:[&>*:not(:last-child)]:border-r">
+      <div className="skills-metrics grid grid-cols-2 gap-3 min-[880px]:grid-cols-4">
         <Metric
           icon={BarChart3}
           label="Attributed Damage"
@@ -199,21 +199,21 @@ function SkillsReady({
         />
       </div>
 
-      <div className="grid min-h-[30rem] flex-1 overflow-hidden border-y border-border/70 bg-background/25 min-[920px]:grid-cols-[17rem_minmax(0,1fr)]">
-        <aside className="border-b border-border/70 p-2.5 min-[920px]:border-r min-[920px]:border-b-0">
+      <div className="skills-workspace grid min-h-[30rem] flex-1 overflow-hidden rounded-xl border bg-card min-[1040px]:grid-cols-[15rem_minmax(0,1fr)]">
+        <aside className="border-b border-border/70 p-2.5 min-[1040px]:border-r min-[1040px]:border-b-0">
           <div className="mb-2 flex items-center justify-between gap-3 px-1.5">
             <h2 className="text-sm font-semibold">{t("Character")}</h2>
             <span className="font-mono text-[11px] text-muted-foreground">
               {characters.length}
             </span>
           </div>
-          <div className="flex gap-1.5 overflow-x-auto pb-1 min-[920px]:max-h-[calc(100vh-15rem)] min-[920px]:flex-col min-[920px]:overflow-x-hidden min-[920px]:overflow-y-auto">
+          <div className="flex gap-1.5 overflow-x-auto pb-1 min-[1040px]:max-h-[calc(100vh-15rem)] min-[1040px]:flex-col min-[1040px]:overflow-x-hidden min-[1040px]:overflow-y-auto">
             <button
               type="button"
               aria-pressed={selectedCharacterId === null}
               onClick={() => onSelectCharacter(null)}
               className={cn(
-                "flex min-w-44 items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors min-[920px]:min-w-0",
+                "flex min-w-44 items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors min-[1040px]:min-w-0",
                 selectedCharacterId === null
                   ? "bg-primary text-primary-foreground hover:bg-primary"
                   : "hover:bg-muted/70",
@@ -445,7 +445,7 @@ function CharacterButton({
       aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "flex min-w-52 items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors min-[920px]:min-w-0",
+        "flex min-w-52 items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors min-[1040px]:min-w-0",
         selected
           ? "bg-primary text-primary-foreground hover:bg-primary"
           : "hover:bg-muted/70",

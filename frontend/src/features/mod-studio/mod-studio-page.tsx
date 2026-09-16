@@ -222,7 +222,7 @@ export function ModStudioWorkspace() {
         <ModMarketPanel onInstalled={refresh} />
       ) : (
         panel && (
-          <>
+          <div className="grid items-start gap-5 min-[1200px]:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle>{t("Combat data")}</CardTitle>
@@ -385,7 +385,7 @@ export function ModStudioWorkspace() {
                 </p>
               </CardContent>
             </Card>
-          </>
+          </div>
         )
       )}
       <AlertDialog
