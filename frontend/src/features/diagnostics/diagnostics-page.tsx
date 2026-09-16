@@ -174,7 +174,7 @@ export function DiagnosticsPage() {
           <DiagnosticsLoadError error={state.error} onRetry={retry} />
         ) : null}
         {contentKind === "ready" && snapshot ? (
-          <div className="mx-auto w-full max-w-[1800px]">
+          <div className="diagnostics-sections mx-auto w-full max-w-[1600px]">
             <EnvironmentSection snapshot={snapshot} />
             <HistoryArchiveWarning
               droppedCount={snapshot.capture.droppedHistoryArchives}

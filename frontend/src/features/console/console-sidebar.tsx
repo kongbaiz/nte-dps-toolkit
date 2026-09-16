@@ -123,7 +123,7 @@ export function ConsoleSidebar({
   return (
     <aside
       className={cn(
-        "flex w-52 shrink-0 flex-col border-r bg-sidebar px-3 py-3 text-sidebar-foreground transition-[width,padding] duration-[var(--motion-duration-slow)] [transition-timing-function:var(--motion-ease-emphasized)]",
+        "console-sidebar flex w-52 shrink-0 flex-col border-r bg-sidebar px-3 py-3 text-sidebar-foreground transition-[width,padding] duration-[var(--motion-duration-slow)] [transition-timing-function:var(--motion-ease-emphasized)]",
         presentation.collapsed && "w-14 px-1.5",
       )}
       aria-label={t("Console navigation")}

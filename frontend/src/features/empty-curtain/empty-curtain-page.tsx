@@ -105,6 +105,10 @@ export function EmptyCurtainPage() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <header className="console-section-heading">
+        <h1>{t("Console Loadout")}</h1>
+        <p>{t("Equipment inventory and character loadouts")}</p>
+      </header>
       {model.notice ? (
         <FloatingNotice error={model.notice} onClose={model.clearNotice} />
       ) : null}
