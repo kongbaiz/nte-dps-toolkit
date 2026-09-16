@@ -3,7 +3,10 @@
 use crate::{
     engine::{
         capture::EngineEventSink,
-        model::{EngineEvent, Hit, HitCharacterSource, HitDirection},
+        model::{
+            CombatClockRuntimeHealth, EngineEvent, Hit, HitCharacterSource, HitDirection,
+            TimeStopEvent,
+        },
     },
     platform::toolkit::{MAX_BLOB_BYTES, ToolkitClient, ToolkitError},
 };
@@ -50,9 +53,27 @@ struct Report {
     encounter_id: String,
     totals: Totals,
     quality: ReportQuality,
+    game_clock: GameClock,
     participants: Vec<Participant>,
     events: Vec<Damage>,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GameClock {
+    valid: bool,
+    status: String,
+    transitions: Vec<ClockTransition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClockTransition {
+    world_seconds: f64,
+    unix_us: u64,
+    pause_mask: u32,
+    boundary: bool,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Totals {
@@ -99,9 +120,11 @@ pub struct ReportCursor {
     identity: Option<(u64, String)>,
     consumed: u64,
     previous: Vec<Damage>,
+    clock: Vec<ClockTransition>,
+    clock_health: Option<CombatClockRuntimeHealth>,
 }
 impl ReportCursor {
-    pub fn ingest(&mut self, bytes: &[u8]) -> Result<Vec<Hit>, ToolkitError> {
+    pub fn ingest(&mut self, bytes: &[u8]) -> Result<Vec<EngineEvent>, ToolkitError> {
         if bytes.len() > MAX_BLOB_BYTES {
             return Err(ToolkitError::TooLarge);
         }
@@ -139,6 +162,39 @@ impl ReportCursor {
         {
             return Err(ToolkitError::DataGap);
         }
+        // A full report is an append-only clock history in the same capture generation.
+        // Validate everything before advancing either cursor so a failed report is retryable.
+        let clock = &report.game_clock;
+        if clock.transitions.len() > 4096 {
+            return Err(ToolkitError::TooLarge);
+        }
+        if clock.status.len() > 128
+            || clock.transitions.iter().any(|t| {
+                !t.world_seconds.is_finite()
+                    || t.world_seconds < 0.0
+                    || t.unix_us > 9_007_199_254_740_991
+                    || t.pause_mask >= 128
+            })
+            || clock.transitions.windows(2).any(|pair| {
+                pair[1].unix_us < pair[0].unix_us || pair[1].world_seconds < pair[0].world_seconds
+            })
+            || (clock.valid && (clock.status != "ok" || clock.transitions.is_empty()))
+        {
+            return Err(ToolkitError::InvalidProtocol);
+        }
+        if clock.transitions.len() < self.clock.len()
+            || clock.transitions[..self.clock.len()] != self.clock
+        {
+            return Err(ToolkitError::DataGap);
+        }
+        // Native validity can preserve the previous last-hit interval after a later
+        // sampling failure. Conservatively expose unobserved boundaries as unavailable.
+        let clock_available = clock.valid && clock.transitions.iter().skip(1).all(|t| t.boundary);
+        let health = if clock_available {
+            CombatClockRuntimeHealth::Available
+        } else {
+            CombatClockRuntimeHealth::DataUnavailable
+        };
         let mut participants = HashMap::new();
         for p in &report.participants {
             if p.role_id.len() > 64
@@ -233,12 +289,50 @@ impl ReportCursor {
                 wire_event: None,
             });
         }
+        let mut timed = Vec::with_capacity(hits.len() + clock.transitions.len() - self.clock.len());
+        let mut mask = self.clock.last().map_or(0, |t| t.pause_mask);
+        for transition in &clock.transitions[self.clock.len()..] {
+            let timestamp = transition.unix_us as f64 / 1_000_000.0;
+            let event = match (mask, transition.pause_mask) {
+                (0, 0) => None,
+                (0, next) => Some(TimeStopEvent::GamePauseStarted {
+                    timestamp,
+                    pause_type_mask: next,
+                }),
+                (old, 0) => Some(TimeStopEvent::GamePauseEnded {
+                    timestamp,
+                    pause_type_mask: old,
+                }),
+                (old, next) if old != next => Some(TimeStopEvent::GamePauseMaskChanged {
+                    timestamp,
+                    pause_type_mask: next,
+                }),
+                _ => None,
+            };
+            if let Some(event) = event {
+                timed.push((transition.unix_us, EngineEvent::TimeStop(event)));
+            }
+            mask = transition.pause_mask;
+        }
+        for (hit, raw) in hits.into_iter().zip(&report.events[retained..]) {
+            timed.push((raw.unix_us, EngineEvent::Hit(Box::new(hit))));
+        }
+        // Pause transitions precede hits at the same timestamp. This preserves
+        // authoritative event order through the existing capture/reducer path.
+        timed.sort_by_key(|(timestamp, _)| *timestamp);
+        let mut events = Vec::with_capacity(timed.len() + 1);
+        if self.clock_health != Some(health) {
+            events.push(EngineEvent::CombatClockHealth(health));
+        }
+        events.extend(timed.into_iter().map(|(_, event)| event));
+        self.clock_health = Some(health);
+        self.clock = report.game_clock.transitions;
         if count > 0 || !identity.1.is_empty() {
             self.identity = Some(identity);
         }
         self.consumed = count;
         self.previous = report.events;
-        Ok(hits)
+        Ok(events)
     }
 }
 
@@ -271,8 +365,8 @@ pub fn run(pid: u32, sender: EngineEventSink, stop: Arc<AtomicBool>) {
         while !cancelled() {
             let status: CombatStatus = client.json(100, 0, "", &cancelled)?;
             let bytes = client.call(107, 0, "", &cancelled)?;
-            for hit in cursor.ingest(&bytes)? {
-                if cancelled() || sender.send(EngineEvent::Hit(Box::new(hit))).is_err() {
+            for event in cursor.ingest(&bytes)? {
+                if cancelled() || sender.send(event).is_err() {
                     return Err(ToolkitError::Cancelled);
                 }
             }
@@ -332,16 +426,159 @@ fn wait_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn clock_report() -> serde_json::Value {
+        let mut value = report(100.0, "direct");
+        let mut second = value["events"][0].clone();
+        second["unixUs"] = serde_json::json!(11_000_000);
+        value["events"].as_array_mut().unwrap().push(second);
+        value["totals"]["allHits"] = serde_json::json!(2);
+        value["gameClock"] = serde_json::json!({"valid":true,"status":"ok","transitions":[
+            {"worldSeconds":1.0,"unixUs":1_000_000,"pauseMask":0,"boundary":false},
+            {"worldSeconds":3.0,"unixUs":3_000_000,"pauseMask":4,"boundary":true},
+            {"worldSeconds":7.0,"unixUs":7_000_000,"pauseMask":0,"boundary":true}
+        ]});
+        value
+    }
+
+    #[test]
+    fn plugin_pause_intervals_reach_shared_reducer_and_duplicate_is_noop() {
+        use crate::{core::reducer::apply_engine_event, engine::model::CombatState};
+        let mut cursor = ReportCursor::default();
+        let report = clock_report();
+        let bytes = serde_json::to_vec(&report).unwrap();
+        let mut state = CombatState::default();
+        for event in cursor.ingest(&bytes).unwrap() {
+            apply_engine_event(&mut state, event);
+        }
+        assert_eq!(
+            state.combat_clock_health,
+            CombatClockRuntimeHealth::Available
+        );
+        assert_eq!(state.duration_with_time_stop(false), 10.0);
+        assert_eq!(state.duration_with_time_stop(true), 6.0);
+        assert!(cursor.ingest(&bytes).unwrap().is_empty());
+
+        let mut next = report;
+        next["gameClock"]["transitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "worldSeconds":12.0,"unixUs":12_000_000,"pauseMask":4,"boundary":true
+            }));
+        let events = cursor.ingest(&serde_json::to_vec(&next).unwrap()).unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "a pause edge must be delivered even without new hits"
+        );
+        assert!(matches!(
+            &events[0],
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted { .. })
+        ));
+        assert!(
+            cursor
+                .ingest(&serde_json::to_vec(&next).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn invalid_or_missing_plugin_clock_never_claims_adjustment() {
+        let mut value = clock_report();
+        value["gameClock"]["valid"] = serde_json::json!(false);
+        value["gameClock"]["status"] = serde_json::json!("clock_context_changed");
+        let events = ReportCursor::default()
+            .ingest(&serde_json::to_vec(&value).unwrap())
+            .unwrap();
+        assert!(matches!(
+            events.first(),
+            Some(EngineEvent::CombatClockHealth(
+                CombatClockRuntimeHealth::DataUnavailable
+            ))
+        ));
+        value.as_object_mut().unwrap().remove("gameClock");
+        assert_eq!(
+            ReportCursor::default()
+                .ingest(&serde_json::to_vec(&value).unwrap())
+                .unwrap_err(),
+            ToolkitError::InvalidProtocol
+        );
+    }
+
+    #[test]
+    fn plugin_clock_rejects_changed_prefix_and_bad_input_without_advancing() {
+        let good = clock_report();
+        let mut cursor = ReportCursor::default();
+        let mut invalid = good.clone();
+        invalid["gameClock"]["transitions"][1]["pauseMask"] = serde_json::json!(128);
+        assert_eq!(
+            cursor
+                .ingest(&serde_json::to_vec(&invalid).unwrap())
+                .unwrap_err(),
+            ToolkitError::InvalidProtocol
+        );
+        let mut reversed = good.clone();
+        reversed["gameClock"]["transitions"][1]["unixUs"] = serde_json::json!(0);
+        assert_eq!(
+            cursor
+                .ingest(&serde_json::to_vec(&reversed).unwrap())
+                .unwrap_err(),
+            ToolkitError::InvalidProtocol
+        );
+        let mut oversized = good.clone();
+        oversized["gameClock"]["transitions"] =
+            serde_json::json!(vec![good["gameClock"]["transitions"][0].clone(); 4097]);
+        assert_eq!(
+            cursor
+                .ingest(&serde_json::to_vec(&oversized).unwrap())
+                .unwrap_err(),
+            ToolkitError::TooLarge
+        );
+        assert!(
+            !cursor
+                .ingest(&serde_json::to_vec(&good).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        invalid = good.clone();
+        invalid["gameClock"]["transitions"][1]["unixUs"] = serde_json::json!(4_000_000);
+        assert_eq!(
+            cursor
+                .ingest(&serde_json::to_vec(&invalid).unwrap())
+                .unwrap_err(),
+            ToolkitError::DataGap
+        );
+        assert!(
+            cursor
+                .ingest(&serde_json::to_vec(&good).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
     fn report(damage: f64, quality: &str) -> serde_json::Value {
         serde_json::json!({"schemaVersion":14,"captureGeneration":1,"encounterId":"one",
             "totals":{"allHits":1},"quality":{"droppedEvents":0},
+            "gameClock":{"valid":false,"status":"pause_clock_not_recorded","transitions":[]},
             "participants":[{"objectIndex":1,"roleId":"1023","displayName":"role"}],
             "events":[{"unixUs":1000000,"damage":damage,"attackerObjectIndex":1,"victimObjectIndex":2,
             "quality":quality,"direction":"outgoing","victimName":"target","victimHp":null,"victimMaxHp":null,
             "skillName":"skill","damageAttribute":"physical","damageLane":"direct"}]})
     }
     fn ingest(c: &mut ReportCursor, value: &serde_json::Value) -> Result<Vec<Hit>, ToolkitError> {
-        c.ingest(&serde_json::to_vec(value).unwrap())
+        c.ingest(&serde_json::to_vec(value).unwrap()).map(|events| {
+            events
+                .into_iter()
+                .filter_map(|event| {
+                    if let EngineEvent::Hit(hit) = event {
+                        Some(*hit)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
     }
     #[test]
     fn plugin_reports_exact_damage_no_duplicate_and_keep_unknown() {

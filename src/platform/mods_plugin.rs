@@ -2654,41 +2654,7 @@ mod tests {
 
     const NATIVE_IPC_HEADER: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/include/nte_mods_ipc.h"
-    ));
-    const NATIVE_HOST_API: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/host_api.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_IPC_TRANSPORT: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/ipc_transport.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_OFFSET_RESOLVER: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/offset_resolver.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_SIGNATURE_POLICY: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/signature_policy.hpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_MOD_RUNTIME: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/mod_runtime.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_PLUGIN_RUNTIME: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/plugin_runtime.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_PLUGIN_RUNTIME_HEADER: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/plugin_runtime.hpp"
+        "/src/platform/fixtures/legacy_mods_ipc_v7.h"
     ));
     fn native_define(name: &str) -> u64 {
         let prefix = format!("#define {name} ");
@@ -2746,7 +2712,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_wire_constants_match_the_native_ipc_header() {
+    fn rust_wire_constants_match_the_frozen_legacy_ipc_header() {
         assert_eq!(native_define("NTE_MODS_IPC_MAGIC"), IPC_MAGIC as u64);
         assert_eq!(
             native_define("NTE_MODS_IPC_DELIVERY_ACK_MAGIC"),
@@ -2857,55 +2823,6 @@ mod tests {
             native_enum("NTE_MODS_STATUS_MOD_DISABLED"),
             MAX_PLUGIN_STATUS as u64
         );
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn native_runtime_presence_and_offset_scanner_are_bounded() {
-        assert!(NATIVE_IPC_TRANSPORT.contains("bool OpenRuntimePresence()"));
-        assert!(NATIVE_IPC_TRANSPORT.contains("LocalIpcSecurityAttributes security;"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("OpenRuntimePresence()"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("CloseRuntimePresence()"));
-        assert!(NATIVE_OFFSET_RESOLVER.contains("RESOLUTION_RETRY_MS = 1000"));
-        assert!(NATIVE_OFFSET_RESOLVER.contains("find_offsets::ResolveCurrentProcess("));
-        assert!(NATIVE_OFFSET_RESOLVER.contains("if (now < retry_at)"));
-        assert!(
-            NATIVE_OFFSET_RESOLVER.contains("InterlockedCompareExchange(&resolution_state, 1, 0)")
-        );
-        assert!(!NATIVE_OFFSET_RESOLVER.contains("ResolveKnownProfile("));
-        assert!(NATIVE_SIGNATURE_POLICY.contains("SelectionResult::Ambiguous"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("ResolveViewportTickIndex"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("VIEWPORT_TICK_SCAN_RADIUS = 8"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("SelectPreferredSemanticViewportTick"));
-    }
-    #[test]
-    fn native_host_exposes_generic_name_hash_reading_without_enemy_services() {
-        assert!(NATIVE_HOST_API.contains("bool ReadNameHash("));
-        assert!(!NATIVE_HOST_API.contains("ReadEnemyIdentitySnapshot"));
-        assert!(!NATIVE_IPC_HEADER.contains("NTE_MODS_IPC_QUERY_ENEMY_IDENTITY"));
-        assert!(!NATIVE_IPC_HEADER.contains("NteEnemyIdentitySnapshot"));
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn process_event_buffer_covers_the_damage_callback_payload() {
-        assert!(
-            NATIVE_PLUGIN_RUNTIME_HEADER
-                .contains("constexpr size_t PROCESS_EVENT_PARAM_CAPACITY = 512;")
-        );
-        assert!(NATIVE_HOST_API.contains("constexpr size_t FUNCTION_PARAM_SIZE_OFFSET = 0xB6;"));
-        assert!(
-            NATIVE_MOD_RUNTIME.contains("ParseCall(line, \"unreal.watch_array_u64\", arguments)")
-        );
-        assert!(NATIVE_MOD_RUNTIME.contains("\"unreal.watch_class_array_u64\""));
-        assert!(NATIVE_MOD_RUNTIME.contains("\"event.captured_u64\""));
-        assert!(
-            NATIVE_PLUGIN_RUNTIME
-                .contains("constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENTS = 32;")
-        );
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("event.captured_u64 = captured_u64;"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("process_event_class_hooks"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("ReplaceProcessEventVTableEntry"));
     }
 
     #[test]
@@ -3233,16 +3150,6 @@ mod tests {
         assert!(decode_mod_logs(&bytes, 29).is_err());
     }
 
-    #[cfg(feature = "desktop")]
-    #[test]
-    fn native_hot_reload_keeps_the_last_working_program_and_quarantines_faults() {
-        assert!(NATIVE_MOD_RUNTIME.contains("candidate_enabled_mod_set"));
-        assert!(NATIVE_MOD_RUNTIME.contains("previous version kept."));
-        assert!(NATIVE_MOD_RUNTIME.contains("ExecuteProgramGuarded"));
-        assert!(NATIVE_MOD_RUNTIME.contains("quarantined_programs"));
-        assert!(NATIVE_MOD_RUNTIME.contains("CopyModLogs"));
-    }
-
     #[test]
     fn combat_clock_response_rejects_legacy_timer_payloads() {
         let mut bytes = [0_u8; RESPONSE_SIZE];
@@ -3492,29 +3399,6 @@ mod tests {
                 .any(|line| line == "equipment")
         );
         fs::remove_dir_all(workspace).unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn native_runtime_exposes_generic_mod_extension_abi() {
-        for api in [
-            "memory.write_u64",
-            "unreal.find_function",
-            "unreal.params_clear",
-            "unreal.params_write_u64",
-            "unreal.params_read_u64",
-            "unreal.call",
-            "unreal.watch",
-            "unreal.watch_class_array_u64",
-            "unreal.unwatch",
-            "event.next",
-            "event.read_u64",
-        ] {
-            assert!(NATIVE_MOD_RUNTIME.contains(api), "{api} is missing");
-        }
-        assert!(NATIVE_HOST_API.contains("InvokeReflectedFunction"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("HookedProcessEvent"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("ResetProcessEventWatches"));
     }
 
     #[test]

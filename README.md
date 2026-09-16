@@ -101,25 +101,20 @@ nte-dps-tool.exe
 
 纯抓包模式可完成实时 DPS、角色/技能统计、历史对比、深渊统计、JSON/PCAPNG 回放等主要工作流。
 
-### 可选原生插件模式
+### 可选 UE Tools 模式
 
-部分高级能力，例如使用游戏权威暂停状态进行精确时停扣除，依赖可选原生插件。该模式：
+插件模式通过独立提供的已编译 UE Tools Toolkit 包采集数据，使用 Toolkit v1 契约。
+公开构建只消费二进制包，不包含 UE Tools 或 Mod Loader 源码。
+默认仍为抓包模式；插件模式的安装与状态在 Console 中管理。
 
-- 默认不启用，必须由用户在 **Console → Mod 工坊**中明确确认；
-- 默认使用代理加载，把 `plugins/dwmapi.dll` 复制到所选客户端的 `HTGame.exe`
-  同级目录；
-- 仅当代理加载无效时，改用与 `nte-dps-tool.exe` 同目录的
-  `nte-mod-loader.exe`；
-- 使用受限脚本、只读内存读取、事件订阅和明确的 capability 白名单；
-- 具有与纯抓包模式不同的风险边界，首次启用时确认风险；确认结果和上次使用的加载方式会写入配置文件。
+计时口径由数据模式决定，不再提供战斗时钟设置：抓包固定使用现实时间，
+插件默认扣除权威暂停区间；插件时钟缺失或无效时显示降级状态并使用现实时间。
+历史记录保留归档时的计时口径。空幕相关 Toolkit 接口尚未实现，现有待调整函数保留。
 
-备用 Loader 在发布包中的位置如下，不需要把 `nte-mod-loader.exe` 移到游戏目录：
-
-```text
-nte-dps-tool.exe
-nte-mod-loader.exe
-plugins/dwmapi.dll
-```
+旧原生 Mod 插件源码已移除，旧脚本和装备 IPC 与 Toolkit v1 不兼容。
+Loader 已迁入 UE Tools 私有工作区，当前公开发布流程不包含它。
+二进制目录说明见 [plugins/README.md](plugins/README.md)，
+残留引用检查见 [旧 Mod 引用清单](docs/LEGACY_MOD_REFERENCES.md)。
 
 ---
 
