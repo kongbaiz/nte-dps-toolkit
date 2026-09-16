@@ -247,7 +247,7 @@ export function CharacterDataPage() {
           onRetry={() => void model.reload(false)}
         />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(260px,340px)_minmax(0,1fr)] max-[980px]:grid-cols-1 max-[980px]:grid-rows-[220px_minmax(0,1fr)]">
+        <div className="character-data-workspace grid min-h-0 flex-1 grid-cols-[minmax(220px,280px)_minmax(0,1fr)] max-[980px]:grid-cols-1 max-[980px]:grid-rows-[180px_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-r max-[980px]:border-r-0 max-[980px]:border-b">
             <div className="relative shrink-0 border-b p-3">
               <Search

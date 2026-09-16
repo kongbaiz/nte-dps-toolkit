@@ -66,14 +66,18 @@ export function SettingsPage() {
   const catalogActions: SettingsCatalogActions = settings;
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col overflow-hidden p-3">
+    <section className="console-preferences flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="console-section-heading">
+        <h1>{t("Settings")}</h1>
+        <p>{t("Interface, capture and HUD preferences")}</p>
+      </header>
       {settings.mutationError ? (
         <MutationError
           error={settings.mutationError}
           onDismiss={settings.clearMutationError}
         />
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto p-px pr-1 pb-1">
+      <div className="console-preferences-scroll min-h-0 flex-1 overflow-y-auto">
         {settings.state.status === "loading" ? (
           <SettingsLoading />
         ) : settings.state.status === "error" ? (
@@ -82,7 +86,7 @@ export function SettingsPage() {
             onRetry={settings.refresh}
           />
         ) : (
-          <div className="grid grid-cols-1 items-start gap-3 min-[900px]:grid-cols-2">
+          <div className="settings-columns grid grid-cols-1 items-start gap-4 min-[1100px]:grid-cols-2">
             <PrimarySettingsColumn
               snapshot={settings.state.snapshot}
               pendingAction={settings.pendingAction}
