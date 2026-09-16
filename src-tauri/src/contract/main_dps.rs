@@ -184,7 +184,7 @@ impl MainDpsSnapshot {
             adapter_version: env!("CARGO_PKG_VERSION"),
             capture: capture_status.into(),
             dps_time: DpsTimeRuntimeSnapshot::new(
-                config.dps_time_mode,
+                state.main_presented_dps_time_mode()?,
                 state.main_presented_combat_clock_health()?,
             ),
             processing_paused,

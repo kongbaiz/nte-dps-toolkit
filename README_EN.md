@@ -101,16 +101,23 @@ The default workflow uses Npcap to **passively read relevant local UDP traffic**
 
 Packet-only mode supports the main live DPS, character/skill, history, Abyss, and JSON/PCAPNG replay workflows.
 
-### Optional native plugin mode
+### Optional UE Tools mode
 
-Some advanced features — including authoritative pause-state timing for precise time-stop deduction — require the optional native plugin. This mode:
+Plugin mode consumes a separately supplied compiled UE Tools Toolkit bundle through
+Toolkit v1. The public build contains neither UE Tools nor Mod Loader source.
+Packet capture remains the default; Console manages plugin installation and status.
 
-- is disabled by default and requires explicit confirmation in **Console → Mod Workshop**;
-- installs the provided `dwmapi.dll` beside `HTGame.exe` for the selected client;
-- uses restricted scripts, read-only memory access, event subscriptions, and an explicit capability allowlist;
-- has a different technical and risk boundary from packet-only capture. Read the in-app disclosure and [`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md) before enabling it.
+Timing follows the data mode, with no separate combat-clock setting: packet capture
+uses wall time, while plugin mode deducts authoritative pause intervals by default.
+Missing or invalid plugin clock data falls back to wall time with a visible degraded
+status. Saved rounds retain their archived timing basis. Empty Curtain Toolkit
+interfaces are pending; the existing placeholder functions remain.
 
-Close the game before changing plugin installation state. If another `dwmapi.dll` already exists in the target directory, the tool preserves it and reports a conflict instead of overwriting or deleting another mod.
+The old native Mod plugin source has been removed. Its scripts and equipment IPC
+are not compatible with Toolkit v1. Mod Loader now belongs to the private UE Tools
+workspace and is not included by the public release workflow.
+See [binary layout](plugins/README.md) and the
+[legacy reference audit](docs/LEGACY_MOD_REFERENCES.md).
 
 ---
 

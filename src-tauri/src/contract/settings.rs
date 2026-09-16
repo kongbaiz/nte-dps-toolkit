@@ -19,7 +19,7 @@ use nte_dps_tool::{
 
 use crate::contract::dps_time::DpsTimeRuntimeSnapshot;
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 9;
+pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -232,7 +232,6 @@ pub(crate) struct CaptureSettingsInput {
     pub separate_reaction_damage: bool,
     pub auto_round_after_idle: bool,
     pub auto_round_idle_seconds: u32,
-    pub dps_time_mode: String,
     pub passthrough_hotkey: HotkeyBindingSnapshot,
 }
 
@@ -288,9 +287,9 @@ impl SettingsSnapshot {
                     nte_dps_tool::storage::config::AUTO_ROUND_IDLE_SECONDS_MIN,
                 auto_round_idle_seconds_max:
                     nte_dps_tool::storage::config::AUTO_ROUND_IDLE_SECONDS_MAX,
-                dps_time_mode: dps_time_mode_id(config.dps_time_mode),
+                dps_time_mode: dps_time_mode_id(config.dps_time_mode()),
                 dps_time_runtime: DpsTimeRuntimeSnapshot::new(
-                    config.dps_time_mode,
+                    config.dps_time_mode(),
                     combat_clock_health,
                 ),
                 passthrough_hotkey: hotkey_binding_snapshot(config.passthrough_hotkey),
