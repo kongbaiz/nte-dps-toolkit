@@ -136,7 +136,7 @@ impl MainDpsDetailSnapshot {
             nte_dps_tool::engine::model::CombatClockRuntimeHealth::Available
                 | nte_dps_tool::engine::model::CombatClockRuntimeHealth::Recorded
         ) && matches!(
-            config.dps_time_mode,
+            state.main_presented_dps_time_mode()?,
             nte_dps_tool::storage::config::DpsTimeMode::TimeStopAdjusted
         );
         let generation = state.next_sequence().to_string();

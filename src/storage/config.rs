@@ -1041,7 +1041,6 @@ pub struct UiConfig {
     /// Manual capture-NIC override (the Npcap device `name`, e.g. `\Device\NPF_{GUID}`). `None`
     /// keeps automatic detection; `Some(name)` pins capture to that interface as a VPN fallback.
     pub manual_capture_device: Option<String>,
-    pub dps_time_mode: DpsTimeMode,
     pub timeline_bucket_seconds: f32,
     pub timeline_dps_view_mode: TimelineDpsViewMode,
     pub hud: HudConfig,
@@ -1123,7 +1122,6 @@ impl Default for UiConfig {
             auto_round_after_idle: false,
             auto_round_idle_seconds: AUTO_ROUND_IDLE_SECONDS_DEFAULT,
             manual_capture_device: None,
-            dps_time_mode: DpsTimeMode::default(),
             timeline_bucket_seconds: TIMELINE_BUCKET_SECONDS_DEFAULT,
             timeline_dps_view_mode: TimelineDpsViewMode::default(),
             hud: HudConfig::default(),
@@ -1148,6 +1146,14 @@ impl Default for UiConfig {
 }
 
 impl UiConfig {
+    /// Timing follows the data source; legacy serialized clock preferences are ignored.
+    pub const fn dps_time_mode(&self) -> DpsTimeMode {
+        match self.data_mode {
+            DataMode::PacketCapture => DpsTimeMode::RealTime,
+            DataMode::Plugin => DpsTimeMode::TimeStopAdjusted,
+        }
+    }
+
     pub fn sanitized(mut self) -> Self {
         self.main_dps_always_on_top =
             Some(self.main_dps_always_on_top.unwrap_or(self.always_on_top));
@@ -1453,6 +1459,28 @@ pub fn save(path: &Path, config: &UiConfig) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_mode_owns_clock_policy_and_ignores_legacy_preference() {
+        for (mode, expected) in [
+            (DataMode::PacketCapture, DpsTimeMode::RealTime),
+            (DataMode::Plugin, DpsTimeMode::TimeStopAdjusted),
+        ] {
+            for legacy in ["real_time", "time_stop_adjusted", "retired-value"] {
+                let mut json = serde_json::to_value(UiConfig::default()).unwrap();
+                json["data_mode"] = serde_json::to_value(mode).unwrap();
+                json["dps_time_mode"] = serde_json::json!(legacy);
+                let config: UiConfig = serde_json::from_value(json).unwrap();
+                assert_eq!(config.dps_time_mode(), expected);
+                assert!(
+                    serde_json::to_value(config)
+                        .unwrap()
+                        .get("dps_time_mode")
+                        .is_none()
+                );
+            }
+        }
+    }
 
     fn temp_config_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

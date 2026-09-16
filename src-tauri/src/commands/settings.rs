@@ -21,8 +21,8 @@ use nte_dps_tool::{
     platform::update_http,
     storage::{
         config::{
-            AccentColor, DpsTimeMode, GlobalHotkeyAction, HotkeyBinding, HotkeyKey,
-            MainDpsAttribution, MainDpsDisplayConfig, MainDpsMetric, ThemePreset, UiDensity,
+            AccentColor, GlobalHotkeyAction, HotkeyBinding, HotkeyKey, MainDpsAttribution,
+            MainDpsDisplayConfig, MainDpsMetric, ThemePreset, UiDensity,
         },
         i18n::{self, Language},
         io_util::atomic_write_text,
@@ -374,7 +374,6 @@ pub(crate) fn set_settings_capture(
     {
         return Err(CommandError::invalid_settings_input());
     }
-    let dps_time_mode = parse_dps_time_mode(&settings.dps_time_mode)?;
     let passthrough_hotkey = parse_hotkey_binding(settings.passthrough_hotkey)?;
     if passthrough_hotkey.is_reserved()
         || hotkey_conflicts(
@@ -399,7 +398,6 @@ pub(crate) fn set_settings_capture(
             settings.separate_reaction_damage,
             settings.auto_round_after_idle,
             settings.auto_round_idle_seconds,
-            dps_time_mode,
             passthrough_hotkey,
         )
         .map_err(settings_save_error)?;
@@ -1072,14 +1070,6 @@ fn parse_density(value: &str) -> Result<UiDensity, CommandError> {
         "compact" => Ok(UiDensity::Compact),
         "cozy" => Ok(UiDensity::Cozy),
         "comfortable" => Ok(UiDensity::Comfortable),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
-fn parse_dps_time_mode(value: &str) -> Result<DpsTimeMode, CommandError> {
-    match value {
-        "time-stop-adjusted" => Ok(DpsTimeMode::TimeStopAdjusted),
-        "real-time" => Ok(DpsTimeMode::RealTime),
         _ => Err(CommandError::invalid_settings_input()),
     }
 }

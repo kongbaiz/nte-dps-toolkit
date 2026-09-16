@@ -644,7 +644,7 @@ impl LiveCaptureService {
                 return Ok(None);
             }
             let detached = state.take_battle_preserving_inventory();
-            let dps_time_mode = policy.effective_for(&detached);
+            let dps_time_mode = policy.effective_for_source(&detached, source);
             *idle_timer = None;
             inner.bump_packet_session();
             inner.bump_revision();
@@ -1252,7 +1252,7 @@ impl LiveCaptureInner {
             return None;
         }
         let detached = state.take_battle_preserving_inventory();
-        let dps_time_mode = policy.effective_for(&detached);
+        let dps_time_mode = policy.effective_for_source(&detached, source);
         *idle_timer = None;
         Some(DetachedAbyssRound {
             state: detached,

@@ -683,12 +683,14 @@ impl IslandNoticeRuntime {
 
 #[derive(Clone)]
 struct PausedPresentation {
+    dps_time_mode: DpsTimeMode,
     state: Arc<CombatState>,
     packet_revision: PacketStreamRevision,
 }
 
 #[derive(Clone)]
 struct SelectedRoundPresentation {
+    dps_time_mode: DpsTimeMode,
     record_id: String,
     history_revision: u64,
     state: Arc<CombatState>,
@@ -1038,7 +1040,7 @@ fn subtract_time_stop_for_state(mode: DpsTimeMode, state: &CombatState) -> bool 
 
 fn history_archive_policy(config: &UiConfig) -> HistoryArchivePolicy {
     HistoryArchivePolicy {
-        requested_dps_time_mode: match config.dps_time_mode {
+        requested_dps_time_mode: match config.dps_time_mode() {
             DpsTimeMode::TimeStopAdjusted => DpsTimeBasis::SubtractTimeStop,
             DpsTimeMode::RealTime => DpsTimeBasis::WallClock,
         },
@@ -1403,6 +1405,7 @@ impl AppState {
     pub(crate) fn snapshot(&self) -> Result<TechnicalSnapshot, CoreError> {
         let sequence = self.next_sequence();
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         let hud_config = config.hud.clone();
         let selected_abyss_half = self.abyss_presentation_snapshot().selected;
         let supported_locales = Language::all()
@@ -1431,7 +1434,7 @@ impl AppState {
                     &HashSet::new(),
                     HudProjectionOptions {
                         dps_time_basis: DpsTimeBasis::from_subtract_time_stop(
-                            subtract_time_stop_for_state(config.dps_time_mode, state),
+                            subtract_time_stop_for_state(dps_time_mode, state),
                         ),
                         separate_reaction_damage: config.separate_reaction_damage,
                         include_max_hp_reduction_in_total_damage: config
@@ -1614,6 +1617,32 @@ impl AppState {
         self.0.live_capture.combat_clock_health()
     }
 
+    fn live_dps_time_mode(&self) -> Result<DpsTimeMode, CoreError> {
+        Ok(match self.0.live_capture.quality_source()? {
+            CaptureQualitySource::Plugin => DpsTimeMode::TimeStopAdjusted,
+            CaptureQualitySource::Live => DpsTimeMode::RealTime,
+            _ => self.ui_config().dps_time_mode(),
+        })
+    }
+
+    pub(crate) fn main_presented_dps_time_mode(&self) -> Result<DpsTimeMode, CoreError> {
+        let mode = self.presentation_mode_snapshot();
+        self.presentation_dps_time_mode(&mode)
+    }
+
+    fn presentation_dps_time_mode(
+        &self,
+        mode: &PresentationModeSnapshot,
+    ) -> Result<DpsTimeMode, CoreError> {
+        if let Some(selected) = &mode.selected_round {
+            return Ok(selected.dps_time_mode);
+        }
+        if let Some(paused) = &mode.paused {
+            return Ok(paused.dps_time_mode);
+        }
+        self.live_dps_time_mode()
+    }
+
     pub(crate) fn main_presented_combat_clock_health(
         &self,
     ) -> Result<CombatClockRuntimeHealth, CoreError> {
@@ -1697,13 +1726,25 @@ impl AppState {
 
         // The capture snapshot can be large. Build it without holding any
         // Presentation lock, then re-check the requested transition.
+        let configured_mode = self.ui_config().dps_time_mode();
         let frozen = self
             .0
             .live_capture
-            .with_packet_state(|packet_revision, _, state| PausedPresentation {
-                state: Arc::new(state.clone()),
-                packet_revision,
+            .with_packet_state(|packet_revision, _, state| {
+                // with_packet_state holds event_gate and state: acquire provenance
+                // next in the capture lock order, freezing it with this snapshot.
+                let dps_time_mode = match self.0.live_capture.quality_source()? {
+                    CaptureQualitySource::Plugin => DpsTimeMode::TimeStopAdjusted,
+                    CaptureQualitySource::Live => DpsTimeMode::RealTime,
+                    _ => configured_mode,
+                };
+                Ok(PausedPresentation {
+                    dps_time_mode,
+                    state: Arc::new(state.clone()),
+                    packet_revision,
+                })
             })
+            .map_err(PresentationError::Capture)?
             .map_err(PresentationError::Capture)?;
         let (mut mode, recovered) = self.0.presentation.lock_mode();
         if recovered {
@@ -1763,7 +1804,16 @@ impl AppState {
             record
                 .details
                 .take()
-                .map(HistoryCombatDetails::into_combat_state)
+                .map(|details| {
+                    (
+                        details.into_combat_state(),
+                        if record.summary.dps_time_mode.subtracts_time_stop() {
+                            DpsTimeMode::TimeStopAdjusted
+                        } else {
+                            DpsTimeMode::RealTime
+                        },
+                    )
+                })
                 .ok_or(PresentationError::RoundUnavailable)
         })
     }
@@ -1772,7 +1822,7 @@ impl AppState {
         &self,
         record_id: Option<String>,
         operation: u64,
-        load: impl FnOnce(&str) -> Result<CombatState, PresentationError>,
+        load: impl FnOnce(&str) -> Result<(CombatState, DpsTimeMode), PresentationError>,
     ) -> Result<bool, PresentationError> {
         let history_revision = self.history_revision();
         if self
@@ -1804,7 +1854,7 @@ impl AppState {
         // their newer intent owns both the visible state and command snapshot.
         let selection = match record_id {
             Some(record_id) => {
-                let state = match load(&record_id) {
+                let (state, dps_time_mode) = match load(&record_id) {
                     Ok(state) => state,
                     Err(_error)
                         if self
@@ -1819,6 +1869,7 @@ impl AppState {
                     Err(error) => return Err(error),
                 };
                 Some(SelectedRoundPresentation {
+                    dps_time_mode,
                     record_id,
                     history_revision,
                     state: Arc::new(state),
@@ -1945,8 +1996,9 @@ impl AppState {
             .presentation
             .main_readout_projection_count
             .fetch_add(1, Ordering::AcqRel);
+        let dps_time_mode = self.presentation_dps_time_mode(&mode)?;
         let readout = self.with_presentation_mode_state(&mode, |state| {
-            self.project_main_readout(state, abyss_after.selected)
+            self.project_main_readout(state, abyss_after.selected, dps_time_mode)
         })?;
 
         // A concurrent hit/settings/presentation mutation makes this result a
@@ -2160,9 +2212,10 @@ impl AppState {
         &self,
         state: &CombatState,
         selected_abyss_half: Option<AbyssHalf>,
+        dps_time_mode: DpsTimeMode,
     ) -> MainDpsReadout {
         let config = self.ui_config();
-        let subtract_time_stop = subtract_time_stop_for_state(config.dps_time_mode, state);
+        let subtract_time_stop = subtract_time_stop_for_state(dps_time_mode, state);
         let projection_half = state.abyss.is_active().then(|| {
             selected_abyss_half
                 .or(state.abyss.active_half)
@@ -2759,7 +2812,6 @@ impl AppState {
         separate_reaction_damage: bool,
         auto_round_after_idle: bool,
         auto_round_idle_seconds: u32,
-        dps_time_mode: DpsTimeMode,
         passthrough_hotkey: HotkeyBinding,
     ) -> Result<bool, SettingsServiceError> {
         let changed = self.update_ui_config(|config| {
@@ -2771,7 +2823,6 @@ impl AppState {
             config.separate_reaction_damage = separate_reaction_damage;
             config.auto_round_after_idle = auto_round_after_idle;
             config.auto_round_idle_seconds = auto_round_idle_seconds;
-            config.dps_time_mode = dps_time_mode;
             config.passthrough_hotkey = passthrough_hotkey;
         })?;
         // Keep the capture-side automatic round-boundary policy synchronized
@@ -3000,10 +3051,11 @@ impl AppState {
 
     fn current_abyss_team(&self, upper: bool) -> Result<Option<TeamDps>, CoreError> {
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         self.with_main_presented_state(|state| {
             let export = nte_dps_tool::core::team_data::export_team_data(
                 state,
-                subtract_time_stop_for_state(config.dps_time_mode, state),
+                subtract_time_stop_for_state(dps_time_mode, state),
                 config.separate_reaction_damage,
                 None,
                 None,
@@ -3032,6 +3084,7 @@ impl AppState {
 
     pub(crate) fn export_team_data(&self) -> Result<Option<TeamDpsExport>, TeamOperationError> {
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         let imported = self
             .0
             .team_import
@@ -3042,7 +3095,7 @@ impl AppState {
         Ok(self.with_main_presented_state(|state| {
             nte_dps_tool::core::team_data::export_team_data(
                 state,
-                subtract_time_stop_for_state(config.dps_time_mode, state),
+                subtract_time_stop_for_state(dps_time_mode, state),
                 config.separate_reaction_damage,
                 imported.upper,
                 imported.lower,
@@ -3141,7 +3194,11 @@ impl AppState {
         let config = self.ui_config();
         let (state, source) = self.0.live_capture.history_state_and_source_snapshot()?;
         let dps_time_mode = DpsTimeBasis::from_subtract_time_stop(subtract_time_stop_for_state(
-            config.dps_time_mode,
+            match source {
+                CaptureQualitySource::Plugin => DpsTimeMode::TimeStopAdjusted,
+                CaptureQualitySource::Live => DpsTimeMode::RealTime,
+                _ => config.dps_time_mode(),
+            },
             &state,
         ));
         Ok(prepare_history_archive_owned(
@@ -3753,6 +3810,7 @@ impl AppState {
         &self,
     ) -> Result<(CaptureExportPlan, u64), CoreError> {
         let config = self.ui_config();
+        let dps_time_mode = self.live_dps_time_mode()?;
         let game_network = self
             .diagnostics_report()
             .and_then(|run| run.environment.game_connection)
@@ -3771,7 +3829,7 @@ impl AppState {
                         include_incoming: true,
                         game_network,
                         dps_time_mode: DpsTimeBasis::from_subtract_time_stop(
-                            subtract_time_stop_for_state(config.dps_time_mode, state),
+                            subtract_time_stop_for_state(dps_time_mode, state),
                         ),
                     },
                 ),
@@ -3825,8 +3883,9 @@ impl AppState {
     ) -> Result<Arc<TimelineProjection>, CoreError> {
         const TIMELINE_CACHE_CAPACITY: usize = 6;
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         let revision = self.main_dps_stream_revision()?;
-        let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted)
+        let subtract_time_stop = matches!(dps_time_mode, DpsTimeMode::TimeStopAdjusted)
             && matches!(
                 self.main_presented_combat_clock_health()?,
                 CombatClockRuntimeHealth::Available | CombatClockRuntimeHealth::Recorded
@@ -4207,6 +4266,9 @@ impl AppState {
                     "mode settings save failed",
                 )
             })?;
+            self.0
+                .live_capture
+                .set_history_archive_policy(history_archive_policy(&self.ui_config()));
             Ok(())
         })();
         self.0
@@ -4414,6 +4476,10 @@ mod tests {
         let live = LiveCaptureService::new(LiveCaptureResources::default());
         let state = AppState::new_with_config_path(UiConfig::default(), live.clone(), path.clone());
         assert_eq!(state.data_mode(), DataMode::PacketCapture);
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::RealTime
+        );
         let before = state.0.presentation.revision.load(Ordering::Acquire);
         state.set_data_mode(DataMode::PacketCapture).unwrap();
         assert_eq!(
@@ -4422,12 +4488,35 @@ mod tests {
         );
         state.set_data_mode(DataMode::Plugin).unwrap();
         assert_eq!(state.data_mode(), DataMode::Plugin);
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::TimeStopAdjusted
+        );
+        assert_eq!(
+            live.history_archive_policy().requested_dps_time_mode,
+            DpsTimeBasis::SubtractTimeStop
+        );
         assert_eq!(live.status().phase, LiveCapturePhase::Idle);
         assert!(state.0.presentation.revision.load(Ordering::Acquire) > before);
         let saved: UiConfig = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved.data_mode, DataMode::Plugin);
+        let selection = state.reserve_main_round_selection();
+        state
+            .set_main_selected_round_id_with(Some("recorded-plugin".into()), selection, |_| {
+                Ok((CombatState::default(), DpsTimeMode::TimeStopAdjusted))
+            })
+            .unwrap();
         state.set_data_mode(DataMode::PacketCapture).unwrap();
         assert_eq!(state.data_mode(), DataMode::PacketCapture);
+        assert_eq!(
+            live.history_archive_policy().requested_dps_time_mode,
+            DpsTimeBasis::WallClock
+        );
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::TimeStopAdjusted,
+            "a stored round keeps its original time basis across a source switch"
+        );
         println!(
             "MODE_PASS: default packet_capture; plugin switch; no-op revision stable; no automatic source start"
         );
@@ -4740,7 +4829,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(200.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("commit newer History selection")
@@ -4752,7 +4841,7 @@ mod tests {
                     stale_loader_ran.store(true, Ordering::Release);
                     let mut selected = CombatState::default();
                     selected.push_hit(test_hit(100.0));
-                    Ok(selected)
+                    Ok((selected, DpsTimeMode::RealTime))
                 },)
                 .expect("superseded History selection")
         );
@@ -4779,7 +4868,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(100.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("select first History contents")
@@ -4799,7 +4888,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(250.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("reload replaced History contents")
@@ -4828,7 +4917,7 @@ mod tests {
                     release_rx.recv().expect("release slow History load");
                     let mut selected = CombatState::default();
                     selected.push_hit(test_hit(100.0));
-                    Ok(selected)
+                    Ok((selected, DpsTimeMode::RealTime))
                 },
             )
         });
@@ -4842,7 +4931,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(200.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("commit newer History selection")
@@ -5022,8 +5111,14 @@ mod tests {
         second.push_hit(test_hit(300.0));
         second.push_hit(test_hit(25.0));
         live_capture
-            .restore_session(second, CaptureQualitySource::Live)
+            .restore_session(second, CaptureQualitySource::Plugin)
             .expect("healthy live-capture state");
+
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::RealTime,
+            "paused packet data retains its clock policy after replacing the live source"
+        );
 
         assert_eq!(
             state
@@ -5048,6 +5143,10 @@ mod tests {
         state
             .set_main_processing_paused(false)
             .expect("resume healthy live capture");
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::TimeStopAdjusted
+        );
         assert_eq!(
             state
                 .with_main_presented_state(|presented| presented.total_damage)
@@ -6481,6 +6580,7 @@ mod tests {
             partial.push_hit(test_hit(987_654.0));
             paused.paused.as_mut().expect("paused snapshot").state = Arc::new(partial);
             paused.selected_round = Some(SelectedRoundPresentation {
+                dps_time_mode: DpsTimeMode::RealTime,
                 record_id: "private-partial-round".to_owned(),
                 history_revision: 0,
                 state: Arc::new(CombatState::default()),
@@ -6625,6 +6725,7 @@ mod tests {
             assert!(!recovered);
             mode.selected_outgoing_revision = selected_outgoing_revision;
             mode.selected_round = Some(SelectedRoundPresentation {
+                dps_time_mode: DpsTimeMode::RealTime,
                 record_id: "history-round".to_owned(),
                 history_revision: state.history_revision(),
                 state: Arc::new(CombatState::default()),
@@ -7317,7 +7418,6 @@ mod tests {
                     true,
                     true,
                     45,
-                    DpsTimeMode::RealTime,
                     HotkeyBinding::new(false, false, false, config::HotkeyKey::Insert),
                 )
                 .expect("capture settings save")
@@ -7403,7 +7503,7 @@ mod tests {
             saved.manual_capture_device.as_deref(),
             Some("capture-device")
         );
-        assert_eq!(saved.dps_time_mode, DpsTimeMode::RealTime);
+        assert_eq!(saved.dps_time_mode(), DpsTimeMode::RealTime);
         assert_eq!(
             saved.main_dps_display.metrics,
             [

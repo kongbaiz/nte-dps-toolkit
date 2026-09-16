@@ -1,3 +1,5 @@
+// Frozen legacy IPC v7 wire contract for Rust compatibility regression tests.
+// The retired plugin implementation is not part of this repository.
 #pragma once
 
 #include <stdint.h>
