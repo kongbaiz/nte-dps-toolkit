@@ -17,10 +17,10 @@ use crate::{
 
 use super::dto::{BattleQualityDto, BattleSummaryDto};
 
-/// Version 5 adds exact pause-type masks to time-stop interval segments while
-/// retaining their global time-union semantics. All battle read DTOs share one
+/// Version 6 makes unavailable HP and unverified overkill explicitly nullable.
+/// Exact pause masks retain their global time-union semantics. Battle DTOs share one
 /// version so a CLI consumer can reject mixed semantics.
-pub const BATTLE_READ_CONTRACT_VERSION: u32 = 5;
+pub const BATTLE_READ_CONTRACT_VERSION: u32 = 6;
 pub const BATTLE_TIMELINE_BUCKET_LIMIT: usize = 10_000;
 pub const BATTLE_TIMELINE_ROLE_LIMIT: usize = 100_000;
 
@@ -176,8 +176,8 @@ pub struct BattleAxisHitDto {
     pub damage: f64,
     pub follow_up_damage: f64,
     pub total_damage: f64,
-    pub overkill_damage: f64,
-    pub max_hp_reduction: f64,
+    pub overkill_damage: Option<f64>,
+    pub max_hp_reduction: Option<f64>,
     pub follow_up_timestamp_unix: Option<f64>,
     pub target_id: Option<String>,
     pub target_name: Option<String>,
@@ -185,10 +185,10 @@ pub struct BattleAxisHitDto {
     pub target_name_ja: Option<String>,
     pub target_monster_id: Option<String>,
     pub target_context: Vec<String>,
-    pub target_hp_before: f64,
-    pub target_hp_after: f64,
-    pub target_max_hp: f64,
-    pub target_hp_percent: f64,
+    pub target_hp_before: Option<f64>,
+    pub target_hp_after: Option<f64>,
+    pub target_max_hp: Option<f64>,
+    pub target_hp_percent: Option<f64>,
     pub gameplay_effect_index: Option<u32>,
     pub gameplay_effect_name: Option<String>,
     pub ability_name: Option<String>,
@@ -280,8 +280,8 @@ fn axis_hit(
         damage: hit.damage,
         follow_up_damage: hit.follow_up_damage,
         total_damage: hit.total_damage(),
-        overkill_damage: hit.overkill_damage(),
-        max_hp_reduction: hit.max_hp_reduction,
+        overkill_damage: hit.known_overkill(),
+        max_hp_reduction: hit.known_max_hp_reduction(),
         follow_up_timestamp_unix: hit.follow_up_timestamp,
         target_id: hit.target_id.clone(),
         target_name: hit.target_name.clone(),
@@ -289,10 +289,10 @@ fn axis_hit(
         target_name_ja: hit.target_name_ja.clone(),
         target_monster_id: hit.target_monster_id.clone(),
         target_context: hit.target_context.clone(),
-        target_hp_before: hit.target_hp_before,
-        target_hp_after: hit.target_hp_after,
-        target_max_hp: hit.target_max_hp,
-        target_hp_percent: hit.target_hp_percent,
+        target_hp_before: hit.known_hp_before(),
+        target_hp_after: hit.known_hp_after(),
+        target_max_hp: hit.known_max_hp(),
+        target_hp_percent: hit.known_hp_percent(),
         gameplay_effect_index: hit.gameplay_effect_index,
         gameplay_effect_name: hit.gameplay_effect_name.clone(),
         ability_name: hit.ability_name.clone(),
@@ -651,8 +651,8 @@ mod tests {
         assert_eq!(first.rows[0].attribution_status, "attributed");
         assert!(first.rows[0].attribution_unknown_reason.is_none());
         assert!(first.rows[0].team_snapshot_id.is_none());
-        assert_eq!(first.rows[0].overkill_damage, 40.0);
-        assert_eq!(first.rows[0].max_hp_reduction, 25.0);
+        assert_eq!(first.rows[0].overkill_damage, Some(40.0));
+        assert_eq!(first.rows[0].max_hp_reduction, Some(25.0));
         assert_eq!(
             serde_json::to_value(&first.rows[0]).unwrap()["overkill_damage"],
             40.0
@@ -703,7 +703,7 @@ mod tests {
 
         let record = battle_record(&state, context(0), true);
         let json = serde_json::to_value(&record).unwrap();
-        assert_eq!(json["contract_version"], 5);
+        assert_eq!(json["contract_version"], 6);
         assert_eq!(json["summary"]["duration_seconds"], 2.0);
         assert_eq!(
             json["time_stop_intervals"],
@@ -735,7 +735,7 @@ mod tests {
             true,
         )
         .unwrap();
-        assert_eq!(timeline.contract_version, 5);
+        assert_eq!(timeline.contract_version, 6);
         assert_eq!(
             timeline
                 .time_stop_intervals
@@ -968,6 +968,7 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: None,
         }
     }

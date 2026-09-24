@@ -665,7 +665,7 @@ impl LiveCaptureService {
             let mut state = checked_lock(&inner.state)?;
             let mut idle_timer = checked_lock(&inner.last_outgoing_hit_at)?;
             let combat_clock_health = state.combat_clock_health;
-            *state = CombatState::default();
+            state.clear();
             // The monitor publishes health only on transitions. Resetting a
             // combat round must therefore preserve the capture-session
             // provider state or an unchanged Available provider would never
@@ -1309,7 +1309,7 @@ impl LiveCaptureInner {
             let outgoing_hit = matches!(
                 &event,
                 EngineEvent::Hit(hit) if hit.direction.is_outgoing()
-            );
+            ) || matches!(&event,EngineEvent::ExactSettlement(p) if !p.quarantined && !state.has_exact_message(&p.identity) && p.hits.iter().any(|h|h.direction.is_outgoing()));
             let boundary_context = pre_event_abyss_boundary || post_event_abyss_archive;
             let history_policy = boundary_context.then(|| {
                 decode_history_archive_policy(self.history_archive_policy.load(Ordering::Acquire))
@@ -1346,7 +1346,7 @@ impl LiveCaptureInner {
                 detached_abyss_round =
                     self.detach_abyss_round_if_changed(&mut state, source, policy, idle_timer);
             }
-            if outgoing_hit {
+            if outgoing_hit && matches!(&signal, CoreSignal::StateChanged) {
                 let Some(idle_timer) = idle_timer.as_mut() else {
                     return Err(());
                 };
@@ -1783,6 +1783,7 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: None,
         }))
     }
@@ -2957,6 +2958,58 @@ mod tests {
 
         process(&service, hit(34.0));
         assert_eq!(service.outgoing_hit_revision(), initial + 1);
+    }
+
+    #[test]
+    fn exact_projection_updates_do_not_restart_idle_timer_or_duplicate_outgoing_revision() {
+        use crate::engine::settlement::application::{Evidence, MessageIdentity, Projection};
+        use crate::engine::settlement::{ActorRef, Attribution};
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let EngineEvent::Hit(mut h) = hit(100.0) else {
+            unreachable!()
+        };
+        let identity = MessageIdentity {
+            generation: "fixture".into(),
+            connection: "flow".into(),
+            channel: 3,
+            message: "1".into(),
+            timestamp_bits: "123".into(),
+        };
+        let reference = ActorRef {
+            flags: 0,
+            name: None,
+            fields: vec![(0, 1)],
+        };
+        h.exact = Some(Evidence {
+            message: identity.clone(),
+            target_ordinal: 0,
+            component_ordinal: 0,
+            source: reference.clone(),
+            target: reference,
+            display_type: 0,
+            attribution: Attribution::RequestMissing,
+            current_hp_bits: 0,
+            hp_before_request_bits: None,
+            max_hp_at_request_bits: None,
+        });
+        let mut p = Projection {
+            identity,
+            hits: vec![*h],
+            quarantined: false,
+        };
+        process(&service, EngineEvent::ExactSettlement(Box::new(p.clone())));
+        let outgoing = service.outgoing_hit_revision();
+        let revision = service.revision();
+        assert!(outgoing > 0);
+        process(&service, EngineEvent::ExactSettlement(Box::new(p.clone())));
+        assert_eq!(service.revision(), revision);
+        assert_eq!(service.outgoing_hit_revision(), outgoing);
+        p.hits[0].exact.as_mut().unwrap().max_hp_at_request_bits = Some(1000f32.to_bits());
+        p.hits[0].target_max_hp = 1000.0;
+        process(&service, EngineEvent::ExactSettlement(Box::new(p)));
+        assert!(service.revision() > revision);
+        assert_eq!(service.outgoing_hit_revision(), outgoing);
+        assert_eq!(project(&service, |s| s.hits.len()), 1);
     }
 
     #[test]

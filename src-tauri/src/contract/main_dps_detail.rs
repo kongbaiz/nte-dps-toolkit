@@ -24,7 +24,7 @@ use nte_dps_tool::{
 
 use crate::state::{AppState, MainDpsDetailKind};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 7;
+pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 8;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
@@ -733,8 +733,8 @@ pub(crate) struct MainDpsHitSnapshot {
     pub damage: f64,
     pub primary_damage: f64,
     pub follow_up_damage: f64,
-    pub overkill_damage: f64,
-    pub max_hp_reduction: f64,
+    pub overkill_damage: Option<f64>,
+    pub max_hp_reduction: Option<f64>,
     pub skill_id: String,
     pub skill: String,
     pub damage_type: String,
@@ -744,9 +744,9 @@ pub(crate) struct MainDpsHitSnapshot {
     pub follow_up_damage_digit_key: Option<String>,
     pub target: String,
     pub target_monster_id: Option<String>,
-    pub target_hp_after: f64,
-    pub target_max_hp: f64,
-    pub target_hp_percent: f64,
+    pub target_hp_after: Option<f64>,
+    pub target_max_hp: Option<f64>,
+    pub target_hp_percent: Option<f64>,
 }
 
 #[derive(Default)]
@@ -826,8 +826,8 @@ impl MainDpsHitSnapshot {
             damage: hit.total_damage(),
             primary_damage: hit.damage,
             follow_up_damage: hit.follow_up_damage,
-            overkill_damage: hit.overkill_damage(),
-            max_hp_reduction: hit.max_hp_reduction,
+            overkill_damage: hit.known_overkill(),
+            max_hp_reduction: hit.known_max_hp_reduction(),
             skill_id,
             skill,
             damage_type: text_budget.text(
@@ -856,9 +856,9 @@ impl MainDpsHitSnapshot {
                 "-",
             ),
             target_monster_id: text_budget.optional(hit.target_monster_id.clone()),
-            target_hp_after: hit.target_hp_after,
-            target_max_hp: hit.target_max_hp,
-            target_hp_percent: hit.target_hp_percent,
+            target_hp_after: hit.known_hp_after(),
+            target_max_hp: hit.known_max_hp(),
+            target_hp_percent: hit.known_hp_percent(),
         }
     }
 }
@@ -1032,6 +1032,7 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: None,
         }
     }
@@ -1253,8 +1254,8 @@ mod tests {
 
         assert_eq!(snapshot.damage, 1_750.0);
         assert_eq!(snapshot.primary_damage, 1_500.0);
-        assert_eq!(snapshot.overkill_damage, 500.0);
-        assert_eq!(snapshot.max_hp_reduction, 3_000.0);
+        assert_eq!(snapshot.overkill_damage, Some(500.0));
+        assert_eq!(snapshot.max_hp_reduction, Some(3_000.0));
     }
 
     #[test]
@@ -1274,7 +1275,7 @@ mod tests {
             &mut MainDpsDetailTextBudget::default(),
         );
 
-        assert_eq!(snapshot.overkill_damage, 0.0);
+        assert_eq!(snapshot.overkill_damage, Some(0.0));
     }
 
     #[test]
