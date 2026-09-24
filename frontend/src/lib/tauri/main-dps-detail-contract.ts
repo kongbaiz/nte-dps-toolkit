@@ -1,7 +1,7 @@
 import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 
-export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 7;
+export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 8;
 export const MAIN_DPS_DETAIL_MAX_QTE_SUMMARIES = 32;
 export const MAIN_DPS_DETAIL_MAX_SKILLS = 250;
 export const MAIN_DPS_DETAIL_MAX_ROWS = 250;
@@ -145,8 +145,8 @@ export interface MainDpsHit {
   damage: number;
   primaryDamage: number;
   followUpDamage: number;
-  overkillDamage: number;
-  maxHpReduction: number;
+  overkillDamage: number | null;
+  maxHpReduction: number | null;
   skillId: string;
   skill: string;
   damageType: string;
@@ -156,9 +156,9 @@ export interface MainDpsHit {
   followUpDamageDigitKey: string | null;
   target: string;
   targetMonsterId: string | null;
-  targetHpAfter: number;
-  targetMaxHp: number;
-  targetHpPercent: number;
+  targetHpAfter: number | null;
+  targetMaxHp: number | null;
+  targetHpPercent: number | null;
 }
 
 export function parseMainDpsDetailSnapshot(
@@ -420,8 +420,14 @@ function parseHit(value: unknown): MainDpsHit {
     damage: finite(source.damage, "hit.damage"),
     primaryDamage: finite(source.primaryDamage, "hit.primaryDamage"),
     followUpDamage: finite(source.followUpDamage, "hit.followUpDamage"),
-    overkillDamage: finite(source.overkillDamage, "hit.overkillDamage"),
-    maxHpReduction: finite(source.maxHpReduction, "hit.maxHpReduction"),
+    overkillDamage:
+      source.overkillDamage === null
+        ? null
+        : finite(source.overkillDamage, "hit.overkillDamage"),
+    maxHpReduction:
+      source.maxHpReduction === null
+        ? null
+        : finite(source.maxHpReduction, "hit.maxHpReduction"),
     skillId: boundedText(
       source.skillId,
       "hit.skillId",
@@ -466,9 +472,18 @@ function parseHit(value: unknown): MainDpsHit {
       "hit.targetMonsterId",
       MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
     ),
-    targetHpAfter: finite(source.targetHpAfter, "hit.targetHpAfter"),
-    targetMaxHp: finite(source.targetMaxHp, "hit.targetMaxHp"),
-    targetHpPercent: finite(source.targetHpPercent, "hit.targetHpPercent"),
+    targetHpAfter:
+      source.targetHpAfter === null
+        ? null
+        : finite(source.targetHpAfter, "hit.targetHpAfter"),
+    targetMaxHp:
+      source.targetMaxHp === null
+        ? null
+        : finite(source.targetMaxHp, "hit.targetMaxHp"),
+    targetHpPercent:
+      source.targetHpPercent === null
+        ? null
+        : finite(source.targetHpPercent, "hit.targetHpPercent"),
   };
 }
 

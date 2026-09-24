@@ -838,9 +838,12 @@ function HitRow({
     typeSeparator < 0 ? row.typeLabel : row.typeLabel.slice(0, typeSeparator);
   const typeDetail =
     typeSeparator < 0 ? null : row.typeLabel.slice(typeSeparator + 1);
-  const hpCompression = maxHpCompression(row.targetMaxHp, row.maxHpReduction);
+  const hpCompression = maxHpCompression(
+    row.targetMaxHp ?? 0,
+    row.maxHpReduction ?? 0,
+  );
   const hpPercent =
-    hpCompression.remainingMaxHp > 0
+    row.targetHpAfter !== null && hpCompression.remainingMaxHp > 0
       ? Math.max(
           0,
           Math.min(
@@ -863,7 +866,7 @@ function HitRow({
         ])
       : tf("Damage: {}", [formatMainMetric(row.damage)]);
   const damageTitleWithOverkill =
-    row.overkillDamage > 0
+    row.overkillDamage !== null && row.overkillDamage > 0
       ? `${damageTitle}\n${t("Overkill")}: ${formatMainMetric(row.overkillDamage)}`
       : damageTitle;
   return (
@@ -938,7 +941,7 @@ function HitRow({
                 </span>
               )}
             </span>
-            {row.overkillDamage > 0 && (
+            {row.overkillDamage !== null && row.overkillDamage > 0 && (
               <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-destructive">
                 {t("Overkill")} +{formatMainMetric(row.overkillDamage)}
               </span>
@@ -948,19 +951,21 @@ function HitRow({
       )}
       {columns.showTarget && (
         <td className="relative overflow-hidden px-2 py-1.5">
-          {row.targetMaxHp > 0 && (
-            <span
-              className={cn(
-                "absolute inset-y-1 left-1 rounded-md",
-                hpPercent > 50
-                  ? "bg-emerald-600/15"
-                  : hpPercent > 20
-                    ? "bg-amber-500/20"
-                    : "bg-destructive/20",
-              )}
-              style={{ width: `calc(${hpPercentOfPreviousMax}% - 0.5rem)` }}
-            />
-          )}
+          {row.targetMaxHp !== null &&
+            row.targetHpAfter !== null &&
+            row.targetMaxHp > 0 && (
+              <span
+                className={cn(
+                  "absolute inset-y-1 left-1 rounded-md",
+                  hpPercent > 50
+                    ? "bg-emerald-600/15"
+                    : hpPercent > 20
+                      ? "bg-amber-500/20"
+                      : "bg-destructive/20",
+                )}
+                style={{ width: `calc(${hpPercentOfPreviousMax}% - 0.5rem)` }}
+              />
+            )}
           {hpCompression.reductionPercent > 0 && (
             <span
               className="max-hp-compression-cut absolute inset-y-1 right-1 rounded-r-md"
@@ -982,7 +987,7 @@ function HitRow({
             <span className="min-w-0 flex-1">
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className="truncate">{row.target}</span>
-                {row.maxHpReduction > 0 && (
+                {row.maxHpReduction !== null && row.maxHpReduction > 0 && (
                   <MaxHpCompressionEffect
                     key={row.maxHpReduction}
                     label={t("Max HP reduction")}
@@ -993,11 +998,24 @@ function HitRow({
                   />
                 )}
               </span>
-              {row.targetMaxHp > 0 && (
+              {row.targetMaxHp !== null &&
+                row.targetHpAfter !== null &&
+                row.targetMaxHp > 0 && (
+                  <span className="block truncate text-xs tabular-nums text-muted-foreground">
+                    {formatMainMetric(row.targetHpAfter)} /{" "}
+                    {formatMainMetric(hpCompression.remainingMaxHp)} ·{" "}
+                    {hpPercent.toFixed(1)}%
+                  </span>
+                )}
+              {(row.targetMaxHp === null || row.targetHpAfter === null) && (
                 <span className="block truncate text-xs tabular-nums text-muted-foreground">
-                  {formatMainMetric(row.targetHpAfter)} /{" "}
-                  {formatMainMetric(hpCompression.remainingMaxHp)} ·{" "}
-                  {hpPercent.toFixed(1)}%
+                  {row.targetHpAfter === null
+                    ? t("Unknown")
+                    : formatMainMetric(row.targetHpAfter)}
+                  {" / "}
+                  {row.targetMaxHp === null
+                    ? t("Unknown")
+                    : formatMainMetric(row.targetMaxHp)}
                 </span>
               )}
             </span>

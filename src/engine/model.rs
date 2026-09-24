@@ -176,6 +176,9 @@ impl TryFrom<&str> for HitDirection {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
+    /// Persisted protocol evidence; absent only for historical/legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact: Option<crate::engine::settlement::application::Evidence>,
     pub timestamp: f64,
     pub char_id: u32,
     pub char_name: String,
@@ -240,6 +243,8 @@ pub struct Hit {
     pub wire_event: Option<DamageWireEvent>,
 }
 
+mod exact;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DamageWireEvent {
     pub damage: f32,
@@ -253,11 +258,53 @@ pub struct DamageWireEvent {
 }
 
 impl Hit {
+    pub fn known_hp_before(&self) -> Option<f64> {
+        match &self.exact {
+            Some(e) => e
+                .hp_before_request_bits
+                .map(|b| f64::from(f32::from_bits(b))),
+            None => Some(self.target_hp_before),
+        }
+        .filter(|v| v.is_finite() && *v >= 0.0)
+    }
+    pub fn known_hp_after(&self) -> Option<f64> {
+        let value = self.exact.as_ref().map_or(self.target_hp_after, |e| {
+            f64::from(f32::from_bits(e.current_hp_bits))
+        });
+        (value.is_finite() && value >= 0.0).then_some(value)
+    }
+    pub fn known_max_hp(&self) -> Option<f64> {
+        match &self.exact {
+            Some(e) => e
+                .max_hp_at_request_bits
+                .map(|b| f64::from(f32::from_bits(b))),
+            None => Some(self.target_max_hp),
+        }
+        .filter(|v| v.is_finite() && *v >= 0.0)
+    }
+    pub fn known_hp_percent(&self) -> Option<f64> {
+        if self.exact.is_none() {
+            return self
+                .target_hp_percent
+                .is_finite()
+                .then_some(self.target_hp_percent);
+        }
+        Some(self.known_hp_after()? / self.known_max_hp().filter(|v| *v > 0.0)? * 100.0)
+    }
+    pub fn known_overkill(&self) -> Option<f64> {
+        self.exact.is_none().then(|| self.overkill_damage())
+    }
+    pub fn known_max_hp_reduction(&self) -> Option<f64> {
+        self.exact.is_none().then_some(self.max_hp_reduction)
+    }
     pub fn total_damage(&self) -> f64 {
         self.damage + self.follow_up_damage
     }
 
     pub fn overkill_damage(&self) -> f64 {
+        if self.exact.is_some() {
+            return 0.0;
+        } // Unknown overkill is not inferred from a request snapshot.
         // Overkill starts only after the target reaches its terminal HP state.
         // This read-side invariant also repairs older persisted rows whose
         // interval estimate was recorded before a later server HP correction.
@@ -295,6 +342,9 @@ fn reconcile_latest_overkill_interval(hits: &mut VecDeque<Hit>) {
     let Some(latest) = hits.back() else {
         return;
     };
+    if latest.exact.is_some() {
+        return;
+    }
     let Some(latest_wire) = latest.wire_event else {
         return;
     };
@@ -318,6 +368,9 @@ fn reconcile_latest_overkill_interval(hits: &mut VecDeque<Hit>) {
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
         .filter_map(|(index, candidate)| {
+            if candidate.exact.is_some() {
+                return None;
+            }
             let wire = candidate.wire_event?;
             (candidate.direction.is_outgoing()
                 && candidate.target_id.as_deref() == Some(target_id.as_str())
@@ -3519,7 +3572,7 @@ pub const UNBALANCE_ATTACK_TYPE: &str = "倾陷伤害";
 /// target's HP) but excluded from any single character's personal totals so
 /// it can't inflate one character's ranking/DPS share.
 pub fn is_unbalance_damage_hit(hit: &Hit) -> bool {
-    hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE)
+    hit.exact.is_none() && hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE)
 }
 
 fn summarize_damage_attribution<'a>(
@@ -4384,6 +4437,14 @@ fn compact_time_stop_event_prefix(events: &mut Vec<TimeStopEvent>) {
 
 #[derive(Clone, Debug, Default)]
 pub struct PartyCombatState {
+    exact_positions: HashMap<
+        (
+            crate::engine::settlement::application::MessageIdentity,
+            usize,
+            usize,
+        ),
+        usize,
+    >,
     pub hits: VecDeque<Hit>,
     pub hits_generation: u64,
     pub stats: HashMap<u32, CharacterStats>,
@@ -4401,6 +4462,12 @@ pub struct PartyCombatState {
 impl PartyCombatState {
     pub fn push_hit(&mut self, hit: Hit) {
         let position = self.hits.len();
+        if let Some(e) = &hit.exact {
+            self.exact_positions.insert(
+                (e.message.clone(), e.target_ordinal, e.component_ordinal),
+                position,
+            );
+        }
         update_combat_totals(
             &mut self.stats,
             &mut self.compact_timeline,
@@ -4430,6 +4497,7 @@ impl PartyCombatState {
     /// in one pass; no hit strings are cloned.
     pub(crate) fn replace_hits_bulk(&mut self, hits: Vec<Hit>) {
         self.hits = hits.into();
+        self.rebuild_exact_positions();
         self.hits_generation = u64::try_from(self.hits.len()).unwrap_or(u64::MAX);
         rebuild_all_combat_indexes(
             &self.hits,
@@ -5012,7 +5080,7 @@ fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
 }
 
 fn hit_accepts_enemy_telemetry(hit: &Hit) -> bool {
-    !hit.direction.is_incoming()
+    hit.exact.is_none() && !hit.direction.is_incoming()
 }
 
 fn hit_has_exact_enemy_target(hit: &Hit) -> bool {
@@ -5182,6 +5250,7 @@ fn apply_enemy_hit_target_to_key(
 
 #[derive(Clone, Default)]
 pub struct CombatState {
+    exact_index: HashMap<crate::engine::settlement::application::MessageIdentity, exact::Slot>,
     pub hits: VecDeque<Hit>,
     /// Exact per-global-hit Abyss membership used by cursor pagination. This
     /// sidecar stays position-aligned with `hits`; unlike the old read path it
@@ -5261,10 +5330,19 @@ impl CombatState {
             packet_debug_bytes: 0,
             recent_hit_records: VecDeque::new(),
             server_target_damage_limits: HashMap::new(),
+            exact_index: self
+                .exact_index
+                .iter()
+                .filter(|(_, slot)| slot.quarantined)
+                .map(|(key, slot)| (key.clone(), slot.clone()))
+                .collect(),
         }
     }
 
     pub fn reconcile_server_target_damage(&mut self, marker: Hit) -> bool {
+        if marker.exact.is_some() || !self.exact_index.is_empty() {
+            return false;
+        }
         if !marker.is_server_damage_reconciliation()
             || !marker.target_hp_before.is_finite()
             || marker.target_hp_before <= 0.0
@@ -5304,6 +5382,9 @@ impl CombatState {
     }
 
     pub fn reconcile_known_server_target_limits(&mut self, source_timestamp: f64) -> bool {
+        if !self.exact_index.is_empty() {
+            return false;
+        }
         let limits = self
             .server_target_damage_limits
             .iter()
@@ -5460,6 +5541,7 @@ impl CombatState {
     /// bounded recent-mutation locator window is rebuilt afterward.
     pub(crate) fn replace_global_hits_bulk(&mut self, hits: Vec<Hit>) {
         self.hits = hits.into();
+        self.rebuild_exact_index();
         self.global_hit_abyss_halves =
             std::iter::repeat_n(None, self.hits.len()).collect::<VecDeque<_>>();
         self.hits_generation = u64::try_from(self.hits.len()).unwrap_or(u64::MAX);
@@ -5845,7 +5927,8 @@ impl CombatState {
     }
 
     pub fn clear(&mut self) {
-        *self = Self::default();
+        let previous = std::mem::take(self);
+        self.retire_exact_messages_from(&previous);
     }
 
     pub fn observe_packet(&mut self, observation: PacketObservation) {
@@ -5857,6 +5940,7 @@ impl CombatState {
 
     pub fn take_battle_preserving_inventory(&mut self) -> CombatState {
         let mut detached = std::mem::take(self);
+        self.retire_exact_messages_from(&detached);
         self.empty_curtain = std::mem::take(&mut detached.empty_curtain);
         self.empty_curtain_characters = std::mem::take(&mut detached.empty_curtain_characters);
         self.empty_curtain_generation = detached.empty_curtain_generation;
@@ -5968,6 +6052,7 @@ impl CombatState {
             .map(|(hit, half)| (hit, Some(half)))
             .unzip();
         self.hits = global_hits;
+        self.rebuild_exact_index();
         self.global_hit_abyss_halves = global_hit_abyss_halves;
         self.hits_generation = self.hits_generation.wrapping_add(1);
         rebuild_all_combat_indexes(
@@ -6500,6 +6585,7 @@ impl ModScriptEvent {
 
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
+    ExactSettlement(Box<crate::engine::settlement::application::Projection>),
     Hit(Box<Hit>),
     HitFollowUp(HitFollowUp),
     HitDamageCorrection(HitDamageCorrection),
@@ -6744,6 +6830,9 @@ fn apply_follow_up_to_recent_hit(
     follow_up: &HitFollowUp,
 ) -> Option<HitAggregateMutation> {
     let hit = find_recent_hit_mut(hits, locator)?;
+    if hit.exact.is_some() {
+        return None;
+    }
     let next_follow_up_damage = hit.follow_up_damage + follow_up.damage;
     let changed = hit.follow_up_damage.to_bits() != next_follow_up_damage.to_bits()
         || hit.follow_up_timestamp.map(f64::to_bits) != Some(follow_up.timestamp.to_bits())
@@ -6773,6 +6862,9 @@ fn apply_damage_correction_to_recent_hit(
     correction: &HitDamageCorrection,
 ) -> Option<HitAggregateMutation> {
     let hit = find_recent_hit_mut(hits, locator)?;
+    if hit.exact.is_some() {
+        return None;
+    }
     let overkill_changed = correction
         .reconciled_overkill_damage
         .is_some_and(|overkill| {
@@ -7129,6 +7221,7 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: None,
         }
     }

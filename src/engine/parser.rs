@@ -3573,6 +3573,7 @@ pub fn parse_damage_payload(
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: Some(DamageWireEvent {
                 damage: record.damage,
                 target_hp_before: record.target_hp_before,
