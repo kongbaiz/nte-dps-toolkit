@@ -404,6 +404,8 @@ impl HistorySaveOutcome {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HistoryCombatDetails {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exact_quarantined_messages: Vec<crate::engine::settlement::application::MessageIdentity>,
     pub floor: Option<u32>,
     pub active_half: Option<AbyssHalf>,
     pub first_half_at: Option<f64>,
@@ -424,6 +426,7 @@ pub struct HistoryCombatDetails {
 impl HistoryCombatDetails {
     fn metadata_only(&self) -> Self {
         Self {
+            exact_quarantined_messages: self.exact_quarantined_messages.clone(),
             floor: self.floor,
             active_half: self.active_half,
             first_half_at: self.first_half_at,
@@ -472,6 +475,7 @@ impl HistoryCombatDetails {
         let round_started_at = round_started_at?;
         let round_ended_at = round_ended_at?;
         Some(Self {
+            exact_quarantined_messages: state.exact_quarantined_messages(),
             floor: if has_abyss_hits { abyss.floor } else { None },
             active_half: if has_abyss_hits {
                 abyss.active_half
@@ -556,6 +560,7 @@ impl HistoryCombatDetails {
             round_ended_at,
         );
         Some(Self {
+            exact_quarantined_messages: state.exact_quarantined_messages(),
             floor: has_abyss_hits.then_some(state.abyss.floor).flatten(),
             active_half: has_abyss_hits.then_some(state.abyss.active_half).flatten(),
             first_half_at: has_abyss_hits
@@ -606,12 +611,14 @@ impl HistoryCombatDetails {
         if self.global_hits.is_empty() {
             state.rebuild_global_from_abyss();
         }
+        state.restore_exact_quarantine(self.exact_quarantined_messages.clone());
         state
     }
 
     /// Rebuilds a selected History state by moving its unbounded vectors.
     pub fn into_combat_state(self) -> CombatState {
         let Self {
+            exact_quarantined_messages,
             floor,
             active_half,
             first_half_at,
@@ -641,6 +648,7 @@ impl HistoryCombatDetails {
         if state.hits.is_empty() {
             state.rebuild_global_from_abyss();
         }
+        state.restore_exact_quarantine(exact_quarantined_messages);
         state
     }
 
@@ -655,6 +663,33 @@ impl HistoryCombatDetails {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.exact_quarantined_messages.len() > 100_000
+            || self.exact_quarantined_messages.iter().any(|k| {
+                k.generation.is_empty()
+                    || k.generation.len() > 128
+                    || k.connection.is_empty()
+                    || k.connection.len() > 256
+                    || k.message.parse::<i64>().is_err()
+                    || k.timestamp_bits.parse::<u64>().is_err()
+            })
+        {
+            return Err("History exact identity metadata invalid".into());
+        }
+        let quarantined: std::collections::HashSet<_> =
+            self.exact_quarantined_messages.iter().collect();
+        if self
+            .global_hits
+            .iter()
+            .chain(&self.first_half_hits)
+            .chain(&self.second_half_hits)
+            .any(|h| {
+                h.exact
+                    .as_ref()
+                    .is_some_and(|e| quarantined.contains(&e.message))
+            })
+        {
+            return Err("History exact quarantine conflicts with retained hit".into());
+        }
         if !self.global_hits.is_empty()
             && (!self.first_half_hits.is_empty() || !self.second_half_hits.is_empty())
         {
@@ -5602,6 +5637,7 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: None,
         }
     }

@@ -113,6 +113,25 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 }
 
 describe("main DPS detail contract", () => {
+  it("preserves unavailable HP and overkill as null instead of zero", () => {
+    const value = snapshot();
+    const rows = value.rows.map((row) => ({
+      ...row,
+      targetMaxHp: null,
+      targetHpPercent: null,
+      overkillDamage: null,
+      maxHpReduction: null,
+    }));
+    const parsed = parseMainDpsDetailSnapshot({ ...value, rows });
+    expect(parsed.rows[0]?.targetMaxHp).toBeNull();
+    expect(parsed.rows[0]?.targetHpPercent).toBeNull();
+    expect(parsed.rows[0]?.overkillDamage).toBeNull();
+    expect(parsed.rows[0]?.maxHpReduction).toBeNull();
+    expect(parsed.rows[0]?.targetHpAfter).toBe(877);
+    expect(() =>
+      parseMainDpsDetailSnapshot({ ...value, contractVersion: 7 }),
+    ).toThrow();
+  });
   it("parses the old-detail parity projection and target HP", () => {
     const parsed = parseMainDpsDetailSnapshot(snapshot());
     expect(parsed.kind).toBe("character");

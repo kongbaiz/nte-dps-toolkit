@@ -4380,6 +4380,8 @@ struct HitTargetSnapshot {
 }
 
 struct PacketDecoder {
+    exact_mode: bool,
+    exact_runtime: Option<crate::engine::settlement::runtime::Runtime>,
     packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
@@ -4445,6 +4447,21 @@ impl Default for PacketDecoder {
 }
 
 impl PacketDecoder {
+    fn enable_exact_mode(&mut self, sender: &EngineEventSink) {
+        self.exact_mode = true;
+        match crate::engine::settlement::runtime::Runtime::from_environment() {
+            Ok(Some(runtime)) => self.exact_runtime = Some(runtime),
+            Ok(None) => {
+                let _ = sender.send(EngineEvent::Warning(
+                    "exact_profile_missing_damage_unavailable_no_legacy_fallback".into(),
+                ));
+            }
+            Err(code) => {
+                let _ = sender.send(EngineEvent::Error(code.into()));
+            }
+        }
+    }
+
     fn with_ability_catalog(
         ability_catalog: Arc<AbilityCatalog>,
         use_server_damage_calibration: bool,
@@ -4473,6 +4490,8 @@ impl PacketDecoder {
         );
 
         Self {
+            exact_mode: false,
+            exact_runtime: None,
             packet_emission: PacketEmissionMode::FullDebug,
             session_characters: HashMap::new(),
             client_endpoints: HashSet::new(),
@@ -5557,6 +5576,7 @@ fn server_residual_hit(
         follow_up_attack_type: None,
         follow_up_damage_attribute: None,
         reconciled_overkill_damage: Some(0.0),
+        exact: None,
         wire_event: None,
     }
 }
@@ -5610,6 +5630,7 @@ fn unattributed_display_damage_hit(
         follow_up_attack_type: None,
         follow_up_damage_attribute: None,
         reconciled_overkill_damage: Some(0.0),
+        exact: None,
         wire_event: None,
     }
 }
@@ -6148,6 +6169,29 @@ impl PacketDecoder {
         {
             return;
         }
+        let mut exact_components = 0;
+        if let Some(runtime) = self.exact_runtime.as_mut() {
+            match runtime.datagram(
+                src,
+                src_port,
+                dst,
+                dst_port,
+                payload,
+                capture_timestamp,
+                characters,
+                include_incoming,
+            ) {
+                Ok(projections) => {
+                    for p in projections {
+                        let _ = sender.send(EngineEvent::ExactSettlement(Box::new(p)));
+                    }
+                }
+                Err(code) => {
+                    let _ = sender.send(EngineEvent::Error(code.into()));
+                }
+            }
+            exact_components = runtime.last_settlement_components;
+        }
         let expired_hits = self.take_expired_ambiguous_hits(timestamp);
         self.emit_hits(expired_hits, characters, sender);
         let expired_targetless_hits = self.take_expired_targetless_hits(timestamp);
@@ -6229,7 +6273,7 @@ impl PacketDecoder {
                 &gameplay_effects,
             )
         });
-        let mut hits = if outgoing {
+        let mut hits = if outgoing && !self.exact_mode {
             let packet_char_id = if ids.len() == 1 {
                 ids.first().copied()
             } else {
@@ -6291,7 +6335,7 @@ impl PacketDecoder {
             }
             hits = retained;
         }
-        if outgoing {
+        if outgoing && !self.exact_mode {
             for reassembled in reassembled_bunches
                 .iter()
                 .filter(|observation| observation.bunch.fragment_count > 1)
@@ -6416,14 +6460,14 @@ impl PacketDecoder {
         }
         self.character_declarations
             .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
-        let mut accepted = prepared_hits.emit.len();
+        let mut accepted = prepared_hits.emit.len() + exact_components;
         // CurrentHP 候选缺少目标 handle 校验，仅用于调试显示，不参与 follow-up 计算。
-        let current_hp_updates = if outgoing {
+        let current_hp_updates = if outgoing || self.exact_mode {
             Vec::new()
         } else {
             parse_current_hp_updates(payload)
         };
-        let direct_client_damage_boss = if outgoing {
+        let direct_client_damage_boss = if outgoing || self.exact_mode {
             None
         } else {
             match (&transport_packet, &bunch_packet) {
@@ -6437,12 +6481,12 @@ impl PacketDecoder {
             .as_ref()
             .map(|update| update.target_handle);
         let used_direct_client_damage_boss = direct_boss_target.is_some();
-        let mut target_hp_updates = if outgoing {
+        let mut target_hp_updates = if outgoing || self.exact_mode {
             Vec::new()
         } else {
             parse_client_fight_target_updates(payload)
         };
-        if !outgoing {
+        if !outgoing && !self.exact_mode {
             let mut seen = target_hp_updates
                 .iter()
                 .map(|update| (update.target_handle, update.current_hp.to_bits()))
@@ -6455,12 +6499,12 @@ impl PacketDecoder {
                 }
             }
         }
-        let mut server_damage_settlements = if outgoing {
+        let mut server_damage_settlements = if outgoing || self.exact_mode {
             Vec::new()
         } else {
             parse_server_damage_settlements(payload)
         };
-        if !outgoing {
+        if !outgoing && !self.exact_mode {
             let reassembled_settlements = reassembled_bunches
                 .iter()
                 .flat_map(|observation| parse_server_damage_settlements(&observation.bunch.data))
@@ -6476,7 +6520,7 @@ impl PacketDecoder {
             .collect::<HashSet<_>>();
         let mut boss_hp_updates = match direct_client_damage_boss {
             Some(update) => vec![update],
-            None if !outgoing => parse_boss_hp_updates(payload)
+            None if !outgoing && !self.exact_mode => parse_boss_hp_updates(payload)
                 .into_iter()
                 .filter(|update| {
                     !target_hp_keys.contains(&(update.target_handle, update.current_hp.to_bits()))
@@ -6981,6 +7025,7 @@ fn run_parser(frames: CaptureFrameReceiver, config: ParserRunConfig) {
     } = resources;
     let mut decoder =
         PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
+    decoder.enable_exact_mode(&sender);
     decoder.packet_emission = packet_emission;
     if let Some(warning) = decoder.resource_warning() {
         let _ = sender.send(EngineEvent::Warning(warning));
@@ -7259,6 +7304,7 @@ pub fn import_pcapng(
                 .map_err(|error| map_pcapng_reader_error(error, &byte_budget_exceeded))?;
             let mut decoder =
                 PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
+    decoder.enable_exact_mode(&sender);
             // PCAP replay is an explicit diagnostics/import operation and
             // retains the legacy full packet projection for export fidelity.
             decoder.packet_emission = PacketEmissionMode::FullDebug;
@@ -9277,6 +9323,7 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         follow_up_attack_type: hit.follow_up_attack_type,
         follow_up_damage_attribute: hit.follow_up_damage_attribute,
         reconciled_overkill_damage: hit.reconciled_overkill_damage,
+        exact: None,
         wire_event: None,
     }))
 }
@@ -14593,6 +14640,7 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: None,
         }
     }

@@ -48,7 +48,16 @@ pub enum CoreSignal {
 
 pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSignal {
     match event {
+        EngineEvent::ExactSettlement(projection) => match state.apply_exact_projection(*projection)
+        {
+            Ok(true) => CoreSignal::StateChanged,
+            Ok(false) => CoreSignal::Unchanged,
+            Err(code) => CoreSignal::Error(code.into()),
+        },
         EngineEvent::Hit(hit) => {
+            if hit.exact.is_some() {
+                return CoreSignal::Error("exact_hit_requires_projection_event".into());
+            }
             if hit.is_server_damage_reconciliation() {
                 if state.reconcile_server_target_damage(*hit) {
                     CoreSignal::StateChanged
@@ -194,6 +203,7 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
             wire_event: None,
         }
     }
