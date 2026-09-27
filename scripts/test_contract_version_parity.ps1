@@ -49,18 +49,10 @@ try {
     $rust = Get-VersionConstants -Files $rustFiles -Kind 'Rust'
     $typescript = Get-VersionConstants -Files $typescriptFiles -Kind 'TypeScript'
 
-    # The Rust domain name predates the Mod Studio adapter prefix. Normalize
-    # this one documented alias before comparing the cross-language contract.
-    if ($rust.ContainsKey('MOD_SDK_SCHEMA_VERSION')) {
-        if ($rust.ContainsKey('MOD_STUDIO_SDK_SCHEMA_VERSION')) {
-            throw 'Rust contract version alias collides: MOD_SDK_SCHEMA_VERSION.'
-        }
-        $rust['MOD_STUDIO_SDK_SCHEMA_VERSION'] = $rust['MOD_SDK_SCHEMA_VERSION']
-        $rust.Remove('MOD_SDK_SCHEMA_VERSION')
-    }
-
     $intentionalRustOnly = [ordered]@{
         # CLI JSON-RPC and file/update schemas have no TypeScript consumer.
+        # Legacy Rust SDK metadata remains internal to Rust after editor removal.
+        MOD_SDK_SCHEMA_VERSION = 2
         BATTLE_READ_CONTRACT_VERSION = 6
         MOD_MARKET_SCHEMA_VERSION = 6
         PROTOCOL_VERSION = 1
