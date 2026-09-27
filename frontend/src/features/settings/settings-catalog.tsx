@@ -1039,7 +1039,7 @@ function SettingsCard({
   children: ReactNode;
 }) {
   return (
-    <Card>
+    <Card className="@container/settings-card">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Icon className="size-4" aria-hidden="true" />
@@ -1061,7 +1061,7 @@ function SettingsRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid gap-2 py-2.5 first:pt-0 last:pb-0 sm:grid-cols-[minmax(8.5rem,0.42fr)_minmax(0,1fr)] sm:items-center">
+    <div className="grid gap-3 py-3 first:pt-0 last:pb-0 @min-[28rem]/settings-card:grid-cols-[minmax(8.5rem,0.6fr)_minmax(0,1fr)] @min-[28rem]/settings-card:items-center">
       <div>
         <p className="text-sm font-medium">{t(labelKey)}</p>
         {descriptionKey ? (

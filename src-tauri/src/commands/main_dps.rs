@@ -677,6 +677,45 @@ fn open_team_details_with_filter(
     show_combat_details(app, state, MainDpsDetailKind::Team)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HitSnapshotReply {
+    contract_version: u32,
+    hit_id: String,
+    snapshot_key: String,
+    snapshot: nte_dps_tool::engine::model::plugin_snapshot::PluginHitSnapshot,
+}
+#[tauri::command]
+pub(crate) fn get_main_dps_hit_snapshot(
+    hit_id: String,
+    snapshot_key: String,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<HitSnapshotReply, CommandError> {
+    combat_details::validate_window(&window)?;
+    let kind = combat_details::window_kind(&window)?;
+    let snapshot = crate::contract::main_dps_detail::find_hit_snapshot(
+        state.inner(),
+        kind,
+        &hit_id,
+        &snapshot_key,
+    )
+    .map_err(CommandError::from_core)?
+    .ok_or_else(|| {
+        CommandError::main_dps(
+            "hit_snapshot_unavailable",
+            "This hit snapshot is no longer available. Refresh the hit list.",
+        )
+    })?;
+    // Clone/serialize the bounded requested detail outside the authoritative state lock.
+    Ok(HitSnapshotReply {
+        contract_version: 1,
+        hit_id,
+        snapshot_key,
+        snapshot: (*snapshot).clone(),
+    })
+}
+
 #[tauri::command]
 pub(crate) fn get_main_dps_detail_snapshot(
     offset: usize,

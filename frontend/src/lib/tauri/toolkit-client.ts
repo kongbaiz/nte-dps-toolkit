@@ -3,10 +3,14 @@ import { tauriInvokeTransport, type InvokeTransport } from "./stream-client";
 
 export type DataMode = "packet_capture" | "plugin";
 export interface PluginPanel {
-  contractVersion: 1;
+  contractVersion: 4;
+  connectionIdentity: string | null;
+  collectorActive: boolean;
+  capabilities: number[];
   mode: DataMode;
+  loadingMethod: "proxy" | "loader";
   connection: "notRequested" | "connected" | "unavailable" | "busy" | "error";
-  directorySelected: boolean;
+  componentsReady: boolean;
   plugins: {
     file: string;
     state: "loaded" | "unloaded" | "unload_pending" | "failed";
@@ -29,7 +33,7 @@ const fail = (message: string): never => {
 const p = createContractPrimitives(fail);
 export function parsePluginPanel(value: unknown): PluginPanel {
   const r = p.record(value, "pluginPanel");
-  if (r.contractVersion !== 1) fail("unsupported plugin panel contract");
+  if (r.contractVersion !== 4) fail("unsupported plugin panel contract");
   const mode = p.enumValue(
     r.mode,
     ["packet_capture", "plugin"] as const,
@@ -40,6 +44,26 @@ export function parsePluginPanel(value: unknown): PluginPanel {
     ["notRequested", "connected", "unavailable", "busy", "error"] as const,
     "connection",
   );
+  const identity =
+    r.connectionIdentity === null
+      ? null
+      : p.boundedString(r.connectionIdentity, "connectionIdentity", 64);
+  if (identity !== null && !/^\d+:\d+$/.test(identity))
+    fail("invalid host identity");
+  const rawCapabilities = p.array(r.capabilities, "capabilities");
+  if (rawCapabilities.length > 128) fail("too many capabilities");
+  const capabilities = rawCapabilities.map((v) => {
+    if (
+      typeof v !== "number" ||
+      !Number.isSafeInteger(v) ||
+      v < 1 ||
+      v > 0xffffffff
+    )
+      return fail("invalid capability");
+    return v;
+  });
+  if (new Set(capabilities).size !== capabilities.length)
+    fail("duplicate capability");
   const list = p.array(r.plugins, "plugins");
   if (list.length > 64) fail("too many plugins");
   const files = new Set<string>();
@@ -90,17 +114,28 @@ export function parsePluginPanel(value: unknown): PluginPanel {
       error: p.boundedString(o.error, "error", 512, { allowEmpty: true }),
     };
   }
-  if (connection !== "connected" && (plugins.length || combat || operation))
+  if (
+    connection !== "connected" &&
+    (plugins.length || combat || operation || identity || capabilities.length)
+  )
     fail("disconnected panel contains live data");
   if (mode === "packet_capture" && connection !== "notRequested")
     fail("capture mode must not use plugin IPC");
-  if (connection === "connected" && (combat === null || operation === null))
+  if (connection === "connected" && (operation === null || identity === null))
     fail("missing connected state");
   return {
-    contractVersion: 1,
+    contractVersion: 4,
+    loadingMethod: p.enumValue(
+      r.loadingMethod,
+      ["proxy", "loader"] as const,
+      "loadingMethod",
+    ),
+    connectionIdentity: identity,
+    collectorActive: p.boolean(r.collectorActive, "collectorActive"),
+    capabilities,
     mode,
     connection,
-    directorySelected: p.boolean(r.directorySelected, "directorySelected"),
+    componentsReady: p.boolean(r.componentsReady, "componentsReady"),
     plugins,
     combat,
     operation,
@@ -118,17 +153,31 @@ export function createToolkitClient(
         await transport.invoke("set_data_mode", { mode, acknowledgeRisk }),
       );
     },
+    async setLoadingMethod(method: "proxy" | "loader") {
+      return parsePluginPanel(
+        await transport.invoke("set_host_loading_method", { method }),
+      );
+    },
+    async launchHost() {
+      const result = p.record(
+        await transport.invoke("launch_plugin_host"),
+        "hostLaunch",
+      );
+      return {
+        panel: parsePluginPanel(result.panel),
+        outcome: p.enumValue(
+          result.outcome,
+          ["proxyDeployed", "connected"] as const,
+          "outcome",
+        ),
+      };
+    },
     async control(
-      action: "enable" | "disable" | "reload" | "logLevel",
+      action: "enable" | "disable",
       file: string | null = null,
       value: number | null = null,
     ) {
       await transport.invoke("control_plugin", { action, file, value });
-    },
-    async chooseDirectory() {
-      const result = await transport.invoke("select_plugin_directory");
-      if (typeof result !== "boolean") fail("invalid directory selection");
-      return result;
     },
   };
 }

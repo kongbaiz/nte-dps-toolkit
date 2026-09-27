@@ -1,0 +1,380 @@
+{
+  "FAwakenEffectData": [
+    {
+      "name": "Unlocked",
+      "kind": "bool"
+    },
+    {
+      "name": "EffectID",
+      "kind": "class FName"
+    }
+  ],
+  "FCharacterItemFashionDyeData": [
+    {
+      "name": "FashionID",
+      "kind": "class FName"
+    },
+    {
+      "name": "CurrentDyeID",
+      "kind": "int32"
+    }
+  ],
+  "FCharacterItemNetInfo": [
+    {
+      "name": "CharacterLevel",
+      "kind": "int32"
+    },
+    {
+      "name": "BreakthroughLevel",
+      "kind": "int32"
+    },
+    {
+      "name": "ForkItemNetId",
+      "kind": "struct FHTItemNetID"
+    },
+    {
+      "name": "AwakenLevel",
+      "kind": "int32"
+    },
+    {
+      "name": "SaveHPPercent",
+      "kind": "float"
+    },
+    {
+      "name": "SaveHPMax",
+      "kind": "float"
+    },
+    {
+      "name": "SaveCharge",
+      "kind": "float"
+    },
+    {
+      "name": "SaveHeterochrome",
+      "kind": "float"
+    },
+    {
+      "name": "SaveSatiety",
+      "kind": "float"
+    },
+    {
+      "name": "SaveSatietyChangeTime",
+      "kind": "float"
+    },
+    {
+      "name": "SaveSatietyMaxValue",
+      "kind": "float"
+    },
+    {
+      "name": "SaveIsDead",
+      "kind": "bool"
+    },
+    {
+      "name": "EXP",
+      "kind": "int32"
+    },
+    {
+      "name": "SkillLevelData",
+      "kind": "TArray<struct FSkillLevelData>"
+    },
+    {
+      "name": "EquipmentSlots",
+      "kind": "TArray<struct FEquipmentStruct>"
+    },
+    {
+      "name": "EquipCoreSlots",
+      "kind": "TArray<struct FEquipmentSlotInfo>"
+    },
+    {
+      "name": "FileRead",
+      "kind": "TArray<class FName>"
+    },
+    {
+      "name": "AwakenEffectDataLists",
+      "kind": "TArray<struct FAwakenEffectData>"
+    },
+    {
+      "name": "PassiveSkillData",
+      "kind": "TArray<class FName>"
+    },
+    {
+      "name": "StolenAbility",
+      "kind": "struct FStolenAbility"
+    },
+    {
+      "name": "CityAbilityLevelData",
+      "kind": "TArray<struct FCityAbilityLevelData>"
+    },
+    {
+      "name": "AppearanceEquipData",
+      "kind": "TArray<class FName>"
+    },
+    {
+      "name": "FashionDyeDataArray",
+      "kind": "TArray<struct FCharacterItemFashionDyeData>"
+    },
+    {
+      "name": "DecorationEquipData",
+      "kind": "TArray<struct FDecorationEquipData>"
+    },
+    {
+      "name": "BreakRewardGetLevels",
+      "kind": "TArray<int32>"
+    },
+    {
+      "name": "ChiichanRewardCount",
+      "kind": "int32"
+    },
+    {
+      "name": "ChiichanDailyMaxFons",
+      "kind": "int32"
+    },
+    {
+      "name": "HanielUIStack",
+      "kind": "int32"
+    },
+    {
+      "name": "ChaosSinsCore",
+      "kind": "int32"
+    }
+  ],
+  "FCityAbilityLevelData": [
+    {
+      "name": "CityAbilityId",
+      "kind": "class FName"
+    },
+    {
+      "name": "CityAbilityLevel",
+      "kind": "int32"
+    }
+  ],
+  "FDecorationEquipData": [
+    {
+      "name": "FashionID",
+      "kind": "class FName"
+    },
+    {
+      "name": "DecorationIDs",
+      "kind": "TArray<class FName>"
+    }
+  ],
+  "FEquipmentItemNetInfo": [
+    {
+      "name": "StrengthenLevel",
+      "kind": "int32"
+    },
+    {
+      "name": "CharacterNetID",
+      "kind": "struct FHTItemNetID"
+    },
+    {
+      "name": "EXP",
+      "kind": "int32"
+    },
+    {
+      "name": "IsLocked",
+      "kind": "bool"
+    },
+    {
+      "name": "IsDiscarded",
+      "kind": "bool"
+    }
+  ],
+  "FEquipmentSlotInfo": [
+    {
+      "name": "State",
+      "kind": "int32"
+    },
+    {
+      "name": "EquipmentID",
+      "kind": "class FName"
+    },
+    {
+      "name": "EquipNetID",
+      "kind": "struct FHTItemNetID"
+    },
+    {
+      "name": "bFirstStep",
+      "kind": "bool"
+    },
+    {
+      "name": "Row",
+      "kind": "int32"
+    },
+    {
+      "name": "Column",
+      "kind": "int32"
+    },
+    {
+      "name": "NEW",
+      "kind": "int32"
+    }
+  ],
+  "FEquipmentStruct": [
+    {
+      "name": "SlotList",
+      "kind": "TArray<struct FEquipmentSlotInfo>"
+    }
+  ],
+  "FForkItemNetInfo": [
+    {
+      "name": "StrengthenLevel",
+      "kind": "int32"
+    },
+    {
+      "name": "BreakthroughLevel",
+      "kind": "int32"
+    },
+    {
+      "name": "StarLevel",
+      "kind": "int32"
+    },
+    {
+      "name": "IsLocked",
+      "kind": "bool"
+    },
+    {
+      "name": "CharacterNetID",
+      "kind": "struct FHTItemNetID"
+    },
+    {
+      "name": "EXP",
+      "kind": "int32"
+    }
+  ],
+  "FHTItemNetID": [
+    {
+      "name": "solt",
+      "kind": "uint32"
+    },
+    {
+      "name": "serial",
+      "kind": "uint32"
+    }
+  ],
+  "FHTItemNetInfo": [
+    {
+      "name": "ItemID",
+      "kind": "class FName"
+    },
+    {
+      "name": "UniqueID",
+      "kind": "struct FHTItemNetID"
+    },
+    {
+      "name": "Amount",
+      "kind": "int64"
+    },
+    {
+      "name": "Durable",
+      "kind": "int32"
+    },
+    {
+      "name": "CreateTime",
+      "kind": "int64"
+    },
+    {
+      "name": "ExpireTime",
+      "kind": "int64"
+    },
+    {
+      "name": "CharacterNetInfo",
+      "kind": "TArray<struct FCharacterItemNetInfo>"
+    },
+    {
+      "name": "ForkNetInfo",
+      "kind": "TArray<struct FForkItemNetInfo>"
+    },
+    {
+      "name": "EquipmentNetInfo",
+      "kind": "TArray<struct FEquipmentItemNetInfo>"
+    },
+    {
+      "name": "FishNetInfo",
+      "kind": "TArray<struct FFishItemNetInfo>"
+    },
+    {
+      "name": "RandomModifyBaseData",
+      "kind": "TArray<class FName>"
+    },
+    {
+      "name": "RandomModifyData",
+      "kind": "TArray<struct FRandomModifyDataSaveStruct>"
+    },
+    {
+      "name": "ShortcutUseTimer",
+      "kind": "float"
+    },
+    {
+      "name": "CanUseUtcTimeTicks",
+      "kind": "int64"
+    },
+    {
+      "name": "bIsTemporary",
+      "kind": "bool"
+    },
+    {
+      "name": "IsEquiped",
+      "kind": "int32"
+    },
+    {
+      "name": "ExtraJsonData",
+      "kind": "class FString"
+    }
+  ],
+  "FRandomModifyDataSaveStruct": [
+    {
+      "name": "PropName",
+      "kind": "class FName"
+    },
+    {
+      "name": "PropValue",
+      "kind": "float"
+    }
+  ],
+  "FSkillLevelData": [
+    {
+      "name": "SkillID",
+      "kind": "class FName"
+    },
+    {
+      "name": "SkillTag",
+      "kind": "class FName"
+    },
+    {
+      "name": "SkillLevel",
+      "kind": "int32"
+    }
+  ],
+  "FStealableAbility": [
+    {
+      "name": "AbilityClass",
+      "kind": "TSubclassOf<class UHTGameplayAbility>"
+    },
+    {
+      "name": "InputID",
+      "kind": "T1ByteEnum<ESkillInputIDType>"
+    },
+    {
+      "name": "InheritLevelOfAbilityWithSameInputID",
+      "kind": "T1ByteEnum<ESkillInputIDType>"
+    },
+    {
+      "name": "ChangeAvatarCapsuleScale",
+      "kind": "float"
+    }
+  ],
+  "FStolenAbility": [
+    {
+      "name": "AbilityCfg",
+      "kind": "struct FStealableAbility"
+    },
+    {
+      "name": "TargetAvatarClass",
+      "kind": "TSubclassOf<class AHTAbilityCharacter>"
+    },
+    {
+      "name": "TargetAtk",
+      "kind": "float"
+    }
+  ]
+}

@@ -84,6 +84,7 @@ import {
   roundLabel,
 } from "./main-dps-model";
 import { UpdatePromptDialog } from "./update-prompt-dialog";
+import { DataSourceControl } from "./data-source-control";
 import { useMainDps } from "./use-main-dps";
 
 type MainDpsOpenDetailFilter = Exclude<MainDpsDetailFilter, "qteType">;
@@ -543,6 +544,8 @@ export function MainDpsPage() {
           />
         }
       />
+
+      <DataSourceControl disabled={pending !== null} />
 
       {snapshot.selectedRoundId === null &&
       (captureRunning ||

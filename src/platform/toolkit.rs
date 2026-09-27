@@ -359,20 +359,21 @@ impl ToolkitClient {
         serde_json::from_slice(&self.call(command, argument, text, cancelled)?)
             .map_err(|_| ToolkitError::InvalidProtocol)
     }
-    pub fn describe(&self) -> Result<(), ToolkitError> {
+    pub fn capabilities(&self) -> Result<Vec<u32>, ToolkitError> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Description {
             protocol: u32,
             mode: String,
-            ui: bool,
+            // UI presence is metadata, not a different control protocol.
+            #[serde(rename = "ui")]
+            _ui: bool,
             legacy_mod_protocol: bool,
             commands: Vec<u32>,
         }
         let d: Description = self.json(1, 0, "", &|| false)?;
         if d.protocol != 1
             || d.mode != "toolkit"
-            || d.ui
             || d.legacy_mod_protocol
             || d.commands.len() > 128
             || ![3, 100, 101, 102, 106, 107, 200]
@@ -381,7 +382,19 @@ impl ToolkitClient {
         {
             return Err(ToolkitError::Unsupported);
         }
-        Ok(())
+        let mut commands = d.commands;
+        commands.sort_unstable();
+        commands.dedup();
+        Ok(commands)
+    }
+    pub fn describe(&self) -> Result<(), ToolkitError> {
+        self.capabilities().map(|_| ())
+    }
+    pub fn process_identity(&self) -> (u32, u64) {
+        (self.pid, self.created)
+    }
+    pub fn identity(&self) -> String {
+        format!("{}:{}", self.pid, self.created)
     }
 }
 struct Page {

@@ -23,7 +23,7 @@ const { boolean, enumValue, nullableEnumValue, record } =
   });
 
 export type DpsTimeModeId = "time-stop-adjusted" | "real-time";
-export type DpsTimeEffectiveMode = DpsTimeModeId;
+export type DpsTimeEffectiveMode = DpsTimeModeId | "pending";
 export type CombatClockHealth =
   | "unknown"
   | "recorded"
@@ -54,7 +54,7 @@ export function parseDpsTimeRuntime(
     ),
     effectiveMode: enumValue(
       runtime.effectiveMode,
-      ["time-stop-adjusted", "real-time"] as const,
+      ["time-stop-adjusted", "real-time", "pending"] as const,
       `${field}.effectiveMode`,
     ),
     combatClockHealth: enumValue(
@@ -92,12 +92,14 @@ export function parseDpsTimeRuntime(
       ? parsed.effectiveMode === "real-time" &&
         !parsed.degraded &&
         !warningPresent
-      : providerReady
-        ? adjustedEffective && !parsed.degraded && !warningPresent
-        : !adjustedEffective &&
-          parsed.degraded &&
-          warningPresent &&
-          parsed.warningMessageKey === expectedDegradedWarning;
+      : parsed.effectiveMode === "pending"
+        ? !providerReady && !parsed.degraded && !warningPresent
+        : providerReady
+          ? adjustedEffective && !parsed.degraded && !warningPresent
+          : !adjustedEffective &&
+            parsed.degraded &&
+            warningPresent &&
+            parsed.warningMessageKey === expectedDegradedWarning;
   if (!valid) {
     throw new TechnicalContractError(
       `${field} has an inconsistent configured/effective runtime state`,

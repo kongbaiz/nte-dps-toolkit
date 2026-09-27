@@ -4,7 +4,7 @@ import {
 } from "@/lib/tauri/contract-primitives";
 
 export const MOD_STUDIO_CONTRACT_VERSION = 13;
-export const MOD_MARKET_CONTRACT_VERSION = 12;
+export const MOD_MARKET_CONTRACT_VERSION = 13;
 export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;
 export const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION = 1;
 export const MOD_LOADER_RUNTIME_CONTRACT_VERSION = 1;
@@ -112,6 +112,7 @@ export interface ModLoaderRuntimeSnapshot {
 }
 
 export interface ModMarketItem {
+  component: "plugin" | "host" | "loader" | "driver";
   id: string;
   bindings: string[];
   localizations: {
@@ -514,6 +515,11 @@ export function parseModMarketCatalog(
       );
     }
     return {
+      component: enumValue(
+        item.component,
+        ["plugin", "host", "loader", "driver"] as const,
+        `mods[${index}].component`,
+      ),
       id: modId(item.id, `mods[${index}].id`),
       bindings: parsedBindings,
       localizations: parseModMarketLocalizations(

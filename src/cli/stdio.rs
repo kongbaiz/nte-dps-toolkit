@@ -530,13 +530,23 @@ impl Runtime {
                     self.send_capture_status(outbound, "running");
                 }
             }
-            CoreSignal::Warning(_) => {
+            CoreSignal::Warning(warning) => {
                 let sequence = self.next_sequence();
                 let _ = outbound.send(notification(
                     "event.core.warning",
                     CoreMessageEvent {
                         sequence,
-                        message: "Capture warning",
+                        message: if warning == crate::engine::settlement::automatic::WAITING {
+                            "Waiting for matching damage traffic. You can start capture during combat."
+                        } else if warning == crate::engine::settlement::automatic::GAP {
+                            "An incomplete damage message was skipped. Later complete messages can still be recorded."
+                        } else if warning == crate::engine::settlement::automatic::UNAVAILABLE {
+                            "Damage parsing for a connection is unavailable. Raw capture continues; no legacy estimates are used."
+                        } else if warning == crate::engine::settlement::runtime::PROFILE_MISSING {
+                            "Damage parsing is unavailable: configure exact-packet.json for this game session. Raw capture can continue."
+                        } else {
+                            "Capture warning"
+                        },
                     },
                 ));
             }
@@ -2473,6 +2483,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }

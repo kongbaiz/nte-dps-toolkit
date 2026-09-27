@@ -86,7 +86,7 @@ export function SettingsPage() {
             onRetry={settings.refresh}
           />
         ) : (
-          <div className="settings-columns grid grid-cols-1 items-start gap-4 min-[1100px]:grid-cols-2">
+          <div className="settings-columns grid items-start gap-4">
             <PrimarySettingsColumn
               snapshot={settings.state.snapshot}
               pendingAction={settings.pendingAction}
@@ -145,7 +145,7 @@ function SettingsReady({
 
   return (
     <div className="flex flex-col gap-3">
-      <Card>
+      <Card className="@container/hud-settings">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <SlidersHorizontal className="size-4" aria-hidden="true" />
@@ -239,8 +239,8 @@ function HudWindowSection({
           )}
         </p>
       </div>
-      <div className="mt-3 grid divide-y border-y min-[760px]:grid-cols-2 min-[760px]:divide-x min-[760px]:divide-y-0">
-        <label className="flex items-center justify-between gap-4 py-2.5 min-[760px]:pr-5">
+      <div className="mt-3 grid divide-y border-y @min-[32rem]/hud-settings:grid-cols-2 @min-[32rem]/hud-settings:divide-x @min-[32rem]/hud-settings:divide-y-0">
+        <label className="flex items-center justify-between gap-4 py-2.5 @min-[32rem]/hud-settings:pr-5">
           <span>
             <span className="flex items-center gap-2 text-sm font-medium">
               <Pin
@@ -261,7 +261,7 @@ function HudWindowSection({
           />
         </label>
 
-        <div className="py-2.5 min-[760px]:pl-5">
+        <div className="py-2.5 @min-[32rem]/hud-settings:pl-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="text-sm font-medium" htmlFor="settings-hud-width">
               {t("HUD Width")}

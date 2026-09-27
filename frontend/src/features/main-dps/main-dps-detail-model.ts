@@ -4,7 +4,7 @@ import type {
 } from "@/lib/tauri/main-dps-detail-contract";
 
 export type DetailColumnKey =
-  "time" | "character" | "type" | "damage" | "target";
+  "time" | "character" | "type" | "damage" | "target" | "critical" | "snapshot";
 
 export const DEFAULT_DETAIL_COLUMNS: MainDpsDetailColumns = {
   showTime: true,
@@ -17,6 +17,10 @@ export const DEFAULT_DETAIL_COLUMNS: MainDpsDetailColumns = {
   typeWidth: 250,
   damageWidth: 130,
   targetWidth: 180,
+  showCritical: true,
+  showSnapshot: true,
+  criticalWidth: 80,
+  snapshotWidth: 250,
 };
 
 export const DETAIL_ROW_HEIGHT = 64;
@@ -68,6 +72,8 @@ export function resetDetailColumnWidths(
     typeWidth: DEFAULT_DETAIL_COLUMNS.typeWidth,
     damageWidth: DEFAULT_DETAIL_COLUMNS.damageWidth,
     targetWidth: DEFAULT_DETAIL_COLUMNS.targetWidth,
+    criticalWidth: DEFAULT_DETAIL_COLUMNS.criticalWidth,
+    snapshotWidth: DEFAULT_DETAIL_COLUMNS.snapshotWidth,
   };
 }
 
@@ -127,7 +133,13 @@ function visibilityField(
   column: DetailColumnKey,
 ): keyof Pick<
   MainDpsDetailColumns,
-  "showTime" | "showCharacter" | "showType" | "showDamage" | "showTarget"
+  | "showTime"
+  | "showCharacter"
+  | "showType"
+  | "showDamage"
+  | "showTarget"
+  | "showCritical"
+  | "showSnapshot"
 > {
   switch (column) {
     case "time":
@@ -140,6 +152,10 @@ function visibilityField(
       return "showDamage";
     case "target":
       return "showTarget";
+    case "critical":
+      return "showCritical";
+    case "snapshot":
+      return "showSnapshot";
   }
 }
 
@@ -147,7 +163,13 @@ function widthField(
   column: DetailColumnKey,
 ): keyof Pick<
   MainDpsDetailColumns,
-  "timeWidth" | "characterWidth" | "typeWidth" | "damageWidth" | "targetWidth"
+  | "timeWidth"
+  | "characterWidth"
+  | "typeWidth"
+  | "damageWidth"
+  | "targetWidth"
+  | "criticalWidth"
+  | "snapshotWidth"
 > {
   switch (column) {
     case "time":
@@ -160,5 +182,22 @@ function widthField(
       return "damageWidth";
     case "target":
       return "targetWidth";
+    case "critical":
+      return "criticalWidth";
+    case "snapshot":
+      return "snapshotWidth";
   }
+}
+
+export function criticalTranslationKey(
+  value: boolean | null,
+): "Yes" | "No" | "Unknown value" {
+  return value === null ? "Unknown value" : value ? "Yes" : "No";
+}
+export function effectCountsText(
+  value: import("@/lib/tauri/hit-snapshot-contract").EffectCounts | null,
+): string | null {
+  return value === null || value.complete !== true
+    ? null
+    : `${value.positive} / ${value.negative} (+${value.other})`;
 }

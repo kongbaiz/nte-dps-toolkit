@@ -1,3 +1,5 @@
+import { hitSnapshotFixture, hitDetailsFixture } from "./hit-snapshot-fixture";
+import { userCharacterArtworkFixture } from "./user-character-fixture";
 // Development-only entry; excluded from production Vite inputs.
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { TIMELINE_UI_PREVIEW } from "@/features/timeline/timeline-ui-preview";
@@ -5,6 +7,7 @@ import { parseTimelineSnapshot } from "@/lib/tauri/timeline-contract";
 import { parseSettingsSnapshot } from "@/lib/tauri/settings-contract";
 import {
   settingsFixture,
+  marketFixture,
   historyFixture,
   skillsFixture,
   packetsFixture,
@@ -19,6 +22,10 @@ import { parseEmptyCurtainSnapshot } from "@/lib/tauri/empty-curtain-contract";
 import { parseDiagnosticsSnapshot } from "@/lib/tauri/diagnostics-contract";
 
 const params = new URLSearchParams(location.search);
+let previewMode =
+  params.get("plugin") === "packet" ? "packet_capture" : "plugin";
+let previewLoadingMethod =
+  params.get("loading") === "loader" ? "loader" : "proxy";
 const settings = parseSettingsSnapshot(settingsFixture());
 settings.interface.darkMode = params.get("theme") !== "light";
 settings.interface.reduceMotion = params.get("motion") === "reduced";
@@ -97,10 +104,26 @@ mockIPC(
       return parseSkillsSnapshot({ ...previewSkills, scope: payload.scope });
     if (command === "get_packets_snapshot") return previewPackets;
     if (command === "get_empty_curtain_snapshot")
-      return parseEmptyCurtainSnapshot(equipmentFixture);
+      return parseEmptyCurtainSnapshot({
+        ...equipmentFixture,
+        canOperate: previewMode === "plugin",
+      });
     if (command === "get_diagnostics_snapshot")
       return parseDiagnosticsSnapshot(diagnosticsFixture);
     if (command === "get_encrypted_ini_snapshot") return iniFixture;
+    if (command === "get_user_characters") {
+      if (params.get("characters") === "unavailable")
+        throw {
+          code: "plugin_unavailable",
+          messageKey: "No account snapshot loaded.",
+          messageArguments: [],
+        };
+      const fixture = userCharacterArtworkFixture();
+      if (params.get("characters") === "partial" && fixture.page)
+        fixture.page.complete = false;
+      // This preview never dispatches real account refreshes to a game.
+      return fixture;
+    }
     if (command === "get_character_data_snapshot")
       return {
         contractVersion: 1,
@@ -129,16 +152,107 @@ mockIPC(
           },
         ],
       };
-    if (command === "get_plugin_panel")
+    if (
+      command === "release_plugin_action" &&
+      payload.action === "hudStatus" &&
+      params.get("plugin") === "connected"
+    ) {
+      // Read-only synthetic HUD state; all native mutations still fail closed below.
+      const preview = JSON.stringify({ options: 31 });
+      return {
+        command: 118,
+        preview,
+        totalBytes: new TextEncoder().encode(preview).length,
+        truncated: false,
+      };
+    }
+    if (command === "get_main_dps_detail_snapshot") return hitDetailsFixture;
+    if (command === "get_main_dps_hit_snapshot") {
+      const row = hitDetailsFixture.rows.find(
+        (row) =>
+          row.id === payload.hitId && row.snapshotKey === payload.snapshotKey,
+      );
+      if (!row) throw new Error("Unknown fixture hit");
       return {
         contractVersion: 1,
-        mode: "packet_capture",
-        connection: "notRequested",
-        directorySelected: false,
-        plugins: [],
-        combat: null,
-        operation: null,
+        hitId: row.id,
+        snapshotKey: row.snapshotKey,
+        snapshot: {
+          ...hitSnapshotFixture,
+          key: `preview-capture:${row.snapshotKey}`,
+          critical: row.critical,
+        },
       };
+    }
+    if (command === "subscribe_main_dps_detail")
+      return {
+        subscriptionId: payload.subscriptionId,
+        streamKind: "mainDpsDetail",
+        streamProtocolVersion: 1,
+        streamIntervalMs: 100,
+        streamGeneration: "1",
+      };
+    if (command === "unsubscribe_main_dps_detail") return null;
+    if (command === "get_mod_market_catalog") return marketFixture;
+    if (
+      command === "get_plugin_panel" ||
+      command === "set_data_mode" ||
+      command === "set_host_loading_method"
+    ) {
+      if (command === "set_data_mode") {
+        if (payload.mode !== "plugin" && payload.mode !== "packet_capture")
+          throw new Error("Invalid preview mode");
+        if (payload.mode === "plugin" && payload.acknowledgeRisk !== true)
+          throw new Error("Risk acknowledgement required");
+        previewMode = payload.mode;
+      }
+      if (command === "set_host_loading_method") {
+        if (payload.method !== "proxy" && payload.method !== "loader")
+          throw new Error("Invalid preview loading method");
+        previewLoadingMethod = payload.method;
+      }
+      const connected = params.get("plugin") === "connected";
+      const packet = previewMode === "packet_capture";
+      return {
+        contractVersion: 4,
+        loadingMethod: previewLoadingMethod,
+        mode: packet ? "packet_capture" : "plugin",
+        connection: packet
+          ? "notRequested"
+          : connected
+            ? "connected"
+            : "unavailable",
+        connectionIdentity: connected ? "123:456" : null,
+        collectorActive: false,
+        capabilities: connected
+          ? [
+              1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 100, 101, 102, 103, 104, 105,
+              106, 107, 108, 109, 110, 113, 114, 115, 116, 117, 118, 119, 120,
+              121, 200, 300, 301, 302, 303, 304, 305,
+            ]
+          : [],
+        componentsReady: connected,
+        plugins: connected
+          ? ["Combat", "User", "Network", "Performance"].map((name) => ({
+              file: `NTE_Plugin${name}.dll`,
+              state: "loaded",
+            }))
+          : [],
+        combat: connected
+          ? {
+              generation: "1",
+              capturing: false,
+              hits: "824",
+              totalDamage: 5626849,
+              direct: 5626849,
+              correlated: 0,
+              inferred: 0,
+              unknown: 0,
+            }
+          : null,
+        operation: connected ? { state: "", error: "" } : null,
+      };
+    }
     if (
       /^subscribe_(skills|packets|empty_curtain|diagnostics|history)$/.test(
         command,
@@ -235,6 +349,12 @@ mockIPC(
 
 // Use the actual production shell, navigation, command palette and pages.
 const { ConsolePage } = await import("@/features/console/console-page");
+const { MainDpsDetailPage } =
+  await import("@/features/main-dps/main-dps-detail-page");
+const { DataSourceControl } =
+  await import("@/features/main-dps/data-source-control");
+const dataSourcePreview = params.get("view") === "data-source";
+const hitPreview = params.get("view") === "hit-details";
 const { renderWindow } = await import("@/entries/window-bootstrap");
 renderWindow(
   <div className="flex h-dvh flex-col">
@@ -247,11 +367,17 @@ renderWindow(
       </div>
     </div>
     <div className="min-h-0 flex-1">
-      <ConsolePage />
+      {dataSourcePreview ? (
+        <DataSourceControl />
+      ) : hitPreview ? (
+        <MainDpsDetailPage />
+      ) : (
+        <ConsolePage />
+      )}
     </div>
   </div>,
   {
-    windowRoute: "console",
+    windowRoute: hitPreview ? "combat-details" : "console",
     characterAvatars: false,
   },
 );

@@ -19,6 +19,7 @@ pub(crate) mod skills;
 pub(crate) mod technical;
 pub(crate) mod timeline;
 pub(crate) mod toolkit;
+pub(crate) mod user_characters;
 
 pub(crate) fn parse_hud_module(module: &str) -> Result<HudModule, CommandError> {
     match module {

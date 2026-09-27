@@ -1,6 +1,13 @@
 {
   "format_version": 1,
   "effects": {
+    "GE_Reaction_4_new_1042_Damage": {
+      "display_only": true,
+      "show_parent_ability": false,
+      "damage_name_en": "BlackBird: Enhanced Nova Settlement",
+      "damage_name_zh": "鸫歌·黯星强化结算",
+      "damage_name_ja": "BlackBird: Enhanced Nova Settlement"
+    },
     "GE_Parry_Damage": {
       "show_parent_ability": false,
       "damage_name_en": "Rail Counter",
@@ -215,7 +222,11 @@
       "damage_name_ja": "複製創生花"
     },
     "GE_Player_Daffodill_ExtraUnbalance_Damage": {
-      "attack_type": "倾陷伤害"
+      "attack_type": "倾陷伤害",
+      "show_parent_ability": false,
+      "damage_name_zh": "达芙蒂尔·额外倾陷伤害",
+      "damage_name_en": "Daffodill: Extra Break Damage",
+      "damage_name_ja": "ダフォディール・追加ブレイクダメージ"
     },
     "GE_Nanally010_Lv1_Damage": {
       "owner_character_id": 1010,
@@ -690,9 +701,9 @@
     "GE_Player_Radio072_Branch_Damage": {
       "show_parent_ability": false,
       "owner_character_id": 1091,
-      "damage_name_zh": "普通攻击：恶灵大巴掌",
-      "damage_name_en": "普通攻击：恶灵大巴掌",
-      "damage_name_ja": "普通攻击：恶灵大巴掌"
+      "damage_name_zh": "普通攻击：恶灵大巴掌！",
+      "damage_name_en": "普通攻击：恶灵大巴掌！",
+      "damage_name_ja": "普通攻击：恶灵大巴掌！"
     },
     "GE_Player_Radio072_QTE_Damage": {
       "show_parent_ability": false,
@@ -700,6 +711,156 @@
       "damage_name_zh": "恶灵左直拳！",
       "damage_name_en": "恶灵左直拳！",
       "damage_name_ja": "恶灵左直拳！"
+    },
+    "GE_Player_BlackBird_Branch1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "归巢",
+      "owner_character_id": 1042,
+      "damage_name_en": "归巢",
+      "damage_name_ja": "归巢"
+    },
+    "GE_Player_BlackBird_AirAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "顽疾",
+      "owner_character_id": 1042,
+      "damage_name_en": "顽疾",
+      "damage_name_ja": "顽疾"
+    },
+    "GE_Player_BlackBird_Evolve_Branch1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "予尔等之恩泽",
+      "owner_character_id": 1042,
+      "damage_name_en": "予尔等之恩泽",
+      "damage_name_ja": "予尔等之恩泽"
+    },
+    "GE_Player_BlackBird_Evolve_Branch2_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "赐众生之福音",
+      "owner_character_id": 1042,
+      "damage_name_en": "赐众生之福音",
+      "damage_name_ja": "赐众生之福音"
+    },
+    "GE_Player_BlackBird_Evolve_AirAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "灼痕",
+      "owner_character_id": 1042,
+      "damage_name_en": "灼痕",
+      "damage_name_ja": "灼痕"
+    },
+    "GE_Player_BlackBird_Skill_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "葬羽冥",
+      "owner_character_id": 1042,
+      "damage_name_en": "葬羽冥",
+      "damage_name_ja": "葬羽冥"
+    },
+    "GE_Player_BlackBird_Evolve_Skill_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "渡世死焰",
+      "owner_character_id": 1042,
+      "damage_name_en": "渡世死焰",
+      "damage_name_ja": "渡世死焰"
+    },
+    "GE_Player_BlackBird_UltraSkill_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "恳请众魂安息",
+      "owner_character_id": 1042,
+      "damage_name_en": "恳请众魂安息",
+      "damage_name_ja": "恳请众魂安息"
+    },
+    "GE_Player_BlackBird_Evolve_UltraSkill_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "万火归一",
+      "owner_character_id": 1042,
+      "damage_name_en": "万火归一",
+      "damage_name_ja": "万火归一"
+    },
+    "GE_Player_BlackBird_QTE_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "断罪于我",
+      "owner_character_id": 1042,
+      "damage_name_en": "断罪于我",
+      "damage_name_ja": "断罪于我"
+    },
+    "GE_Player_BlackBird_Evolve_QTE_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "唯余慈悲",
+      "owner_character_id": 1042,
+      "damage_name_en": "唯余慈悲",
+      "damage_name_ja": "唯余慈悲"
+    },
+    "GE_Player_Lacrimosa_AnHunZhouTwo_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "番茄酱盛宴·失谐强化追加伤害",
+      "damage_name_en": "Lacrimosa: Enhanced Discord Bonus",
+      "damage_name_ja": "Lacrimosa: Enhanced Discord Bonus"
+    },
+    "GE_Player_BlackBird_SkillAssist_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "失乐鸟·协同攻击",
+      "damage_name_en": "BlackBird: Coordinated Attack",
+      "damage_name_ja": "BlackBird: Coordinated Attack"
+    },
+    "GE_boss_05_HitBullet_Dmg_BP": {
+      "show_parent_ability": false,
+      "damage_name_zh": "墨菲克斯·弹丸回击",
+      "damage_name_en": "Morphix: Returned Projectile",
+      "damage_name_ja": "Morphix: Returned Projectile"
+    },
+    "GE_boss_05_act10_Dmg01_BP": {
+      "show_parent_ability": false,
+      "damage_name_zh": "墨菲克斯·act10攻击",
+      "damage_name_en": "Morphix: act10 Attack",
+      "damage_name_ja": "Morphix: act10 Attack",
+      "display_only": true
+    },
+    "GE_mon_51_act08_1_Dmg01_BP": {
+      "show_parent_ability": false,
+      "damage_name_zh": "桀桀熊·act08第1段",
+      "damage_name_en": "Enemy mon_51: act08 Hit 1",
+      "damage_name_ja": "Enemy mon_51: act08 Hit 1",
+      "display_only": true
+    },
+    "GE_mon_51_act08_1_Dmg02_BP": {
+      "show_parent_ability": false,
+      "damage_name_zh": "桀桀熊·act08第2段",
+      "damage_name_en": "Enemy mon_51: act08 Hit 2",
+      "damage_name_ja": "Enemy mon_51: act08 Hit 2",
+      "display_only": true
+    },
+    "GE_mon_51_act08_1_Dmg03_BP": {
+      "show_parent_ability": false,
+      "damage_name_zh": "桀桀熊·act08第3段",
+      "damage_name_en": "Enemy mon_51: act08 Hit 3",
+      "damage_name_ja": "Enemy mon_51: act08 Hit 3",
+      "display_only": true
+    },
+    "GE_mon_51_act08_1_Dmg04_BP": {
+      "show_parent_ability": false,
+      "damage_name_zh": "桀桀熊·act08第4段",
+      "damage_name_en": "Enemy mon_51: act08 Hit 4",
+      "damage_name_ja": "Enemy mon_51: act08 Hit 4",
+      "display_only": true
+    },
+    "GE_mon_51_act08_1_Dmg05_BP": {
+      "show_parent_ability": false,
+      "damage_name_zh": "桀桀熊·act08第5段",
+      "damage_name_en": "Enemy mon_51: act08 Hit 5",
+      "damage_name_ja": "Enemy mon_51: act08 Hit 5",
+      "display_only": true
+    },
+    "Buff_Tenacity_damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "普通倾陷伤害",
+      "damage_name_en": "Standard Break Damage",
+      "damage_name_ja": "通常のブレイクダメージ",
+      "attack_type": "倾陷伤害"
+    },
+    "GE_Fork_BlackBook_damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "漆黑青春妄想·黑之书",
+      "damage_name_en": "BlackBook: Arc Follow-up Damage",
+      "damage_name_ja": "漆黑青春妄想・黒の書"
     }
   }
 }

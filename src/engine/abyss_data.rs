@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=10;
+const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=12;
 const MAX_REMOTE_JSON_NODES: usize = 500_000;
 const MAX_REMOTE_JSON_DEPTH: usize = 48;
 const MAX_REMOTE_STRING_BYTES: usize = 4 * 1024;
@@ -676,9 +676,12 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn supports_released_abyss_season_ten_only() {
-        assert!(is_supported_abyss_season(10));
-        assert!(!is_supported_abyss_season(11));
+    fn supports_abyss_seasons_through_twelve() {
+        for season in 1..=12 {
+            assert!(is_supported_abyss_season(season));
+        }
+        assert!(!is_supported_abyss_season(0));
+        assert!(!is_supported_abyss_season(13));
     }
 
     #[test]

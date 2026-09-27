@@ -1,3 +1,4 @@
+import { parseHitSnapshotReply } from "./hit-snapshot-contract";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -15,6 +16,16 @@ import {
 const DETAIL_CHANGED_EVENT = "main-dps-detail-requested";
 
 export const mainDpsDetailClient = {
+  async getHitSnapshot(hitId: string, snapshotKey: string) {
+    return parseHitSnapshotReply(
+      await invoke<unknown>("get_main_dps_hit_snapshot", {
+        hitId,
+        snapshotKey,
+      }),
+      hitId,
+      snapshotKey,
+    );
+  },
   async getSnapshot(offset = 0, limit = 200): Promise<MainDpsDetailSnapshot> {
     return parseMainDpsDetailSnapshot(
       await invoke<unknown>("get_main_dps_detail_snapshot", { offset, limit }),

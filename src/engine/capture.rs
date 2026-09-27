@@ -4382,6 +4382,7 @@ struct HitTargetSnapshot {
 struct PacketDecoder {
     exact_mode: bool,
     exact_runtime: Option<crate::engine::settlement::runtime::Runtime>,
+    exact_auto: Option<crate::engine::settlement::automatic::Automatic>,
     packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
@@ -4398,7 +4399,9 @@ struct PacketDecoder {
     pending_targetless_hits: VecDeque<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     target_snapshots: HashMap<String, HitTargetSnapshot>,
+    #[allow(dead_code)] // Legacy fixtures only; production inventory uses RPC boundaries.
     empty_curtain: EmptyCurtainDecoder,
+    exact_inventory: super::inventory::InventoryDecoder,
     frame_dedup: FrameDedup,
     gameplay_effect_fragments: GameplayEffectFragmentTracker,
     bool_enum_gameplay_effect_fragments: BoolEnumGameplayEffectFragmentTracker,
@@ -4449,13 +4452,23 @@ impl Default for PacketDecoder {
 impl PacketDecoder {
     fn enable_exact_mode(&mut self, sender: &EngineEventSink) {
         self.exact_mode = true;
+        let _ = sender.send(EngineEvent::PacketInventory {
+            items: vec![],
+            characters: vec![],
+        });
         match crate::engine::settlement::runtime::Runtime::from_environment() {
             Ok(Some(runtime)) => self.exact_runtime = Some(runtime),
-            Ok(None) => {
-                let _ = sender.send(EngineEvent::Warning(
-                    "exact_profile_missing_damage_unavailable_no_legacy_fallback".into(),
-                ));
-            }
+            Ok(None) => match crate::engine::settlement::automatic::Automatic::bundled() {
+                Ok(automatic) => {
+                    self.exact_auto = Some(automatic);
+                    let _ = sender.send(EngineEvent::Warning(
+                        crate::engine::settlement::automatic::WAITING.into(),
+                    ));
+                }
+                Err(code) => {
+                    let _ = sender.send(EngineEvent::Error(code.into()));
+                }
+            },
             Err(code) => {
                 let _ = sender.send(EngineEvent::Error(code.into()));
             }
@@ -4492,6 +4505,7 @@ impl PacketDecoder {
         Self {
             exact_mode: false,
             exact_runtime: None,
+            exact_auto: None,
             packet_emission: PacketEmissionMode::FullDebug,
             session_characters: HashMap::new(),
             client_endpoints: HashSet::new(),
@@ -4504,6 +4518,9 @@ impl PacketDecoder {
             pending_targetless_hits: VecDeque::new(),
             recent_confirmed_hits: Vec::new(),
             target_snapshots: HashMap::new(),
+            exact_inventory: super::inventory::InventoryDecoder::new(Arc::new(
+                equipment_catalog.clone(),
+            )),
             empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
             frame_dedup: FrameDedup::default(),
             gameplay_effect_fragments: GameplayEffectFragmentTracker::default(),
@@ -5577,6 +5594,7 @@ fn server_residual_hit(
         follow_up_damage_attribute: None,
         reconciled_overkill_damage: Some(0.0),
         exact: None,
+        plugin_snapshot: None,
         wire_event: None,
     }
 }
@@ -5631,6 +5649,7 @@ fn unattributed_display_damage_hit(
         follow_up_damage_attribute: None,
         reconciled_overkill_damage: Some(0.0),
         exact: None,
+        plugin_snapshot: None,
         wire_event: None,
     }
 }
@@ -6141,6 +6160,27 @@ impl PacketDecoder {
         );
     }
 
+    fn flush_inventory(&mut self, sender: &EngineEventSink) {
+        match self.exact_inventory.finish() {
+            Ok(Some(update)) => {
+                let _ = sender.send(EngineEvent::PacketInventory {
+                    items: update.items,
+                    characters: update.characters,
+                });
+            }
+            Err(_) => {
+                let _ = sender.send(EngineEvent::Warning(
+                    "exact_inventory_incomplete_capture".into(),
+                ));
+                let _ = sender.send(EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![],
+                });
+            }
+            _ => {}
+        }
+    }
+
     fn process_capture_frame(
         &mut self,
         packet: CapturedPacket<'_>,
@@ -6170,6 +6210,36 @@ impl PacketDecoder {
             return;
         }
         let mut exact_components = 0;
+        if let Some(automatic) = self.exact_auto.as_mut() {
+            let was_ready = automatic.ready;
+            let projections = automatic.datagram(
+                src,
+                src_port,
+                dst,
+                dst_port,
+                local_ip,
+                payload,
+                capture_timestamp,
+                characters,
+                include_incoming,
+            );
+            for projection in projections {
+                let _ = sender.send(EngineEvent::ExactSettlement(Box::new(projection)));
+            }
+            if automatic.ready && !was_ready {
+                let _ = sender.send(EngineEvent::Status(
+                    crate::engine::settlement::automatic::READY.into(),
+                ));
+            } else if was_ready && !automatic.ready {
+                let _ = sender.send(EngineEvent::Warning(
+                    crate::engine::settlement::automatic::WAITING.into(),
+                ));
+            }
+            if let Some(code) = automatic.warning {
+                let _ = sender.send(EngineEvent::Warning(code.into()));
+            }
+            exact_components = automatic.last_settlement_components;
+        }
         if let Some(runtime) = self.exact_runtime.as_mut() {
             match runtime.datagram(
                 src,
@@ -6189,6 +6259,9 @@ impl PacketDecoder {
                 Err(code) => {
                     let _ = sender.send(EngineEvent::Error(code.into()));
                 }
+            }
+            if let Some(code) = runtime.warning {
+                let _ = sender.send(EngineEvent::Warning(code.into()));
             }
             exact_components = runtime.last_settlement_components;
         }
@@ -6582,25 +6655,41 @@ impl PacketDecoder {
             &server_damage_settlements,
         );
         accepted += resolved_target_hits.len();
-        let inventory_result = if !outgoing {
-            match &transport_packet {
-                Some(TransportPacket::Sequenced(packet)) => self.empty_curtain.process_packet(
-                    InventoryConnectionKey::new(
-                        format!("{src}:{src_port}"),
-                        format!("{dst}:{dst_port}"),
-                    ),
-                    packet,
-                ),
-                _ => InventoryPacketResult::default(),
+        // Inventory direction must not depend on byte-scanned character guesses.
+        let inventory_inbound = local_ip.map_or(!src.is_private() && dst.is_private(), |local| {
+            dst == local && src != local
+        });
+        let inventory_result = if inventory_inbound {
+            match self.exact_inventory.datagram(
+                format!("{src}:{src_port}"),
+                format!("{dst}:{dst_port}"),
+                payload,
+                timestamp,
+            ) {
+                Ok(Some(update)) => InventoryPacketResult {
+                    snapshot: Some(update.items),
+                    characters: Some(update.characters),
+                    recognized: true,
+                },
+                Ok(None) => InventoryPacketResult::default(),
+                Err(_) => {
+                    let _ = sender.send(EngineEvent::Warning(
+                        "exact_inventory_unavailable_or_unsupported_update".into(),
+                    ));
+                    InventoryPacketResult {
+                        snapshot: Some(vec![]),
+                        characters: Some(vec![]),
+                        recognized: true,
+                    }
+                }
             }
         } else {
             InventoryPacketResult::default()
         };
-        if let Some(characters) = inventory_result.characters {
-            let _ = sender.send(EngineEvent::EmptyCurtainCharacters(characters));
-        }
-        if let Some(snapshot) = inventory_result.snapshot {
-            let _ = sender.send(EngineEvent::EmptyCurtain(snapshot));
+        if let (Some(items), Some(characters)) =
+            (inventory_result.snapshot, inventory_result.characters)
+        {
+            let _ = sender.send(EngineEvent::PacketInventory { items, characters });
         }
         let mut equipment_slots = Vec::new();
         if !outgoing {
@@ -7043,6 +7132,7 @@ fn run_parser(frames: CaptureFrameReceiver, config: ParserRunConfig) {
             &sender,
         );
     }
+    decoder.flush_inventory(&sender);
     let pending_hits = decoder.take_all_ambiguous_hits();
     decoder.emit_hits(pending_hits, &characters, &sender);
     let pending_targetless_hits = decoder.take_all_targetless_hits();
@@ -7434,6 +7524,7 @@ pub fn import_pcapng(
                     &sender,
                 );
             }
+            decoder.flush_inventory(&sender);
             let pending_hits = decoder.take_all_ambiguous_hits();
             decoder.emit_hits(pending_hits, &characters, &sender);
             let pending_targetless_hits = decoder.take_all_targetless_hits();
@@ -7741,6 +7832,14 @@ struct CaptureExportAbyssPartyRow {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ExportHit {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::engine::model::plugin_snapshot::serialize",
+        deserialize_with = "crate::engine::model::plugin_snapshot::deserialize"
+    )]
+    plugin_snapshot:
+        Option<std::sync::Arc<crate::engine::model::plugin_snapshot::PluginHitSnapshot>>,
     timestamp_unix: f64,
     #[serde(default)]
     time_local: String,
@@ -7981,6 +8080,7 @@ impl CaptureExportDocument {
 impl From<&Hit> for ExportHit {
     fn from(hit: &Hit) -> Self {
         Self {
+            plugin_snapshot: hit.plugin_snapshot.clone(),
             timestamp_unix: hit.timestamp,
             time_local: format_capture_time(hit.timestamp),
             char_id: hit.char_id,
@@ -9324,6 +9424,7 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         follow_up_damage_attribute: hit.follow_up_damage_attribute,
         reconciled_overkill_damage: hit.reconciled_overkill_damage,
         exact: None,
+        plugin_snapshot: hit.plugin_snapshot,
         wire_event: None,
     }))
 }
@@ -14605,6 +14706,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn exported_native_hit_keeps_snapshot_through_json_replay() {
+        use crate::engine::model::plugin_snapshot::PluginHitSnapshot;
+        let mut hit = targetless_hit();
+        hit.plugin_snapshot = Some(
+            PluginHitSnapshot {
+                instance_id: 0,
+                key: "capture:7".into(),
+                critical: Some(false),
+                critical_source: Some("native_prediction".into()),
+                role_effects: None,
+                enemy_effects: None,
+                retention: "missing".into(),
+                data: None,
+            }
+            .seal()
+            .unwrap(),
+        );
+        let exported = ExportHit::from(&hit);
+        let exported: ExportHit =
+            serde_json::from_slice(&serde_json::to_vec(&exported).unwrap()).unwrap();
+        let EngineEvent::Hit(restored) = export_hit_event(exported) else {
+            panic!()
+        };
+        assert_eq!(restored.plugin_snapshot.as_ref().unwrap().key, "capture:7");
+        assert_eq!(
+            restored.plugin_snapshot.as_ref().unwrap().critical,
+            Some(false)
+        );
+    }
+
     fn targetless_hit() -> Hit {
         Hit {
             timestamp: 0.0,
@@ -14641,6 +14773,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
@@ -17770,8 +17903,14 @@ mod tests {
             match event {
                 EngineEvent::Abyss(abyss_event) => {
                     let (label, timestamp) = match abyss_event {
+                        crate::engine::model::AbyssEvent::Location { timestamp, floor } => {
+                            (format!("Location floor={floor}"), timestamp)
+                        }
                         crate::engine::model::AbyssEvent::RestartDetected { timestamp } => {
                             ("RestartDetected".to_owned(), timestamp)
+                        }
+                        crate::engine::model::AbyssEvent::RestartHalf { timestamp, half } => {
+                            (format!("RestartHalf {half:?}"), timestamp)
                         }
                         crate::engine::model::AbyssEvent::Stage {
                             timestamp,
