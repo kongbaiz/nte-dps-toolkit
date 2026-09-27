@@ -30,7 +30,6 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import {
   ContextMenu,
   ContextMenuItem,
@@ -85,6 +84,7 @@ import {
   roundLabel,
 } from "./main-dps-model";
 import { UpdatePromptDialog } from "./update-prompt-dialog";
+import { DataSourceControl } from "./data-source-control";
 import { useMainDps } from "./use-main-dps";
 
 type MainDpsOpenDetailFilter = Exclude<MainDpsDetailFilter, "qteType">;
@@ -438,9 +438,9 @@ export function MainDpsPage() {
       {confirmation !== null && (
         <AlertDialog
           open
-          onOpenChange={(open) =>
-            dismissLayerWhenClosed(open, () => setConfirmation(null))
-          }
+          onOpenChange={(open) => {
+            if (!open) setConfirmation(null);
+          }}
         >
           <AlertDialogPortal>
             <AlertDialogBackdrop className="z-[70] bg-black/45" />
@@ -544,6 +544,8 @@ export function MainDpsPage() {
           />
         }
       />
+
+      <DataSourceControl disabled={pending !== null} />
 
       {snapshot.selectedRoundId === null &&
       (captureRunning ||
@@ -954,9 +956,9 @@ export function MainDpsPage() {
               ) : (
                 <ContextMenu
                   open={context !== null}
-                  onOpenChange={(open) =>
-                    dismissLayerWhenClosed(open, () => setContext(null))
-                  }
+                  onOpenChange={(open) => {
+                    if (!open) setContext(null);
+                  }}
                 >
                   <ContextMenuTrigger
                     render={

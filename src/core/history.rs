@@ -16,7 +16,8 @@ pub fn abyss_event_starts_new_round(current_floor: Option<u32>, event: &AbyssEve
             AbyssEvent::Stage {
                 floor: Some(next_floor),
                 ..
-            } if current_floor.is_some_and(|floor| floor != *next_floor)
+            } | AbyssEvent::Location { floor: next_floor, .. }
+                if current_floor.is_some_and(|floor| floor != *next_floor)
         )
 }
 
@@ -78,8 +79,17 @@ impl Default for HistoryArchivePolicy {
 }
 
 impl HistoryArchivePolicy {
-    pub fn effective_for(self, state: &CombatState) -> DpsTimeBasis {
-        state.effective_dps_time_basis(self.requested_dps_time_mode)
+    pub fn effective_for_source(
+        self,
+        state: &CombatState,
+        source: CaptureQualitySource,
+    ) -> DpsTimeBasis {
+        let requested = match source {
+            CaptureQualitySource::Live => DpsTimeBasis::WallClock,
+            CaptureQualitySource::Plugin => DpsTimeBasis::SubtractTimeStop,
+            _ => self.requested_dps_time_mode,
+        };
+        state.effective_dps_time_basis(requested)
     }
 }
 
@@ -114,6 +124,30 @@ mod tests {
     use crate::engine::model::{Hit, HitCharacterSource, HitDirection};
 
     #[test]
+    fn explicit_half_retry_is_not_a_whole_floor_boundary() {
+        assert!(!abyss_event_starts_new_round(
+            Some(11),
+            &AbyssEvent::RestartHalf {
+                timestamp: 1.0,
+                half: crate::engine::model::AbyssHalf::Second,
+            }
+        ));
+        assert!(abyss_event_starts_new_round(
+            Some(11),
+            &AbyssEvent::RestartDetected { timestamp: 1.0 }
+        ));
+    }
+    #[test]
+    fn location_only_cuts_round_when_known_floor_changes() {
+        let event = AbyssEvent::Location {
+            timestamp: 1.0,
+            floor: 11,
+        };
+        assert!(!abyss_event_starts_new_round(None, &event));
+        assert!(!abyss_event_starts_new_round(Some(11), &event));
+        assert!(abyss_event_starts_new_round(Some(12), &event));
+    }
+    #[test]
     fn abyss_exit_is_not_a_pre_event_archive_boundary() {
         assert!(!abyss_event_starts_new_round(
             Some(12),
@@ -130,6 +164,32 @@ mod tests {
         assert!(!auto_round_due(true, false, true, false, true, due, 30));
         assert!(!auto_round_due(true, false, false, true, true, due, 30));
         assert!(!auto_round_due(true, false, false, false, false, due, 30));
+    }
+
+    #[test]
+    fn capture_source_owns_archive_clock_policy() {
+        let mut state = CombatState::default();
+        state.combat_clock_health = crate::engine::model::CombatClockRuntimeHealth::Available;
+        for requested in [DpsTimeBasis::WallClock, DpsTimeBasis::SubtractTimeStop] {
+            let policy = HistoryArchivePolicy {
+                requested_dps_time_mode: requested,
+                separate_reaction_damage: false,
+            };
+            assert_eq!(
+                policy.effective_for_source(&state, CaptureQualitySource::Live),
+                DpsTimeBasis::WallClock
+            );
+            assert_eq!(
+                policy.effective_for_source(&state, CaptureQualitySource::Plugin),
+                DpsTimeBasis::SubtractTimeStop
+            );
+        }
+        state.combat_clock_health = crate::engine::model::CombatClockRuntimeHealth::DataUnavailable;
+        assert_eq!(
+            HistoryArchivePolicy::default()
+                .effective_for_source(&state, CaptureQualitySource::Plugin),
+            DpsTimeBasis::WallClock
+        );
     }
 
     #[test]
@@ -182,6 +242,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         });
 

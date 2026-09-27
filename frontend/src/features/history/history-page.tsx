@@ -32,7 +32,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import {
   ContextMenu,
   ContextMenuItem,
@@ -181,14 +180,17 @@ export function HistoryPage() {
   return (
     <ContextMenu
       open={contextMenu !== null}
-      onOpenChange={(open) =>
-        dismissLayerWhenClosed(open, () => setContextMenu(null))
-      }
+      onOpenChange={(open) => {
+        if (!open) setContextMenu(null);
+      }}
     >
       <ContextMenuTrigger
         render={
           <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
             <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2 min-[640px]:px-4">
+              <h1 className="mr-auto text-lg font-semibold tracking-tight">
+                {t("History")}
+              </h1>
               <Button
                 disabled={busy}
                 size="sm"
@@ -326,9 +328,9 @@ export function HistoryPage() {
                 </div>
               </Empty>
             ) : (
-              <div className="grid min-h-0 flex-1 grid-cols-1 items-start gap-3 overflow-y-auto p-3 min-[900px]:grid-cols-[300px_minmax(0,1fr)]">
+              <div className="history-workspace grid min-h-0 flex-1 grid-cols-1 items-start gap-4 overflow-y-auto p-4 min-[1000px]:grid-cols-[260px_minmax(0,1fr)]">
                 <div
-                  className="flex min-w-0 gap-2 overflow-x-auto rounded-lg border bg-background p-2 min-[900px]:sticky min-[900px]:top-0 min-[900px]:block min-[900px]:max-h-[calc(100vh-7rem)] min-[900px]:overflow-y-auto"
+                  className="flex min-w-0 gap-2 overflow-x-auto rounded-lg border bg-background p-2 min-[1000px]:sticky min-[1000px]:top-0 min-[1000px]:block min-[1000px]:max-h-[calc(100vh-7rem)] min-[1000px]:overflow-y-auto"
                   role="listbox"
                   aria-label={t("History records")}
                   onKeyDown={(event) => {
@@ -368,7 +370,7 @@ export function HistoryPage() {
                       data-history-record
                       aria-selected={record.id === selectedId}
                       className={cn(
-                        "flex min-h-16 min-w-64 shrink-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left text-sm hover:bg-muted min-[900px]:mb-1 min-[900px]:w-full min-[900px]:min-w-0",
+                        "flex min-h-16 min-w-64 shrink-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left text-sm hover:bg-muted min-[1000px]:mb-1 min-[1000px]:w-full min-[1000px]:min-w-0",
                         record.id === selectedId &&
                           "bg-primary text-primary-foreground hover:bg-primary",
                       )}
@@ -1040,8 +1042,8 @@ function HistoryLoading() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
       <Skeleton className="h-12 w-full" />
-      <div className="grid flex-1 grid-cols-1 gap-3 min-[900px]:grid-cols-[300px_1fr]">
-        <Skeleton className="h-24 min-[900px]:h-full" />
+      <div className="grid flex-1 grid-cols-1 gap-3 min-[1000px]:grid-cols-[300px_1fr]">
+        <Skeleton className="h-24 min-[1000px]:h-full" />
         <Skeleton className="min-h-72" />
       </div>
     </div>

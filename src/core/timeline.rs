@@ -71,6 +71,7 @@ pub struct TimelineProjection {
 pub struct TimelineIntervalProjection {
     pub start: f64,
     pub end: f64,
+    pub pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -218,6 +219,7 @@ pub fn project_timeline(
         .map(|interval| TimelineIntervalProjection {
             start: finite_non_negative(interval.start_offset),
             end: finite_non_negative(interval.end_offset),
+            pause_type_mask: interval.pause_type_mask,
         })
         .collect::<Vec<_>>();
     let time_stop_duration = timeline_time_stop_duration(&time_stop_intervals);
@@ -368,6 +370,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
@@ -490,10 +494,12 @@ mod tests {
             TimelineIntervalProjection {
                 start: 1.0,
                 end: 2.5,
+                pause_type_mask: None,
             },
             TimelineIntervalProjection {
                 start: 5.0,
                 end: 7.25,
+                pause_type_mask: None,
             },
         ]);
 

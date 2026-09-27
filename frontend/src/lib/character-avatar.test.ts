@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  characterAvatarUrl,
   getCharacterAvatarCatalogRevision,
   replaceCharacterAvatarCatalog,
   resolveCharacterAvatar,
@@ -18,7 +17,7 @@ describe("runtime character avatar catalog", () => {
         avatar: "res/images/characters/player_zhenhong.png",
       },
     ]);
-    expect(characterAvatarUrl(1076)).toContain("player_zhenhong.png");
+    expect(resolveCharacterAvatar(1076)).toContain("player_zhenhong.png");
 
     replaceCharacterAvatarCatalog([
       {
@@ -26,13 +25,13 @@ describe("runtime character avatar catalog", () => {
         avatar: "res/images/characters/player_003.png",
       },
     ]);
-    expect(characterAvatarUrl(1076)).toBeNull();
-    expect(characterAvatarUrl(1003)).toContain("player_003.png");
+    expect(resolveCharacterAvatar(1076)).toBeNull();
+    expect(resolveCharacterAvatar(1003)).toContain("player_003.png");
   });
 
   it("ignores empty avatar paths", () => {
     replaceCharacterAvatarCatalog([{ id: 1076, avatar: "  " }]);
-    expect(characterAvatarUrl(1076)).toBeNull();
+    expect(resolveCharacterAvatar(1076)).toBeNull();
   });
 
   it("publishes catalog revisions without changing resolver identity", () => {
@@ -50,7 +49,6 @@ describe("runtime character avatar catalog", () => {
 
     expect(getCharacterAvatarCatalogRevision()).toBe(revision + 1);
     expect(resolveCharacterAvatar).toBe(resolver);
-    expect(characterAvatarUrl).toBe(resolver);
     expect(listener).toHaveBeenCalledTimes(1);
 
     unsubscribe();

@@ -4,6 +4,7 @@ import {
   Download,
   Filter,
   LockKeyhole,
+  LoaderCircle,
   PackageOpen,
   RotateCcw,
   Search,
@@ -105,8 +106,50 @@ export function EmptyCurtainPage() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <header className="console-section-heading flex items-center justify-between gap-3">
+        <div>
+          <h1>{t("Console Loadout")}</h1>
+          <p>{t("Equipment inventory and character loadouts")}</p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={model.retry}
+          disabled={
+            !snapshot.canOperate || model.actionPending || model.refreshing
+          }
+          aria-busy={model.refreshing}
+        >
+          {model.refreshing ? (
+            <LoaderCircle className="animate-spin" aria-hidden="true" />
+          ) : (
+            <RotateCcw aria-hidden="true" />
+          )}
+          {t(
+            model.refreshing ? "Refreshing equipment..." : "Refresh from game",
+          )}
+        </Button>
+      </header>
+      {!snapshot.canOperate ? (
+        <p
+          role="status"
+          className="border-b px-4 py-2 text-sm text-muted-foreground"
+        >
+          {t(
+            "Equipment is read-only for packet capture and replay. Viewing and export remain available.",
+          )}
+        </p>
+      ) : null}
       {model.notice ? (
         <FloatingNotice error={model.notice} onClose={model.clearNotice} />
+      ) : null}
+      {snapshot.operation.status === "pending" ? (
+        <div
+          role="status"
+          className="flex items-center gap-2 border-b px-4 py-2 text-sm text-muted-foreground"
+        >
+          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+          {t(snapshot.operation.messageKey)}
+        </div>
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -120,7 +163,9 @@ export function EmptyCurtainPage() {
                 <EmptyTitle>{t("No Console equipment data")}</EmptyTitle>
                 <EmptyDescription>
                   {t(
-                    "Start capture or import a replay to collect equipment data.",
+                    snapshot.canOperate
+                      ? "Refresh from the User plugin, or import a replay with equipment data."
+                      : "Start capture or import a replay to collect equipment data.",
                   )}
                 </EmptyDescription>
               </EmptyHeader>
@@ -198,6 +243,7 @@ export function EmptyCurtainPage() {
                   characters={snapshot.characters}
                   items={snapshot.items}
                   pending={model.actionPending}
+                  readOnly={!snapshot.canOperate}
                   onImport={model.importLoadout}
                   onExport={model.exportLoadout}
                   onAction={model.characterAction}
@@ -215,7 +261,11 @@ export function EmptyCurtainPage() {
               ) : null}
 
               <p className="py-2.5 text-xs text-muted-foreground">
-                {t("Right-click equipment to manage it through the plugin")}
+                {t(
+                  snapshot.canOperate
+                    ? "Right-click equipment to manage it through the plugin"
+                    : "Select equipment to view its recorded details",
+                )}
               </p>
               {visibleItems.length === 0 ? (
                 <Empty className="min-h-[24rem] flex-1 border">
@@ -253,7 +303,7 @@ export function EmptyCurtainPage() {
                 <EquipmentDetailsDialog
                   item={selectedItem}
                   characters={snapshot.characters}
-                  pending={model.actionPending}
+                  pending={model.actionPending || !snapshot.canOperate}
                   loadPositions={model.positions}
                   onManage={model.manageItem}
                   onDone={() => setSelectedItemKey(null)}
@@ -271,6 +321,7 @@ function CharacterEquipmentDialog({
   characters,
   items,
   pending,
+  readOnly,
   onImport,
   onExport,
   onAction,
@@ -279,6 +330,7 @@ function CharacterEquipmentDialog({
   characters: EmptyCurtainCharacter[];
   items: EmptyCurtainItem[];
   pending: boolean;
+  readOnly: boolean;
   onImport: () => void;
   onExport: (uid: ItemUid) => void;
   onAction: (uid: ItemUid, action: "unequip-all" | "one-click") => void;
@@ -331,7 +383,7 @@ function CharacterEquipmentDialog({
             <Button
               variant="outline"
               size="sm"
-              disabled={pending}
+              disabled={pending || readOnly}
               title={t(
                 "Import a character Console loadout JSON and switch equipment through the plugin",
               )}
@@ -369,7 +421,7 @@ function CharacterEquipmentDialog({
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={pending}
+                      disabled={pending || readOnly}
                       onClick={() => onAction(character.uid, "one-click")}
                     >
                       {t("One-click Equip")}
@@ -377,7 +429,7 @@ function CharacterEquipmentDialog({
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={pending || equipped === 0}
+                      disabled={pending || readOnly || equipped === 0}
                       onClick={() => onAction(character.uid, "unequip-all")}
                     >
                       {t("Unequip All")}
@@ -1038,6 +1090,7 @@ function EquipmentDetailsDialog({
               <div className="grid gap-2 min-[480px]:grid-cols-[minmax(0,1fr)_auto_auto]">
                 <select
                   className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs"
+                  disabled={pending}
                   value={targetKey}
                   onChange={(event) => selectCharacter(event.target.value)}
                 >
@@ -1054,6 +1107,7 @@ function EquipmentDetailsDialog({
                 {item.kind === "module" && target ? (
                   <select
                     className="h-8 min-w-24 rounded-md border bg-background px-2 text-xs"
+                    disabled={pending}
                     value={positionKey}
                     onChange={(event) => setPositionKey(event.target.value)}
                   >

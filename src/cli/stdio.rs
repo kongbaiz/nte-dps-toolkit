@@ -65,6 +65,7 @@ const OUTBOUND_QUEUE_CAPACITY: usize = 1024;
 ///   accumulated while stdout is backpressured.
 const ENGINE_EVENT_QUEUE_CAPACITY: usize = 16_384;
 const BATTLE_SUMMARY_INTERVAL: Duration = Duration::from_millis(250);
+const LIVE_BATTLE_READ_EVENT_DRAIN_LIMIT: usize = 512;
 
 enum ReaderEvent {
     Request(ValidatedRequest),
@@ -475,21 +476,25 @@ impl Runtime {
     }
 
     fn process_engine_event(&mut self, event: EngineEvent, outbound: &Sender<Value>) {
-        let appended_hit = matches!(&event, EngineEvent::Hit(_));
+        let expects_direct_hit_append = matches!(
+            &event,
+            EngineEvent::Hit(hit) if !hit.is_server_damage_reconciliation()
+        );
         let previous_hit_count = self.state.hits.len();
         let previous_hits_generation = self.state.hits_generation;
         let previous_abyss_event_count = self.state.abyss.event_count;
         let time_stop_state_may_change = match &event {
-            EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted { timestamp, .. }) => {
-                timestamp.is_finite()
-            }
+            EngineEvent::TimeStop(
+                TimeStopEvent::GamePauseStarted { timestamp, .. }
+                | TimeStopEvent::GamePauseMaskChanged { timestamp, .. },
+            ) => timestamp.is_finite(),
             EngineEvent::TimeStop(TimeStopEvent::GamePauseEnded { .. }) => {
                 self.state.is_game_paused()
             }
             _ => false,
         };
         let signal = apply_engine_event(&mut self.state, event);
-        let dropped_hits = if appended_hit {
+        let dropped_hits = if expects_direct_hit_append {
             previous_hit_count
                 .saturating_add(1)
                 .saturating_sub(self.state.hits.len()) as u64
@@ -525,13 +530,23 @@ impl Runtime {
                     self.send_capture_status(outbound, "running");
                 }
             }
-            CoreSignal::Warning(_) => {
+            CoreSignal::Warning(warning) => {
                 let sequence = self.next_sequence();
                 let _ = outbound.send(notification(
                     "event.core.warning",
                     CoreMessageEvent {
                         sequence,
-                        message: "Capture warning",
+                        message: if warning == crate::engine::settlement::automatic::WAITING {
+                            "Waiting for matching damage traffic. You can start capture during combat."
+                        } else if warning == crate::engine::settlement::automatic::GAP {
+                            "An incomplete damage message was skipped. Later complete messages can still be recorded."
+                        } else if warning == crate::engine::settlement::automatic::UNAVAILABLE {
+                            "Damage parsing for a connection is unavailable. Raw capture continues; no legacy estimates are used."
+                        } else if warning == crate::engine::settlement::runtime::PROFILE_MISSING {
+                            "Damage parsing is unavailable: configure exact-packet.json for this game session. Raw capture can continue."
+                        } else {
+                            "Capture warning"
+                        },
                     },
                 ));
             }
@@ -1126,14 +1141,14 @@ fn handle_request(
             }
         }
         Request::BattleGetSummary(BattleSummaryParams { subtract_time_stop }) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             send(
                 outbound,
                 success(id, runtime.battle_summary(subtract_time_stop)),
             )
         }
         Request::BattleGetRecord(params) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             let message = match runtime.battle_record(params) {
                 Ok(record) => success(id, record),
                 Err(error) => failure(id, battle_read_error(error)),
@@ -1141,7 +1156,7 @@ fn handle_request(
             send(outbound, message)
         }
         Request::BattleGetAxis(params) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             let message = match runtime.battle_axis(params) {
                 Ok(axis) => success(id, axis),
                 Err(error) => failure(id, battle_read_error(error)),
@@ -1149,7 +1164,7 @@ fn handle_request(
             send(outbound, message)
         }
         Request::BattleGetTimeline(params) => {
-            drain_engine_events(runtime, engine_receiver, outbound);
+            drain_engine_events_for_battle_read(runtime, engine_receiver, outbound);
             let message = match runtime.battle_timeline(params) {
                 Ok(timeline) => success(id, timeline),
                 Err(error) => failure(id, battle_read_error(error)),
@@ -1311,6 +1326,23 @@ fn drain_engine_events(
     outbound: &Sender<Value>,
 ) {
     while let Ok(event) = engine_receiver.try_recv() {
+        runtime.process_engine_event(event, outbound);
+    }
+}
+
+fn drain_engine_events_for_battle_read(
+    runtime: &mut Runtime,
+    engine_receiver: &Receiver<EngineEvent>,
+    outbound: &Sender<Value>,
+) {
+    if !runtime.capture.is_running() {
+        drain_engine_events(runtime, engine_receiver, outbound);
+        return;
+    }
+    for _ in 0..LIVE_BATTLE_READ_EVENT_DRAIN_LIMIT {
+        let Ok(event) = engine_receiver.try_recv() else {
+            break;
+        };
         runtime.process_engine_event(event, outbound);
     }
 }
@@ -1835,6 +1867,65 @@ mod tests {
     }
 
     #[test]
+    fn live_battle_record_bounds_event_catch_up_before_responding() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, engine_receiver) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender.clone(),
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime.handshaken = true;
+        runtime.active_operation_id = Some("capture-live-read".to_owned());
+        runtime.latest_operation_id = runtime.active_operation_id.clone();
+        runtime.running_notified = true;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let producer_stop = Arc::clone(&stop);
+        let sink = crate::engine::capture::EngineEventSink::reliable(engine_sender.clone());
+        let producer = thread::spawn(move || {
+            while !producer_stop.load(Ordering::Relaxed) {
+                thread::yield_now();
+            }
+            let _ = sink.send(EngineEvent::CaptureStopped);
+        });
+        runtime.capture.install_test_capture(
+            crate::engine::capture::CaptureHandle::from_test_thread(stop, producer),
+            CaptureProfile::Combat,
+        );
+
+        let (outbound, receiver) = bounded(4);
+        runtime.process_engine_event(EngineEvent::Hit(Box::new(test_hit(1.0, 100.0))), &outbound);
+        for index in 0..=LIVE_BATTLE_READ_EVENT_DRAIN_LIMIT {
+            engine_sender
+                .send(EngineEvent::Status(index.to_string()))
+                .expect("queue live event");
+        }
+
+        assert!(!handle_request(
+            ValidatedRequest {
+                id: serde_json::json!(3),
+                request: Request::BattleGetRecord(BattleRecordParams {
+                    battle_record_id: None,
+                    subtract_time_stop: true,
+                }),
+            },
+            &mut runtime,
+            &engine_receiver,
+            &outbound,
+        ));
+
+        let record = receiver.recv().expect("record response");
+        assert_eq!(record["result"]["summary"]["total_damage"], 100.0);
+        assert_eq!(engine_receiver.len(), 1);
+        runtime
+            .stop_capture_with_drain(&engine_receiver)
+            .expect("stop test capture");
+    }
+
+    #[test]
     fn equipment_requests_map_external_uids_and_boolean_state() {
         let request = mods_plugin_request(
             17,
@@ -1963,6 +2054,9 @@ mod tests {
         );
         runtime.process_engine_event(
             EngineEvent::HitFollowUp(HitFollowUp {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 99.0,
                 source_char_id: 999,
                 source_damage: 1.0,
@@ -2036,6 +2130,98 @@ mod tests {
             runtime.battle_record.as_ref().expect("new record").id,
             "battle-2"
         );
+    }
+
+    #[test]
+    fn server_damage_reconciliation_in_place_keeps_the_cli_axis_complete() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, _) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        let (outbound, _) = bounded(4);
+
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(targeted_test_hit(105.0))),
+            &outbound,
+        );
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(server_reconciliation_marker(99.0))),
+            &outbound,
+        );
+
+        let record = runtime
+            .battle_record(BattleRecordParams {
+                battle_record_id: None,
+                subtract_time_stop: true,
+            })
+            .expect("record query")
+            .expect("record exists");
+        let axis = runtime
+            .battle_axis(BattleAxisParams {
+                battle_record_id: Some(record.battle_record_id.clone()),
+                cursor: None,
+                limit: 10,
+            })
+            .expect("axis query")
+            .expect("axis exists");
+
+        assert!(record.axis_complete);
+        assert!(axis.complete);
+        assert_eq!(axis.first_available_cursor, "1");
+        assert_eq!(axis.total_hits, "1");
+        assert_eq!(axis.rows.len(), 1);
+        assert_eq!(runtime.state.hits[0].overkill_damage(), 6.0);
+    }
+
+    #[test]
+    fn positive_server_damage_residual_appends_without_trimming_the_cli_axis() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, _) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        let (outbound, _) = bounded(4);
+
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(targeted_test_hit(80.0))),
+            &outbound,
+        );
+        runtime.process_engine_event(
+            EngineEvent::Hit(Box::new(server_reconciliation_marker(99.0))),
+            &outbound,
+        );
+
+        let record = runtime
+            .battle_record(BattleRecordParams {
+                battle_record_id: None,
+                subtract_time_stop: true,
+            })
+            .expect("record query")
+            .expect("record exists");
+        let axis = runtime
+            .battle_axis(BattleAxisParams {
+                battle_record_id: Some(record.battle_record_id.clone()),
+                cursor: None,
+                limit: 10,
+            })
+            .expect("axis query")
+            .expect("axis exists");
+
+        assert!(record.axis_complete);
+        assert!(axis.complete);
+        assert_eq!(axis.first_available_cursor, "1");
+        assert_eq!(axis.total_hits, "2");
+        assert_eq!(axis.rows.len(), 2);
+        assert_eq!(runtime.state.total_damage, 99.0);
     }
 
     #[test]
@@ -2296,8 +2482,34 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
+    }
+
+    fn targeted_test_hit(damage: f64) -> Hit {
+        let mut hit = test_hit(1.0, damage);
+        hit.target_id = Some("enemy-wire:test".to_owned());
+        hit.target_hp_before = 100.0;
+        hit.target_hp_after = (100.0 - damage).max(0.0);
+        hit.target_max_hp = 100.0;
+        hit.reconciled_overkill_damage = Some(0.0);
+        hit
+    }
+
+    fn server_reconciliation_marker(authoritative_damage: f64) -> Hit {
+        let mut hit = test_hit(1.1, 0.0);
+        hit.char_id = 0;
+        hit.char_name = "Unattributed".to_owned();
+        hit.char_known = false;
+        hit.target_id = Some("enemy-wire:test".to_owned());
+        hit.target_hp_before = authoritative_damage;
+        hit.target_hp_after = 0.0;
+        hit.target_max_hp = 100.0;
+        hit.damage_name = Some("Server settlement residual".to_owned());
+        hit.reconciled_overkill_damage = Some(0.0);
+        hit
     }
 
     #[derive(Clone, Default)]

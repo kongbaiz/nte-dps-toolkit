@@ -68,6 +68,7 @@ const STATUS_LABELS = {
 
 const SOURCE_LABELS = {
   live: "Live capture",
+  plugin: "Plugin mode",
   pcapng_replay: "PCAPNG replay",
   json_replay: "JSON replay",
   unknown: "No capture data",
@@ -173,7 +174,7 @@ export function DiagnosticsPage() {
           <DiagnosticsLoadError error={state.error} onRetry={retry} />
         ) : null}
         {contentKind === "ready" && snapshot ? (
-          <div className="mx-auto w-full max-w-[1800px]">
+          <div className="diagnostics-sections mx-auto w-full max-w-[1600px]">
             <EnvironmentSection snapshot={snapshot} />
             <HistoryArchiveWarning
               droppedCount={snapshot.capture.droppedHistoryArchives}

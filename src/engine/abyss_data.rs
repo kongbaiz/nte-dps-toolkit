@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=10;
+const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=12;
 const MAX_REMOTE_JSON_NODES: usize = 500_000;
 const MAX_REMOTE_JSON_DEPTH: usize = 48;
 const MAX_REMOTE_STRING_BYTES: usize = 4 * 1024;
@@ -71,21 +71,6 @@ pub struct AbyssMonsterStats {
     pub raw_props: Vec<(String, f64)>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AbyssWaveHp {
-    pub wave: Option<u32>,
-    pub hp: f64,
-    pub monster_count: u32,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AbyssWaveClearPrediction {
-    pub wave: Option<u32>,
-    pub hp: f64,
-    pub seconds: f64,
-    pub cumulative_seconds: f64,
-}
-
 #[derive(Clone, Debug, Default)]
 struct StaticMonsterInfo {
     name: Option<String>,
@@ -111,13 +96,6 @@ impl AbyssMonsterDataset {
             build_dataset_from_summary(&summary_rows, &pack_rows, &static_index, &season_names);
         validate_remote_dataset(&dataset)?;
         Ok(dataset)
-    }
-
-    pub fn first_floor_key(&self) -> Option<(u32, u32)> {
-        self.seasons
-            .first()
-            .and_then(|season| season.floors.first())
-            .map(|floor| (floor.season, floor.floor))
     }
 
     pub fn season(&self, season: u32) -> Option<&AbyssSeason> {
@@ -150,63 +128,6 @@ impl AbyssFloor {
             .collect::<std::collections::HashSet<_>>()
             .len()
     }
-}
-
-pub fn abyss_monster_total_hp(monster: &AbyssMonsterEntry) -> f64 {
-    monster.stats.hp_max_base * f64::from(monster.count)
-}
-
-pub fn abyss_line_hp_total<'a>(monsters: impl IntoIterator<Item = &'a AbyssMonsterEntry>) -> f64 {
-    monsters.into_iter().map(abyss_monster_total_hp).sum()
-}
-
-pub fn line_hp_by_wave<'a>(
-    monsters: impl IntoIterator<Item = &'a AbyssMonsterEntry>,
-) -> Vec<AbyssWaveHp> {
-    let mut waves = HashMap::<Option<u32>, AbyssWaveHp>::new();
-    for monster in monsters {
-        let entry = waves.entry(monster.wave).or_insert_with(|| AbyssWaveHp {
-            wave: monster.wave,
-            ..Default::default()
-        });
-        entry.hp += abyss_monster_total_hp(monster);
-        entry.monster_count = entry.monster_count.saturating_add(monster.count);
-    }
-    let mut waves = waves.into_values().collect::<Vec<_>>();
-    waves.sort_by(|left, right| match (left.wave, right.wave) {
-        (Some(left), Some(right)) => left.cmp(&right),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-    waves
-}
-
-pub fn required_dps_for_target_time(line_hp: f64, target_seconds: f64) -> Option<f64> {
-    (line_hp > 0.0 && target_seconds > 0.0).then(|| line_hp / target_seconds)
-}
-
-pub fn predict_wave_clear_times(
-    waves: &[AbyssWaveHp],
-    team_dps: f64,
-) -> Vec<AbyssWaveClearPrediction> {
-    if team_dps <= 0.0 {
-        return Vec::new();
-    }
-    let mut cumulative_seconds = 0.0;
-    waves
-        .iter()
-        .map(|wave| {
-            let seconds = wave.hp / team_dps;
-            cumulative_seconds += seconds;
-            AbyssWaveClearPrediction {
-                wave: wave.wave,
-                hp: wave.hp,
-                seconds,
-                cumulative_seconds,
-            }
-        })
-        .collect()
 }
 
 /// Per-floor metadata that is repeated across every wave/route row of a
@@ -755,9 +676,12 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn supports_released_abyss_season_ten_only() {
-        assert!(is_supported_abyss_season(10));
-        assert!(!is_supported_abyss_season(11));
+    fn supports_abyss_seasons_through_twelve() {
+        for season in 1..=12 {
+            assert!(is_supported_abyss_season(season));
+        }
+        assert!(!is_supported_abyss_season(0));
+        assert!(!is_supported_abyss_season(13));
     }
 
     #[test]
@@ -930,53 +854,5 @@ mod tests {
 
         assert_eq!(names.get(&4).map(String::as_str), Some("晦冥环线"));
         assert_eq!(names.get(&5).map(String::as_str), Some("晦冥环线"));
-    }
-
-    #[test]
-    fn predicts_wave_clear_times_from_static_hp() {
-        let monsters = vec![
-            super::AbyssMonsterEntry {
-                pack_id: "a".to_owned(),
-                attribute_id: "a".to_owned(),
-                monster_pool_id: None,
-                monster_id: "m1".to_owned(),
-                name: "一号".to_owned(),
-                count: 2,
-                level: None,
-                half: Some(0),
-                wave: Some(1),
-                is_boss: false,
-                stats: super::AbyssMonsterStats {
-                    hp_max_base: 100.0,
-                    raw_props: Vec::new(),
-                },
-            },
-            super::AbyssMonsterEntry {
-                pack_id: "b".to_owned(),
-                attribute_id: "b".to_owned(),
-                monster_pool_id: None,
-                monster_id: "m2".to_owned(),
-                name: "二号".to_owned(),
-                count: 1,
-                level: None,
-                half: Some(0),
-                wave: Some(2),
-                is_boss: false,
-                stats: super::AbyssMonsterStats {
-                    hp_max_base: 300.0,
-                    raw_props: Vec::new(),
-                },
-            },
-        ];
-
-        let waves = super::line_hp_by_wave(&monsters);
-        let predictions = super::predict_wave_clear_times(&waves, 100.0);
-
-        assert_eq!(super::abyss_line_hp_total(&monsters), 500.0);
-        assert_eq!(super::required_dps_for_target_time(500.0, 10.0), Some(50.0));
-        assert_eq!(waves.len(), 2);
-        assert_eq!(waves[0].hp, 200.0);
-        assert_eq!(predictions[0].seconds, 2.0);
-        assert_eq!(predictions[1].cumulative_seconds, 5.0);
     }
 }

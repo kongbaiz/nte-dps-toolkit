@@ -23,5 +23,4 @@ export const islandClient = {
   },
 };
 
-export type IslandClient = typeof islandClient;
 export type { IslandSnapshot };

@@ -7,6 +7,7 @@ import updatePromptSource from "../../features/main-dps/update-prompt-dialog.tsx
 import mainDpsDetailSource from "../../features/main-dps/main-dps-detail-page.tsx?raw";
 import mainDpsSource from "../../features/main-dps/main-dps-page.tsx?raw";
 import modStudioSource from "../../features/mod-studio/mod-studio-page.tsx?raw";
+import dataSourceControlSource from "../../features/main-dps/data-source-control.tsx?raw";
 import technicalHudSource from "../../features/technical-hud/technical-hud-page.tsx?raw";
 import timelineChartSource from "../../features/timeline/timeline-chart.tsx?raw";
 import indexCssSource from "../../index.css?raw";
@@ -31,6 +32,7 @@ const migratedProductionSources = [
   historyPageSource,
   mainDpsSource,
   modStudioSource,
+  dataSourceControlSource,
   technicalHudSource,
   timelineChartSource,
   indexCssSource,
@@ -80,7 +82,7 @@ describe("Base UI migration invariants", () => {
   it("migrates every reported W-03 consumer to project primitives", () => {
     expect(consolePageSource).toContain("<AlertDialog");
     expect(encryptedIniSource).toContain("<AlertDialog");
-    expect(modStudioSource.match(/<AlertDialog(?:\s|>)/g)).toHaveLength(3);
+    expect(dataSourceControlSource).toContain("<AlertDialog");
     expect(mainDpsSource).toContain("<AlertDialog");
     expect(mainDpsSource).toContain("<Dialog");
     expect(mainDpsSource).toContain("<Popover");

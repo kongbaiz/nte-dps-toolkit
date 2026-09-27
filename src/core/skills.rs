@@ -276,6 +276,7 @@ pub fn skill_label_translation_key(label: &str) -> Option<&'static str> {
         "Passive Damage" => Some("Passive Damage"),
         "Special Damage" => Some("Special Damage"),
         "Awakening Damage" => Some("Awakening Damage"),
+        "Max HP scaling loss" => Some("Max HP scaling loss"),
         _ => None,
     }
 }
@@ -320,6 +321,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }

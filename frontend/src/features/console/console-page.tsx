@@ -26,7 +26,6 @@ import { ShortcutsPage } from "@/features/shortcuts/shortcuts-page";
 import { SkillsPage } from "@/features/skills/skills-page";
 import { TimelinePage } from "@/features/timeline/timeline-page";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
-import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { t, useTranslationRevision } from "@/lib/i18n";
 import { startMotionViewTransition } from "@/lib/motion";
 import { applySettingsPresentation } from "@/lib/settings-presentation";
@@ -274,7 +273,7 @@ export function ConsolePage() {
         }
         title={t("NTE Console")}
       />
-      <main className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-foreground select-none">
+      <main className="console-workspace relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-foreground select-none">
         <ConsoleSidebar
           activePage={activePage}
           collapsed={sidebarCollapsed}
@@ -306,6 +305,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "timeline"}
+            data-page="timeline"
           >
             <TimelinePage />
           </div>
@@ -317,6 +317,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "skills"}
+            data-page="skills"
           >
             <SkillsPage />
           </div>
@@ -328,6 +329,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "empty-curtain"}
+            data-page="empty-curtain"
           >
             <EmptyCurtainPage />
           </div>
@@ -339,6 +341,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "character-data"}
+            data-page="character-data"
           >
             <CharacterDataPage />
           </div>
@@ -350,6 +353,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "encrypted-ini"}
+            data-page="encrypted-ini"
           >
             <EncryptedIniPage />
           </div>
@@ -361,6 +365,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "history"}
+            data-page="history"
           >
             <HistoryPage />
           </div>
@@ -372,6 +377,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "packets"}
+            data-page="packets"
           >
             <PacketsPage />
           </div>
@@ -383,6 +389,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "settings"}
+            data-page="settings"
           >
             <SettingsPage />
           </div>
@@ -394,6 +401,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "shortcuts"}
+            data-page="shortcuts"
           >
             <ShortcutsPage />
           </div>
@@ -405,6 +413,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "diagnostics"}
+            data-page="diagnostics"
           >
             <DiagnosticsPage />
           </div>
@@ -416,6 +425,7 @@ export function ConsolePage() {
           <div
             className="console-page-stage flex min-h-0 min-w-0 flex-1"
             data-active={activePage === "mod-studio"}
+            data-page="mod-studio"
           >
             <ModStudioWorkspace />
           </div>
@@ -429,9 +439,9 @@ export function ConsolePage() {
       {replayConfirmation !== null && (
         <AlertDialog
           open
-          onOpenChange={(open) =>
-            dismissLayerWhenClosed(open, () => setReplayConfirmation(null))
-          }
+          onOpenChange={(open) => {
+            if (!open) setReplayConfirmation(null);
+          }}
         >
           <AlertDialogPortal>
             <AlertDialogBackdrop className="z-[80] bg-black/45" />

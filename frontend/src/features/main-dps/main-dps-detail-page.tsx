@@ -1,3 +1,4 @@
+import { HitSnapshotDialog } from "./hit-snapshot-dialog";
 import { ChevronDown, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -41,6 +42,8 @@ import {
 import { createDamageImageLookup } from "./damage-image-lookup";
 import {
   DEFAULT_DETAIL_COLUMNS,
+  criticalTranslationKey,
+  effectCountsText,
   DETAIL_ROW_HEIGHT,
   type DetailColumnKey,
   detailColumnVisible,
@@ -333,7 +336,9 @@ export function MainDpsDetailPage() {
                           "character",
                           "type",
                           "damage",
+                          "critical",
                           "target",
+                          "snapshot",
                         ] as const
                       ).map((column) => (
                         <label
@@ -627,6 +632,11 @@ function HitTable({
   importReplay(): void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const [selectedHit, setSelectedHit] = useState<MainDpsHit | null>(null);
+  useEffect(
+    () => setSelectedHit(null),
+    [snapshot.kind, snapshot.characterId, snapshot.abyssHalf],
+  );
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(480);
   const hasRows = snapshot.rows.length > 0;
@@ -741,6 +751,7 @@ function HitTable({
               team={snapshot.kind === "team"}
               columns={columns}
               maxDamage={snapshot.maxRowDamage}
+              openSnapshot={() => setSelectedHit(row)}
             />
           ))}
           {bottomSpacer > 0 && (
@@ -760,6 +771,13 @@ function HitTable({
           )}
         </tbody>
       </table>
+      {selectedHit && (
+        <HitSnapshotDialog
+          key={`${selectedHit.id}:${selectedHit.snapshotKey}`}
+          row={selectedHit}
+          onClose={() => setSelectedHit(null)}
+        />
+      )}
     </div>
   );
 }
@@ -823,7 +841,9 @@ function HitRow({
   team,
   columns,
   maxDamage,
+  openSnapshot,
 }: {
+  openSnapshot: () => void;
   row: MainDpsHit;
   team: boolean;
   columns: MainDpsDetailColumns;
@@ -838,9 +858,12 @@ function HitRow({
     typeSeparator < 0 ? row.typeLabel : row.typeLabel.slice(0, typeSeparator);
   const typeDetail =
     typeSeparator < 0 ? null : row.typeLabel.slice(typeSeparator + 1);
-  const hpCompression = maxHpCompression(row.targetMaxHp, row.maxHpReduction);
+  const hpCompression = maxHpCompression(
+    row.targetMaxHp ?? 0,
+    row.maxHpReduction ?? 0,
+  );
   const hpPercent =
-    hpCompression.remainingMaxHp > 0
+    row.targetHpAfter !== null && hpCompression.remainingMaxHp > 0
       ? Math.max(
           0,
           Math.min(
@@ -863,7 +886,7 @@ function HitRow({
         ])
       : tf("Damage: {}", [formatMainMetric(row.damage)]);
   const damageTitleWithOverkill =
-    row.overkillDamage > 0
+    row.overkillDamage !== null && row.overkillDamage > 0
       ? `${damageTitle}\n${t("Overkill")}: ${formatMainMetric(row.overkillDamage)}`
       : damageTitle;
   return (
@@ -938,7 +961,7 @@ function HitRow({
                 </span>
               )}
             </span>
-            {row.overkillDamage > 0 && (
+            {row.overkillDamage !== null && row.overkillDamage > 0 && (
               <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-destructive">
                 {t("Overkill")} +{formatMainMetric(row.overkillDamage)}
               </span>
@@ -946,21 +969,38 @@ function HitRow({
           </span>
         </td>
       )}
+      {columns.showCritical && (
+        <td className="border-r px-2 py-1.5 text-center text-xs">
+          <span
+            className={
+              row.critical === true
+                ? "font-semibold text-amber-600"
+                : row.critical === null
+                  ? "text-muted-foreground"
+                  : ""
+            }
+          >
+            {t(criticalTranslationKey(row.critical))}
+          </span>
+        </td>
+      )}
       {columns.showTarget && (
         <td className="relative overflow-hidden px-2 py-1.5">
-          {row.targetMaxHp > 0 && (
-            <span
-              className={cn(
-                "absolute inset-y-1 left-1 rounded-md",
-                hpPercent > 50
-                  ? "bg-emerald-600/15"
-                  : hpPercent > 20
-                    ? "bg-amber-500/20"
-                    : "bg-destructive/20",
-              )}
-              style={{ width: `calc(${hpPercentOfPreviousMax}% - 0.5rem)` }}
-            />
-          )}
+          {row.targetMaxHp !== null &&
+            row.targetHpAfter !== null &&
+            row.targetMaxHp > 0 && (
+              <span
+                className={cn(
+                  "absolute inset-y-1 left-1 rounded-md",
+                  hpPercent > 50
+                    ? "bg-emerald-600/15"
+                    : hpPercent > 20
+                      ? "bg-amber-500/20"
+                      : "bg-destructive/20",
+                )}
+                style={{ width: `calc(${hpPercentOfPreviousMax}% - 0.5rem)` }}
+              />
+            )}
           {hpCompression.reductionPercent > 0 && (
             <span
               className="max-hp-compression-cut absolute inset-y-1 right-1 rounded-r-md"
@@ -982,7 +1022,7 @@ function HitRow({
             <span className="min-w-0 flex-1">
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className="truncate">{row.target}</span>
-                {row.maxHpReduction > 0 && (
+                {row.maxHpReduction !== null && row.maxHpReduction > 0 && (
                   <MaxHpCompressionEffect
                     key={row.maxHpReduction}
                     label={t("Max HP reduction")}
@@ -993,15 +1033,62 @@ function HitRow({
                   />
                 )}
               </span>
-              {row.targetMaxHp > 0 && (
+              {row.targetMaxHp !== null &&
+                row.targetHpAfter !== null &&
+                row.targetMaxHp > 0 && (
+                  <span className="block truncate text-xs tabular-nums text-muted-foreground">
+                    {formatMainMetric(row.targetHpAfter)} /{" "}
+                    {formatMainMetric(hpCompression.remainingMaxHp)} ·{" "}
+                    {hpPercent.toFixed(1)}%
+                  </span>
+                )}
+              {(row.targetMaxHp === null || row.targetHpAfter === null) && (
                 <span className="block truncate text-xs tabular-nums text-muted-foreground">
-                  {formatMainMetric(row.targetHpAfter)} /{" "}
-                  {formatMainMetric(hpCompression.remainingMaxHp)} ·{" "}
-                  {hpPercent.toFixed(1)}%
+                  {row.targetHpAfter === null
+                    ? t("Unknown")
+                    : formatMainMetric(row.targetHpAfter)}
+                  {" / "}
+                  {row.targetMaxHp === null
+                    ? t("Unknown")
+                    : formatMainMetric(row.targetMaxHp)}
                 </span>
               )}
             </span>
           </span>
+        </td>
+      )}
+      {columns.showSnapshot && (
+        <td className="border-l px-2 py-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div
+              className="min-w-0 flex-1 space-y-1 text-[11px]"
+              title={t("Positive / negative (+other), not added / removed.")}
+            >
+              <p className="truncate">
+                {t("Role effects")}:{" "}
+                {effectCountsText(row.roleEffects) ?? t("Unknown value")}
+                {row.roleEffects?.complete === false
+                  ? ` · ${t("Partial snapshot")}`
+                  : ""}
+              </p>
+              <p className="truncate">
+                {t("Enemy effects")}:{" "}
+                {effectCountsText(row.enemyEffects) ?? t("Unknown value")}
+                {row.enemyEffects?.complete === false
+                  ? ` · ${t("Partial snapshot")}`
+                  : ""}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={row.snapshotKey === null}
+              onClick={openSnapshot}
+              aria-label={`${t("Hit snapshot details")} · ${formatHitTime(row.timestamp)}`}
+            >
+              {t("Details")}
+            </Button>
+          </div>
         </td>
       )}
     </tr>
@@ -1108,7 +1195,17 @@ function detailColumnsFor(
   snapshot: MainDpsDetailSnapshot,
   columns: MainDpsDetailColumns,
 ): DetailColumnKey[] {
-  return (["time", "character", "type", "damage", "target"] as const).filter(
+  return (
+    [
+      "time",
+      "character",
+      "type",
+      "damage",
+      "critical",
+      "target",
+      "snapshot",
+    ] as const
+  ).filter(
     (column) =>
       detailColumnVisible(columns, column) &&
       !(snapshot.kind === "character" && column === "character"),
@@ -1174,6 +1271,10 @@ function columnLabel(column: DetailColumnKey): string {
       return t("Damage");
     case "target":
       return t("Target");
+    case "critical":
+      return t("Critical hit");
+    case "snapshot":
+      return t("Hit snapshot");
   }
 }
 

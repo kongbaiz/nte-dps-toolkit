@@ -2,10 +2,12 @@ use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
     channels::stream_runtime::{
-        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
-        validate_subscription_id,
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_blocking_polling_stream,
+        stream_registry_error, validate_subscription_id,
     },
-    commands::empty_curtain::{empty_curtain_runtime_error, snapshot_with_operation},
+    commands::empty_curtain::{
+        empty_curtain_runtime_error, poll_plugin_changes, snapshot_with_operation,
+    },
     contract::{
         CommandError, SubscriptionReceipt,
         empty_curtain::EmptyCurtainEvent,
@@ -15,7 +17,7 @@ use crate::{
     windows::console,
 };
 
-pub(crate) const EMPTY_CURTAIN_STREAM_INTERVAL_MS: u32 = 100;
+pub(crate) const EMPTY_CURTAIN_STREAM_INTERVAL_MS: u32 = 500;
 #[tauri::command]
 pub(crate) fn subscribe_empty_curtain(
     subscription_id: String,
@@ -36,16 +38,37 @@ pub(crate) fn subscribe_empty_curtain(
         .map_err(stream_registry_error)?;
     let stream_generation = registration.generation();
     let mut last_revision = None;
-    spawn_polling_stream(
-        "nte-empty-curtain-stream",
+    spawn_blocking_polling_stream(
         StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         EMPTY_CURTAIN_STREAM_INTERVAL_MS,
-        move |state| {
+        move |state, stop| {
+            if let Err(error) = poll_plugin_changes(state, stop)
+                && !stop.load(std::sync::atomic::Ordering::Acquire)
+            {
+                let service = state.equipment_service();
+                let waiting = service.inventory.confirming().unwrap_or(false);
+                if waiting {
+                    if let Ok(identity) = service.inventory.identity() {
+                        let _ = crate::commands::empty_curtain::settle_equipment_confirmation(
+                            state, &identity, None,
+                        );
+                    }
+                } else if !matches!(
+                    error.code,
+                    "plugin_session_changed" | "plugin_busy" | "equipment_snapshot_changed"
+                ) {
+                    let _ = service.set("error", error.message_key);
+                }
+            }
             let Ok((revision, operation)) = state.empty_curtain_revision_and_operation() else {
                 return PollingStreamOutput::Stop;
             };
+            let Ok(can_operate) = state.uses_plugin_equipment() else {
+                return PollingStreamOutput::Stop;
+            };
+            let revision = (revision, can_operate);
             if last_revision == Some(revision) {
                 return PollingStreamOutput::NoChange;
             }
@@ -63,7 +86,6 @@ pub(crate) fn subscribe_empty_curtain(
         EMPTY_CURTAIN_STREAM_INTERVAL_MS,
     ))
 }
-
 #[tauri::command]
 pub(crate) fn unsubscribe_empty_curtain(
     subscription_id: String,
@@ -79,17 +101,4 @@ pub(crate) fn unsubscribe_empty_curtain(
         )
         .map_err(stream_registry_error)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn subscription_ids_are_bounded_ascii() {
-        assert!(validate_subscription_id("empty_curtain_01").is_ok());
-        assert!(validate_subscription_id("").is_err());
-        assert!(validate_subscription_id("empty/curtain").is_err());
-        assert!(validate_subscription_id(&"a".repeat(65)).is_err());
-    }
 }

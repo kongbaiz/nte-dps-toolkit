@@ -7,11 +7,14 @@ import {
   type StreamKind,
 } from "@/lib/tauri/stream-contract";
 
-export interface StreamTransport {
+export interface InvokeTransport {
   invoke(
     command: string,
     arguments_?: Record<string, unknown>,
   ): Promise<unknown>;
+}
+
+export interface StreamTransport extends InvokeTransport {
   createChannel(onMessage: (message: unknown) => void): unknown;
 }
 
@@ -27,8 +30,12 @@ export interface StreamOptions<Event> {
   onError(error: unknown): void;
 }
 
-export const tauriStreamTransport: StreamTransport = {
+export const tauriInvokeTransport: InvokeTransport = {
   invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
+};
+
+export const tauriStreamTransport: StreamTransport = {
+  ...tauriInvokeTransport,
   createChannel: (onMessage) => {
     const channel = new Channel<unknown>();
     channel.onmessage = onMessage;

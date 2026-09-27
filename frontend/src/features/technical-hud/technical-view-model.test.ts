@@ -4,7 +4,6 @@ import type { TechnicalSnapshot } from "@/lib/tauri/technical-contract";
 
 import {
   acceptSnapshot,
-  bridgeTone,
   captureAction,
   captureMessage,
   formatHudDuration,
@@ -96,8 +95,7 @@ describe("technical HUD projection", () => {
     expect(acceptSnapshot(current, snapshot("13"))).not.toBe(current);
   });
 
-  it("maps unknown bridge enums to the visible unknown tone", () => {
-    expect(bridgeTone("future_state")).toBe("unknown");
+  it("maps unknown HUD enums to the visible unknown tone", () => {
     expect(hudDataTone("future_state")).toBe("unknown");
   });
 

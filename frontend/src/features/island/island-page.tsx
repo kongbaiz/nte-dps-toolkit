@@ -23,41 +23,74 @@ export function IslandPage() {
   const [undoPending, setUndoPending] = useState(false);
   const dismissing = useRef<string | null>(null);
 
+  const lifecycle = useRef({ mounted: false, serial: 0 });
+  const currentNotice = useRef<string | null>(null);
+  const acceptSnapshot = useCallback((next: IslandSnapshot, ticket: number) => {
+    if (!lifecycle.current.mounted || ticket !== lifecycle.current.serial)
+      return;
+    currentNotice.current = next.notice?.id ?? null;
+    setSnapshot(next);
+    setError(null);
+  }, []);
   useEffect(() => {
+    const lifetime = lifecycle.current;
+    lifetime.mounted = true;
+    let active = true;
     const refresh = () => {
+      if (!active) return;
+      const ticket = ++lifecycle.current.serial;
       void islandClient
         .getSnapshot()
-        .then(setSnapshot)
+        .then((next) => acceptSnapshot(next, ticket))
         .catch((value) => {
+          if (!lifecycle.current.mounted || ticket !== lifecycle.current.serial)
+            return;
           const error = parseIslandCommandError(value);
           setError(tf(error.messageKey, error.messageArguments));
         });
     };
     refresh();
-    return cleanupAsyncRegistration(
+    const cleanup = cleanupAsyncRegistration(
       islandClient.subscribe(refresh),
       (value) => {
+        if (!active) return;
         const error = parseIslandCommandError(value);
         setError(tf(error.messageKey, error.messageArguments));
       },
     );
-  }, []);
+    return () => {
+      active = false;
+      lifetime.mounted = false;
+      lifetime.serial++;
+      cleanup();
+    };
+  }, [acceptSnapshot]);
 
-  const dismissWithMotion = useCallback(async (noticeId: string) => {
-    if (dismissing.current === noticeId) return;
-    dismissing.current = noticeId;
-    setExiting(true);
-    await waitForMotion(MOTION_DURATION.slow);
-    try {
-      setSnapshot(await islandClient.dismiss(noticeId));
-    } catch (value) {
-      const commandError = parseIslandCommandError(value);
-      setError(tf(commandError.messageKey, commandError.messageArguments));
-      setExiting(false);
-    } finally {
-      dismissing.current = null;
-    }
-  }, []);
+  const dismissWithMotion = useCallback(
+    async (noticeId: string) => {
+      if (dismissing.current === noticeId || currentNotice.current !== noticeId)
+        return;
+      dismissing.current = noticeId;
+      setExiting(true);
+      let ticket: number | undefined;
+      try {
+        await waitForMotion(MOTION_DURATION.slow);
+        if (!lifecycle.current.mounted || currentNotice.current !== noticeId)
+          return;
+        ticket = ++lifecycle.current.serial;
+        acceptSnapshot(await islandClient.dismiss(noticeId), ticket);
+      } catch (value) {
+        if (!lifecycle.current.mounted || ticket !== lifecycle.current.serial)
+          return;
+        const commandError = parseIslandCommandError(value);
+        setError(tf(commandError.messageKey, commandError.messageArguments));
+        setExiting(false);
+      } finally {
+        if (dismissing.current === noticeId) dismissing.current = null;
+      }
+    },
+    [acceptSnapshot],
+  );
 
   useEffect(() => {
     setExiting(false);
@@ -126,10 +159,16 @@ export function IslandPage() {
             disabled={undoPending || exiting}
             onClick={() => {
               setUndoPending(true);
+              const ticket = ++lifecycle.current.serial;
               void islandClient
                 .undo(notice.id)
-                .then(setSnapshot)
+                .then((next) => acceptSnapshot(next, ticket))
                 .catch((value) => {
+                  if (
+                    !lifecycle.current.mounted ||
+                    ticket !== lifecycle.current.serial
+                  )
+                    return;
                   const commandError = parseIslandCommandError(value);
                   setError(
                     tf(commandError.messageKey, commandError.messageArguments),

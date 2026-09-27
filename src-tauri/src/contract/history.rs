@@ -459,6 +459,7 @@ fn abyss_half_code(half: AbyssHalf) -> &'static str {
 fn capture_source_code(source: CaptureQualitySource) -> &'static str {
     match source {
         CaptureQualitySource::Live => "live",
+        CaptureQualitySource::Plugin => "plugin",
         CaptureQualitySource::PcapngReplay => "pcapng_replay",
         CaptureQualitySource::JsonReplay => "json_replay",
         CaptureQualitySource::Unknown => "unknown",

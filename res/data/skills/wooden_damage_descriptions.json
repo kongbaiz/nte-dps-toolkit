@@ -2406,6 +2406,81 @@
         "Desc": {
           "CultureInvariantString": "伊洛伊极小必要伤害"
         }
+      },
+      "GE_Player_Akane_Melee1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音普攻1段"
+        }
+      },
+      "GE_Player_Akane_Melee2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音普攻2段"
+        }
+      },
+      "GE_Player_Akane_Melee3_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音普攻3段"
+        }
+      },
+      "GE_Player_Akane_Melee3_1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音普攻3_1段"
+        }
+      },
+      "GE_Player_Akane_Melee4_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音普攻4段"
+        }
+      },
+      "GE_Player_Akane_Airattack_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音下落"
+        }
+      },
+      "GE_Player_Akane_Branch_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音分支"
+        }
+      },
+      "GE_Player_Akane_Skill_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音技能点按"
+        }
+      },
+      "GE_Player_Akane_UpgradeSkill_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音技能长按"
+        }
+      },
+      "GE_Player_Akane_Skill2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音技能2"
+        }
+      },
+      "GE_Player_Akane_UltraSkill1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音大招1段"
+        }
+      },
+      "GE_Player_Akane_UltraSkill2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音大招2段"
+        }
+      },
+      "GE_Player_Akane_QTE_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音QTE"
+        }
+      },
+      "GE_Player_Akane_PerfectEvadeAttack_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音闪反"
+        }
+      },
+      "GE_Reaction_3_new_1057_Damage": {
+        "Desc": {
+          "CultureInvariantString": "明音被动2"
+        }
       }
     }
   }

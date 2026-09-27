@@ -14,7 +14,9 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
@@ -23,6 +25,7 @@ use pcap_file::pcapng::blocks::enhanced_packet::EnhancedPacketBlock;
 use pcap_file::pcapng::blocks::interface_description::{
     InterfaceDescriptionBlock, InterfaceDescriptionOption,
 };
+#[cfg(test)]
 use pcap_file::pcapng::blocks::unknown::UnknownBlock;
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use pcap_file::{DataLink, PcapError};
@@ -55,10 +58,9 @@ use crate::engine::parser::{
     parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects,
     parse_server_damage_settlements, valid_item_net_id, validate_empty_curtain_snapshot,
 };
-use crate::platform::mods_plugin::{
-    CombatClockQueryError, CombatClockTransitionSnapshot, query_combat_clock_transitions,
-    query_mod_events,
-};
+#[cfg(test)]
+use crate::platform::mods_plugin::CombatClockQueryError;
+use crate::platform::mods_plugin::CombatClockTransitionSnapshot;
 use crate::storage::io_util::atomic_write_file;
 
 use crate::engine::protocol::{
@@ -87,9 +89,10 @@ const NTE_MOD_SCRIPT_BLOCK_SIZE: usize = 120;
 const NTE_MOD_SCRIPT_STRING_CAPACITY: usize = 32;
 const NTE_MOD_SCRIPT_VALUE_CAPACITY: usize = 3;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
+const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
-const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(test)]
 const COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD: u8 = 3;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS: usize = 256 * 1024 * 8;
@@ -934,32 +937,6 @@ impl RawCaptureBuffer {
         }
     }
 
-    fn push_combat_clock_transition(&self, transition: &CombatClockTransitionSnapshot) {
-        if let Ok(mut capture) = self.inner.lock() {
-            let result = capture
-                .writer
-                .as_mut()
-                .map(|writer| writer.write_combat_clock_transition(transition));
-            if let Some(Err(error)) = result {
-                capture.write_error = Some(error);
-                capture.writer = None;
-            }
-        }
-    }
-
-    fn push_mod_script_event(&self, event: &ModScriptEvent) {
-        if let Ok(mut capture) = self.inner.lock() {
-            let result = capture
-                .writer
-                .as_mut()
-                .map(|writer| writer.write_mod_script_event(event));
-            if let Some(Err(error)) = result {
-                capture.write_error = Some(error);
-                capture.writer = None;
-            }
-        }
-    }
-
     pub fn packet_count(&self) -> usize {
         self.inner
             .lock()
@@ -1111,26 +1088,6 @@ impl RawCaptureWriter {
         Ok(())
     }
 
-    fn write_combat_clock_transition(
-        &mut self,
-        transition: &CombatClockTransitionSnapshot,
-    ) -> Result<(), String> {
-        let payload = encode_combat_clock_block(transition);
-        self.writer
-            .write_pcapng_block(UnknownBlock::new(NTE_COMBAT_CLOCK_BLOCK_TYPE, 0, &payload))
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
-    fn write_mod_script_event(&mut self, event: &ModScriptEvent) -> Result<(), String> {
-        let payload = encode_mod_script_block(event)
-            .ok_or_else(|| "invalid ModScript event for raw capture".to_owned())?;
-        self.writer
-            .write_pcapng_block(UnknownBlock::new(NTE_MOD_SCRIPT_BLOCK_TYPE, 0, &payload))
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-
     fn finish(mut self) -> Result<(u64, u64), String> {
         self.writer
             .get_mut()
@@ -1140,6 +1097,7 @@ impl RawCaptureWriter {
     }
 }
 
+#[cfg(test)]
 fn encode_combat_clock_block(
     transition: &CombatClockTransitionSnapshot,
 ) -> [u8; NTE_COMBAT_CLOCK_BLOCK_SIZE] {
@@ -1168,7 +1126,7 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
         u32::from_le_bytes(value[32..36].try_into().expect("fixed clock state flags"));
     if reserved_value != 0
         || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
-        || pause_type_mask & !0x1c != 0
+        || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
         || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
     {
         return None;
@@ -1186,6 +1144,7 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
     })
 }
 
+#[cfg(test)]
 fn encode_mod_script_block(event: &ModScriptEvent) -> Option<[u8; NTE_MOD_SCRIPT_BLOCK_SIZE]> {
     if !valid_mod_script_block_identifier(&event.mod_id)
         || !valid_mod_script_block_identifier(&event.name)
@@ -1282,6 +1241,7 @@ fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
     Some(timestamp_ticks as f64 / FILETIME_TICKS_PER_SECOND as f64)
 }
 
+#[cfg(test)]
 fn current_filetime_100ns() -> u64 {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1293,25 +1253,28 @@ fn current_filetime_100ns() -> u64 {
 
 #[derive(Default)]
 struct GamePauseIntervalTracker {
-    active_type_mask: u32,
     pause_type_mask: u32,
 }
 
 impl GamePauseIntervalTracker {
     fn apply_transition(&mut self, timestamp: f64, pause_type_mask: u32) -> Option<TimeStopEvent> {
-        let event = if self.pause_type_mask == 0 && pause_type_mask != 0 {
-            self.active_type_mask = pause_type_mask;
+        let previous_pause_type_mask = self.pause_type_mask;
+        let event = if previous_pause_type_mask == 0 && pause_type_mask != 0 {
             Some(TimeStopEvent::GamePauseStarted {
                 timestamp,
                 pause_type_mask,
             })
-        } else if self.pause_type_mask != 0 && pause_type_mask == 0 {
+        } else if previous_pause_type_mask != 0 && pause_type_mask == 0 {
             Some(TimeStopEvent::GamePauseEnded {
                 timestamp,
-                pause_type_mask: self.active_type_mask,
+                pause_type_mask: previous_pause_type_mask,
+            })
+        } else if previous_pause_type_mask != pause_type_mask {
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
             })
         } else {
-            self.active_type_mask |= pause_type_mask;
             None
         };
         self.pause_type_mask = pause_type_mask;
@@ -1326,6 +1289,7 @@ fn send_game_pause_transition(
     sender.send(EngineEvent::TimeStop(event))
 }
 
+#[cfg(test)]
 fn combat_clock_error_health(error: CombatClockQueryError) -> CombatClockRuntimeHealth {
     match error {
         CombatClockQueryError::ProviderUnavailable => CombatClockRuntimeHealth::ProviderUnavailable,
@@ -1357,6 +1321,7 @@ fn publish_combat_clock_health(
     Ok(())
 }
 
+#[cfg(test)]
 fn stable_combat_clock_error_health(
     error: CombatClockQueryError,
     consecutive_provider_failures: &mut u8,
@@ -1370,6 +1335,7 @@ fn stable_combat_clock_error_health(
         .then_some(CombatClockRuntimeHealth::ProviderUnavailable)
 }
 
+#[cfg(test)]
 fn publish_combat_clock_snapshot_health(
     sender: &EngineEventSink,
     previous: &mut Option<CombatClockRuntimeHealth>,
@@ -1383,196 +1349,6 @@ fn publish_combat_clock_snapshot_health(
         previous,
         combat_clock_sample_health(transition.state_flags, false),
     )
-}
-
-fn run_plugin_monitor(
-    stop: &AtomicBool,
-    capture_started_100ns: u64,
-    raw_capture: &RawCaptureBuffer,
-    sender: &EngineEventSink,
-) {
-    let mut resource_warnings = Vec::new();
-    let enemy_catalog = load_resource(
-        ENEMY_CATALOG_PATH,
-        &mut resource_warnings,
-        load_enemy_catalog,
-    );
-    if !resource_warnings.is_empty() {
-        let _ = sender.send(EngineEvent::Warning(format!(
-            "enemy telemetry catalog: {}",
-            resource_warnings.join("; ")
-        )));
-    }
-    let mut last_sequence = 0;
-    let mut last_mod_event_sequence = 0;
-    let mut tracker = GamePauseIntervalTracker::default();
-    let capture_started = filetime_100ns_to_unix_seconds(capture_started_100ns)
-        .expect("capture FILETIME must be after Unix epoch");
-    let mut initialized = false;
-    let mut pause_state_valid = false;
-    let mut previous_pause_type_mask = 0;
-    let mut previous_combat_clock_health = None;
-    let mut consecutive_combat_clock_provider_failures = 0;
-    while !stop.load(Ordering::Relaxed) {
-        match query_combat_clock_transitions() {
-            Ok(transitions) => {
-                consecutive_combat_clock_provider_failures = 0;
-                // Every response is a bounded authoritative history snapshot.
-                // Re-publish health from its newest sample even when its
-                // sequence was already consumed; otherwise one transient IPC
-                // failure leaves time-stop adjustment degraded until the next
-                // real pause transition.
-                if publish_combat_clock_snapshot_health(
-                    sender,
-                    &mut previous_combat_clock_health,
-                    &transitions,
-                )
-                .is_err()
-                {
-                    return;
-                }
-                let mut current = Vec::new();
-                for transition in transitions {
-                    if transition.sequence <= last_sequence {
-                        continue;
-                    }
-                    last_sequence = transition.sequence;
-                    current.push(transition);
-                }
-                for transition in current {
-                    if transition.timestamp_100ns < capture_started_100ns {
-                        pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
-                        previous_pause_type_mask = if pause_state_valid {
-                            transition.pause_type_mask
-                        } else {
-                            0
-                        };
-                        continue;
-                    }
-                    if !initialized {
-                        initialized = true;
-                        raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
-                            sequence: 0,
-                            timestamp_100ns: capture_started_100ns,
-                            pause_type_mask: if pause_state_valid {
-                                previous_pause_type_mask
-                            } else {
-                                0
-                            },
-                            reserved_value: 0,
-                            state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
-                        });
-                        if pause_state_valid
-                            && let Some(event) =
-                                tracker.apply_transition(capture_started, previous_pause_type_mask)
-                            && send_game_pause_transition(sender, event).is_err()
-                        {
-                            return;
-                        }
-                    }
-                    raw_capture.push_combat_clock_transition(&transition);
-                    let Some(timestamp) =
-                        filetime_100ns_to_unix_seconds(transition.timestamp_100ns)
-                    else {
-                        continue;
-                    };
-                    pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
-                    let pause_type_mask = if pause_state_valid {
-                        transition.pause_type_mask
-                    } else {
-                        0
-                    };
-                    if let Some(event) = tracker.apply_transition(timestamp, pause_type_mask)
-                        && send_game_pause_transition(sender, event).is_err()
-                    {
-                        return;
-                    }
-                }
-                if !initialized {
-                    initialized = true;
-                    raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
-                        sequence: 0,
-                        timestamp_100ns: capture_started_100ns,
-                        pause_type_mask: if pause_state_valid {
-                            previous_pause_type_mask
-                        } else {
-                            0
-                        },
-                        reserved_value: 0,
-                        state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
-                    });
-                    if pause_state_valid
-                        && let Some(event) =
-                            tracker.apply_transition(capture_started, previous_pause_type_mask)
-                        && send_game_pause_transition(sender, event).is_err()
-                    {
-                        return;
-                    }
-                }
-            }
-            Err(error) => {
-                if let Some(health) = stable_combat_clock_error_health(
-                    error,
-                    &mut consecutive_combat_clock_provider_failures,
-                ) && publish_combat_clock_health(
-                    sender,
-                    &mut previous_combat_clock_health,
-                    health,
-                )
-                .is_err()
-                {
-                    return;
-                }
-            }
-        }
-        if let Ok(events) = query_mod_events() {
-            for event in events {
-                if event.sequence <= last_mod_event_sequence {
-                    continue;
-                }
-                last_mod_event_sequence = event.sequence;
-                if event.mod_id == "enemy-telemetry"
-                    && event.timestamp_100ns < capture_started_100ns
-                {
-                    continue;
-                }
-                let mut event = crate::engine::model::ModScriptEvent::from_bridge(
-                    event.sequence,
-                    event.timestamp_100ns,
-                    event.mod_id,
-                    event.name,
-                    event.values,
-                );
-                if event.mod_id == "enemy-telemetry"
-                    && matches!(event.name.as_str(), "enemy.identity" | "enemy.hit_target")
-                    && let [_, config_hash, _] = event.values.as_slice()
-                {
-                    event.enemy_identity = enemy_catalog.get(*config_hash).cloned();
-                }
-                raw_capture.push_mod_script_event(&event);
-                if sender.send(EngineEvent::ModScript(event)).is_err() {
-                    return;
-                }
-            }
-        }
-        thread::sleep(COMBAT_CLOCK_POLL_INTERVAL);
-    }
-    if tracker.pause_type_mask != 0 {
-        let ended_100ns = current_filetime_100ns();
-        let transition = CombatClockTransitionSnapshot {
-            sequence: last_sequence.saturating_add(1),
-            timestamp_100ns: ended_100ns,
-            pause_type_mask: 0,
-            reserved_value: 0,
-            state_flags: COMBAT_CLOCK_PAUSE_VALID,
-        };
-        raw_capture.push_combat_clock_transition(&transition);
-        if let Some(timestamp) = filetime_100ns_to_unix_seconds(ended_100ns)
-            && let Some(event) = tracker.apply_transition(timestamp, 0)
-        {
-            let _ = send_game_pause_transition(sender, event);
-        }
-    }
 }
 
 fn npcap_library_path() -> PathBuf {
@@ -2654,102 +2430,24 @@ const LEGACY_DAMAGE_RECORD_SOURCE_CHARACTER_BITS: (usize, usize) = (769, 916);
 const BOOL_ENUM_DAMAGE_RECORD_SOURCE_CHARACTER_BITS: (usize, usize) = (537, 1173);
 
 #[derive(Clone)]
-struct PendingHit {
-    hit: Hit,
-}
-
-#[derive(Default)]
-struct FollowUpDamageTracker {
-    last_hit_timestamp: Option<f64>,
-    target_max_hp: Option<f64>,
-    pending_hits: VecDeque<PendingHit>,
-    authoritative_sources_to_skip: Vec<Hit>,
-}
-
-impl FollowUpDamageTracker {
-    fn reset_battle(&mut self) {
-        self.pending_hits.clear();
-        self.authoritative_sources_to_skip.clear();
-    }
-
-    fn observe_hit(
-        &mut self,
-        hit: &Hit,
-        _gameplay_effect_index: Option<u32>,
-        _characters: &HashMap<u32, CharacterInfo>,
-    ) {
-        if hit.direction.is_incoming()
-            || hit.char_id == 0
-            || hit.target_max_hp <= 500_000.0
-            || hit.target_hp_before <= 0.0
-        {
-            return;
-        }
-        let new_full_health_battle = self.last_hit_timestamp.is_some_and(|last_timestamp| {
-            hit.timestamp - last_timestamp > 10.0 && hit.target_hp_before >= hit.target_max_hp * 0.9
-        });
-        // A max-HP reduction is an in-fight mutation, so preserve pending
-        // source candidates. A later increase starts a new source window.
-        let increased_target_max_hp = self
-            .target_max_hp
-            .is_some_and(|maximum| hit.target_max_hp > maximum + 1.0);
-        if new_full_health_battle || increased_target_max_hp {
-            self.reset_battle();
-        }
-        self.last_hit_timestamp = Some(hit.timestamp);
-        self.target_max_hp = Some(hit.target_max_hp);
-        if let Some(index) = self
-            .authoritative_sources_to_skip
-            .iter()
-            .position(|source| same_authoritative_follow_up_source(source, hit))
-        {
-            self.authoritative_sources_to_skip.swap_remove(index);
-            return;
-        }
-        if self
-            .pending_hits
-            .back()
-            .is_some_and(|previous| hit.timestamp - previous.hit.timestamp > 1.0)
-        {
-            self.pending_hits.clear();
-        }
-        self.pending_hits.push_back(PendingHit { hit: hit.clone() });
-        while self.pending_hits.len() > MAX_PENDING_FOLLOW_UP_HITS {
-            self.pending_hits.pop_front();
-        }
-    }
-
-    fn observe_authoritative_settlement(&mut self, timestamp: f64) {
-        self.pending_hits
-            .retain(|pending| timestamp - pending.hit.timestamp <= 1.0);
-    }
-
-    fn claim_authoritative_source(&mut self, source: &Hit, skip_future_observation: bool) {
-        self.pending_hits
-            .retain(|pending| !same_authoritative_follow_up_source(&pending.hit, source));
-        if skip_future_observation {
-            self.authoritative_sources_to_skip.push(source.clone());
-            if self.authoritative_sources_to_skip.len() > MAX_PENDING_FOLLOW_UP_HITS {
-                self.authoritative_sources_to_skip.remove(0);
-            }
-        }
-    }
-}
-
-fn same_authoritative_follow_up_source(left: &Hit, right: &Hit) -> bool {
-    left.timestamp.to_bits() == right.timestamp.to_bits()
-        && left.char_id == right.char_id
-        && left.damage.to_bits() == right.damage.to_bits()
-        && left.gameplay_effect_index == right.gameplay_effect_index
-        && wire_handle_from_hit(left) == wire_handle_from_hit(right)
-}
-
-#[derive(Clone)]
 struct ServerDamagePendingHit {
     hit: Hit,
     target_handle: Option<[u8; 29]>,
     use_server_damage: bool,
     max_hp_reduction_percent: u32,
+}
+
+struct ServerDamageSettlementObservation {
+    corrections: Vec<HitDamageCorrection>,
+    unattributed: Vec<UnattributedServerDamage>,
+    sources: Vec<Option<Hit>>,
+}
+
+struct ServerDamageReconciliation {
+    corrections: Vec<HitDamageCorrection>,
+    unattributed: Vec<UnattributedServerDamage>,
+    residual_hits: Vec<Hit>,
+    sources: Vec<Option<Hit>>,
 }
 
 #[derive(Clone, Copy)]
@@ -2924,6 +2622,9 @@ impl ServerDamageCalibrationTracker {
         let source_hit = source.hit;
         Some(HitDamageCorrection {
             source_timestamp: source_hit.timestamp,
+            source_byte_offset: Some(source_hit.byte_offset),
+            source_bit_shift: Some(source_hit.bit_shift),
+            source_target_id: source_hit.target_id.clone(),
             source_char_id: source_hit.char_id,
             source_damage: source_hit.damage,
             source_target_hp_before: source_hit.target_hp_before,
@@ -3033,11 +2734,22 @@ impl ServerDamageCalibrationTracker {
         (corrections.pop(), unattributed.pop())
     }
 
+    #[cfg(test)]
     fn observe_server_damage_settlements(
         &mut self,
         timestamp: f64,
         settlements: &[ParsedServerDamageSettlement],
     ) -> (Vec<HitDamageCorrection>, Vec<UnattributedServerDamage>) {
+        let observation =
+            self.observe_server_damage_settlements_with_sources(timestamp, settlements);
+        (observation.corrections, observation.unattributed)
+    }
+
+    fn observe_server_damage_settlements_with_sources(
+        &mut self,
+        timestamp: f64,
+        settlements: &[ParsedServerDamageSettlement],
+    ) -> ServerDamageSettlementObservation {
         self.pending_hits.retain(|pending| {
             timestamp - pending.hit.timestamp <= SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS
         });
@@ -3057,23 +2769,90 @@ impl ServerDamageCalibrationTracker {
             current_hps.push(current_hp);
         }
 
+        // One authoritative settlement owns at most one decoded source
+        // occurrence. Reserve exact damage and HP-continuity matches across the
+        // whole batch before falling back to wire order, so an earlier fuzzy
+        // settlement cannot steal a later exact source. Duplicate hits remain
+        // distinct by index and are therefore consumed one at a time. Fuzzy
+        // FIFO assignments still calibrate server damage. A container's role
+        // declaration constrains every candidate before the existing exact,
+        // unique HP-bridge and unique recent source matching rules run.
+        let mut candidate_rows = Vec::new();
+        let mut hp_bridge_counts = vec![0_usize; settlements.len()];
+        let mut recent_counts = vec![0_usize; settlements.len()];
+        for (settlement_index, settlement) in settlements.iter().enumerate() {
+            let current_hp = current_hps[settlement_index];
+            let additional_damage = f64::from(settlement.additional_damage.unwrap_or(0));
+            for (pending_index, pending) in self.pending_hits.iter().enumerate() {
+                if pending.target_handle != Some(settlement.target_handle)
+                    || pending.hit.timestamp > timestamp + f64::EPSILON
+                    || settlement
+                        .source_character_id
+                        .is_some_and(|id| id != pending.hit.char_id)
+                {
+                    continue;
+                }
+                let exact_damage = pending.hit.damage == f64::from(settlement.raw_damage);
+                let hp_bridge =
+                    (pending.hit.target_hp_after - current_hp - additional_damage).abs() <= 1.0;
+                let recent = timestamp >= pending.hit.timestamp
+                    && timestamp - pending.hit.timestamp
+                        <= AUTHORITATIVE_DISPLAY_SOURCE_WINDOW_SECONDS;
+                if hp_bridge {
+                    hp_bridge_counts[settlement_index] += 1;
+                }
+                if recent {
+                    recent_counts[settlement_index] += 1;
+                }
+                candidate_rows.push((
+                    settlement_index,
+                    pending_index,
+                    exact_damage,
+                    hp_bridge,
+                    recent,
+                ));
+            }
+        }
+
+        let mut candidates = candidate_rows
+            .into_iter()
+            .map(
+                |(settlement_index, pending_index, exact_damage, hp_bridge, recent)| {
+                    let unique_hp_bridge = hp_bridge && hp_bridge_counts[settlement_index] == 1;
+                    let unique_recent = recent && recent_counts[settlement_index] == 1;
+                    let priority = if exact_damage && hp_bridge {
+                        0_u8
+                    } else if exact_damage {
+                        1
+                    } else if hp_bridge {
+                        2
+                    } else if unique_recent {
+                        3
+                    } else {
+                        4
+                    };
+                    (
+                        priority,
+                        settlement_index,
+                        pending_index,
+                        exact_damage || unique_hp_bridge || unique_recent,
+                    )
+                },
+            )
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+
         let mut assigned_pending = HashSet::new();
         let mut assignments = vec![None; settlements.len()];
-        for (settlement_index, settlement) in settlements.iter().enumerate() {
-            let Some(pending_index) =
-                self.pending_hits
-                    .iter()
-                    .enumerate()
-                    .find_map(|(pending_index, pending)| {
-                        (!assigned_pending.contains(&pending_index)
-                            && pending.target_handle == Some(settlement.target_handle))
-                        .then_some(pending_index)
-                    })
-            else {
+        let mut assignment_can_attribute_follow_up = vec![false; settlements.len()];
+        for (_, settlement_index, pending_index, can_attribute_follow_up) in candidates {
+            if assignments[settlement_index].is_some() || assigned_pending.contains(&pending_index)
+            {
                 continue;
-            };
+            }
             assigned_pending.insert(pending_index);
             assignments[settlement_index] = Some(pending_index);
+            assignment_can_attribute_follow_up[settlement_index] = can_attribute_follow_up;
         }
 
         let sources = assignments
@@ -3148,6 +2927,9 @@ impl ServerDamageCalibrationTracker {
                 .unwrap_or(source_hit.target_max_hp);
             let correction = HitDamageCorrection {
                 source_timestamp: source_hit.timestamp,
+                source_byte_offset: Some(source_hit.byte_offset),
+                source_bit_shift: Some(source_hit.bit_shift),
+                source_target_id: source_hit.target_id.clone(),
                 source_char_id: source_hit.char_id,
                 source_damage: source_hit.damage,
                 source_target_hp_before: source_hit.target_hp_before,
@@ -3217,7 +2999,20 @@ impl ServerDamageCalibrationTracker {
                 self.clear_max_hp_reduction_candidates(settlement.target_handle);
             }
         }
-        (corrections, unattributed)
+        ServerDamageSettlementObservation {
+            corrections,
+            unattributed,
+            sources: sources
+                .into_iter()
+                .zip(assignment_can_attribute_follow_up)
+                .map(
+                    |(source, can_attribute_follow_up)| match (source, can_attribute_follow_up) {
+                        (Some(source), true) => Some(source.hit),
+                        _ => None,
+                    },
+                )
+                .collect(),
+        }
     }
 
     fn take_residual_hits(&mut self) -> Vec<Hit> {
@@ -3324,6 +3119,9 @@ impl ServerDamageCalibrationTracker {
         let source_hit = &source.hit;
         let correction = HitDamageCorrection {
             source_timestamp: source_hit.timestamp,
+            source_byte_offset: Some(source_hit.byte_offset),
+            source_bit_shift: Some(source_hit.bit_shift),
+            source_target_id: source_hit.target_id.clone(),
             source_char_id: source_hit.char_id,
             source_damage: source_hit.damage,
             source_target_hp_before: source_hit.target_hp_before,
@@ -3710,7 +3508,10 @@ impl EmptyCurtainDecoder {
         if activated_by_raw_items {
             self.active_connection = Some(connection.clone());
         }
-        let (streams, bunches_recognized) = {
+        // Unsupported Bunch modes may still carry raw records, but their packet IDs
+        // must not seed or advance the inventory fragment clock. Supported packets
+        // without inventory Bunches still advance that clock and expire stale fragments.
+        let (streams, bunches_recognized) = if packet.mode == 0 {
             let state = self
                 .connections
                 .get_mut(&connection)
@@ -3719,6 +3520,8 @@ impl EmptyCurtainDecoder {
             let bunches = parse_inventory_bunches(packet, &known_channels);
             let recognized = !bunches.is_empty();
             (state.push_bunches(packet.packet_id, bunches), recognized)
+        } else {
+            (Vec::new(), false)
         };
 
         let mut items_changed = false;
@@ -4577,24 +4380,28 @@ struct HitTargetSnapshot {
 }
 
 struct PacketDecoder {
+    exact_mode: bool,
+    exact_runtime: Option<crate::engine::settlement::runtime::Runtime>,
+    exact_auto: Option<crate::engine::settlement::automatic::Automatic>,
     packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
     gameplay_effect_names: HashMap<u32, String>,
     ability_catalog: Arc<AbilityCatalog>,
-    follow_up_damage: FollowUpDamageTracker,
     server_damage_calibration: ServerDamageCalibrationTracker,
     use_server_damage_calibration: bool,
     character_declarations: HashMap<u32, f64>,
     pending_ambiguous_hits: Vec<Hit>,
-    /// Confirmed outgoing hits without a wire target wait for the following
-    /// server target-state response. FIFO, bounded to
-    /// `MAX_PENDING_FOLLOW_UP_HITS`; full policy emits the oldest hit without
-    /// inventing a target, and capture shutdown flushes the remaining hits.
+    /// Confirmed outgoing hits without a direct wire target wait for the
+    /// following server target-state response and then briefly for a matching
+    /// direct-target record. FIFO, bounded to `MAX_PENDING_FOLLOW_UP_HITS`;
+    /// full policy emits the oldest hit, and capture shutdown flushes the rest.
     pending_targetless_hits: VecDeque<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     target_snapshots: HashMap<String, HitTargetSnapshot>,
+    #[allow(dead_code)] // Legacy fixtures only; production inventory uses RPC boundaries.
     empty_curtain: EmptyCurtainDecoder,
+    exact_inventory: super::inventory::InventoryDecoder,
     frame_dedup: FrameDedup,
     gameplay_effect_fragments: GameplayEffectFragmentTracker,
     bool_enum_gameplay_effect_fragments: BoolEnumGameplayEffectFragmentTracker,
@@ -4643,6 +4450,31 @@ impl Default for PacketDecoder {
 }
 
 impl PacketDecoder {
+    fn enable_exact_mode(&mut self, sender: &EngineEventSink) {
+        self.exact_mode = true;
+        let _ = sender.send(EngineEvent::PacketInventory {
+            items: vec![],
+            characters: vec![],
+        });
+        match crate::engine::settlement::runtime::Runtime::from_environment() {
+            Ok(Some(runtime)) => self.exact_runtime = Some(runtime),
+            Ok(None) => match crate::engine::settlement::automatic::Automatic::bundled() {
+                Ok(automatic) => {
+                    self.exact_auto = Some(automatic);
+                    let _ = sender.send(EngineEvent::Warning(
+                        crate::engine::settlement::automatic::WAITING.into(),
+                    ));
+                }
+                Err(code) => {
+                    let _ = sender.send(EngineEvent::Error(code.into()));
+                }
+            },
+            Err(code) => {
+                let _ = sender.send(EngineEvent::Error(code.into()));
+            }
+        }
+    }
+
     fn with_ability_catalog(
         ability_catalog: Arc<AbilityCatalog>,
         use_server_damage_calibration: bool,
@@ -4671,12 +4503,14 @@ impl PacketDecoder {
         );
 
         Self {
+            exact_mode: false,
+            exact_runtime: None,
+            exact_auto: None,
             packet_emission: PacketEmissionMode::FullDebug,
             session_characters: HashMap::new(),
             client_endpoints: HashSet::new(),
             gameplay_effect_names,
             ability_catalog,
-            follow_up_damage: FollowUpDamageTracker::default(),
             server_damage_calibration: ServerDamageCalibrationTracker::default(),
             use_server_damage_calibration,
             character_declarations: HashMap::new(),
@@ -4684,6 +4518,9 @@ impl PacketDecoder {
             pending_targetless_hits: VecDeque::new(),
             recent_confirmed_hits: Vec::new(),
             target_snapshots: HashMap::new(),
+            exact_inventory: super::inventory::InventoryDecoder::new(Arc::new(
+                equipment_catalog.clone(),
+            )),
             empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
             frame_dedup: FrameDedup::default(),
             gameplay_effect_fragments: GameplayEffectFragmentTracker::default(),
@@ -4726,11 +4563,21 @@ where
 impl PacketDecoder {
     fn resolve_and_observe_hit_targets(&mut self, hits: &mut [Hit]) {
         for index in 0..hits.len() {
-            if hits[index].target_id.is_none() {
-                let packet_target = unique_packet_target_before(hits, index);
-                let tracked_target =
-                    packet_target.or_else(|| self.unique_tracked_target_for_hit(&hits[index]));
-                if let Some((target_id, snapshot)) = tracked_target {
+            let packet_target = unique_packet_target_before(hits, index);
+            let tracked_target =
+                packet_target.or_else(|| self.unique_tracked_target_for_hit(&hits[index]));
+            if let Some((target_id, snapshot)) = tracked_target {
+                let replace_target = match hits[index].target_id.as_ref() {
+                    None => true,
+                    Some(current_target) if current_target != &target_id => self
+                        .target_snapshots
+                        .get(current_target)
+                        .is_some_and(|current| {
+                            !target_snapshot_max_matches_hit(current, &hits[index])
+                        }),
+                    Some(_) => false,
+                };
+                if replace_target {
                     apply_target_snapshot(&mut hits[index], target_id, &snapshot);
                 }
             }
@@ -4741,11 +4588,7 @@ impl PacketDecoder {
     fn unique_tracked_target_for_hit(&self, hit: &Hit) -> Option<(String, HitTargetSnapshot)> {
         let mut candidate = None;
         for (target_id, snapshot) in &self.target_snapshots {
-            if !nearly_same(snapshot.current_hp, hit.target_hp_before)
-                || (snapshot.max_hp > 0.0
-                    && hit.target_max_hp > 0.0
-                    && !nearly_same(snapshot.max_hp, hit.target_max_hp))
-            {
+            if !target_snapshot_matches_hit(snapshot, hit) {
                 continue;
             }
             if candidate.is_some() {
@@ -4872,6 +4715,7 @@ impl PacketDecoder {
         &mut self,
         timestamp: f64,
         updates: &[crate::engine::parser::ParsedBossHpUpdate],
+        settlements: &[crate::engine::parser::ParsedServerDamageSettlement],
     ) -> Vec<Hit> {
         let mut update_candidates = Vec::new();
         let mut candidate_handles = HashMap::<PendingTargetLocation, HashSet<[u8; 29]>>::new();
@@ -4921,6 +4765,7 @@ impl PacketDecoder {
             let target_id = target_id_from_wire_handle(target_handle);
             if let Some(snapshot) = self.target_snapshots.get(&target_id) {
                 apply_target_snapshot(hit, target_id, snapshot);
+                hit.direction = HitDirection::Outgoing;
             }
         }
 
@@ -4934,12 +4779,22 @@ impl PacketDecoder {
         targetless.sort_unstable_by_key(|(index, _)| std::cmp::Reverse(*index));
         let mut resolved = Vec::with_capacity(targetless.len());
         for (index, target_handle) in targetless {
-            let Some(mut hit) = self.pending_targetless_hits.remove(index) else {
+            let target_id = target_id_from_wire_handle(&target_handle);
+            let Some(snapshot) = self.target_snapshots.get(&target_id).cloned() else {
                 continue;
             };
-            let target_id = target_id_from_wire_handle(&target_handle);
-            if let Some(snapshot) = self.target_snapshots.get(&target_id) {
-                apply_target_snapshot(&mut hit, target_id, snapshot);
+            let has_matching_settlement = settlements.iter().any(|settlement| {
+                settlement.target_handle == target_handle
+                    && f64::from(settlement.current_hp).to_bits() == snapshot.current_hp.to_bits()
+            });
+            if !has_matching_settlement {
+                if let Some(hit) = self.pending_targetless_hits.get_mut(index) {
+                    apply_target_snapshot(hit, target_id, &snapshot);
+                }
+                continue;
+            }
+            if let Some(mut hit) = self.pending_targetless_hits.remove(index) {
+                apply_target_snapshot(&mut hit, target_id, &snapshot);
                 resolved.push(hit);
             }
         }
@@ -4968,7 +4823,7 @@ impl PacketDecoder {
     fn emit_hits_inner(
         &mut self,
         hits: impl IntoIterator<Item = Hit>,
-        characters: &HashMap<u32, CharacterInfo>,
+        _characters: &HashMap<u32, CharacterInfo>,
         sender: &EngineEventSink,
         observe_server_damage: bool,
     ) {
@@ -4976,8 +4831,6 @@ impl PacketDecoder {
             if is_enemy_death_settlement_hit(&hit) {
                 continue;
             }
-            self.follow_up_damage
-                .observe_hit(&hit, hit.gameplay_effect_index, characters);
             let max_hp_reduction_correction = observe_server_damage
                 .then(|| self.observe_server_damage_hit(&hit))
                 .flatten();
@@ -5035,6 +4888,8 @@ impl PacketDecoder {
                 hit.direction = HitDirection::Outgoing;
                 hit.char_source = HitCharacterSource::GameplayEffect;
             }
+            prepared.suppressed_ambiguous +=
+                self.suppress_matching_hp_resolved_targetless_hit(&hit);
             if is_recent_confirmed_duplicate(&hit, &self.recent_confirmed_hits) {
                 prepared.suppressed_ambiguous += 1;
                 continue;
@@ -5150,12 +5005,11 @@ impl PacketDecoder {
         &mut self,
         timestamp: f64,
         settlements: &[ParsedServerDamageSettlement],
-        hits: &[&Hit],
+        sources: &[Option<Hit>],
     ) -> (Vec<HitFollowUp>, Vec<Hit>) {
         let mut follow_ups = Vec::new();
         let mut shared_hits = Vec::new();
-        let mut claimed_hits = HashSet::new();
-        for settlement in settlements {
+        for (settlement_index, settlement) in settlements.iter().enumerate() {
             let (Some(additional_damage), Some(additional_display_type)) = (
                 settlement.additional_damage,
                 settlement.additional_display_type,
@@ -5168,81 +5022,35 @@ impl PacketDecoder {
             ) else {
                 continue;
             };
-            self.follow_up_damage
-                .observe_authoritative_settlement(timestamp);
-            let mut candidates = hits
-                .iter()
-                .enumerate()
-                .filter(|(index, hit)| {
-                    !claimed_hits.contains(index)
-                        && !hit.direction.is_incoming()
-                        && hit.char_id != 0
-                        && wire_handle_from_hit(hit) == Some(settlement.target_handle)
-                })
-                .map(|(index, hit)| (Some(index), (*hit).clone()))
-                .collect::<Vec<_>>();
-            candidates.extend(
-                self.follow_up_damage
-                    .pending_hits
-                    .iter()
-                    .filter(|pending| {
-                        timestamp >= pending.hit.timestamp
-                            && timestamp - pending.hit.timestamp <= 1.0
-                            && !pending.hit.direction.is_incoming()
-                            && pending.hit.char_id != 0
-                            && wire_handle_from_hit(&pending.hit) == Some(settlement.target_handle)
-                    })
-                    .map(|pending| (None, pending.hit.clone())),
-            );
-            let exact_damage_match = candidates
-                .iter()
-                .filter(|(_, source)| source.damage == settlement.raw_damage as f64)
-                .min_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp));
-            let hp_bridge_match = candidates
-                .iter()
-                .filter(|(_, source)| {
-                    (source.target_hp_after
-                        - settlement.current_hp as f64
-                        - additional_damage as f64)
-                        .abs()
-                        <= 1.0
-                })
-                .min_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp));
-            let recent_matches = candidates
-                .iter()
-                .filter(|(_, source)| {
-                    timestamp >= source.timestamp
-                        && timestamp - source.timestamp
-                            <= AUTHORITATIVE_DISPLAY_SOURCE_WINDOW_SECONDS
-                })
-                .collect::<Vec<_>>();
-            let candidate = if let Some(candidate) = exact_damage_match {
-                Some(candidate)
-            } else if let Some(candidate) = hp_bridge_match {
-                Some(candidate)
-            } else if let [candidate] = recent_matches.as_slice() {
-                Some(*candidate)
-            } else {
-                None
-            };
-            let Some(candidate) = candidate else {
+            let source = sources
+                .get(settlement_index)
+                .and_then(Option::as_ref)
+                .filter(|hit| {
+                    settlement
+                        .source_character_id
+                        .is_none_or(|id| id == hit.char_id)
+                });
+            let Some(source) = source else {
+                let target_max_hp = self
+                    .server_damage_calibration
+                    .target_max_hp_by_handle
+                    .get(&settlement.target_handle)
+                    .copied()
+                    .unwrap_or(0.0);
                 shared_hits.push(unattributed_display_damage_hit(
                     timestamp,
                     settlement,
                     additional_damage as f64,
                     additional_display_type,
-                    self.follow_up_damage.target_max_hp.unwrap_or(0.0),
+                    target_max_hp,
                 ));
                 continue;
             };
-            let (current_index, source) = candidate;
-            if let Some(index) = current_index {
-                claimed_hits.insert(*index);
-            }
-            self.follow_up_damage
-                .claim_authoritative_source(source, current_index.is_some());
             follow_ups.push(HitFollowUp {
                 source_timestamp: source.timestamp,
+                source_byte_offset: Some(source.byte_offset),
+                source_bit_shift: Some(source.bit_shift),
+                source_target_id: source.target_id.clone(),
                 source_char_id: source.char_id,
                 source_damage: source.damage,
                 source_target_hp_before: source.target_hp_before,
@@ -5265,16 +5073,12 @@ impl PacketDecoder {
         (follow_ups, shared_hits)
     }
 
-    fn hp_update_has_authoritative_additional_damage(
+    fn hp_update_has_authoritative_settlement(
         settlements: &[ParsedServerDamageSettlement],
         update: &crate::engine::parser::ParsedBossHpUpdate,
     ) -> bool {
         settlements.iter().any(|settlement| {
-            settlement.additional_damage.is_some()
-                && settlement
-                    .additional_display_type
-                    .is_some_and(|display_type| display_type.attack_type().is_some())
-                && settlement.target_handle == update.target_handle
+            settlement.target_handle == update.target_handle
                 && settlement.current_hp.to_bits() == update.current_hp.to_bits()
         })
     }
@@ -5322,6 +5126,7 @@ impl PacketDecoder {
         )
     }
 
+    #[cfg(test)]
     fn reconcile_server_damage_settlements(
         &mut self,
         timestamp: f64,
@@ -5331,11 +5136,26 @@ impl PacketDecoder {
         Vec<UnattributedServerDamage>,
         Vec<Hit>,
     ) {
-        let (corrections, mut unattributed) = self
+        let reconciliation =
+            self.reconcile_server_damage_settlements_with_sources(timestamp, settlements);
+        (
+            reconciliation.corrections,
+            reconciliation.unattributed,
+            reconciliation.residual_hits,
+        )
+    }
+
+    fn reconcile_server_damage_settlements_with_sources(
+        &mut self,
+        timestamp: f64,
+        settlements: &[ParsedServerDamageSettlement],
+    ) -> ServerDamageReconciliation {
+        let observation = self
             .server_damage_calibration
-            .observe_server_damage_settlements(timestamp, settlements);
-        let mut accepted_corrections = Vec::with_capacity(corrections.len());
-        for correction in corrections {
+            .observe_server_damage_settlements_with_sources(timestamp, settlements);
+        let mut unattributed = observation.unattributed;
+        let mut accepted_corrections = Vec::with_capacity(observation.corrections.len());
+        for correction in observation.corrections {
             if correction.reconciled_overkill_damage == Some(0.0) {
                 accepted_corrections.push(correction);
                 continue;
@@ -5350,9 +5170,15 @@ impl PacketDecoder {
             }
         }
         let residual_hits = self.server_damage_calibration.take_residual_hits();
-        (accepted_corrections, unattributed, residual_hits)
+        ServerDamageReconciliation {
+            corrections: accepted_corrections,
+            unattributed,
+            residual_hits,
+            sources: observation.sources,
+        }
     }
 
+    #[cfg(test)]
     fn reconcile_current_packet_server_damage_settlements<'a>(
         &mut self,
         timestamp: f64,
@@ -5363,14 +5189,33 @@ impl PacketDecoder {
         Vec<UnattributedServerDamage>,
         Vec<Hit>,
     ) {
+        let reconciliation = self.reconcile_current_packet_server_damage_settlements_with_sources(
+            timestamp,
+            settlements,
+            hits,
+        );
+        (
+            reconciliation.corrections,
+            reconciliation.unattributed,
+            reconciliation.residual_hits,
+        )
+    }
+
+    fn reconcile_current_packet_server_damage_settlements_with_sources<'a>(
+        &mut self,
+        timestamp: f64,
+        settlements: &[ParsedServerDamageSettlement],
+        hits: impl IntoIterator<Item = &'a Hit>,
+    ) -> ServerDamageReconciliation {
         // A server settlement can be decoded from the same packet as its
         // client hit. Queue those hits before reconciliation while callers
         // preserve the public Hit -> HitDamageCorrection event order.
         let mut max_hp_reduction_corrections = self.observe_server_damage_hits(hits);
-        let (mut corrections, unattributed, residual_hits) =
-            self.reconcile_server_damage_settlements(timestamp, settlements);
-        max_hp_reduction_corrections.append(&mut corrections);
-        (max_hp_reduction_corrections, unattributed, residual_hits)
+        let mut reconciliation =
+            self.reconcile_server_damage_settlements_with_sources(timestamp, settlements);
+        max_hp_reduction_corrections.append(&mut reconciliation.corrections);
+        reconciliation.corrections = max_hp_reduction_corrections;
+        reconciliation
     }
 
     fn suppress_matching_ambiguous_hits(&mut self, confirmed_hit: &Hit) -> usize {
@@ -5381,6 +5226,108 @@ impl PacketDecoder {
         self.pending_ambiguous_hits
             .retain(|pending| !same_damage_event(pending, confirmed_hit));
         before - self.pending_ambiguous_hits.len()
+    }
+
+    fn suppress_matching_hp_resolved_targetless_hit(&mut self, confirmed_hit: &Hit) -> usize {
+        if !is_confirmed_packet_hit(confirmed_hit) || !has_direct_wire_target(confirmed_hit) {
+            return 0;
+        }
+        let Some(index) = self
+            .pending_targetless_hits
+            .iter()
+            .position(|pending| same_hp_resolved_damage_event(pending, confirmed_hit))
+        else {
+            return 0;
+        };
+        self.pending_targetless_hits.remove(index);
+        1
+    }
+}
+
+// Direct packet and reassembled views may expose different amounts of the
+// same source header. Preserve occurrence counts and prefer exact role matches
+// before using a missing declaration as a wildcard. Queues are packet-local;
+// each direct occurrence is visited a bounded number of times.
+fn merge_reassembled_server_damage_settlements(
+    settlements: &mut Vec<ParsedServerDamageSettlement>,
+    reassembled: Vec<ParsedServerDamageSettlement>,
+) {
+    let key = |row: &ParsedServerDamageSettlement| {
+        (
+            row.target_handle,
+            row.current_hp.to_bits(),
+            row.dead_state,
+            row.raw_damage,
+            row.display_type,
+            row.additional_damage,
+            row.additional_display_type,
+        )
+    };
+    let mut by_source = HashMap::new();
+    let mut by_value = HashMap::new();
+    for (index, row) in settlements.iter().enumerate() {
+        by_source
+            .entry((key(row), row.source_character_id))
+            .or_insert_with(VecDeque::new)
+            .push_back(index);
+        by_value
+            .entry(key(row))
+            .or_insert_with(VecDeque::new)
+            .push_back(index);
+    }
+    let mut used = vec![false; settlements.len()];
+    let mut assignments = vec![None; reassembled.len()];
+    // Reserve known-to-known matches before using a missing declaration.
+    for (index, row) in reassembled.iter().enumerate() {
+        if row.source_character_id.is_none() {
+            continue;
+        }
+        if let Some(original) = by_source
+            .get_mut(&(key(row), row.source_character_id))
+            .and_then(VecDeque::pop_front)
+        {
+            used[original] = true;
+            assignments[index] = Some(original);
+        }
+    }
+    // Known reassembled roles get the remaining unknown direct occurrences
+    // before an unknown reassembled row can consume those occurrences.
+    for (index, row) in reassembled.iter().enumerate() {
+        if row.source_character_id.is_none() || assignments[index].is_some() {
+            continue;
+        }
+        if let Some(original) = by_source
+            .get_mut(&(key(row), None))
+            .and_then(VecDeque::pop_front)
+        {
+            used[original] = true;
+            assignments[index] = Some(original);
+        }
+    }
+    for (index, row) in reassembled.iter().enumerate() {
+        if row.source_character_id.is_some() {
+            continue;
+        }
+        if let Some(original) = by_value.get_mut(&key(row)).and_then(|indices| {
+            while let Some(index) = indices.pop_front() {
+                if !used[index] {
+                    return Some(index);
+                }
+            }
+            None
+        }) {
+            used[original] = true;
+            assignments[index] = Some(original);
+        }
+    }
+    for (row, original) in reassembled.into_iter().zip(assignments) {
+        if let Some(original) = original {
+            if settlements[original].source_character_id.is_none() {
+                settlements[original].source_character_id = row.source_character_id;
+            }
+        } else {
+            settlements.push(row);
+        }
     }
 }
 
@@ -5423,6 +5370,18 @@ fn is_confirmed_packet_hit(hit: &Hit) -> bool {
     ) && hit.direction.is_outgoing()
 }
 
+fn should_defer_partial_stream_hit(hit: &Hit) -> bool {
+    hit.target_id.is_none() || hit.char_source == HitCharacterSource::Session
+}
+
+fn promote_resolved_outgoing_hits(hits: &mut [Hit]) {
+    for hit in hits {
+        if hit.direction.is_unknown() && hit.target_id.is_some() {
+            hit.direction = HitDirection::Outgoing;
+        }
+    }
+}
+
 fn same_damage_event(left: &Hit, right: &Hit) -> bool {
     (left.timestamp - right.timestamp).abs() <= AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS
         && left.gameplay_effect_index.is_some()
@@ -5431,6 +5390,31 @@ fn same_damage_event(left: &Hit, right: &Hit) -> bool {
         && nearly_same(left.target_hp_before, right.target_hp_before)
         && nearly_same(left.target_hp_after, right.target_hp_after)
         && nearly_same(left.target_max_hp, right.target_max_hp)
+}
+
+fn has_direct_wire_target(hit: &Hit) -> bool {
+    let Some(encoded) = hit
+        .target_id
+        .as_deref()
+        .and_then(|target_id| target_id.strip_prefix("enemy-wire:"))
+    else {
+        return false;
+    };
+    hit.target_context.iter().any(|context| {
+        context
+            .strip_prefix("enemy_target_wire=")
+            .is_some_and(|wire| wire == encoded)
+    })
+}
+
+fn same_hp_resolved_damage_event(pending: &Hit, confirmed: &Hit) -> bool {
+    pending.target_id.is_some()
+        && pending.target_id == confirmed.target_id
+        && pending.gameplay_effect_index.is_some()
+        && pending.gameplay_effect_index == confirmed.gameplay_effect_index
+        && (pending.timestamp - confirmed.timestamp).abs()
+            <= AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS
+        && same_exact_wire_damage_event(pending, confirmed)
 }
 
 fn is_recent_confirmed_duplicate(hit: &Hit, confirmed_hits: &[Hit]) -> bool {
@@ -5609,6 +5593,8 @@ fn server_residual_hit(
         follow_up_attack_type: None,
         follow_up_damage_attribute: None,
         reconciled_overkill_damage: Some(0.0),
+        exact: None,
+        plugin_snapshot: None,
         wire_event: None,
     }
 }
@@ -5662,13 +5648,14 @@ fn unattributed_display_damage_hit(
         follow_up_attack_type: None,
         follow_up_damage_attribute: None,
         reconciled_overkill_damage: Some(0.0),
+        exact: None,
+        plugin_snapshot: None,
         wire_event: None,
     }
 }
 
 fn is_enemy_death_settlement_hit(hit: &Hit) -> bool {
     hit.direction.is_outgoing()
-        && hit.target_id.is_some()
         && hit.damage == 1.0
         && hit.target_hp_before == 1.0
         && hit.target_hp_after == 0.0
@@ -5679,7 +5666,7 @@ fn pending_hit_matches_target_update(
     update_timestamp: f64,
     update: &crate::engine::parser::ParsedBossHpUpdate,
 ) -> bool {
-    hit.direction.is_outgoing()
+    !hit.direction.is_incoming()
         && hit.target_id.is_none()
         && update_timestamp >= hit.timestamp
         && update_timestamp - hit.timestamp <= AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS
@@ -5708,6 +5695,17 @@ fn target_snapshot_from_hit(hit: &Hit) -> HitTargetSnapshot {
         target_monster_id: hit.target_monster_id.clone(),
         target_context: hit.target_context.clone(),
     }
+}
+
+fn target_snapshot_matches_hit(snapshot: &HitTargetSnapshot, hit: &Hit) -> bool {
+    nearly_same(snapshot.current_hp, hit.target_hp_before)
+        && target_snapshot_max_matches_hit(snapshot, hit)
+}
+
+fn target_snapshot_max_matches_hit(snapshot: &HitTargetSnapshot, hit: &Hit) -> bool {
+    snapshot.max_hp <= 0.0
+        || hit.target_max_hp <= 0.0
+        || nearly_same(snapshot.max_hp, hit.target_max_hp)
 }
 
 fn unique_packet_target_before(hits: &[Hit], index: usize) -> Option<(String, HitTargetSnapshot)> {
@@ -6162,6 +6160,27 @@ impl PacketDecoder {
         );
     }
 
+    fn flush_inventory(&mut self, sender: &EngineEventSink) {
+        match self.exact_inventory.finish() {
+            Ok(Some(update)) => {
+                let _ = sender.send(EngineEvent::PacketInventory {
+                    items: update.items,
+                    characters: update.characters,
+                });
+            }
+            Err(_) => {
+                let _ = sender.send(EngineEvent::Warning(
+                    "exact_inventory_incomplete_capture".into(),
+                ));
+                let _ = sender.send(EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![],
+                });
+            }
+            _ => {}
+        }
+    }
+
     fn process_capture_frame(
         &mut self,
         packet: CapturedPacket<'_>,
@@ -6189,6 +6208,62 @@ impl PacketDecoder {
             .is_duplicate(packet.data, capture_timestamp)
         {
             return;
+        }
+        let mut exact_components = 0;
+        if let Some(automatic) = self.exact_auto.as_mut() {
+            let was_ready = automatic.ready;
+            let projections = automatic.datagram(
+                src,
+                src_port,
+                dst,
+                dst_port,
+                local_ip,
+                payload,
+                capture_timestamp,
+                characters,
+                include_incoming,
+            );
+            for projection in projections {
+                let _ = sender.send(EngineEvent::ExactSettlement(Box::new(projection)));
+            }
+            if automatic.ready && !was_ready {
+                let _ = sender.send(EngineEvent::Status(
+                    crate::engine::settlement::automatic::READY.into(),
+                ));
+            } else if was_ready && !automatic.ready {
+                let _ = sender.send(EngineEvent::Warning(
+                    crate::engine::settlement::automatic::WAITING.into(),
+                ));
+            }
+            if let Some(code) = automatic.warning {
+                let _ = sender.send(EngineEvent::Warning(code.into()));
+            }
+            exact_components = automatic.last_settlement_components;
+        }
+        if let Some(runtime) = self.exact_runtime.as_mut() {
+            match runtime.datagram(
+                src,
+                src_port,
+                dst,
+                dst_port,
+                payload,
+                capture_timestamp,
+                characters,
+                include_incoming,
+            ) {
+                Ok(projections) => {
+                    for p in projections {
+                        let _ = sender.send(EngineEvent::ExactSettlement(Box::new(p)));
+                    }
+                }
+                Err(code) => {
+                    let _ = sender.send(EngineEvent::Error(code.into()));
+                }
+            }
+            if let Some(code) = runtime.warning {
+                let _ = sender.send(EngineEvent::Warning(code.into()));
+            }
+            exact_components = runtime.last_settlement_components;
         }
         let expired_hits = self.take_expired_ambiguous_hits(timestamp);
         self.emit_hits(expired_hits, characters, sender);
@@ -6271,7 +6346,7 @@ impl PacketDecoder {
                 &gameplay_effects,
             )
         });
-        let mut hits = if outgoing {
+        let mut hits = if outgoing && !self.exact_mode {
             let packet_char_id = if ids.len() == 1 {
                 ids.first().copied()
             } else {
@@ -6309,11 +6384,7 @@ impl PacketDecoder {
             reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
         }
         if outgoing {
-            for hit in &mut hits {
-                if hit.direction.is_unknown() && hit.target_id.is_some() {
-                    hit.direction = HitDirection::Outgoing;
-                }
-            }
+            promote_resolved_outgoing_hits(&mut hits);
         }
         let starts_partial_stream = single_bunch
             .as_ref()
@@ -6327,7 +6398,7 @@ impl PacketDecoder {
         if outgoing && starts_partial_stream {
             let mut retained = Vec::with_capacity(hits.len());
             for hit in hits {
-                if hit.target_id.is_none()
+                if should_defer_partial_stream_hit(&hit)
                     && self.pending_ambiguous_hits.len() < MAX_PENDING_FOLLOW_UP_HITS
                 {
                     self.pending_ambiguous_hits.push(hit);
@@ -6337,7 +6408,7 @@ impl PacketDecoder {
             }
             hits = retained;
         }
-        if outgoing {
+        if outgoing && !self.exact_mode {
             for reassembled in reassembled_bunches
                 .iter()
                 .filter(|observation| observation.bunch.fragment_count > 1)
@@ -6452,6 +6523,9 @@ impl PacketDecoder {
         hits.append(&mut bool_enum_fragment_observation.abandoned_hits);
         propagate_unanimous_trailing_skill(&mut hits);
         self.resolve_and_observe_hit_targets(&mut hits);
+        if outgoing {
+            promote_resolved_outgoing_hits(&mut hits);
+        }
         let prepared_hits =
             self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
         for character_id in &ids {
@@ -6459,14 +6533,14 @@ impl PacketDecoder {
         }
         self.character_declarations
             .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
-        let mut accepted = prepared_hits.emit.len();
+        let mut accepted = prepared_hits.emit.len() + exact_components;
         // CurrentHP 候选缺少目标 handle 校验，仅用于调试显示，不参与 follow-up 计算。
-        let current_hp_updates = if outgoing {
+        let current_hp_updates = if outgoing || self.exact_mode {
             Vec::new()
         } else {
             parse_current_hp_updates(payload)
         };
-        let direct_client_damage_boss = if outgoing {
+        let direct_client_damage_boss = if outgoing || self.exact_mode {
             None
         } else {
             match (&transport_packet, &bunch_packet) {
@@ -6480,12 +6554,12 @@ impl PacketDecoder {
             .as_ref()
             .map(|update| update.target_handle);
         let used_direct_client_damage_boss = direct_boss_target.is_some();
-        let mut target_hp_updates = if outgoing {
+        let mut target_hp_updates = if outgoing || self.exact_mode {
             Vec::new()
         } else {
             parse_client_fight_target_updates(payload)
         };
-        if !outgoing {
+        if !outgoing && !self.exact_mode {
             let mut seen = target_hp_updates
                 .iter()
                 .map(|update| (update.target_handle, update.current_hp.to_bits()))
@@ -6498,45 +6572,20 @@ impl PacketDecoder {
                 }
             }
         }
-        let mut server_damage_settlements = if outgoing {
+        let mut server_damage_settlements = if outgoing || self.exact_mode {
             Vec::new()
         } else {
             parse_server_damage_settlements(payload)
         };
-        if !outgoing {
-            let settlement_key = |settlement: &ParsedServerDamageSettlement| {
-                (
-                    settlement.target_handle,
-                    settlement.current_hp.to_bits(),
-                    settlement.dead_state,
-                    settlement.raw_damage,
-                    settlement.display_type,
-                    settlement.additional_damage,
-                    settlement.additional_display_type,
-                )
-            };
-            let mut packet_occurrences = HashMap::new();
-            for settlement in &server_damage_settlements {
-                *packet_occurrences
-                    .entry(settlement_key(settlement))
-                    .or_insert(0_usize) += 1;
-            }
-            for observation in &reassembled_bunches {
-                for settlement in parse_server_damage_settlements(&observation.bunch.data) {
-                    let key = settlement_key(&settlement);
-                    if packet_occurrences.get_mut(&key).is_some_and(|remaining| {
-                        if *remaining == 0 {
-                            false
-                        } else {
-                            *remaining -= 1;
-                            true
-                        }
-                    }) {
-                        continue;
-                    }
-                    server_damage_settlements.push(settlement);
-                }
-            }
+        if !outgoing && !self.exact_mode {
+            let reassembled_settlements = reassembled_bunches
+                .iter()
+                .flat_map(|observation| parse_server_damage_settlements(&observation.bunch.data))
+                .collect();
+            merge_reassembled_server_damage_settlements(
+                &mut server_damage_settlements,
+                reassembled_settlements,
+            );
         }
         let target_hp_keys = target_hp_updates
             .iter()
@@ -6544,7 +6593,7 @@ impl PacketDecoder {
             .collect::<HashSet<_>>();
         let mut boss_hp_updates = match direct_client_damage_boss {
             Some(update) => vec![update],
-            None if !outgoing => parse_boss_hp_updates(payload)
+            None if !outgoing && !self.exact_mode => parse_boss_hp_updates(payload)
                 .into_iter()
                 .filter(|update| {
                     !target_hp_keys.contains(&(update.target_handle, update.current_hp.to_bits()))
@@ -6600,27 +6649,47 @@ impl PacketDecoder {
                 target_evidence.push(update);
             }
         }
-        let resolved_target_hits = self.resolve_pending_hit_targets(timestamp, &target_evidence);
+        let resolved_target_hits = self.resolve_pending_hit_targets(
+            timestamp,
+            &target_evidence,
+            &server_damage_settlements,
+        );
         accepted += resolved_target_hits.len();
-        let inventory_result = if !outgoing {
-            match &transport_packet {
-                Some(TransportPacket::Sequenced(packet)) => self.empty_curtain.process_packet(
-                    InventoryConnectionKey::new(
-                        format!("{src}:{src_port}"),
-                        format!("{dst}:{dst_port}"),
-                    ),
-                    packet,
-                ),
-                _ => InventoryPacketResult::default(),
+        // Inventory direction must not depend on byte-scanned character guesses.
+        let inventory_inbound = local_ip.map_or(!src.is_private() && dst.is_private(), |local| {
+            dst == local && src != local
+        });
+        let inventory_result = if inventory_inbound {
+            match self.exact_inventory.datagram(
+                format!("{src}:{src_port}"),
+                format!("{dst}:{dst_port}"),
+                payload,
+                timestamp,
+            ) {
+                Ok(Some(update)) => InventoryPacketResult {
+                    snapshot: Some(update.items),
+                    characters: Some(update.characters),
+                    recognized: true,
+                },
+                Ok(None) => InventoryPacketResult::default(),
+                Err(_) => {
+                    let _ = sender.send(EngineEvent::Warning(
+                        "exact_inventory_unavailable_or_unsupported_update".into(),
+                    ));
+                    InventoryPacketResult {
+                        snapshot: Some(vec![]),
+                        characters: Some(vec![]),
+                        recognized: true,
+                    }
+                }
             }
         } else {
             InventoryPacketResult::default()
         };
-        if let Some(characters) = inventory_result.characters {
-            let _ = sender.send(EngineEvent::EmptyCurtainCharacters(characters));
-        }
-        if let Some(snapshot) = inventory_result.snapshot {
-            let _ = sender.send(EngineEvent::EmptyCurtain(snapshot));
+        if let (Some(items), Some(characters)) =
+            (inventory_result.snapshot, inventory_result.characters)
+        {
+            let _ = sender.send(EngineEvent::PacketInventory { items, characters });
         }
         let mut equipment_slots = Vec::new();
         if !outgoing {
@@ -6655,26 +6724,26 @@ impl PacketDecoder {
                 .iter()
                 .chain(prepared_hits.emit.iter())
                 .collect::<Vec<_>>();
+            let reconciliation = self
+                .reconcile_current_packet_server_damage_settlements_with_sources(
+                    timestamp,
+                    &server_damage_settlements,
+                    current_packet_hits.iter().copied(),
+                );
             let (inferred_follow_ups, authoritative_shared_hits) = self
                 .reconcile_authoritative_additional_damage_settlements(
                     timestamp,
                     &server_damage_settlements,
-                    &current_packet_hits,
+                    &reconciliation.sources,
                 );
-            let (
-                mut server_damage_corrections,
-                mut unattributed_server_damage,
-                mut server_residual_hits,
-            ) = self.reconcile_current_packet_server_damage_settlements(
-                timestamp,
-                &server_damage_settlements,
-                current_packet_hits.iter().copied(),
-            );
+            let mut server_damage_corrections = reconciliation.corrections;
+            let mut unattributed_server_damage = reconciliation.unattributed;
+            let mut server_residual_hits = reconciliation.residual_hits;
             server_residual_hits.extend(authoritative_shared_hits);
             let unclaimed_boss_hp_updates = boss_hp_updates
                 .iter()
                 .filter(|update| {
-                    !Self::hp_update_has_authoritative_additional_damage(
+                    !Self::hp_update_has_authoritative_settlement(
                         &server_damage_settlements,
                         update,
                     )
@@ -6857,29 +6926,25 @@ impl PacketDecoder {
             .iter()
             .chain(prepared_hits.emit.iter())
             .collect::<Vec<_>>();
-        let (inferred_follow_ups, authoritative_shared_hits) = self
-            .reconcile_authoritative_additional_damage_settlements(
-                timestamp,
-                &server_damage_settlements,
-                &current_packet_hits,
-            );
-        let (
-            mut server_damage_corrections,
-            mut unattributed_server_damage,
-            mut server_residual_hits,
-        ) = self.reconcile_current_packet_server_damage_settlements(
+        let reconciliation = self.reconcile_current_packet_server_damage_settlements_with_sources(
             timestamp,
             &server_damage_settlements,
             current_packet_hits.iter().copied(),
         );
+        let (inferred_follow_ups, authoritative_shared_hits) = self
+            .reconcile_authoritative_additional_damage_settlements(
+                timestamp,
+                &server_damage_settlements,
+                &reconciliation.sources,
+            );
+        let mut server_damage_corrections = reconciliation.corrections;
+        let mut unattributed_server_damage = reconciliation.unattributed;
+        let mut server_residual_hits = reconciliation.residual_hits;
         server_residual_hits.extend(authoritative_shared_hits);
         let unclaimed_boss_hp_updates = boss_hp_updates
             .iter()
             .filter(|update| {
-                !Self::hp_update_has_authoritative_additional_damage(
-                    &server_damage_settlements,
-                    update,
-                )
+                !Self::hp_update_has_authoritative_settlement(&server_damage_settlements, update)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -7049,6 +7114,7 @@ fn run_parser(frames: CaptureFrameReceiver, config: ParserRunConfig) {
     } = resources;
     let mut decoder =
         PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
+    decoder.enable_exact_mode(&sender);
     decoder.packet_emission = packet_emission;
     if let Some(warning) = decoder.resource_warning() {
         let _ = sender.send(EngineEvent::Warning(warning));
@@ -7066,6 +7132,7 @@ fn run_parser(frames: CaptureFrameReceiver, config: ParserRunConfig) {
             &sender,
         );
     }
+    decoder.flush_inventory(&sender);
     let pending_hits = decoder.take_all_ambiguous_hits();
     decoder.emit_hits(pending_hits, &characters, &sender);
     let pending_targetless_hits = decoder.take_all_targetless_hits();
@@ -7187,19 +7254,6 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         raw_capture_status
     )));
 
-    // The plugin monitor starts only after the capture link type has been frozen and the raw
-    // writer has emitted its matching interface block, so no custom block can precede it.
-    let monitor_stop = Arc::new(AtomicBool::new(false));
-    let monitor_thread = {
-        let stop = Arc::clone(&monitor_stop);
-        let raw_capture = raw_capture.clone();
-        let sender = sender.clone();
-        let capture_started_100ns = current_filetime_100ns();
-        thread::spawn(move || {
-            run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
-        })
-    };
-
     // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
     // the FIFO parser queue. Both the frame count and payload-byte high-water are reliable
     // backpressure bounds: full blocks the acquisition producer, no frame is dropped, and a
@@ -7280,13 +7334,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
     }
     let frame_queue_high_water = frame_sender.byte_high_water_mark();
     drop(frame_sender);
-    monitor_stop.store(true, Ordering::Relaxed);
-    let monitor_panicked = monitor_thread.join().is_err();
     if parser_thread.join().is_err() && loop_result.is_ok() {
         loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
-    }
-    if monitor_panicked && loop_result.is_ok() {
-        loop_result = Err("capture plugin monitor stopped unexpectedly".to_owned());
     }
     if frame_queue_high_water > CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER && loop_result.is_ok() {
         loop_result = Err("capture parser queue exceeded its byte budget".to_owned());
@@ -7345,6 +7394,7 @@ pub fn import_pcapng(
                 .map_err(|error| map_pcapng_reader_error(error, &byte_budget_exceeded))?;
             let mut decoder =
                 PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
+    decoder.enable_exact_mode(&sender);
             // PCAP replay is an explicit diagnostics/import operation and
             // retains the legacy full packet projection for export fidelity.
             decoder.packet_emission = PacketEmissionMode::FullDebug;
@@ -7474,6 +7524,7 @@ pub fn import_pcapng(
                     &sender,
                 );
             }
+            decoder.flush_inventory(&sender);
             let pending_hits = decoder.take_all_ambiguous_hits();
             decoder.emit_hits(pending_hits, &characters, &sender);
             let pending_targetless_hits = decoder.take_all_targetless_hits();
@@ -7589,6 +7640,10 @@ enum CaptureTimeStopEvent {
         timestamp: f64,
         pause_type_mask: u32,
     },
+    GamePauseMaskChanged {
+        timestamp: f64,
+        pause_type_mask: u32,
+    },
     GamePause {
         start_timestamp: f64,
         end_timestamp: f64,
@@ -7642,6 +7697,16 @@ where
                     pause_type_mask,
                 });
             }
+            CaptureTimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
+            } => {
+                validate_saved_pause_state(timestamp, pause_type_mask).map_err(D::Error::custom)?;
+                events.push(TimeStopEvent::GamePauseMaskChanged {
+                    timestamp,
+                    pause_type_mask,
+                });
+            }
             CaptureTimeStopEvent::GamePause {
                 start_timestamp,
                 end_timestamp,
@@ -7673,7 +7738,10 @@ where
 }
 
 fn validate_saved_pause_state(timestamp: f64, pause_type_mask: u32) -> Result<(), &'static str> {
-    if !timestamp.is_finite() || pause_type_mask == 0 || pause_type_mask & !0x1c != 0 {
+    if !timestamp.is_finite()
+        || pause_type_mask == 0
+        || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
+    {
         return Err("invalid saved game pause state");
     }
     Ok(())
@@ -7764,6 +7832,14 @@ struct CaptureExportAbyssPartyRow {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ExportHit {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::engine::model::plugin_snapshot::serialize",
+        deserialize_with = "crate::engine::model::plugin_snapshot::deserialize"
+    )]
+    plugin_snapshot:
+        Option<std::sync::Arc<crate::engine::model::plugin_snapshot::PluginHitSnapshot>>,
     timestamp_unix: f64,
     #[serde(default)]
     time_local: String,
@@ -8004,6 +8080,7 @@ impl CaptureExportDocument {
 impl From<&Hit> for ExportHit {
     fn from(hit: &Hit) -> Self {
         Self {
+            plugin_snapshot: hit.plugin_snapshot.clone(),
             timestamp_unix: hit.timestamp,
             time_local: format_capture_time(hit.timestamp),
             char_id: hit.char_id,
@@ -8055,12 +8132,6 @@ impl From<&PacketDebug> for ExportPacket {
             decoded_text: packet.decoded_text.clone(),
         }
     }
-}
-
-pub fn write_capture_export(path: &Path, document: &CaptureExportDocument) -> Result<(), String> {
-    atomic_write_file(path, |writer| {
-        serde_json::to_writer_pretty(writer, document).map_err(|error| error.to_string())
-    })
 }
 
 struct StreamingCaptureExport<'a, F> {
@@ -8418,30 +8489,6 @@ impl CaptureImportError {
             | Self::EquipmentDataUnavailable => "replay_validation_failed",
         }
     }
-}
-
-/// Checks a capture JSON import path before any bytes are read:
-/// - the path must be a regular file;
-/// - its metadata size must fit the import budget.
-///
-/// Every replay/import entry point must call this before `read_to_string`.
-pub fn validate_capture_json_import(path: &Path) -> Result<(), CaptureImportError> {
-    validate_capture_json_import_with_limit(path, MAX_CAPTURE_JSON_IMPORT_BYTES)
-}
-
-fn validate_capture_json_import_with_limit(
-    path: &Path,
-    limit: u64,
-) -> Result<(), CaptureImportError> {
-    let metadata = std::fs::metadata(path).map_err(CaptureImportError::Io)?;
-    if !metadata.is_file() {
-        return Err(CaptureImportError::NotAFile);
-    }
-    let size = metadata.len();
-    if size > limit {
-        return Err(CaptureImportError::TooLarge { size, limit });
-    }
-    Ok(())
 }
 
 fn read_bounded_utf8(
@@ -8866,7 +8913,8 @@ fn validate_capture_export_structure_with_limits(
     for event in &document.time_stop_events {
         let timestamp = match event {
             TimeStopEvent::GamePauseStarted { timestamp, .. }
-            | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+            | TimeStopEvent::GamePauseEnded { timestamp, .. }
+            | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
         };
         validate_capture_number(
             "time_stop_events[].timestamp",
@@ -9037,15 +9085,6 @@ fn prepare_capture_json_replay_with_limits(
         equipment_catalog,
         equipment_warning,
     })
-}
-
-pub fn import_capture_json(
-    path: PathBuf,
-    sender: impl Into<EngineEventSink>,
-    stop: Arc<AtomicBool>,
-) -> Result<thread::JoinHandle<()>, CaptureImportError> {
-    let prepared = prepare_capture_json_replay(&path)?;
-    import_prepared_capture_json(prepared, sender, stop).map_err(CaptureImportError::Io)
 }
 
 pub fn import_prepared_capture_json(
@@ -9336,7 +9375,8 @@ fn send_export_packet(
 fn time_stop_event_timestamp(event: &TimeStopEvent) -> f64 {
     match event {
         TimeStopEvent::GamePauseStarted { timestamp, .. }
-        | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+        | TimeStopEvent::GamePauseEnded { timestamp, .. }
+        | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
     }
 }
 
@@ -9383,6 +9423,8 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         follow_up_attack_type: hit.follow_up_attack_type,
         follow_up_damage_attribute: hit.follow_up_damage_attribute,
         reconciled_overkill_damage: hit.reconciled_overkill_damage,
+        exact: None,
+        plugin_snapshot: hit.plugin_snapshot,
         wire_event: None,
     }))
 }
@@ -9828,29 +9870,6 @@ mod tests {
         std::fs::write(&within, b"{\"version\":1,\"hits\":[],\"packets\":[]}")
             .expect("write small fixture");
 
-        assert!(matches!(
-            validate_capture_json_import_with_limit(&directory, 1 << 20),
-            Err(CaptureImportError::NotAFile)
-        ));
-        assert!(matches!(
-            validate_capture_json_import_with_limit(&directory.join("missing.json"), 1 << 20),
-            Err(CaptureImportError::Io(_))
-        ));
-
-        let size = std::fs::metadata(&within).expect("fixture metadata").len();
-        assert!(
-            validate_capture_json_import_with_limit(&within, size).is_ok(),
-            "a file exactly at the limit is accepted"
-        );
-        assert!(matches!(
-            validate_capture_json_import_with_limit(&within, size - 1),
-            Err(CaptureImportError::TooLarge { .. })
-        ));
-        assert!(
-            validate_capture_json_import(&within).is_ok(),
-            "production entry point accepts small fixtures"
-        );
-
         let document: CaptureExportDocument = serde_json::from_value(serde_json::json!({
             "version": 1,
             "party": [{}],
@@ -10213,11 +10232,11 @@ mod tests {
     }
 
     #[test]
-    fn combat_clock_block_round_trips_authoritative_pause_state() {
+    fn combat_clock_block_round_trips_linko_pause_state() {
         let transition = CombatClockTransitionSnapshot {
             sequence: 9,
             timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 87 * FILETIME_TICKS_PER_SECOND,
-            pause_type_mask: 1 << 3,
+            pause_type_mask: 1 << 6,
             reserved_value: 0,
             state_flags: COMBAT_CLOCK_PAUSE_VALID,
         };
@@ -10428,7 +10447,44 @@ mod tests {
     }
 
     #[test]
-    fn game_pause_tracker_unions_nested_authoritative_pause_types() {
+    fn capture_export_accepts_saved_linko_mask_changes() {
+        let document: CaptureExportDocument = serde_json::from_str(
+            r#"{
+                "time_stop_events": [
+                    {"GamePauseStarted":{"timestamp":10.0,"pause_type_mask":64}},
+                    {"GamePauseMaskChanged":{"timestamp":11.0,"pause_type_mask":68}},
+                    {"GamePauseMaskChanged":{"timestamp":12.0,"pause_type_mask":4}},
+                    {"GamePauseEnded":{"timestamp":13.0,"pause_type_mask":4}}
+                ]
+            }"#,
+        )
+        .expect("Linko and Q pause masks should be accepted");
+
+        assert_eq!(
+            document.time_stop_events,
+            vec![
+                TimeStopEvent::GamePauseStarted {
+                    timestamp: 10.0,
+                    pause_type_mask: 1 << 6,
+                },
+                TimeStopEvent::GamePauseMaskChanged {
+                    timestamp: 11.0,
+                    pause_type_mask: (1 << 6) | (1 << 2),
+                },
+                TimeStopEvent::GamePauseMaskChanged {
+                    timestamp: 12.0,
+                    pause_type_mask: 1 << 2,
+                },
+                TimeStopEvent::GamePauseEnded {
+                    timestamp: 13.0,
+                    pause_type_mask: 1 << 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn game_pause_tracker_preserves_nonzero_mask_changes() {
         let mut tracker = GamePauseIntervalTracker::default();
         assert_eq!(
             tracker.apply_transition(10.0, 1 << 2),
@@ -10437,13 +10493,25 @@ mod tests {
                 pause_type_mask: 1 << 2,
             })
         );
-        assert_eq!(tracker.apply_transition(11.0, (1 << 2) | (1 << 4)), None);
-        assert_eq!(tracker.apply_transition(12.0, 1 << 4), None);
+        assert_eq!(
+            tracker.apply_transition(11.0, (1 << 2) | (1 << 6)),
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp: 11.0,
+                pause_type_mask: (1 << 2) | (1 << 6),
+            })
+        );
+        assert_eq!(
+            tracker.apply_transition(12.0, 1 << 6),
+            Some(TimeStopEvent::GamePauseMaskChanged {
+                timestamp: 12.0,
+                pause_type_mask: 1 << 6,
+            })
+        );
         assert_eq!(
             tracker.apply_transition(13.0, 0),
             Some(TimeStopEvent::GamePauseEnded {
                 timestamp: 13.0,
-                pause_type_mask: (1 << 2) | (1 << 4),
+                pause_type_mask: 1 << 6,
             })
         );
         assert_eq!(tracker.apply_transition(14.0, 0), None);
@@ -11948,6 +12016,120 @@ mod tests {
         assert!(decoder.items.contains_key(&retained));
     }
 
+    fn split_inventory_item_packets(
+        catalog: &EquipmentCatalog,
+        id: HtItemNetId,
+    ) -> (SequencedPacket, SequencedPacket) {
+        let raw = raw_inventory_item_packet(catalog, id, "Cosmos_purple", None, false, false);
+        let split = raw.payload_bit_len / 2;
+        let mut parts = Vec::new();
+        for (start, end, sequence, flags) in [
+            (0, split, 700, 0x09),
+            (split, raw.payload_bit_len, 701, 0x0c),
+        ] {
+            let mut record = InventoryTestBitWriter::default();
+            for index in start..end {
+                record.push_bits(u64::from((raw.payload[index / 8] >> (index % 8)) & 1), 1);
+            }
+            parts.push(inventory_fragment_packet(record, sequence, flags));
+        }
+        let tail = parts.pop().expect("tail fragment");
+        let start = parts.pop().expect("start fragment");
+        (start, tail)
+    }
+
+    #[test]
+    fn inventory_mode_mismatch_does_not_seed_or_advance_fragment_clock() {
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let owner = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        // Exercise initial clock poisoning, in-flight poisoning, and 14-bit wrap.
+        // Each item spans both fragments, so raw per-packet scanning cannot mask a loss.
+        for mode in [1, 2, 3] {
+            for (first_id, last_id) in [(13_775, 13_776), (16_383, 0), (100, 101)] {
+                let (mut start, mut tail) = split_inventory_item_packets(&catalog, id);
+                start.packet_id = first_id;
+                tail.packet_id = last_id;
+                let mut decoder = EmptyCurtainDecoder::new(catalog.clone());
+                let mut other_mode = raw_character_owner_packet(1020, owner);
+                other_mode.mode = mode;
+                other_mode.packet_id = 257;
+                assert!(
+                    decoder
+                        .process_packet(connection.clone(), &other_mode)
+                        .snapshot
+                        .is_none()
+                );
+                assert!(
+                    decoder
+                        .process_packet(connection.clone(), &start)
+                        .snapshot
+                        .is_none()
+                );
+                other_mode.packet_id = 1_000;
+                assert!(
+                    decoder
+                        .process_packet(connection.clone(), &other_mode)
+                        .snapshot
+                        .is_none()
+                );
+                let result = decoder.process_packet(connection.clone(), &tail);
+                let snapshot = result
+                    .snapshot
+                    .expect("both fragments must produce the item");
+                assert_eq!(snapshot.len(), 1);
+                assert_eq!(snapshot[0].id, id);
+                assert_eq!(snapshot[0].item_id, "Cosmos_purple");
+                // Only the fragment clock is gated: raw character declarations still survive.
+                let characters = result
+                    .characters
+                    .expect("character instances should publish");
+                assert_eq!(characters.len(), 1);
+                assert_eq!(characters[0].net_id, owner);
+                assert_eq!(characters[0].character_id, 1020);
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_supported_empty_packet_still_expires_old_fragments() {
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let (mut start, mut tail) = split_inventory_item_packets(&catalog, id);
+        start.packet_id = 100;
+        let empty = SequencedPacket {
+            packet_id: 197,
+            payload: Vec::new(),
+            payload_bit_len: 0,
+            ..start.clone()
+        };
+        // The retransmitted tail has an in-window sequence relative to the start.
+        // Only the intervening supported empty packet proves that the start has expired.
+        tail.packet_id = 101;
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        for packet in [&start, &empty, &tail] {
+            assert!(
+                decoder
+                    .process_packet(connection.clone(), packet)
+                    .snapshot
+                    .is_none()
+            );
+        }
+    }
+
     #[test]
     fn completed_remove_stream_wins_over_raw_tail_item_update() {
         let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
@@ -12389,36 +12571,6 @@ mod tests {
                 .join(",")
         );
         assert!(parse_capture_export(packet_document(serde_json::json!(legacy))).is_ok());
-    }
-
-    #[test]
-    fn capture_export_writer_persists_a_replayable_document() {
-        let path = std::env::temp_dir().join(format!(
-            "nte-capture-export-{}-{}.json",
-            std::process::id(),
-            Local::now()
-                .timestamp_nanos_opt()
-                .expect("current local time must fit in nanoseconds")
-        ));
-        let document = CaptureExportDocument::snapshot(
-            &CombatState::default(),
-            CaptureExportOptions {
-                filter: "udp".to_owned(),
-                include_incoming: false,
-                game_network: None,
-                dps_time_mode: DpsTimeBasis::WallClock,
-            },
-        );
-
-        write_capture_export(&path, &document)
-            .expect("capture export should be written atomically");
-        let text = std::fs::read_to_string(&path).expect("capture export should be readable");
-        let restored = parse_capture_export(&text).expect("written capture export should replay");
-        std::fs::remove_file(&path).expect("capture export fixture should be removable");
-
-        assert_eq!(restored.version, CAPTURE_EXPORT_VERSION);
-        assert_eq!(restored.filter, "udp");
-        assert_eq!(restored.summary.dps_time_mode, "Real Time");
     }
 
     #[test]
@@ -14554,6 +14706,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn exported_native_hit_keeps_snapshot_through_json_replay() {
+        use crate::engine::model::plugin_snapshot::PluginHitSnapshot;
+        let mut hit = targetless_hit();
+        hit.plugin_snapshot = Some(
+            PluginHitSnapshot {
+                instance_id: 0,
+                key: "capture:7".into(),
+                critical: Some(false),
+                critical_source: Some("native_prediction".into()),
+                role_effects: None,
+                enemy_effects: None,
+                retention: "missing".into(),
+                data: None,
+            }
+            .seal()
+            .unwrap(),
+        );
+        let exported = ExportHit::from(&hit);
+        let exported: ExportHit =
+            serde_json::from_slice(&serde_json::to_vec(&exported).unwrap()).unwrap();
+        let EngineEvent::Hit(restored) = export_hit_event(exported) else {
+            panic!()
+        };
+        assert_eq!(restored.plugin_snapshot.as_ref().unwrap().key, "capture:7");
+        assert_eq!(
+            restored.plugin_snapshot.as_ref().unwrap().critical,
+            Some(false)
+        );
+    }
+
     fn targetless_hit() -> Hit {
         Hit {
             timestamp: 0.0,
@@ -14589,6 +14772,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
@@ -14622,41 +14807,6 @@ mod tests {
         packet.extend_from_slice(&0_u16.to_be_bytes());
         packet.extend_from_slice(payload);
         packet
-    }
-
-    fn follow_up_test_characters() -> HashMap<u32, CharacterInfo> {
-        HashMap::from([
-            (
-                1,
-                CharacterInfo {
-                    name_zh: "ling".to_owned(),
-                    name_en: String::new(),
-                    color: None,
-                    avatar: None,
-                    attribute: Some("灵".to_owned()),
-                },
-            ),
-            (
-                2,
-                CharacterInfo {
-                    name_zh: "zhou".to_owned(),
-                    name_en: String::new(),
-                    color: None,
-                    avatar: None,
-                    attribute: Some("咒".to_owned()),
-                },
-            ),
-            (
-                3,
-                CharacterInfo {
-                    name_zh: "other".to_owned(),
-                    name_en: String::new(),
-                    color: None,
-                    avatar: None,
-                    attribute: Some("光".to_owned()),
-                },
-            ),
-        ])
     }
 
     fn write_shifted_bytes(payload: &mut [u8], bit_shift: u8, byte_offset: usize, bytes: &[u8]) {
@@ -14797,6 +14947,7 @@ mod tests {
     ) -> ParsedServerDamageSettlement {
         ParsedServerDamageSettlement {
             target_handle,
+            source_character_id: None,
             current_hp,
             dead_state,
             raw_damage,
@@ -14806,6 +14957,78 @@ mod tests {
             byte_offset: 0,
             bit_shift: 0,
         }
+    }
+
+    #[test]
+    fn reassembled_settlement_completes_source_without_double_counting() {
+        let mut unknown = server_damage_settlement_for([1; 29], 900.0, 0, 100);
+        unknown.additional_damage = Some(33);
+        unknown.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let mut known = unknown.clone();
+        known.source_character_id = Some(1036);
+        known.byte_offset = 100; // Reassembly shifts the containing buffer.
+        for (direct, reassembled) in [
+            (unknown.clone(), known.clone()),
+            (known.clone(), unknown.clone()),
+        ] {
+            let offset = direct.byte_offset;
+            let mut rows = vec![direct];
+            merge_reassembled_server_damage_settlements(&mut rows, vec![reassembled]);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].source_character_id, Some(1036));
+            assert_eq!(rows[0].additional_damage, Some(33));
+            assert_eq!(rows[0].byte_offset, offset);
+        }
+        let mut rows = vec![unknown];
+        merge_reassembled_server_damage_settlements(&mut rows, vec![known.clone(), known]);
+        assert_eq!(rows.len(), 2); // Two real occurrences must not collapse.
+        assert!(rows.iter().all(|row| row.source_character_id == Some(1036)));
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.additional_damage.unwrap_or(0))
+                .sum::<u32>(),
+            66
+        );
+    }
+
+    #[test]
+    fn reassembled_settlement_reserves_exact_roles_before_missing_sources() {
+        let unknown = server_damage_settlement_for([1; 29], 900.0, 0, 100);
+        let mut first = unknown.clone();
+        first.source_character_id = Some(1036);
+        let mut second = unknown.clone();
+        second.source_character_id = Some(1075);
+        for (direct, reassembled) in [
+            (
+                vec![first.clone(), second.clone()],
+                vec![unknown.clone(), first.clone()],
+            ),
+            (
+                vec![unknown.clone(), first.clone()],
+                vec![second.clone(), first.clone()],
+            ),
+            (
+                vec![unknown.clone(), first.clone()],
+                vec![unknown.clone(), second.clone()],
+            ),
+            (
+                vec![unknown.clone(), first.clone()],
+                vec![second.clone(), unknown.clone()],
+            ),
+        ] {
+            let mut rows = direct;
+            merge_reassembled_server_damage_settlements(&mut rows, reassembled);
+            assert_eq!(rows.len(), 2);
+            let mut roles = rows
+                .iter()
+                .filter_map(|row| row.source_character_id)
+                .collect::<Vec<_>>();
+            roles.sort_unstable();
+            assert_eq!(roles, vec![1036, 1075]);
+        }
+        let mut rows = vec![first];
+        merge_reassembled_server_damage_settlements(&mut rows, vec![second]);
+        assert_eq!(rows.len(), 2); // Conflicting known declarations remain distinct.
     }
 
     fn set_wire_target(hit: &mut Hit, target_handle: [u8; 29]) {
@@ -15131,12 +15354,146 @@ mod tests {
         decoder.pending_targetless_hits.push_back(hit);
         let update = boss_hp_update_for(target, 1_900.0);
         decoder.observe_target_hp_update(10.1, &update);
+        let settlement = server_damage_settlement_for(target, 1_900.0, 0, 100);
 
-        let resolved = decoder.resolve_pending_hit_targets(10.1, &[update]);
+        let resolved =
+            decoder.resolve_pending_hit_targets(10.1, &[update], std::slice::from_ref(&settlement));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(wire_handle_from_hit(&resolved[0]), Some(target));
         assert!(decoder.pending_targetless_hits.is_empty());
+    }
+
+    #[test]
+    fn hp_resolved_hit_waits_for_and_yields_to_matching_direct_target_record() {
+        let mut decoder = PacketDecoder::default();
+        let target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.char_id = 1051;
+        provisional.char_source = HitCharacterSource::Packet;
+        provisional.damage = 1_350.0;
+        provisional.target_hp_before = 5_276_334.0;
+        provisional.target_hp_after = 5_274_984.0;
+        provisional.target_max_hp = 5_417_573.0;
+        provisional.gameplay_effect_index = Some(2417);
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(target, 5_274_984.0);
+        decoder.observe_target_hp_update(10.01, &update);
+
+        assert!(
+            decoder
+                .resolve_pending_hit_targets(10.01, &[update], &[])
+                .is_empty()
+        );
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(target)
+        );
+
+        let mut direct = decoder.pending_targetless_hits[0].clone();
+        direct.timestamp = 10.066_759;
+        set_wire_target(&mut direct, target);
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![direct], &[1051], false, &HashMap::new());
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 1);
+        assert!(decoder.pending_targetless_hits.is_empty());
+        assert!(has_direct_wire_target(&prepared.emit[0]));
+    }
+
+    #[test]
+    fn direct_record_for_another_target_does_not_suppress_hp_resolved_hit() {
+        let mut decoder = PacketDecoder::default();
+        let resolved_target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.char_id = 1051;
+        provisional.char_source = HitCharacterSource::Packet;
+        provisional.target_hp_before = 2_000.0;
+        provisional.target_hp_after = 1_900.0;
+        provisional.target_max_hp = 2_500.0;
+        provisional.gameplay_effect_index = Some(2417);
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(resolved_target, 1_900.0);
+        decoder.observe_target_hp_update(10.01, &update);
+        assert!(
+            decoder
+                .resolve_pending_hit_targets(10.01, &[update], &[])
+                .is_empty()
+        );
+
+        let mut other_target = decoder.pending_targetless_hits[0].clone();
+        other_target.timestamp = 10.066_759;
+        set_wire_target(&mut other_target, [5_u8; 29]);
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![other_target], &[1051], false, &HashMap::new());
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 0);
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(resolved_target)
+        );
+    }
+
+    #[test]
+    fn unrelated_server_settlement_does_not_release_hp_resolved_hit() {
+        let mut decoder = PacketDecoder::default();
+        let resolved_target = [4_u8; 29];
+        let mut provisional = targetless_hit();
+        provisional.timestamp = 10.0;
+        provisional.target_hp_before = 2_000.0;
+        provisional.target_hp_after = 1_900.0;
+        provisional.target_max_hp = 2_500.0;
+        decoder.pending_targetless_hits.push_back(provisional);
+        let update = boss_hp_update_for(resolved_target, 1_900.0);
+        decoder.observe_target_hp_update(10.01, &update);
+        let unrelated = server_damage_settlement_for([5_u8; 29], 900.0, 0, 100);
+
+        let resolved = decoder.resolve_pending_hit_targets(10.01, &[update], &[unrelated]);
+
+        assert!(resolved.is_empty());
+        assert_eq!(decoder.pending_targetless_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_targetless_hits[0]),
+            Some(resolved_target)
+        );
+    }
+
+    #[test]
+    fn exact_server_target_response_promotes_pending_unknown_direction() {
+        let mut decoder = PacketDecoder::default();
+        let target = [4_u8; 29];
+        let mut hit = targetless_hit();
+        hit.timestamp = 10.0;
+        hit.direction = HitDirection::Unknown;
+        hit.char_source = HitCharacterSource::Session;
+        hit.target_hp_before = 2_000.0;
+        hit.target_hp_after = 1_900.0;
+        hit.target_max_hp = 2_500.0;
+        decoder.pending_ambiguous_hits.push(hit);
+        let update = boss_hp_update_for(target, 1_900.0);
+        decoder.observe_target_hp_update(10.1, &update);
+
+        assert!(
+            decoder
+                .resolve_pending_hit_targets(10.1, &[update], &[])
+                .is_empty()
+        );
+
+        assert_eq!(decoder.pending_ambiguous_hits.len(), 1);
+        assert_eq!(
+            wire_handle_from_hit(&decoder.pending_ambiguous_hits[0]),
+            Some(target)
+        );
+        assert_eq!(
+            decoder.pending_ambiguous_hits[0].direction,
+            HitDirection::Outgoing
+        );
     }
 
     #[test]
@@ -15156,7 +15513,7 @@ mod tests {
         decoder.observe_target_hp_update(10.1, &second);
         assert!(
             decoder
-                .resolve_pending_hit_targets(10.1, &[first, second])
+                .resolve_pending_hit_targets(10.1, &[first, second], &[])
                 .is_empty()
         );
 
@@ -15199,7 +15556,8 @@ mod tests {
         };
         decoder.observe_target_hp_update(10.1, &update);
 
-        let resolved = decoder.resolve_pending_hit_targets(10.1, &[update]);
+        let resolved =
+            decoder.resolve_pending_hit_targets(10.1, &[update], std::slice::from_ref(&settlement));
         let (_, _, residual_hits) = decoder.reconcile_current_packet_server_damage_settlements(
             10.1,
             &[settlement],
@@ -15227,7 +15585,7 @@ mod tests {
 
         assert!(
             multiple_targets
-                .resolve_pending_hit_targets(10.1, &[first, second])
+                .resolve_pending_hit_targets(10.1, &[first, second], &[])
                 .is_empty()
         );
         assert_eq!(multiple_targets.pending_targetless_hits.len(), 1);
@@ -15244,7 +15602,7 @@ mod tests {
 
         assert!(
             multiple_hits
-                .resolve_pending_hit_targets(10.1, &[update])
+                .resolve_pending_hit_targets(10.1, &[update], &[])
                 .is_empty()
         );
         assert_eq!(multiple_hits.pending_targetless_hits.len(), 2);
@@ -15267,7 +15625,7 @@ mod tests {
     }
 
     #[test]
-    fn emission_drops_only_targeted_outgoing_death_settlement_marker() {
+    fn emission_drops_outgoing_death_settlement_marker() {
         let mut decoder = PacketDecoder::default();
         let characters = HashMap::new();
         let (sender, receiver) = bounded(4);
@@ -15282,9 +15640,12 @@ mod tests {
         decoder.emit_hits(std::iter::once(marker.clone()), &characters, &sink);
         assert!(receiver.try_recv().is_err());
 
-        marker.direction = HitDirection::Incoming;
         marker.target_id = None;
         marker.target_context.clear();
+        decoder.emit_hits(std::iter::once(marker.clone()), &characters, &sink);
+        assert!(receiver.try_recv().is_err());
+
+        marker.direction = HitDirection::Incoming;
         decoder.emit_hits(std::iter::once(marker), &characters, &sink);
         assert!(matches!(receiver.try_recv(), Ok(EngineEvent::Hit(_))));
     }
@@ -16049,7 +16410,6 @@ mod tests {
 
     #[test]
     fn authoritative_four_wrapper_display_type_uses_unique_wire_source_and_exact_damage() {
-        let characters = follow_up_test_characters();
         let mut decoder = PacketDecoder::default();
         let target = [7_u8; 29];
         let mut source = targetless_hit();
@@ -16064,34 +16424,65 @@ mod tests {
         settlement.additional_damage = Some(250);
         settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
 
+        let settlements = [settlement];
+        let reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.05,
+                &settlements,
+                [&source],
+            );
         let (follow_ups, shared_hits) = decoder
             .reconcile_authoritative_additional_damage_settlements(
                 10.05,
-                &[settlement],
-                &[&source],
+                &settlements,
+                &reconciliation.sources,
             );
 
         assert!(shared_hits.is_empty());
+        assert_eq!(reconciliation.corrections.len(), 1);
         assert_eq!(follow_ups.len(), 1);
         assert_eq!(follow_ups[0].damage, 250.0);
         assert_eq!(follow_ups[0].source_char_id, 1);
-        decoder
-            .follow_up_damage
-            .observe_hit(&source, None, &characters);
-        assert!(decoder.follow_up_damage.pending_hits.is_empty());
     }
 
     #[test]
     fn authoritative_four_wrapper_display_type_stays_unattributed_without_unique_source() {
         let mut decoder = PacketDecoder::default();
         let target = [7_u8; 29];
+        let mut first = targetless_hit();
+        first.timestamp = 9.2;
+        first.char_id = 1;
+        first.damage = 700.0;
+        first.target_hp_before = 10_000.0;
+        first.target_hp_after = 9_300.0;
+        first.target_max_hp = 10_000.0;
+        set_wire_target(&mut first, target);
+        let mut second = first.clone();
+        second.timestamp = 9.3;
+        second.char_id = 2;
+        second.damage = 500.0;
+        second.target_hp_before = 9_300.0;
+        second.target_hp_after = 8_800.0;
         let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
         settlement.additional_damage = Some(250);
         settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
 
+        let settlements = [settlement];
+        let reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.0,
+                &settlements,
+                [&first, &second],
+            );
         let (follow_ups, shared_hits) = decoder
-            .reconcile_authoritative_additional_damage_settlements(10.05, &[settlement], &[]);
+            .reconcile_authoritative_additional_damage_settlements(
+                10.0,
+                &settlements,
+                &reconciliation.sources,
+            );
 
+        assert_eq!(reconciliation.corrections.len(), 1);
+        assert!(reconciliation.sources[0].is_none());
         assert!(follow_ups.is_empty());
         assert_eq!(shared_hits.len(), 1);
         assert_eq!(shared_hits[0].damage, 250.0);
@@ -16101,8 +16492,195 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_four_wrapper_display_type_keeps_unique_recent_source_fallback() {
+        let mut decoder = PacketDecoder::default();
+        let target = [7_u8; 29];
+        let mut source = targetless_hit();
+        source.timestamp = 10.0;
+        source.char_id = 1;
+        source.damage = 700.0;
+        source.target_hp_before = 10_000.0;
+        source.target_hp_after = 9_300.0;
+        source.target_max_hp = 10_000.0;
+        set_wire_target(&mut source, target);
+        let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+        settlement.additional_damage = Some(250);
+        settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+
+        let settlements = [settlement];
+        let reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.05,
+                &settlements,
+                [&source],
+            );
+        let (follow_ups, shared_hits) = decoder
+            .reconcile_authoritative_additional_damage_settlements(
+                10.05,
+                &settlements,
+                &reconciliation.sources,
+            );
+
+        assert!(shared_hits.is_empty());
+        assert_eq!(follow_ups.len(), 1);
+        assert_eq!(follow_ups[0].source_timestamp, source.timestamp);
+        assert_eq!(follow_ups[0].source_char_id, source.char_id);
+    }
+
+    #[test]
+    fn authoritative_four_wrapper_display_type_rejects_ambiguous_hp_bridge() {
+        let mut decoder = PacketDecoder::default();
+        let target = [7_u8; 29];
+        let mut first = targetless_hit();
+        first.timestamp = 9.2;
+        first.char_id = 1;
+        first.damage = 700.0;
+        first.target_hp_before = 10_000.0;
+        first.target_hp_after = 9_000.0;
+        first.target_max_hp = 10_000.0;
+        set_wire_target(&mut first, target);
+        let mut second = first.clone();
+        second.timestamp = 9.3;
+        second.char_id = 2;
+        second.damage = 500.0;
+        let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+        settlement.additional_damage = Some(250);
+        settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+
+        let settlements = [settlement];
+        let reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.0,
+                &settlements,
+                [&first, &second],
+            );
+        let (follow_ups, shared_hits) = decoder
+            .reconcile_authoritative_additional_damage_settlements(
+                10.0,
+                &settlements,
+                &reconciliation.sources,
+            );
+
+        assert_eq!(reconciliation.corrections.len(), 1);
+        assert!(reconciliation.sources[0].is_none());
+        assert!(follow_ups.is_empty());
+        assert_eq!(shared_hits.len(), 1);
+        assert!(!shared_hits[0].char_known);
+    }
+
+    #[test]
+    fn authoritative_settlement_claims_its_duplicate_legacy_hp_update() {
+        let target = [7_u8; 29];
+        let settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+        let duplicate = boss_hp_update_for(target, 8_750.0);
+        let different = boss_hp_update_for(target, 8_749.0);
+
+        assert!(PacketDecoder::hp_update_has_authoritative_settlement(
+            std::slice::from_ref(&settlement),
+            &duplicate,
+        ));
+        assert!(!PacketDecoder::hp_update_has_authoritative_settlement(
+            &[settlement],
+            &different,
+        ));
+    }
+
+    #[test]
+    fn declared_weave_role_constrains_existing_source_matching() {
+        // Even an exact damage/HP match from a different role cannot steal
+        // the declared role's exact, HP-bridge or unique recent candidate.
+        for matching_rule in ["exact", "hp_bridge", "recent"] {
+            let mut decoder = PacketDecoder::default();
+            let target = [7_u8; 29];
+            let mut other = targetless_hit();
+            other.timestamp = 10.0;
+            other.char_id = 1004;
+            other.damage = 1_000.0;
+            other.target_hp_before = 10_000.0;
+            other.target_hp_after = 9_000.0;
+            other.target_max_hp = 10_000.0;
+            other.byte_offset = 100;
+            set_wire_target(&mut other, target);
+            let mut source = other.clone();
+            source.char_id = 1036;
+            source.byte_offset = 200;
+            if matching_rule != "exact" {
+                source.damage = 700.0;
+            }
+            if matching_rule == "recent" {
+                source.target_hp_after = 9_300.0;
+            }
+            let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+            settlement.source_character_id = Some(source.char_id);
+            settlement.additional_damage = Some(250);
+            settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+            let settlements = [settlement];
+            let reconciliation = decoder
+                .reconcile_current_packet_server_damage_settlements_with_sources(
+                    10.05,
+                    &settlements,
+                    [&other, &source],
+                );
+            let (follow_ups, shared_hits) = decoder
+                .reconcile_authoritative_additional_damage_settlements(
+                    10.05,
+                    &settlements,
+                    &reconciliation.sources,
+                );
+
+            assert_eq!(reconciliation.corrections.len(), 1, "{matching_rule}");
+            assert_eq!(reconciliation.corrections[0].source_char_id, source.char_id);
+            assert_eq!(follow_ups.len(), 1, "{matching_rule}");
+            assert_eq!(follow_ups[0].source_char_id, source.char_id);
+            assert_eq!(follow_ups[0].source_byte_offset, Some(source.byte_offset));
+            assert_eq!(follow_ups[0].source_target_id, source.target_id);
+            assert_eq!(follow_ups[0].damage, 250.0);
+            assert!(shared_hits.is_empty(), "{matching_rule}");
+        }
+    }
+
+    #[test]
+    fn declared_weave_role_does_not_link_to_another_role_when_source_hit_is_missing() {
+        let mut decoder = PacketDecoder::default();
+        let target = [7_u8; 29];
+        let mut other = targetless_hit();
+        other.timestamp = 10.0;
+        other.char_id = 1004;
+        other.damage = 1_000.0;
+        other.target_hp_before = 10_000.0;
+        other.target_hp_after = 9_000.0;
+        other.target_max_hp = 10_000.0;
+        set_wire_target(&mut other, target);
+        let mut settlement = server_damage_settlement_for(target, 8_750.0, 0, 1_000);
+        settlement.source_character_id = Some(1036);
+        settlement.additional_damage = Some(250);
+        settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let settlements = [settlement];
+        let reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.05,
+                &settlements,
+                [&other],
+            );
+        assert!(reconciliation.corrections.is_empty());
+        assert!(reconciliation.sources[0].is_none());
+        let (follow_ups, shared_hits) = decoder
+            .reconcile_authoritative_additional_damage_settlements(
+                10.05,
+                &settlements,
+                &reconciliation.sources,
+            );
+        assert!(follow_ups.is_empty());
+        // Exhausted source matching retains the existing unknown record;
+        // a role declaration alone does not create a known independent hit.
+        assert_eq!(shared_hits.len(), 1);
+        assert_eq!(shared_hits[0].char_id, 0);
+        assert!(!shared_hits[0].char_known);
+        assert_eq!(shared_hits[0].damage, 250.0);
+    }
+
+    #[test]
     fn authoritative_four_wrapper_display_type_pairs_identical_burst_hits_in_wire_order() {
-        let characters = follow_up_test_characters();
         let mut decoder = PacketDecoder::default();
         let target = [7_u8; 29];
         let mut first = targetless_hit();
@@ -16112,44 +16690,77 @@ mod tests {
         first.target_hp_before = 11_140_138.0;
         first.target_hp_after = 11_137_652.0;
         first.target_max_hp = 11_245_012.0;
+        first.byte_offset = 100;
         set_wire_target(&mut first, target);
         let mut second = first.clone();
-        second.timestamp = 10.025;
-        decoder
-            .follow_up_damage
-            .observe_hit(&first, None, &characters);
-        decoder
-            .follow_up_damage
-            .observe_hit(&second, None, &characters);
+        second.byte_offset = 200;
 
         let mut first_settlement = server_damage_settlement_for(target, 11_137_155.0, 0, 2_486);
         first_settlement.additional_damage = Some(497);
         first_settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let first_settlements = [first_settlement];
+        let first_reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.057,
+                &first_settlements,
+                [&first, &second],
+            );
         let (first_follow_ups, first_shared) = decoder
             .reconcile_authoritative_additional_damage_settlements(
                 10.057,
-                &[first_settlement],
-                &[],
+                &first_settlements,
+                &first_reconciliation.sources,
             );
         let mut second_settlement = server_damage_settlement_for(target, 11_134_172.0, 0, 2_486);
         second_settlement.additional_damage = Some(497);
         second_settlement.additional_display_type = Some(DamageDisplayType::LingZhouReactionFollow);
+        let second_settlements = [second_settlement];
+        let second_reconciliation = decoder
+            .reconcile_current_packet_server_damage_settlements_with_sources(
+                10.106,
+                &second_settlements,
+                std::iter::empty(),
+            );
         let (second_follow_ups, second_shared) = decoder
             .reconcile_authoritative_additional_damage_settlements(
                 10.106,
-                &[second_settlement],
-                &[],
+                &second_settlements,
+                &second_reconciliation.sources,
             );
 
         assert!(first_shared.is_empty());
         assert!(second_shared.is_empty());
         assert_eq!(first_follow_ups[0].source_timestamp, first.timestamp);
         assert_eq!(second_follow_ups[0].source_timestamp, second.timestamp);
+        assert_eq!(
+            first_follow_ups[0].source_byte_offset,
+            Some(first.byte_offset)
+        );
+        assert_eq!(
+            second_follow_ups[0].source_byte_offset,
+            Some(second.byte_offset)
+        );
+        let mut state = CombatState::default();
+        state.push_hit(first);
+        state.push_hit(second);
+        for (follow_ups, corrections) in [
+            (first_follow_ups, first_reconciliation.corrections),
+            (second_follow_ups, second_reconciliation.corrections),
+        ] {
+            for follow_up in follow_ups {
+                assert!(state.apply_follow_up(follow_up));
+            }
+            for correction in corrections {
+                assert!(state.apply_damage_correction(correction));
+            }
+        }
+        assert_eq!(state.hits.len(), 2);
+        assert_eq!(state.hits[0].follow_up_damage, 497.0);
+        assert_eq!(state.hits[1].follow_up_damage, 497.0);
     }
 
     #[test]
     fn reconcile_boss_hp_updates_still_calibrates_when_no_follow_up_applies() {
-        let characters = duplicate_test_characters();
         let mut decoder = PacketDecoder::with_server_damage_calibration(true);
 
         let warm_up = boss_hp_update(10_000.0);
@@ -16162,9 +16773,6 @@ mod tests {
         hit.target_max_hp = 10_000.0;
         hit.gameplay_effect_name = Some("GE_Unmapped_Damage".to_owned());
         set_wire_target(&mut hit, [7; 29]);
-        decoder
-            .follow_up_damage
-            .observe_hit(&hit, None, &characters);
         let _ = decoder.observe_server_damage_hit(&hit);
 
         let update = boss_hp_update(8_750.0);
@@ -16502,6 +17110,54 @@ mod tests {
             wire_handle_from_hit(&decoder.pending_ambiguous_hits[0]),
             Some([2; 29])
         );
+    }
+
+    #[test]
+    fn conflicting_wire_target_is_replaced_by_unique_hp_continuity() {
+        let mut decoder = PacketDecoder::default();
+
+        let mut small = duplicate_test_hit(9.0, HitCharacterSource::Packet, "outgoing");
+        small.target_hp_before = 605_569.0;
+        small.target_hp_after = 605_049.0;
+        small.target_max_hp = 808_898.0;
+        set_wire_target(&mut small, [1; 29]);
+        decoder.observe_hit_target(&small);
+
+        let mut large = duplicate_test_hit(9.0, HitCharacterSource::Packet, "outgoing");
+        large.target_hp_before = 2_436_602.0;
+        large.target_hp_after = 2_435_197.0;
+        large.target_max_hp = 2_628_918.0;
+        set_wire_target(&mut large, [2; 29]);
+        decoder.observe_hit_target(&large);
+
+        let mut mislabeled = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        mislabeled.damage = 1_405.0;
+        mislabeled.target_hp_before = 2_435_197.0;
+        mislabeled.target_hp_after = 2_433_792.0;
+        mislabeled.target_max_hp = 2_628_918.0;
+        set_wire_target(&mut mislabeled, [1; 29]);
+
+        decoder.resolve_and_observe_hit_targets(std::slice::from_mut(&mut mislabeled));
+
+        assert_eq!(wire_handle_from_hit(&mislabeled), Some([2; 29]));
+    }
+
+    #[test]
+    fn partial_stream_defers_session_shadow_even_with_resolved_target() {
+        let mut shadow = duplicate_test_hit(10.0, HitCharacterSource::Session, "outgoing");
+        set_wire_target(&mut shadow, [1; 29]);
+
+        assert!(should_defer_partial_stream_hit(&shadow));
+    }
+
+    #[test]
+    fn resolved_reassembled_hit_is_promoted_to_outgoing() {
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Session, "unknown");
+        set_wire_target(&mut hit, [1; 29]);
+
+        promote_resolved_outgoing_hits(std::slice::from_mut(&mut hit));
+
+        assert_eq!(hit.direction, HitDirection::Outgoing);
     }
 
     #[test]
@@ -17169,7 +17825,9 @@ mod tests {
         let (sender, receiver) = unbounded();
         let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
-        let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop)
+        let prepared =
+            prepare_capture_json_replay(Path::new(&path)).expect("JSON import should be prepared");
+        let handle = import_prepared_capture_json(prepared, sender, stop)
             .expect("JSON import thread should spawn");
         handle.join().expect("json import thread should finish");
 
@@ -17245,8 +17903,14 @@ mod tests {
             match event {
                 EngineEvent::Abyss(abyss_event) => {
                     let (label, timestamp) = match abyss_event {
+                        crate::engine::model::AbyssEvent::Location { timestamp, floor } => {
+                            (format!("Location floor={floor}"), timestamp)
+                        }
                         crate::engine::model::AbyssEvent::RestartDetected { timestamp } => {
                             ("RestartDetected".to_owned(), timestamp)
+                        }
+                        crate::engine::model::AbyssEvent::RestartHalf { timestamp, half } => {
+                            (format!("RestartHalf {half:?}"), timestamp)
                         }
                         crate::engine::model::AbyssEvent::Stage {
                             timestamp,

@@ -1,40 +1,40 @@
 {
-  "generated_at": "2026-08-20T13:21:13.847117+00:00",
+  "generated_at": "2026-09-24T15:02:30.535380+00:00",
   "assets_root_name": "NTE_Assets",
   "paths_redacted": true,
-  "assets_git_revision": "5806a02dfdaacb96b8910f2b5389de3acb980fb1",
+  "assets_git_revision": "166efaf4842237e25e7990e9b971e9fab2dcab9c",
   "inputs": {
     "characters": {
       "path": "CN/HT/Content/DataTable/Character/DT_Character.json",
-      "sha256": "c136a445c6e1e77c95dfddb065a699fb068b1e3e33d4c3157c8c797158739577"
+      "sha256": "f6a5006b183c96fd00c3f354d3e0f4d575b44ceb26d5ec860281a877bcb131e9"
     },
     "gameplay_effect_mapping": {
       "path": "CN/HT/Content/DataTable/Skill/DT_GameplayEffectMappingData.json",
-      "sha256": "0f724e80725959c2f21b48442259eaefb4d53a9ff86de524a056b335dfc7408a"
+      "sha256": "cf9515ad8d0007e2306d1ac4b2fd90899997a93eadb90c46caec3573b7fe8a81"
     },
     "skill_damage": {
       "path": "CN/HT/Content/DataTable/Skill/DT_SkillDamageData.json",
-      "sha256": "0286f3cc4f7e2f4543ffb93c229d19e30d66cb201a4be6f36eac8b3c9d363e46"
+      "sha256": "3af44465bff1f9e6ef83b7012a5084a02741a292d511492a516a384449365973"
     },
     "wooden_damage_descriptions": {
       "path": "CN/HT/Content/DataTable/Skill/Wooden/DT_WoodenStructData.json",
-      "sha256": "37282b14b09dc982d2f165d29affa2969f68b953cc66510b7bcc938cfd28951d"
+      "sha256": "150dd0b8841588ae33b763df05f47fd30cc1f132e6c06833ca97ae236f3ea287"
     },
     "ability_tips": {
       "path": "CN/HT/Content/DataTable/Skill/DT_GameplayAbilityTipsData.json",
-      "sha256": "4009b032c00070df272f806bd5791ad8ec313f297b171b25a9c7e179de237e6e"
+      "sha256": "fa21250500a3049de613c60c112369ff60c25e6e26c7cfba80f2347f4ac7cc19"
     },
     "abyss_monster_static": {
       "path": "CN/HT/Content/DataTable/Monster/DT_MonsterStaticData_Abyss.json",
-      "sha256": "d4ca3b2e8651e3eb9938ea0a641599009f8a0e7e4e31219402bc652546c5b6ec"
+      "sha256": "9d63b4037ea752b778c9fca95e11d28839b294c7a6abf3e653964f77758dd87a"
     },
     "abyss_monster_pack": {
       "path": "CN/HT/Content/DataTable/PackData/DT_MonsterPackData.json",
-      "sha256": "8414843dc7d90c58e3d1859b214efc6ef998ef094d68bcdf3f519c60c6d3f7da"
+      "sha256": "d9c1c830fa75473f1b2be19e0463ae0a4f3d6cb38a7de90e6f484501fc7912dc"
     },
     "abyss_combat_award_quest": {
       "path": "CN/HT/Content/DataTable/SimpleQuest/DT_CombatAwardQuest.json",
-      "sha256": "0301a48894ee44bf6584e5b94cf9fe9140445ff54f447faa74240ca6ad0b1b05"
+      "sha256": "2fe34ce15a30d6ce42ffa4b741dc74f8c2380311586929f25466abeb8e76c7a2"
     },
     "reaction_data": {
       "path": "CN/HT/Content/DataTable/Reaction/DT_ReactionData.json",
@@ -66,7 +66,7 @@
     },
     "zh_cn_localization": {
       "path": "Localization/Game/zh-CN/game.json",
-      "sha256": "d94a2e5ab64ced3c6cbe2a6d7eaa5c48113f64a3bd3bd33fd4c19c589388b1e6"
+      "sha256": "962b75cc23bcb5b2be759e87d8be380ebc84b5bc6e870081451ae2c4143586e3"
     }
   },
   "outputs": {
@@ -84,6 +84,20 @@
     "reactions": "data/reactions/reactions.json",
     "abyss_floor_monster_summary": "data/abyss/abyss_floor_monster_summary.json",
     "abyss_season_names": "data/abyss/season_names_zh_cn.json",
-    "coverage_report": "data/asset_report.json"
-  }
+    "coverage_report": "data/asset_report.json",
+    "skill_attribution_catalog": "data/skills/skill_attribution_catalog.json",
+    "gameplay_effect_semantics": "data/skills/gameplay_effect_semantics.json"
+  },
+  "abyss_delivery": "remote_manifest_v1",
+  "updated_outputs": [
+    "characters",
+    "ability_tips",
+    "skill_attribution_catalog",
+    "gameplay_effect_semantics",
+    "program_tables",
+    "abyss_program_tables",
+    "abyss_monster_pack",
+    "abyss_floor_monster_summary",
+    "abyss_season_names"
+  ]
 }

@@ -14,7 +14,6 @@ export type TechnicalPageState =
   | { status: "error"; error: TechnicalCommandError }
   | { status: "ready"; snapshot: TechnicalSnapshot };
 
-export type BridgeTone = "ready" | "degraded" | "unknown";
 export type HudDataTone = "empty" | "preview" | "live" | "unknown";
 export type CaptureAction = "start" | "stop" | "pending";
 export type HudSurfaceTone = "blurred" | "transparent";
@@ -37,17 +36,6 @@ export function acceptSnapshot(
   }
 
   return { status: "ready", snapshot: incoming };
-}
-
-export function bridgeTone(status: string): BridgeTone {
-  switch (status) {
-    case "ready":
-      return "ready";
-    case "degraded":
-      return "degraded";
-    default:
-      return "unknown";
-  }
 }
 
 export function hudDataTone(state: string): HudDataTone {

@@ -93,37 +93,3 @@ export function mainCharacterListState(
   if (totalDamage > 0) return "unattributed";
   return "combat-empty";
 }
-
-export interface FloatingPanelAnchor {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-}
-
-export interface FloatingPanelViewport {
-  width: number;
-  height: number;
-}
-
-export function appearancePanelPosition(
-  anchor: FloatingPanelAnchor,
-  viewport: FloatingPanelViewport,
-  panel = { width: 176, height: 160 },
-): { left: number; top: number } {
-  const margin = 8;
-  const gap = 6;
-  const maxLeft = Math.max(margin, viewport.width - panel.width - margin);
-  const left = Math.min(Math.max(margin, anchor.right - panel.width), maxLeft);
-  const below = anchor.bottom + gap;
-  const above = anchor.top - gap - panel.height;
-  const maxTop = Math.max(margin, viewport.height - panel.height - margin);
-  const top =
-    below + panel.height <= viewport.height - margin
-      ? below
-      : above >= margin
-        ? above
-        : Math.min(Math.max(margin, below), maxTop);
-
-  return { left, top };
-}

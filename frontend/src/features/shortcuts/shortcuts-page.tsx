@@ -43,8 +43,12 @@ export function ShortcutsPage() {
   const settings = useSettings();
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col overflow-hidden p-3">
-      <div className="min-h-0 flex-1 overflow-y-auto p-px pr-1 pb-1">
+    <section className="console-preferences flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="console-section-heading">
+        <h1>{t("Shortcuts")}</h1>
+        <p>{t("Keyboard controls and window interactions")}</p>
+      </header>
+      <div className="console-preferences-scroll @container/shortcuts min-h-0 flex-1 overflow-y-auto">
         {settings.mutationError ? (
           <Alert className="mb-3" variant="destructive">
             <TriangleAlert aria-hidden="true" />
@@ -90,7 +94,7 @@ export function ShortcutsPage() {
             </AlertAction>
           </Alert>
         ) : (
-          <div className="mx-auto flex w-full max-w-4xl flex-col gap-3">
+          <div className="grid w-full max-w-[90rem] items-start gap-5 @min-[68rem]/shortcuts:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
             <GlobalHotkeysCard
               snapshot={settings.state.snapshot}
               pending={settings.pendingAction !== null}
@@ -142,7 +146,7 @@ function GlobalHotkeysCard({
           {t("Manage application-wide shortcuts from one place.")}
         </CardDescription>
       </CardHeader>
-      <CardContent className="divide-y">
+      <CardContent className="@container/hotkeys divide-y">
         <label className="flex items-center justify-between gap-4 pb-3">
           <span className="text-sm font-medium">
             {t("Enable global hotkeys")}
@@ -158,12 +162,14 @@ function GlobalHotkeysCard({
           const binding = bindings.get(action.id) ?? null;
           return (
             <div
-              className="grid gap-2 py-3 sm:grid-cols-[minmax(9rem,0.6fr)_minmax(0,1fr)_auto] sm:items-center"
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-3 @min-[34rem]/hotkeys:grid-cols-[minmax(0,1fr)_14rem_auto]"
               key={action.id}
             >
-              <span className="text-sm">{t(action.labelKey)}</span>
+              <span className="col-span-2 text-sm @min-[34rem]/hotkeys:col-span-1">
+                {t(action.labelKey)}
+              </span>
               <Button
-                className="min-w-0 justify-start font-mono"
+                className="min-h-8 min-w-0 justify-start font-mono whitespace-normal"
                 type="button"
                 variant="outline"
                 disabled={pending || !snapshot.hotkeys.enabled}
@@ -198,7 +204,7 @@ function GlobalHotkeysCard({
           );
         })}
       </CardContent>
-      <CardFooter className="justify-end text-xs text-muted-foreground">
+      <CardFooter className="text-xs leading-relaxed text-muted-foreground">
         {t("Click, then press a supported key combination; Esc cancels")}
       </CardFooter>
     </Card>
@@ -231,12 +237,12 @@ function PassthroughHotkeyCard({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="text-sm font-medium">
             {t("Toggle Mouse Passthrough")}
           </span>
           <Button
-            className="min-w-36 justify-start font-mono"
+            className="min-h-8 w-56 max-w-full justify-start font-mono whitespace-normal"
             type="button"
             variant="outline"
             aria-label={t("Passthrough Hotkey")}
@@ -264,7 +270,7 @@ function PassthroughHotkeyCard({
           </Button>
         </div>
       </CardContent>
-      <CardFooter className="justify-end text-xs text-muted-foreground">
+      <CardFooter className="text-xs leading-relaxed text-muted-foreground">
         {t("Click, then press a supported key combination; Esc cancels")}
       </CardFooter>
     </Card>
@@ -284,10 +290,7 @@ function captureInput(snapshot: SettingsSnapshot): CaptureSettingsInput {
 
 function ShortcutsLoading() {
   return (
-    <Card
-      className="mx-auto w-full max-w-4xl"
-      aria-label={t("Loading Settings")}
-    >
+    <Card className="w-full max-w-[59rem]" aria-label={t("Loading Settings")}>
       <CardHeader>
         <Skeleton className="h-5 w-36" />
         <Skeleton className="h-4 w-64 max-w-full" />

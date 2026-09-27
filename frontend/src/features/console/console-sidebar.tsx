@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
@@ -123,7 +124,7 @@ export function ConsoleSidebar({
   return (
     <aside
       className={cn(
-        "flex w-52 shrink-0 flex-col border-r bg-sidebar px-3 py-3 text-sidebar-foreground transition-[width,padding] duration-[var(--motion-duration-slow)] [transition-timing-function:var(--motion-ease-emphasized)]",
+        "console-sidebar flex w-56 shrink-0 flex-col border-r bg-sidebar px-3 py-3 text-sidebar-foreground transition-[width,padding] duration-[var(--motion-duration-slow)] [transition-timing-function:var(--motion-ease-emphasized)]",
         presentation.collapsed && "w-14 px-1.5",
       )}
       aria-label={t("Console navigation")}
@@ -132,9 +133,9 @@ export function ConsoleSidebar({
         <Tooltip>
           <TooltipTrigger
             render={
-              <button
-                type="button"
-                className="mb-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-card text-sm text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.97]"
+              <Button
+                variant="ghost"
+                className="mb-3 h-9 w-full text-muted-foreground"
                 aria-label={t(
                   presentation.collapsed
                     ? "Expand sidebar"
@@ -159,11 +160,11 @@ export function ConsoleSidebar({
         </Tooltip>
       )}
 
-      <nav className="console-sidebar-scroll min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain">
-        <div className="mb-3">
+      <nav className="console-sidebar-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="mb-5">
           <p
             className={cn(
-              "mb-1 px-2 text-[11px] text-muted-foreground",
+              "mb-2 px-2 text-xs font-medium text-muted-foreground",
               presentation.collapsed && "sr-only",
             )}
           >
@@ -189,10 +190,10 @@ export function ConsoleSidebar({
           </div>
         </div>
         {CONSOLE_NAV_GROUPS.map((group) => (
-          <div className="mb-3" key={group.labelKey}>
+          <div className="mb-5" key={group.labelKey}>
             <p
               className={cn(
-                "mb-1 px-2 text-[11px] text-muted-foreground",
+                "mb-2 px-2 text-xs font-medium text-muted-foreground",
                 presentation.collapsed && "sr-only",
               )}
             >
@@ -240,15 +241,16 @@ function ConsoleNavRow({
     <button
       type="button"
       className={cn(
-        "console-nav-row group/nav-row flex h-9 w-full items-center gap-3 rounded-md px-2 text-sm",
+        "console-nav-row flex h-9 w-full items-center gap-2.5 rounded-md px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-inset",
+        !labelHidden && "pr-9",
         labelHidden && "justify-center px-0",
         consoleSidebarRowClasses(active, false),
       )}
       aria-current={active ? "page" : undefined}
       onClick={() => onNavigate(item.pageId)}
     >
-      <span className="grid size-[18px] shrink-0 place-items-center transition-transform duration-200 ease-out group-hover/nav-row:scale-110 group-active/nav-row:scale-95">
-        <Icon className="size-[18px]" aria-hidden="true" />
+      <span className="grid size-4 shrink-0 place-items-center">
+        <Icon className="size-4" aria-hidden="true" />
       </span>
       <span className={cn("truncate", labelHidden && "sr-only")}>
         {t(item.labelKey)}
@@ -265,16 +267,17 @@ function ConsoleNavRow({
     );
   }
   return (
-    <div className="group/favorite-row flex items-center gap-1">
-      <div className="min-w-0 flex-1">{navigationButton}</div>
+    <div className="group/favorite-row relative">
+      {navigationButton}
       <Tooltip>
         <TooltipTrigger
           render={
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon-sm"
               className={cn(
-                "grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition-[opacity,color,background-color] hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/favorite-row:opacity-100",
-                favorite && "text-amber-500 opacity-100",
+                "absolute top-1 right-1 text-muted-foreground opacity-0 transition-[opacity,color,background-color] hover:text-foreground focus-visible:opacity-100 group-focus-within/favorite-row:opacity-100 group-hover/favorite-row:opacity-100 [@media(hover:none)]:opacity-100",
+                favorite && "opacity-100",
               )}
               aria-label={t(
                 favorite ? "Remove from favorites" : "Add to favorites",

@@ -39,7 +39,6 @@ impl std::error::Error for DialogError {}
 enum DialogOperation {
     PickFile,
     SaveFile,
-    PickFolder,
 }
 
 #[cfg(windows)]
@@ -105,7 +104,6 @@ async fn run_dialog(
         let selection = match request.operation {
             DialogOperation::PickFile => builder.blocking_pick_file(),
             DialogOperation::SaveFile => builder.blocking_save_file(),
-            DialogOperation::PickFolder => builder.blocking_pick_folder(),
         };
         map_selection(selection)
     })
@@ -222,23 +220,6 @@ pub(crate) async fn choose_pcapng_save_path(
         default_file_name,
         "PCAPNG files (*.pcapng)",
         "pcapng",
-    )
-    .await
-}
-
-#[cfg(windows)]
-pub(crate) async fn choose_folder(
-    window: &WebviewWindow,
-    title: String,
-) -> Result<DialogOutcome, DialogError> {
-    run_dialog(
-        window,
-        DialogRequest {
-            title,
-            filters: Vec::new(),
-            default_file_name: None,
-            operation: DialogOperation::PickFolder,
-        },
     )
     .await
 }

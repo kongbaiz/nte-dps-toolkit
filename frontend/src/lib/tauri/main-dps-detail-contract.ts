@@ -1,7 +1,8 @@
+import { parseEffectCounts, type EffectCounts } from "./hit-snapshot-contract";
 import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 
-export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 7;
+export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 9;
 export const MAIN_DPS_DETAIL_MAX_QTE_SUMMARIES = 32;
 export const MAIN_DPS_DETAIL_MAX_SKILLS = 250;
 export const MAIN_DPS_DETAIL_MAX_ROWS = 250;
@@ -78,6 +79,10 @@ export interface MainDpsDetailColumns {
   typeWidth: number;
   damageWidth: number;
   targetWidth: number;
+  showCritical: boolean;
+  showSnapshot: boolean;
+  criticalWidth: number;
+  snapshotWidth: number;
 }
 
 export interface MainDpsDetailActions {
@@ -137,6 +142,11 @@ export interface MainDpsSkillSummary {
 }
 
 export interface MainDpsHit {
+  critical: boolean | null;
+  snapshotKey: string | null;
+  snapshotRetention: "available" | "missing" | "budget_exceeded" | null;
+  roleEffects: EffectCounts | null;
+  enemyEffects: EffectCounts | null;
   id: string;
   timestamp: number;
   characterId: number;
@@ -145,8 +155,8 @@ export interface MainDpsHit {
   damage: number;
   primaryDamage: number;
   followUpDamage: number;
-  overkillDamage: number;
-  maxHpReduction: number;
+  overkillDamage: number | null;
+  maxHpReduction: number | null;
   skillId: string;
   skill: string;
   damageType: string;
@@ -156,9 +166,9 @@ export interface MainDpsHit {
   followUpDamageDigitKey: string | null;
   target: string;
   targetMonsterId: string | null;
-  targetHpAfter: number;
-  targetMaxHp: number;
-  targetHpPercent: number;
+  targetHpAfter: number | null;
+  targetMaxHp: number | null;
+  targetHpPercent: number | null;
 }
 
 export function parseMainDpsDetailSnapshot(
@@ -284,6 +294,10 @@ function parseColumns(value: unknown): MainDpsDetailColumns {
     typeWidth: integer(source.typeWidth, "columns.typeWidth"),
     damageWidth: integer(source.damageWidth, "columns.damageWidth"),
     targetWidth: integer(source.targetWidth, "columns.targetWidth"),
+    showCritical: bool(source.showCritical, "columns.showCritical"),
+    showSnapshot: bool(source.showSnapshot, "columns.showSnapshot"),
+    criticalWidth: integer(source.criticalWidth, "columns.criticalWidth"),
+    snapshotWidth: integer(source.snapshotWidth, "columns.snapshotWidth"),
   };
 }
 
@@ -404,6 +418,20 @@ function parseSkillSummary(value: unknown): MainDpsSkillSummary {
 function parseHit(value: unknown): MainDpsHit {
   const source = object(value, "detail hit");
   return {
+    critical:
+      source.critical === null ? null : bool(source.critical, "hit.critical"),
+    snapshotKey: nullableBoundedText(
+      source.snapshotKey,
+      "hit.snapshotKey",
+      256,
+    ),
+    snapshotRetention: nullableOneOf(
+      source.snapshotRetention,
+      ["available", "missing", "budget_exceeded"] as const,
+      "hit.snapshotRetention",
+    ),
+    roleEffects: parseEffectCounts(source.roleEffects),
+    enemyEffects: parseEffectCounts(source.enemyEffects),
     id: boundedText(source.id, "hit.id", MAIN_DPS_DETAIL_MAX_TEXT_BYTES),
     timestamp: finite(source.timestamp, "hit.timestamp"),
     characterId: integer(source.characterId, "hit.characterId"),
@@ -420,8 +448,14 @@ function parseHit(value: unknown): MainDpsHit {
     damage: finite(source.damage, "hit.damage"),
     primaryDamage: finite(source.primaryDamage, "hit.primaryDamage"),
     followUpDamage: finite(source.followUpDamage, "hit.followUpDamage"),
-    overkillDamage: finite(source.overkillDamage, "hit.overkillDamage"),
-    maxHpReduction: finite(source.maxHpReduction, "hit.maxHpReduction"),
+    overkillDamage:
+      source.overkillDamage === null
+        ? null
+        : finite(source.overkillDamage, "hit.overkillDamage"),
+    maxHpReduction:
+      source.maxHpReduction === null
+        ? null
+        : finite(source.maxHpReduction, "hit.maxHpReduction"),
     skillId: boundedText(
       source.skillId,
       "hit.skillId",
@@ -466,9 +500,18 @@ function parseHit(value: unknown): MainDpsHit {
       "hit.targetMonsterId",
       MAIN_DPS_DETAIL_MAX_TEXT_BYTES,
     ),
-    targetHpAfter: finite(source.targetHpAfter, "hit.targetHpAfter"),
-    targetMaxHp: finite(source.targetMaxHp, "hit.targetMaxHp"),
-    targetHpPercent: finite(source.targetHpPercent, "hit.targetHpPercent"),
+    targetHpAfter:
+      source.targetHpAfter === null
+        ? null
+        : finite(source.targetHpAfter, "hit.targetHpAfter"),
+    targetMaxHp:
+      source.targetMaxHp === null
+        ? null
+        : finite(source.targetMaxHp, "hit.targetMaxHp"),
+    targetHpPercent:
+      source.targetHpPercent === null
+        ? null
+        : finite(source.targetHpPercent, "hit.targetHpPercent"),
   };
 }
 
@@ -490,6 +533,7 @@ function validateProjectedTextBudget(snapshot: MainDpsDetailSnapshot): void {
   }
   for (const hit of snapshot.rows) {
     add(hit.id);
+    add(hit.snapshotKey);
     add(hit.characterName);
     add(hit.skillId);
     add(hit.skill);

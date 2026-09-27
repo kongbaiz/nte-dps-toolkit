@@ -205,6 +205,8 @@ Core 领域错误使用 code `-32000`、message `Core error`，并提供稳定�
 
 返回最新完整背包快照，不会自行开始抓包，也不会写业务背包文件。首次完整快照出现前返回 `INVENTORY_NOT_READY`。
 
+背包分片的过期判断仅使用受支持的 Bunch 包模式；其他模式不初始化或推进其序号时钟，其中可独立识别的原始角色与物品记录仍按原逻辑处理。受支持模式中不含背包分片的包仍推进过期判断。
+
 背包结果和 `event.inventory.snapshot` 都包含 `generation`、`observed_at_unix_ms`、`complete`、`character_count`、`characters`、`item_count` 和 `items`；事件还包含全局 `sequence`。抓包得到的角色实例独立于装备归属映射：
 
 ```json
@@ -326,7 +328,9 @@ stdout 永远不会输出 `PacketDebug`、payload preview、payload hex、decode
 
 尚无战斗或深渊状态时返回 null。记录获得进程内稳定的 `battle_record_id`；抓包停止或 Core 关闭前状态为 `live`，之后变为 `finalized`。`battle.reset` 会终止该记录的可读取周期，下一场战斗获得新 ID。传入已经失效或未知的 ID 会返回 `BATTLE_RECORD_NOT_FOUND`，不会静默切换到当前战斗。
 
-响应契约版本为 4。版本 4 新增聚合摘要和逐击 `max_hp_reduction`；版本 3 新增权威逐击 `overkill_damage`。响应包含共享 `generation`、抓包 operation ID、状态/来源、战斗时间边界、裁剪后的时停区间、深渊标记、聚合摘要、质量计数和逐击数据完整性。`generation`、`axis_first_sequence`、`axis_total_hits` 使用十进制字符串，避免 JavaScript 丢失 64 位整数精度。只有公开战斗读取模型发生变化或记录完成时才推进 generation。
+响应契约版本为 6。版本 6 将逐击 HP、血量百分比、过量伤害和最大生命值损失改为可空值，无法验证时返回 null。版本 5 为每个 `time_stop_intervals` 项新增可空的 `pause_type_mask`；版本 4 新增聚合摘要和逐击 `max_hp_reduction`，版本 3 新增权威逐击 `overkill_damage`。响应包含共享 `generation`、抓包 operation ID、状态/来源、战斗时间边界、裁剪后的时停区间、深渊标记、聚合摘要、质量计数和逐击数据完整性。已知掩码按 `EPausedGameType` 位编码：类型 2、3、4 合计为 `0x1c`，类型 6（`PG_LinkoEffect`）为 `0x40`。非零掩码切换为另一个非零掩码时，旧分段在该时间戳闭合，新分段同时开启；消费方因此可用 `pause_type_mask & 0x1c != 0` 精确锚定普通 Q，不会把仅 Linko 的分段开头当成 Q 开头。相邻或重叠分段在 DPS 扣时中仍按全局时间并集计算。掩码为 null 表示旧归档压缩区间已无法无损恢复类型，不得按零值处理或猜测类型。`generation`、`axis_first_sequence`、`axis_total_hits` 使用十进制字符串，避免 JavaScript 丢失 64 位整数精度。只有公开战斗读取模型发生变化或记录完成时才推进 generation。
+
+抓包活动期间，战报读取方法只处理一批有界的待处理 EngineEvent 后就返回；余下事件保持原顺序，交给 Core 主循环或后续读取继续处理。抓包停止后，停止路径仍会等待生产者退出并完整排空所有已产生事件，再把记录标记为 `finalized`。
 
 ### `battle.get_axis`
 
@@ -339,7 +343,9 @@ stdout 永远不会输出 `PacketDebug`、payload preview、payload hex、decode
 }
 ```
 
-返回一页有序逐击数据。`limit` 必填，范围为 1～500。`cursor` 可省略/为 null（从首条保留记录开始），也可传入 `next_cursor` 返回的正十进制字符串。sequence、cursor、total 均使用字符串，页面同时携带同一战斗 `generation`。每行包含 Core 已持有的有界、脱敏战斗事实，包括记录 ID、角色来源、归因状态/未知原因、方向、伤害/追击、目标投影、技能标识和深渊半场。`overkill_damage` 表示 primary `damage` 中超过有效 `target_hp_before` 的部分，不包含追击伤害；Core 缺少有效目标 HP 快照时为零。`max_hp_reduction` 表示归属于该次命中的额外最大生命值损失，并与 `total_damage` 分开返回。逐击行不包含网络包字节、端点或 PCAP 数据。稳定队伍快照尚不存在时，`team_snapshot_id` 明确返回 null，不根据当前 UI 状态推测。
+返回一页有序逐击数据。`limit` 必填，范围为 1～500。`cursor` 可省略/为 null（从首条保留记录开始），也可传入 `next_cursor` 返回的正十进制字符串。sequence、cursor、total 均使用字符串，页面同时携带同一战斗 `generation`。每行包含 Core 已持有的有界、脱敏战斗事实，包括记录 ID、角色来源、归因状态/未知原因、方向、伤害/追击、目标投影、技能标识和深渊半场。`overkill_damage` 表示 primary `damage` 中超过有效 `target_hp_before` 的部分，不包含追击伤害；新精确结算记录未验证过量伤害时为 null，不从请求 HP 推算。`max_hp_reduction` 表示归属于该次命中的额外最大生命值损失，并与 `total_damage` 分开返回。目标当前 HP 来自服务器结算；最大 HP 和前置 HP 来自对应请求快照，缺少请求时为 null。逐击行不包含网络包字节、端点或 PCAP 数据。稳定队伍快照尚不存在时，`team_snapshot_id` 明确返回 null，不根据当前 UI 状态推测。
+
+覆纹追加伤害的结算容器含有经过结构验证的角色声明时，Core 先把前置击候选限制为该角色，再沿用伤害匹配、血量连续性和唯一近时命中的规则，追加到匹配的逐击行。角色声明本身不产生已知角色的独立逐击；若仍找不到前置击，保留原有未归因伤害表示。同帧同伤害但解码位置或目标不同的命中分别归并。当前包与重组包中的同一次结算只补全来源，不重复计入伤害。
 
 Core 只保留有界命中窗口。更早记录被裁剪后，`complete` 变为 false，`first_available_cursor` 指出首条仍可读取记录。过旧 cursor 返回 `BATTLE_AXIS_CURSOR_EXPIRED`；超过 `total_hits + 1` 的 cursor 返回 `BATTLE_AXIS_CURSOR_INVALID`。
 
@@ -359,7 +365,7 @@ Core 只保留有界命中窗口。更早记录被裁剪后，`complete` 变为 
 }
 ```
 
-`scope` 可取 `all`、`upper`、`lower`。`bucket_seconds` 必填且必须是 0.2～10 的有限数值。响应复用 Core 权威时间线投影，包含角色、时间桶、桶内分角色 DPS、标记、时停区间和简化曲线段；同时携带契约版本 4、共享 battle generation，并在底层逐击数据已裁剪时返回 `complete:false`。
+`scope` 可取 `all`、`upper`、`lower`。`bucket_seconds` 必填且必须是 0.2～10 的有限数值。响应复用 Core 权威时间线投影，包含角色、时间桶、桶内分角色 DPS、标记、时停区间和简化曲线段；时间线区间沿用战报中可空 `pause_type_mask` 的语义，同时携带契约版本 5、共享 battle generation，并在底层逐击数据已裁剪时返回 `complete:false`。
 
 Core 会在分配时间线前检查响应预算，最多输出 10,000 个桶和总计 100,000 个桶内角色行。超过任一预算会返回 `BATTLE_TIMELINE_TOO_LARGE`；客户端可以增大 `bucket_seconds` 或只查询深渊某一半。
 

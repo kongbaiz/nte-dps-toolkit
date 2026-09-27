@@ -1,3 +1,6 @@
+#[cfg(test)]
+use nte_dps_tool::platform::mods_plugin::ModsPluginGameRegion;
+use nte_dps_tool::storage::config::ModStudioLoadingMethod;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
@@ -29,10 +32,6 @@ use nte_dps_tool::{
             CaptureReplayKind, LiveCapturePhase, LiveCaptureResources, LiveCaptureService,
             LiveCaptureStatus, ReplayStartError,
         },
-        mod_studio::{
-            ModStudioError, ModStudioRuntimeEvent, ModStudioRuntimeLog, ModStudioWorkspaceService,
-            poll_mod_studio_runtime_events, poll_mod_studio_runtime_logs,
-        },
         packets::{
             PacketStreamRevision, PacketsProjection, project_packets_since, project_recent_packets,
         },
@@ -57,16 +56,12 @@ use nte_dps_tool::{
             CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_equipment_catalog,
         },
     },
-    platform::{
-        mod_loader::ModLoaderRuntimeService,
-        mods_plugin::{ModsPluginGameRegion, ModsPluginOperation},
-    },
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
         config::{
             self, AccentColor, DpsTimeMode, GlobalHotkeys, HotkeyBinding, HudConfig, HudModule,
-            MainDpsDisplayConfig, ModStudioLoadingMethod, ThemePreset, TimelineDpsViewMode,
-            UiConfig, UiDensity, sanitize_timeline_bucket_seconds,
+            MainDpsDisplayConfig, ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
+            sanitize_timeline_bucket_seconds,
         },
         history::{
             BorrowedHistorySaveOutcome, HistoryCombatDetails, HistoryDeleteTombstone,
@@ -221,6 +216,21 @@ type EmptyCurtainDataSnapshot = (
 
 #[derive(Clone)]
 pub(crate) struct AppState(Arc<AppStateInner>);
+
+pub(crate) struct PluginControlReservation(AppState);
+impl Drop for PluginControlReservation {
+    fn drop(&mut self) {
+        if self
+            .0
+            .0
+            .replay_import
+            .release(ReplayImportReservationState::PluginControl)
+            .is_err()
+        {
+            log::error!("plugin control reservation release failed");
+        }
+    }
+}
 
 pub(crate) struct ReplayImportReservation {
     state: AppState,
@@ -623,6 +633,16 @@ impl IslandNoticeRuntime {
         // Ephemeral notification state is safe to reset after an interrupted
         // mutation. The replacement is the sole externally visible change.
         let (mut notice, _) = self.lock_discarding_poison();
+        let tone = if tone == "status" { "info" } else { tone };
+        if let Some(current) = notice.as_ref()
+            && Instant::now() < current.expires_at
+            && current.tone == tone
+            && current.message_key == message_key
+            && current.message_arguments == message_arguments
+            && current.undo_token == undo_token
+        {
+            return current.id.clone();
+        }
         let revision = self.bump_revision();
         let id = format!("notice-{revision:016x}");
         *notice = Some(IslandNoticeState {
@@ -688,12 +708,14 @@ impl IslandNoticeRuntime {
 
 #[derive(Clone)]
 struct PausedPresentation {
+    dps_time_mode: DpsTimeMode,
     state: Arc<CombatState>,
     packet_revision: PacketStreamRevision,
 }
 
 #[derive(Clone)]
 struct SelectedRoundPresentation {
+    dps_time_mode: DpsTimeMode,
     record_id: String,
     history_revision: u64,
     state: Arc<CombatState>,
@@ -1043,7 +1065,7 @@ fn subtract_time_stop_for_state(mode: DpsTimeMode, state: &CombatState) -> bool 
 
 fn history_archive_policy(config: &UiConfig) -> HistoryArchivePolicy {
     HistoryArchivePolicy {
-        requested_dps_time_mode: match config.dps_time_mode {
+        requested_dps_time_mode: match config.dps_time_mode() {
             DpsTimeMode::TimeStopAdjusted => DpsTimeBasis::SubtractTimeStop,
             DpsTimeMode::RealTime => DpsTimeBasis::WallClock,
         },
@@ -1089,8 +1111,6 @@ struct AppStateInner {
     replay_import: ReplayImportRuntime,
     streams: StreamRegistry,
     live_capture: LiveCaptureService,
-    mod_studio: ModStudioWorkspaceService,
-    mod_loader: ModLoaderRuntimeService,
     equipment_catalog: Arc<EquipmentCatalog>,
     equipment_operation: EquipmentOperationService,
     settings: SettingsService,
@@ -1125,6 +1145,7 @@ enum ReplayImportReservationState {
     Idle,
     ReplayImport,
     CaptureStart,
+    PluginControl,
 }
 
 #[derive(Default)]
@@ -1392,8 +1413,6 @@ impl AppState {
             replay_import: ReplayImportRuntime::default(),
             streams: StreamRegistry::default(),
             live_capture,
-            mod_studio: ModStudioWorkspaceService::default(),
-            mod_loader: ModLoaderRuntimeService::default(),
             equipment_catalog: Arc::new(equipment_catalog),
             equipment_operation: EquipmentOperationService::default(),
             settings: SettingsService::new(config, config_path, capture_devices),
@@ -1412,6 +1431,7 @@ impl AppState {
     pub(crate) fn snapshot(&self) -> Result<TechnicalSnapshot, CoreError> {
         let sequence = self.next_sequence();
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         let hud_config = config.hud.clone();
         let selected_abyss_half = self.abyss_presentation_snapshot().selected;
         let supported_locales = Language::all()
@@ -1440,7 +1460,7 @@ impl AppState {
                     &HashSet::new(),
                     HudProjectionOptions {
                         dps_time_basis: DpsTimeBasis::from_subtract_time_stop(
-                            subtract_time_stop_for_state(config.dps_time_mode, state),
+                            subtract_time_stop_for_state(dps_time_mode, state),
                         ),
                         separate_reaction_damage: config.separate_reaction_damage,
                         include_max_hp_reduction_in_total_damage: config
@@ -1623,6 +1643,32 @@ impl AppState {
         self.0.live_capture.combat_clock_health()
     }
 
+    fn live_dps_time_mode(&self) -> Result<DpsTimeMode, CoreError> {
+        Ok(match self.0.live_capture.quality_source()? {
+            CaptureQualitySource::Plugin => DpsTimeMode::TimeStopAdjusted,
+            CaptureQualitySource::Live => DpsTimeMode::RealTime,
+            _ => self.ui_config().dps_time_mode(),
+        })
+    }
+
+    pub(crate) fn main_presented_dps_time_mode(&self) -> Result<DpsTimeMode, CoreError> {
+        let mode = self.presentation_mode_snapshot();
+        self.presentation_dps_time_mode(&mode)
+    }
+
+    fn presentation_dps_time_mode(
+        &self,
+        mode: &PresentationModeSnapshot,
+    ) -> Result<DpsTimeMode, CoreError> {
+        if let Some(selected) = &mode.selected_round {
+            return Ok(selected.dps_time_mode);
+        }
+        if let Some(paused) = &mode.paused {
+            return Ok(paused.dps_time_mode);
+        }
+        self.live_dps_time_mode()
+    }
+
     pub(crate) fn main_presented_combat_clock_health(
         &self,
     ) -> Result<CombatClockRuntimeHealth, CoreError> {
@@ -1706,13 +1752,25 @@ impl AppState {
 
         // The capture snapshot can be large. Build it without holding any
         // Presentation lock, then re-check the requested transition.
+        let configured_mode = self.ui_config().dps_time_mode();
         let frozen = self
             .0
             .live_capture
-            .with_packet_state(|packet_revision, _, state| PausedPresentation {
-                state: Arc::new(state.clone()),
-                packet_revision,
+            .with_packet_state(|packet_revision, _, state| {
+                // with_packet_state holds event_gate and state: acquire provenance
+                // next in the capture lock order, freezing it with this snapshot.
+                let dps_time_mode = match self.0.live_capture.quality_source()? {
+                    CaptureQualitySource::Plugin => DpsTimeMode::TimeStopAdjusted,
+                    CaptureQualitySource::Live => DpsTimeMode::RealTime,
+                    _ => configured_mode,
+                };
+                Ok(PausedPresentation {
+                    dps_time_mode,
+                    state: Arc::new(state.clone()),
+                    packet_revision,
+                })
             })
+            .map_err(PresentationError::Capture)?
             .map_err(PresentationError::Capture)?;
         let (mut mode, recovered) = self.0.presentation.lock_mode();
         if recovered {
@@ -1772,7 +1830,16 @@ impl AppState {
             record
                 .details
                 .take()
-                .map(HistoryCombatDetails::into_combat_state)
+                .map(|details| {
+                    (
+                        details.into_combat_state(),
+                        if record.summary.dps_time_mode.subtracts_time_stop() {
+                            DpsTimeMode::TimeStopAdjusted
+                        } else {
+                            DpsTimeMode::RealTime
+                        },
+                    )
+                })
                 .ok_or(PresentationError::RoundUnavailable)
         })
     }
@@ -1781,7 +1848,7 @@ impl AppState {
         &self,
         record_id: Option<String>,
         operation: u64,
-        load: impl FnOnce(&str) -> Result<CombatState, PresentationError>,
+        load: impl FnOnce(&str) -> Result<(CombatState, DpsTimeMode), PresentationError>,
     ) -> Result<bool, PresentationError> {
         let history_revision = self.history_revision();
         if self
@@ -1813,7 +1880,7 @@ impl AppState {
         // their newer intent owns both the visible state and command snapshot.
         let selection = match record_id {
             Some(record_id) => {
-                let state = match load(&record_id) {
+                let (state, dps_time_mode) = match load(&record_id) {
                     Ok(state) => state,
                     Err(_error)
                         if self
@@ -1828,6 +1895,7 @@ impl AppState {
                     Err(error) => return Err(error),
                 };
                 Some(SelectedRoundPresentation {
+                    dps_time_mode,
                     record_id,
                     history_revision,
                     state: Arc::new(state),
@@ -1954,8 +2022,9 @@ impl AppState {
             .presentation
             .main_readout_projection_count
             .fetch_add(1, Ordering::AcqRel);
+        let dps_time_mode = self.presentation_dps_time_mode(&mode)?;
         let readout = self.with_presentation_mode_state(&mode, |state| {
-            self.project_main_readout(state, abyss_after.selected)
+            self.project_main_readout(state, abyss_after.selected, dps_time_mode)
         })?;
 
         // A concurrent hit/settings/presentation mutation makes this result a
@@ -2169,9 +2238,10 @@ impl AppState {
         &self,
         state: &CombatState,
         selected_abyss_half: Option<AbyssHalf>,
+        dps_time_mode: DpsTimeMode,
     ) -> MainDpsReadout {
         let config = self.ui_config();
-        let subtract_time_stop = subtract_time_stop_for_state(config.dps_time_mode, state);
+        let subtract_time_stop = subtract_time_stop_for_state(dps_time_mode, state);
         let projection_half = state.abyss.is_active().then(|| {
             selected_abyss_half
                 .or(state.abyss.active_half)
@@ -2374,6 +2444,22 @@ impl AppState {
                 ));
             }
             let config = self.ui_config();
+            if config.data_mode == nte_dps_tool::core::toolkit::DataMode::Plugin {
+                let pid = nte_dps_tool::platform::network::game_process_id()
+                    .map_err(|_| {
+                        CoreError::new(
+                            CoreErrorCode::SystemProbeFailed,
+                            "plugin process probe failed",
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        CoreError::new(
+                            CoreErrorCode::GameProcessNotFound,
+                            "plugin host not running",
+                        )
+                    })?;
+                return self.0.live_capture.request_plugin_start(pid);
+            }
             let device = config
                 .manual_capture_device
                 .clone()
@@ -2752,7 +2838,6 @@ impl AppState {
         separate_reaction_damage: bool,
         auto_round_after_idle: bool,
         auto_round_idle_seconds: u32,
-        dps_time_mode: DpsTimeMode,
         passthrough_hotkey: HotkeyBinding,
     ) -> Result<bool, SettingsServiceError> {
         let changed = self.update_ui_config(|config| {
@@ -2764,7 +2849,6 @@ impl AppState {
             config.separate_reaction_damage = separate_reaction_damage;
             config.auto_round_after_idle = auto_round_after_idle;
             config.auto_round_idle_seconds = auto_round_idle_seconds;
-            config.dps_time_mode = dps_time_mode;
             config.passthrough_hotkey = passthrough_hotkey;
         })?;
         // Keep the capture-side automatic round-boundary policy synchronized
@@ -2993,10 +3077,11 @@ impl AppState {
 
     fn current_abyss_team(&self, upper: bool) -> Result<Option<TeamDps>, CoreError> {
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         self.with_main_presented_state(|state| {
             let export = nte_dps_tool::core::team_data::export_team_data(
                 state,
-                subtract_time_stop_for_state(config.dps_time_mode, state),
+                subtract_time_stop_for_state(dps_time_mode, state),
                 config.separate_reaction_damage,
                 None,
                 None,
@@ -3025,6 +3110,7 @@ impl AppState {
 
     pub(crate) fn export_team_data(&self) -> Result<Option<TeamDpsExport>, TeamOperationError> {
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         let imported = self
             .0
             .team_import
@@ -3035,24 +3121,12 @@ impl AppState {
         Ok(self.with_main_presented_state(|state| {
             nte_dps_tool::core::team_data::export_team_data(
                 state,
-                subtract_time_stop_for_state(config.dps_time_mode, state),
+                subtract_time_stop_for_state(dps_time_mode, state),
                 config.separate_reaction_damage,
                 imported.upper,
                 imported.lower,
             )
         })?)
-    }
-
-    pub(crate) fn poll_mod_studio_runtime_logs(
-        &self,
-    ) -> Result<Vec<ModStudioRuntimeLog>, ModStudioError> {
-        poll_mod_studio_runtime_logs()
-    }
-
-    pub(crate) fn poll_mod_studio_runtime_events(
-        &self,
-    ) -> Result<Vec<ModStudioRuntimeEvent>, ModStudioError> {
-        poll_mod_studio_runtime_events()
     }
 
     pub(crate) fn set_hud_option(
@@ -3146,7 +3220,11 @@ impl AppState {
         let config = self.ui_config();
         let (state, source) = self.0.live_capture.history_state_and_source_snapshot()?;
         let dps_time_mode = DpsTimeBasis::from_subtract_time_stop(subtract_time_stop_for_state(
-            config.dps_time_mode,
+            match source {
+                CaptureQualitySource::Plugin => DpsTimeMode::TimeStopAdjusted,
+                CaptureQualitySource::Live => DpsTimeMode::RealTime,
+                _ => config.dps_time_mode(),
+            },
             &state,
         ));
         Ok(prepare_history_archive_owned(
@@ -3546,7 +3624,61 @@ impl AppState {
         self.0.encrypted_ini.clear()
     }
 
+    pub(crate) fn uses_plugin_equipment(&self) -> Result<bool, CoreError> {
+        Ok(
+            self.data_mode() == nte_dps_tool::storage::config::DataMode::Plugin
+                && !self.main_processing_paused()
+                && !matches!(
+                    self.0.live_capture.quality_source()?,
+                    CaptureQualitySource::PcapngReplay | CaptureQualitySource::JsonReplay
+                ),
+        )
+    }
+    pub(crate) fn equipment_service(&self) -> &EquipmentOperationService {
+        &self.0.equipment_operation
+    }
+    pub(crate) fn equipment_rpc(&self) -> Arc<nte_dps_tool::core::equipment_rpc::Router> {
+        self.0.live_capture.equipment_rpc()
+    }
+    fn plugin_inventory(
+        &self,
+    ) -> Result<
+        (
+            Option<Arc<nte_dps_tool::core::user_equipment::Inventory>>,
+            u64,
+        ),
+        CoreError,
+    > {
+        self.0.equipment_operation.inventory.get().map_err(|_| {
+            CoreError::new(
+                CoreErrorCode::CaptureStateUnavailable,
+                "Equipment inventory is unavailable",
+            )
+        })
+    }
     pub(crate) fn empty_curtain_snapshot(&self) -> Result<InventorySnapshot, CoreError> {
+        if self.uses_plugin_equipment()? {
+            let (data, revision) = self.plugin_inventory()?;
+            let resources = self.0.live_capture.resources();
+            return Ok(match data {
+                Some(data) => inventory_snapshot(
+                    &data.items,
+                    &data.characters,
+                    &self.0.equipment_catalog,
+                    &resources.characters,
+                    revision,
+                    data.observed_us / 1000,
+                ),
+                None => InventorySnapshot {
+                    generation: revision,
+                    observed_at_unix_ms: 0,
+                    complete: false,
+                    items: vec![],
+                    characters: vec![],
+                },
+            });
+        }
+
         let resources = self.0.live_capture.resources();
         let observed_at_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3568,6 +3700,21 @@ impl AppState {
     pub(crate) fn empty_curtain_data_snapshot(
         &self,
     ) -> Result<EmptyCurtainDataSnapshot, CoreError> {
+        if self.uses_plugin_equipment()? {
+            let (data, _) = self.plugin_inventory()?;
+            let data = data.ok_or_else(|| {
+                CoreError::new(
+                    CoreErrorCode::CaptureStateUnavailable,
+                    "Refresh equipment inventory first",
+                )
+            })?;
+            return Ok((
+                data.items.clone(),
+                data.characters.clone(),
+                self.equipment_catalog(),
+            ));
+        }
+
         let (items, characters) = self.with_main_presented_state(|state| {
             (
                 state.empty_curtain.clone(),
@@ -3591,6 +3738,13 @@ impl AppState {
         &self,
     ) -> Result<((u64, u64, u64), EmptyCurtainOperationState), EmptyCurtainRuntimeError> {
         let operation = self.empty_curtain_operation_snapshot()?;
+        if self.uses_plugin_equipment()? {
+            let (_, revision) = self.plugin_inventory()?;
+            return Ok((
+                (revision, revision, operation.revision),
+                operation.operation,
+            ));
+        }
         let (inventory, characters) = if self.main_processing_paused() {
             self.with_main_presented_state(|state| {
                 (
@@ -3758,6 +3912,7 @@ impl AppState {
         &self,
     ) -> Result<(CaptureExportPlan, u64), CoreError> {
         let config = self.ui_config();
+        let dps_time_mode = self.live_dps_time_mode()?;
         let game_network = self
             .diagnostics_report()
             .and_then(|run| run.environment.game_connection)
@@ -3776,7 +3931,7 @@ impl AppState {
                         include_incoming: true,
                         game_network,
                         dps_time_mode: DpsTimeBasis::from_subtract_time_stop(
-                            subtract_time_stop_for_state(config.dps_time_mode, state),
+                            subtract_time_stop_for_state(dps_time_mode, state),
                         ),
                     },
                 ),
@@ -3824,22 +3979,15 @@ impl AppState {
         })
     }
 
-    pub(crate) fn submit_empty_curtain_operation(
-        &self,
-        character: nte_dps_tool::engine::model::HtItemNetId,
-        operation: ModsPluginOperation,
-    ) -> Result<u64, EquipmentOperationError> {
-        self.0.equipment_operation.submit(character, operation)
-    }
-
     pub(crate) fn timeline_projection(
         &self,
         scope: TimelineScope,
     ) -> Result<Arc<TimelineProjection>, CoreError> {
         const TIMELINE_CACHE_CAPACITY: usize = 6;
         let config = self.ui_config();
+        let dps_time_mode = self.main_presented_dps_time_mode()?;
         let revision = self.main_dps_stream_revision()?;
-        let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted)
+        let subtract_time_stop = matches!(dps_time_mode, DpsTimeMode::TimeStopAdjusted)
             && matches!(
                 self.main_presented_combat_clock_health()?,
                 CombatClockRuntimeHealth::Available | CombatClockRuntimeHealth::Recorded
@@ -4194,14 +4342,55 @@ impl AppState {
         }
     }
 
-    pub(crate) fn mod_studio(&self) -> ModStudioWorkspaceService {
-        self.0.mod_studio.clone()
+    /// A finite IPC action reserves mode/start changes without holding any hot
+    /// mutex during foreign I/O. Dropping it releases the reservation on errors.
+    pub(crate) fn reserve_plugin_control(&self) -> Result<PluginControlReservation, CoreError> {
+        self.0
+            .replay_import
+            .reserve(ReplayImportReservationState::PluginControl)
+            .map_err(ReplayImportError::into_core)?;
+        Ok(PluginControlReservation(self.clone()))
     }
 
-    pub(crate) fn mod_loader(&self) -> ModLoaderRuntimeService {
-        self.0.mod_loader.clone()
+    pub(crate) fn data_mode(&self) -> nte_dps_tool::core::toolkit::DataMode {
+        self.ui_config().data_mode
     }
 
+    pub(crate) fn set_data_mode(
+        &self,
+        mode: nte_dps_tool::core::toolkit::DataMode,
+    ) -> Result<(), CoreError> {
+        self.0
+            .replay_import
+            .reserve(ReplayImportReservationState::CaptureStart)
+            .map_err(ReplayImportError::into_core)?;
+        let result = (|| {
+            if self.data_mode() == mode {
+                return Ok(());
+            }
+            self.stop_active_capture_and_wait(Duration::from_secs(15))?;
+            self.update_ui_config(|config| {
+                config.data_mode = mode;
+            })
+            .map_err(|_| {
+                CoreError::new(
+                    CoreErrorCode::SystemProbeFailed,
+                    "mode settings save failed",
+                )
+            })?;
+            self.0
+                .live_capture
+                .set_history_archive_policy(history_archive_policy(&self.ui_config()));
+            Ok(())
+        })();
+        self.0
+            .replay_import
+            .release(ReplayImportReservationState::CaptureStart)
+            .map_err(ReplayImportError::into_core)?;
+        result
+    }
+
+    #[cfg(test)]
     pub(crate) fn mod_studio_game_directory(&self, region: ModsPluginGameRegion) -> Option<String> {
         let config = self.ui_config();
         match region {
@@ -4210,6 +4399,7 @@ impl AppState {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn set_mod_studio_game_directory(
         &self,
         region: ModsPluginGameRegion,
@@ -4234,10 +4424,12 @@ impl AppState {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn mod_studio_risk_acknowledged(&self) -> bool {
         self.ui_config().mod_studio_risk_acknowledged
     }
 
+    #[cfg(test)]
     pub(crate) fn acknowledge_mod_studio_risk(&self) -> Result<bool, SettingsServiceError> {
         self.update_ui_config_with_effects(SettingsMutationEffects::NONE, |config| {
             config.mod_studio_risk_acknowledged = true;
@@ -4305,6 +4497,355 @@ mod tests {
 
     use super::*;
     use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
+
+    #[test]
+    #[ignore = "requires NTE_TEST_AUTO_CAPTURE and NTE_TEST_EXPECTED_DAMAGE real-capture inputs"]
+    fn automatic_midstream_capture_reaches_main_dps_display_contract() {
+        assert!(
+            std::env::var_os("NTE_EXACT_PACKET_CONFIG").is_none(),
+            "test must exercise default startup"
+        );
+        let path = PathBuf::from(std::env::var_os("NTE_TEST_AUTO_CAPTURE").expect("capture input"));
+        let expected: f64 = std::env::var("NTE_TEST_EXPECTED_DAMAGE")
+            .expect("expected total")
+            .parse()
+            .unwrap();
+        let mut expected_display = expected;
+        let mut expected_shared = std::env::var("NTE_TEST_EXPECTED_SHARED_DAMAGE")
+            .ok()
+            .map(|v| v.parse::<f64>().unwrap());
+        let display_half = match std::env::var("NTE_TEST_ABYSS_HALF").ok().as_deref() {
+            None | Some("first") => AbyssHalf::First,
+            Some("second") => AbyssHalf::Second,
+            Some(_) => panic!("unsupported acceptance half"),
+        };
+        let mut expected_reduction = std::env::var("NTE_TEST_EXPECTED_MAX_HP_REDUCTION")
+            .ok()
+            .map(|v| v.parse::<f64>().unwrap());
+        let mut expected_reduction_rows =
+            std::env::var("NTE_TEST_EXPECTED_HP_ROWS").map_or(23, |v| v.parse::<usize>().unwrap());
+        let mut expected_extra = std::env::var("NTE_TEST_EXPECTED_HP_EXTRA")
+            .map_or(233351.125, |v| v.parse::<f64>().unwrap());
+        let expected_assist = std::env::var("NTE_TEST_EXPECTED_ASSIST_DAMAGE")
+            .ok()
+            .map(|v| v.parse::<f64>().unwrap());
+        let (resources, warnings) =
+            LiveCaptureResources::load(nte_dps_tool::storage::i18n::Language::SimplifiedChinese);
+        println!(
+            "ACCEPTANCE_RESOURCES characters={} warnings={}",
+            resources.characters.len(),
+            warnings.len()
+        );
+        let service = LiveCaptureService::new(resources);
+        let state = AppState::new(UiConfig::default(), service.clone());
+        let before = state.main_dps_stream_revision().unwrap();
+        let empty = crate::contract::main_dps::MainDpsSnapshot::from_state(&state).unwrap();
+        assert_eq!(empty.readout.summary.total_damage, 0.0);
+        service
+            .request_replay(CaptureReplayKind::Pcapng, path, None, true, false)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(300);
+        while service.replay_running().unwrap() {
+            assert!(Instant::now() < deadline, "replay did not terminate");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_ne!(service.status().phase, LiveCapturePhase::Failed);
+        println!(
+            "ACCEPTANCE_STATE {:?} {:?}",
+            service.status(),
+            service
+                .with_state(|s| (s.hits.len(), s.total_damage, s.total_damage_taken))
+                .unwrap()
+        );
+        let mut archives = service.take_pending_abyss_archives().unwrap();
+        if !archives.is_empty() {
+            // CaptureStopped legitimately archives an Abyss round and leaves
+            // an empty live row. Verify the actual archived record through the
+            // History presentation path, not a fabricated nonempty live row.
+            assert_eq!(
+                archives.len(),
+                1,
+                "this acceptance input must contain one archived round"
+            );
+            let archive = archives.pop().unwrap();
+            let basis = if archive.dps_time_mode.subtracts_time_stop() {
+                DpsTimeMode::TimeStopAdjusted
+            } else {
+                DpsTimeMode::RealTime
+            };
+            let encoded = serde_json::to_vec(&archive.details).unwrap();
+            let details: HistoryCombatDetails = serde_json::from_slice(&encoded).unwrap();
+            let archived = details.into_combat_state();
+            assert_eq!(
+                archived.total_damage, expected,
+                "complete archived capture total"
+            );
+            if let Some(reduction) = expected_reduction {
+                assert_eq!(archived.max_hp_reduction, reduction);
+                assert_eq!(
+                    archived
+                        .hits
+                        .iter()
+                        .filter(|h| h.max_hp_reduction > 0.0)
+                        .count(),
+                    expected_reduction_rows
+                );
+                assert_eq!(
+                    archived
+                        .hits
+                        .iter()
+                        .map(|h| h.follow_up_damage)
+                        .sum::<f64>(),
+                    expected_extra
+                );
+            }
+            if let Some(expected) = expected_assist {
+                let assist: Vec<_> = archived
+                    .hits
+                    .iter()
+                    .filter(|h| h.gameplay_effect_index == Some(6114))
+                    .collect();
+                assert_eq!(assist.iter().map(|h| h.damage).sum::<f64>(), expected);
+                assert!(assist.iter().all(|h| h.char_id == 1042));
+                use nte_dps_tool::core::skills::{
+                    SkillsProjectionOptions, SkillsScope, project_skills,
+                };
+                let skills = project_skills(
+                    &archived,
+                    &HashMap::new(),
+                    SkillsProjectionOptions {
+                        scope: SkillsScope::Whole,
+                        language: nte_dps_tool::storage::i18n::Language::SimplifiedChinese,
+                    },
+                );
+                let skills = crate::contract::skills::SkillsSnapshot::from_projection(
+                    skills,
+                    1,
+                    SkillsScope::Whole,
+                );
+                for (effect, expected_name) in [
+                    (6114, "失乐鸟·协同攻击"),
+                    (3241, "番茄酱盛宴·失谐强化追加伤害"),
+                    (6094, "鸫歌·黯星强化结算"),
+                    (1349, "墨菲克斯·弹丸回击"),
+                ] {
+                    let rows: Vec<_> = skills
+                        .rows
+                        .iter()
+                        .filter(|r| r.gameplay_effect_index == Some(effect))
+                        .collect();
+                    assert!(!rows.is_empty(), "missing effect {effect}");
+                    assert!(
+                        rows.iter().all(|r| r.name == expected_name),
+                        "wrong label: {rows:?}"
+                    );
+                }
+                println!("SKILL_NAMES_PASS assist_damage={expected}");
+            }
+            if let Some(expected) = expected_shared {
+                assert_eq!(
+                    archived.damage_attribution_summary().shared_damage,
+                    expected
+                );
+                let shared = archived.indexed_combat_details(
+                    None,
+                    &nte_dps_tool::engine::model::IndexedCombatDetailFilter::SharedMechanics,
+                    None,
+                    0,
+                    100,
+                );
+                assert_eq!(shared.total_hits, 2);
+                assert_eq!(shared.total_damage, expected);
+                assert_eq!(
+                    shared.rows[0].1.damage_component.as_deref(),
+                    Some("普通倾陷伤害")
+                );
+                assert_eq!(
+                    shared.rows[1].1.damage_component.as_deref(),
+                    Some("达芙蒂尔·额外倾陷伤害")
+                );
+                assert_eq!(
+                    archived
+                        .hits
+                        .iter()
+                        .filter(|h| h.gameplay_effect_index == Some(3311))
+                        .map(|h| h.damage)
+                        .sum::<f64>(),
+                    6773.0
+                );
+            }
+            if archived.abyss.is_active() {
+                // Main DPS presents the selected/current half. Independently
+                // sum its retained rows rather than expecting the whole-file
+                // total in a half-filtered display.
+                let half = archived.abyss.half(display_half);
+                if expected_shared.is_some() {
+                    expected_shared = Some(half.damage_attribution_summary().shared_damage);
+                }
+                expected_display = half
+                    .hits
+                    .iter()
+                    .filter(|h| !h.direction.is_incoming())
+                    .map(|h| h.total_damage())
+                    .sum();
+                if expected_reduction.is_some() {
+                    expected_reduction = Some(half.hits.iter().map(|h| h.max_hp_reduction).sum());
+                    expected_reduction_rows = half
+                        .hits
+                        .iter()
+                        .filter(|h| h.max_hp_reduction > 0.0)
+                        .count();
+                    expected_extra = half.hits.iter().map(|h| h.follow_up_damage).sum();
+                }
+            }
+            println!(
+                "ACCEPTANCE_ARCHIVE hits={} damage={}",
+                archived.hits.len(),
+                archived.total_damage
+            );
+            let id = "acceptance-recorded-round".to_owned();
+            *state.0.history.round_cache.lock().unwrap() = MainRoundCache {
+                revision: Some(state.history_revision()),
+                index: Arc::new(vec![HistoryRoundIndex {
+                    id: id.clone(),
+                    display_time: "Recorded capture".into(),
+                    abyss_floor: archived.abyss.floor,
+                    has_details: true,
+                }]),
+            };
+            let operation = state.reserve_main_round_selection();
+            state
+                .set_main_selected_round_id_with(Some(id), operation, |_| Ok((archived, basis)))
+                .unwrap();
+            state
+                .set_main_selected_abyss_half(Some(display_half))
+                .unwrap();
+        }
+        let snapshot = crate::contract::main_dps::MainDpsSnapshot::from_state(&state).unwrap();
+        assert_eq!(snapshot.readout.summary.total_damage, expected_display);
+        if let Some(expected) = expected_shared {
+            assert_eq!(snapshot.readout.damage_attribution.shared_damage, expected);
+            state
+                .set_main_dps_detail_request(
+                    MainDpsDetailKind::Team,
+                    MainDpsDetailRequest {
+                        character_id: None,
+                        filter: CombatDetailFilter::SharedMechanics,
+                        skill_filter: None,
+                    },
+                )
+                .unwrap();
+            let detail = crate::contract::main_dps_detail::MainDpsDetailSnapshot::from_state(
+                &state,
+                MainDpsDetailKind::Team,
+                0,
+                100,
+            )
+            .unwrap();
+            assert_eq!(detail.total_damage, expected);
+            assert_eq!(detail.rows.len(), 2);
+            assert!(detail.rows[0].skill.contains("普通倾陷伤害"));
+            assert!(detail.rows[1].skill.contains("达芙蒂尔·额外倾陷伤害"));
+            state
+                .set_main_dps_detail_request(
+                    MainDpsDetailKind::Team,
+                    MainDpsDetailRequest::default(),
+                )
+                .unwrap();
+            let all = crate::contract::main_dps_detail::MainDpsDetailSnapshot::from_state(
+                &state,
+                MainDpsDetailKind::Team,
+                0,
+                500,
+            )
+            .unwrap();
+            assert!(
+                all.rows
+                    .iter()
+                    .any(|r| r.skill.contains("漆黑青春妄想·黑之书"))
+            );
+            println!(
+                "SHARED_BREAK_PASS damage={expected} ordinary_and_extra_labels_distinct=true black_book_named=true"
+            );
+        }
+        if let Some(reduction) = expected_reduction {
+            assert_eq!(
+                snapshot.readout.damage_attribution.max_hp_reduction,
+                reduction
+            );
+            let mut offset = 0;
+            let mut reduction_rows = 0;
+            let mut reductions = 0.0;
+            let mut extra = 0.0;
+            loop {
+                let detail = crate::contract::main_dps_detail::MainDpsDetailSnapshot::from_state(
+                    &state,
+                    MainDpsDetailKind::Team,
+                    offset,
+                    200,
+                )
+                .unwrap();
+                for row in &detail.rows {
+                    if let Some(value) = row.max_hp_reduction
+                        && value > 0.0
+                    {
+                        reduction_rows += 1;
+                        reductions += value;
+                    }
+                    extra += row.follow_up_damage;
+                    if [1036, 1042].contains(&row.character_id) {
+                        assert!(
+                            !row.skill.contains("Unmapped") && !row.skill.contains("未映射"),
+                            "mechanic label not projected"
+                        );
+                    }
+                }
+                offset += detail.rows.len();
+                if offset >= detail.total_hits {
+                    break;
+                }
+                assert!(!detail.rows.is_empty());
+            }
+            assert_eq!(reductions, reduction);
+            assert_eq!(reduction_rows, expected_reduction_rows);
+            assert_eq!(extra, expected_extra);
+            println!(
+                "MECHANIC_DETAIL_PASS reduction_rows={reduction_rows} max_hp_reduction={reductions} additional_hp_loss={extra}"
+            );
+        }
+        assert_eq!(
+            crate::contract::main_dps::MainDpsSnapshot::from_state(&state)
+                .unwrap()
+                .readout
+                .summary
+                .total_damage,
+            expected_display,
+            "an idle reread must retain the refreshed projection"
+        );
+        assert!(!snapshot.readout.characters.is_empty());
+        assert!(snapshot.has_live_session_data || snapshot.selected_round_id.is_some());
+        assert_ne!(state.main_dps_stream_revision().unwrap(), before);
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(
+            json["readout"]["summary"]["totalDamage"].as_f64(),
+            Some(expected_display)
+        );
+        if let Some(path) = std::env::var_os("NTE_TEST_MAIN_SNAPSHOT_OUTPUT") {
+            let bytes = serde_json::to_vec_pretty(&json).unwrap();
+            let mut output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap();
+            std::io::Write::write_all(&mut output, &bytes).unwrap();
+        }
+        println!(
+            "AUTO_MAIN_DPS_PASS total={} character_rows={} data_state={}",
+            expected_display,
+            snapshot.readout.characters.len(),
+            snapshot.readout.data_state
+        );
+    }
 
     #[test]
     fn desktop_capture_retains_packets_for_the_live_inspector() {
@@ -4385,8 +4926,85 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
+    }
+
+    #[test]
+    fn plugin_control_reservation_excludes_mode_switch_and_releases_after_failure() {
+        use nte_dps_tool::core::toolkit::DataMode;
+        let path = temporary_config_path("plugin_control_reservation");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            path.clone(),
+        );
+        state.set_data_mode(DataMode::Plugin).unwrap();
+        {
+            let _guard = state.reserve_plugin_control().unwrap();
+            assert!(state.reserve_plugin_control().is_err());
+            assert!(state.set_data_mode(DataMode::PacketCapture).is_err());
+            assert_eq!(state.data_mode(), DataMode::Plugin);
+        }
+        state.set_data_mode(DataMode::PacketCapture).unwrap();
+        assert_eq!(state.data_mode(), DataMode::PacketCapture);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn data_modes_default_switch_noop_and_preserve_records() {
+        use nte_dps_tool::core::toolkit::DataMode;
+        let path = temporary_config_path("data_modes");
+        let live = LiveCaptureService::new(LiveCaptureResources::default());
+        let state = AppState::new_with_config_path(UiConfig::default(), live.clone(), path.clone());
+        assert_eq!(state.data_mode(), DataMode::PacketCapture);
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::RealTime
+        );
+        let before = state.0.presentation.revision.load(Ordering::Acquire);
+        state.set_data_mode(DataMode::PacketCapture).unwrap();
+        assert_eq!(
+            state.0.presentation.revision.load(Ordering::Acquire),
+            before
+        );
+        state.set_data_mode(DataMode::Plugin).unwrap();
+        assert_eq!(state.data_mode(), DataMode::Plugin);
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::TimeStopAdjusted
+        );
+        assert_eq!(
+            live.history_archive_policy().requested_dps_time_mode,
+            DpsTimeBasis::SubtractTimeStop
+        );
+        assert_eq!(live.status().phase, LiveCapturePhase::Idle);
+        assert!(state.0.presentation.revision.load(Ordering::Acquire) > before);
+        let saved: UiConfig = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.data_mode, DataMode::Plugin);
+        let selection = state.reserve_main_round_selection();
+        state
+            .set_main_selected_round_id_with(Some("recorded-plugin".into()), selection, |_| {
+                Ok((CombatState::default(), DpsTimeMode::TimeStopAdjusted))
+            })
+            .unwrap();
+        state.set_data_mode(DataMode::PacketCapture).unwrap();
+        assert_eq!(state.data_mode(), DataMode::PacketCapture);
+        assert_eq!(
+            live.history_archive_policy().requested_dps_time_mode,
+            DpsTimeBasis::WallClock
+        );
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::TimeStopAdjusted,
+            "a stored round keeps its original time basis across a source switch"
+        );
+        println!(
+            "MODE_PASS: default packet_capture; plugin switch; no-op revision stable; no automatic source start"
+        );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     fn temporary_config_path(tag: &str) -> PathBuf {
@@ -4695,7 +5313,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(200.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("commit newer History selection")
@@ -4707,7 +5325,7 @@ mod tests {
                     stale_loader_ran.store(true, Ordering::Release);
                     let mut selected = CombatState::default();
                     selected.push_hit(test_hit(100.0));
-                    Ok(selected)
+                    Ok((selected, DpsTimeMode::RealTime))
                 },)
                 .expect("superseded History selection")
         );
@@ -4734,7 +5352,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(100.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("select first History contents")
@@ -4754,7 +5372,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(250.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("reload replaced History contents")
@@ -4783,7 +5401,7 @@ mod tests {
                     release_rx.recv().expect("release slow History load");
                     let mut selected = CombatState::default();
                     selected.push_hit(test_hit(100.0));
-                    Ok(selected)
+                    Ok((selected, DpsTimeMode::RealTime))
                 },
             )
         });
@@ -4797,7 +5415,7 @@ mod tests {
                     |_| {
                         let mut selected = CombatState::default();
                         selected.push_hit(test_hit(200.0));
-                        Ok(selected)
+                        Ok((selected, DpsTimeMode::RealTime))
                     },
                 )
                 .expect("commit newer History selection")
@@ -4923,6 +5541,27 @@ mod tests {
     }
 
     #[test]
+    fn plugin_equipment_does_not_replace_imported_replay_inventory() {
+        let state = AppState::new(
+            UiConfig {
+                data_mode: nte_dps_tool::storage::config::DataMode::Plugin,
+                ..UiConfig::default()
+            },
+            LiveCaptureService::new(LiveCaptureResources::default()),
+        );
+        assert!(state.uses_plugin_equipment().unwrap());
+        for source in [
+            CaptureQualitySource::JsonReplay,
+            CaptureQualitySource::PcapngReplay,
+        ] {
+            state.restore_live_state_for_test(CombatState::default(), source);
+            assert!(!state.uses_plugin_equipment().unwrap());
+        }
+        state.restore_live_state_for_test(CombatState::default(), CaptureQualitySource::Plugin);
+        assert!(state.uses_plugin_equipment().unwrap());
+    }
+
+    #[test]
     fn empty_curtain_data_snapshot_is_detached_from_live_state() {
         use nte_dps_tool::engine::model::{EmptyCurtainItem, HtItemNetId};
 
@@ -4977,8 +5616,14 @@ mod tests {
         second.push_hit(test_hit(300.0));
         second.push_hit(test_hit(25.0));
         live_capture
-            .restore_session(second, CaptureQualitySource::Live)
+            .restore_session(second, CaptureQualitySource::Plugin)
             .expect("healthy live-capture state");
+
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::RealTime,
+            "paused packet data retains its clock policy after replacing the live source"
+        );
 
         assert_eq!(
             state
@@ -5003,6 +5648,10 @@ mod tests {
         state
             .set_main_processing_paused(false)
             .expect("resume healthy live capture");
+        assert_eq!(
+            state.main_presented_dps_time_mode().unwrap(),
+            DpsTimeMode::TimeStopAdjusted
+        );
         assert_eq!(
             state
                 .with_main_presented_state(|presented| presented.total_damage)
@@ -6436,6 +7085,7 @@ mod tests {
             partial.push_hit(test_hit(987_654.0));
             paused.paused.as_mut().expect("paused snapshot").state = Arc::new(partial);
             paused.selected_round = Some(SelectedRoundPresentation {
+                dps_time_mode: DpsTimeMode::RealTime,
                 record_id: "private-partial-round".to_owned(),
                 history_revision: 0,
                 state: Arc::new(CombatState::default()),
@@ -6580,6 +7230,7 @@ mod tests {
             assert!(!recovered);
             mode.selected_outgoing_revision = selected_outgoing_revision;
             mode.selected_round = Some(SelectedRoundPresentation {
+                dps_time_mode: DpsTimeMode::RealTime,
                 record_id: "history-round".to_owned(),
                 history_revision: state.history_revision(),
                 state: Arc::new(CombatState::default()),
@@ -7272,7 +7923,6 @@ mod tests {
                     true,
                     true,
                     45,
-                    DpsTimeMode::RealTime,
                     HotkeyBinding::new(false, false, false, config::HotkeyKey::Insert),
                 )
                 .expect("capture settings save")
@@ -7358,7 +8008,7 @@ mod tests {
             saved.manual_capture_device.as_deref(),
             Some("capture-device")
         );
-        assert_eq!(saved.dps_time_mode, DpsTimeMode::RealTime);
+        assert_eq!(saved.dps_time_mode(), DpsTimeMode::RealTime);
         assert_eq!(
             saved.main_dps_display.metrics,
             [
@@ -7994,6 +8644,48 @@ mod tests {
         assert!(!state.dismiss_island_notice("untrusted-notice-id"));
         assert_eq!(state.0.island_notice.revision(), initial_revision + 1);
         assert!(state.island_notice().is_none());
+    }
+
+    #[test]
+    fn repeated_capture_notices_do_not_replay_stale_stops_or_suppress_a_new_run() {
+        let state = AppState::default();
+        let mut previous_stop: Option<String> = None;
+        for _ in 0..3 {
+            let start =
+                state.publish_island_notice("status", "Starting live capture...", Vec::new(), None);
+            if let Some(previous) = previous_stop {
+                assert!(!state.dismiss_island_notice(&previous));
+            }
+            assert_eq!(state.island_notice().unwrap().id, start);
+            assert_eq!(state.island_notice().unwrap().tone, "info");
+            state.publish_island_notice("status", "Stopping live capture...", Vec::new(), None);
+            let stop = state.publish_island_notice("success", "Capture stopped", Vec::new(), None);
+            assert_eq!(
+                state.publish_island_notice("success", "Capture stopped", Vec::new(), None),
+                stop
+            );
+            let wire =
+                serde_json::to_value(crate::contract::island::IslandSnapshot::from_state(&state))
+                    .unwrap();
+            assert_eq!(wire["notice"]["tone"], "success");
+            previous_stop = Some(stop);
+        }
+    }
+
+    #[test]
+    fn island_status_is_a_valid_info_tone_and_duplicate_does_not_restart_notice() {
+        let runtime = IslandNoticeRuntime::default();
+        let id = runtime.publish("status", "Stopping live capture...", Vec::new(), None);
+        let first = runtime.current().unwrap();
+        assert_eq!(first.tone, "info");
+        let revision = runtime.revision();
+        assert_eq!(
+            runtime.publish("status", "Stopping live capture...", Vec::new(), None),
+            id
+        );
+        let second = runtime.current().unwrap();
+        assert_eq!(second.expires_at, first.expires_at);
+        assert_eq!(runtime.revision(), revision);
     }
 
     #[test]

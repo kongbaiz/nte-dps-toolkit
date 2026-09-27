@@ -1,5 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-
 import {
   encryptedIniError,
   parseEncryptedIniSnapshot,
@@ -12,6 +10,10 @@ import {
   type SaveEncryptedIniResult,
 } from "@/lib/tauri/encrypted-ini-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
+import {
+  tauriInvokeTransport,
+  type InvokeTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   snapshot: "get_encrypted_ini_snapshot",
@@ -21,13 +23,6 @@ const COMMANDS = {
   clear: "clear_encrypted_ini",
 } as const;
 
-interface EncryptedIniTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-}
-
 export interface EncryptedIniClient {
   getSnapshot(): Promise<EncryptedIniSnapshot>;
   open(): Promise<OpenEncryptedIniResult>;
@@ -36,12 +31,8 @@ export interface EncryptedIniClient {
   clear(): Promise<EncryptedIniSnapshot>;
 }
 
-const tauriTransport: EncryptedIniTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-};
-
 export function createEncryptedIniClient(
-  transport: EncryptedIniTransport = tauriTransport,
+  transport: InvokeTransport = tauriInvokeTransport,
 ): EncryptedIniClient {
   const call = async <T>(operation: () => Promise<T>): Promise<T> => {
     try {

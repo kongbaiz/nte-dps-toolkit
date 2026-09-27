@@ -66,14 +66,18 @@ export function SettingsPage() {
   const catalogActions: SettingsCatalogActions = settings;
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col overflow-hidden p-3">
+    <section className="console-preferences flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="console-section-heading">
+        <h1>{t("Settings")}</h1>
+        <p>{t("Interface, capture and HUD preferences")}</p>
+      </header>
       {settings.mutationError ? (
         <MutationError
           error={settings.mutationError}
           onDismiss={settings.clearMutationError}
         />
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto p-px pr-1 pb-1">
+      <div className="console-preferences-scroll min-h-0 flex-1 overflow-y-auto">
         {settings.state.status === "loading" ? (
           <SettingsLoading />
         ) : settings.state.status === "error" ? (
@@ -82,7 +86,7 @@ export function SettingsPage() {
             onRetry={settings.refresh}
           />
         ) : (
-          <div className="grid grid-cols-1 items-start gap-3 min-[900px]:grid-cols-2">
+          <div className="settings-columns grid items-start gap-4">
             <PrimarySettingsColumn
               snapshot={settings.state.snapshot}
               pendingAction={settings.pendingAction}
@@ -141,7 +145,7 @@ function SettingsReady({
 
   return (
     <div className="flex flex-col gap-3">
-      <Card>
+      <Card className="@container/hud-settings">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <SlidersHorizontal className="size-4" aria-hidden="true" />
@@ -235,8 +239,8 @@ function HudWindowSection({
           )}
         </p>
       </div>
-      <div className="mt-3 grid divide-y border-y min-[760px]:grid-cols-2 min-[760px]:divide-x min-[760px]:divide-y-0">
-        <label className="flex items-center justify-between gap-4 py-2.5 min-[760px]:pr-5">
+      <div className="mt-3 grid divide-y border-y @min-[32rem]/hud-settings:grid-cols-2 @min-[32rem]/hud-settings:divide-x @min-[32rem]/hud-settings:divide-y-0">
+        <label className="flex items-center justify-between gap-4 py-2.5 @min-[32rem]/hud-settings:pr-5">
           <span>
             <span className="flex items-center gap-2 text-sm font-medium">
               <Pin
@@ -257,7 +261,7 @@ function HudWindowSection({
           />
         </label>
 
-        <div className="py-2.5 min-[760px]:pl-5">
+        <div className="py-2.5 @min-[32rem]/hud-settings:pl-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="text-sm font-medium" htmlFor="settings-hud-width">
               {t("HUD Width")}
