@@ -3,6 +3,26 @@ import { describe, expect, it } from "vitest";
 import { parseDpsTimeRuntime } from "@/lib/tauri/dps-time-contract";
 
 describe("DPS time runtime contract", () => {
+  it("represents plugin clock initialization without wall-clock fallback or a pause warning", () => {
+    expect(
+      parseDpsTimeRuntime({
+        configuredMode: "time-stop-adjusted",
+        effectiveMode: "pending",
+        combatClockHealth: "unknown",
+        degraded: false,
+        warningMessageKey: null,
+      }).effectiveMode,
+    ).toBe("pending");
+    expect(() =>
+      parseDpsTimeRuntime({
+        configuredMode: "real-time",
+        effectiveMode: "pending",
+        combatClockHealth: "unknown",
+        degraded: false,
+        warningMessageKey: null,
+      }),
+    ).toThrow();
+  });
   it("accepts authoritative adjusted and explicit degraded wall-clock states", () => {
     expect(
       parseDpsTimeRuntime({

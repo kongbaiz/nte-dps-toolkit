@@ -62,7 +62,7 @@ try {
     $intentionalRustOnly = [ordered]@{
         # CLI JSON-RPC and file/update schemas have no TypeScript consumer.
         BATTLE_READ_CONTRACT_VERSION = 6
-        MOD_MARKET_SCHEMA_VERSION = 4
+        MOD_MARKET_SCHEMA_VERSION = 6
         PROTOCOL_VERSION = 1
         UPDATER_PROTOCOL_VERSION = 1
         UPDATE_SCHEMA_VERSION = 1

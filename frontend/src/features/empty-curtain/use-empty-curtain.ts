@@ -27,6 +27,7 @@ export function useEmptyCurtain(
   });
   const [notice, setNotice] = useState<EmptyCurtainCommandError | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
@@ -40,9 +41,11 @@ export function useEmptyCurtain(
 
   useEffect(() => {
     let active = true;
-    let streamSnapshotReceived = false;
     const generation = ++requestGeneration.current;
-    setState({ status: "loading" });
+    setRefreshing(true);
+    setState((current) =>
+      current.status === "ready" ? current : { status: "loading" },
+    );
     setNotice(null);
     void client
       .getSnapshot()
@@ -52,7 +55,7 @@ export function useEmptyCurtain(
           mounted.current &&
           generation === requestGeneration.current
         ) {
-          if (!streamSnapshotReceived) setState({ status: "ready", snapshot });
+          setState({ status: "ready", snapshot });
         }
       })
       .catch((error: unknown) => {
@@ -61,15 +64,46 @@ export function useEmptyCurtain(
           mounted.current &&
           generation === requestGeneration.current
         ) {
-          setState({ status: "error", error: emptyCurtainError(error) });
+          setState((current) =>
+            current.status === "ready"
+              ? current
+              : { status: "error", error: emptyCurtainError(error) },
+          );
+          setNotice(emptyCurtainError(error));
         }
+      })
+      .finally(() => {
+        if (
+          active &&
+          mounted.current &&
+          generation === requestGeneration.current
+        )
+          setRefreshing(false);
       });
+    return () => {
+      active = false;
+    };
+  }, [client, reloadKey]);
+
+  useEffect(() => {
+    let active = true;
     const unsubscribe = client.subscribe(
       (snapshot) => {
         if (!active || !mounted.current) return;
-        streamSnapshotReceived = true;
         setState({ status: "ready", snapshot });
-        if (snapshot.operation.status === "error") {
+        if (!snapshot.canOperate) {
+          setNotice((current) =>
+            current &&
+            [
+              "plugin_unavailable",
+              "plugin_busy",
+              "plugin_unsupported",
+              "empty_curtain_operation_failed",
+            ].includes(current.code)
+              ? null
+              : current,
+          );
+        } else if (snapshot.operation.status === "error") {
           setNotice((current) => {
             const argumentsMatch =
               current?.messageArguments.join("\u0000") ===
@@ -86,6 +120,12 @@ export function useEmptyCurtain(
               messageArguments: snapshot.operation.messageArguments,
             };
           });
+        } else {
+          // A recovered background read must remove its own old error toast,
+          // without dismissing unrelated command/file-dialog errors.
+          setNotice((current) =>
+            current?.code === "empty_curtain_operation_failed" ? null : current,
+          );
         }
       },
       (error) => {
@@ -96,7 +136,7 @@ export function useEmptyCurtain(
       active = false;
       void unsubscribe();
     };
-  }, [client, reloadKey]);
+  }, [client]);
 
   const runSnapshotAction = useCallback(
     async (operation: Promise<EmptyCurtainSnapshot>) => {
@@ -143,20 +183,35 @@ export function useEmptyCurtain(
     [client],
   );
 
+  const canOperate = state.status === "ready" && state.snapshot.canOperate;
+
   return {
     state,
     notice,
-    actionPending,
+    actionPending:
+      actionPending ||
+      (state.status === "ready" &&
+        state.snapshot.operation.status === "pending"),
+    refreshing,
     clearNotice: () => setNotice(null),
-    retry: () => setReloadKey((value) => value + 1),
+    retry: () => {
+      if (state.status === "ready" && !canOperate) return;
+      setRefreshing(true);
+      setReloadKey((value) => value + 1);
+    },
     positions,
     manageItem: (input: ManageItemInput) =>
-      runSnapshotAction(client.manageItem(input)),
+      canOperate
+        ? runSnapshotAction(client.manageItem(input))
+        : Promise.resolve(),
     characterAction: (character: ItemUid, action: CharacterEquipmentAction) =>
-      runSnapshotAction(client.characterAction(character, action)),
+      canOperate
+        ? runSnapshotAction(client.characterAction(character, action))
+        : Promise.resolve(),
     exportInventory: () => runFileAction(client.exportInventory()),
     exportLoadout: (character: ItemUid) =>
       runFileAction(client.exportLoadout(character)),
-    importLoadout: () => runFileAction(client.importLoadout()),
+    importLoadout: () =>
+      canOperate ? runFileAction(client.importLoadout()) : Promise.resolve(),
   };
 }

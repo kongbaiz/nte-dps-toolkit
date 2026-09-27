@@ -735,6 +735,8 @@ pub enum HitDetailColumn {
     Type,
     Damage,
     TargetHp,
+    Critical,
+    Snapshot,
 }
 
 impl HitDetailColumn {
@@ -746,6 +748,8 @@ impl HitDetailColumn {
             Self::Type => "Type",
             Self::Damage => "Damage",
             Self::TargetHp => "Target / HP",
+            Self::Critical => "Critical hit",
+            Self::Snapshot => "Hit snapshot",
         }
     }
 }
@@ -763,6 +767,10 @@ pub struct HitDetailColumnsConfig {
     pub type_width: u16,
     pub damage_width: u16,
     pub target_hp_width: u16,
+    pub show_critical: bool,
+    pub show_snapshot: bool,
+    pub critical_width: u16,
+    pub snapshot_width: u16,
 }
 
 impl Default for HitDetailColumnsConfig {
@@ -778,6 +786,10 @@ impl Default for HitDetailColumnsConfig {
             type_width: 250,
             damage_width: 130,
             target_hp_width: 180,
+            show_critical: true,
+            show_snapshot: true,
+            critical_width: 80,
+            snapshot_width: 250,
         }
     }
 }
@@ -790,6 +802,8 @@ impl HitDetailColumnsConfig {
             HitDetailColumn::Type => self.show_type,
             HitDetailColumn::Damage => self.show_damage,
             HitDetailColumn::TargetHp => self.show_target_hp,
+            HitDetailColumn::Critical => self.show_critical,
+            HitDetailColumn::Snapshot => self.show_snapshot,
         }
     }
 
@@ -800,6 +814,8 @@ impl HitDetailColumnsConfig {
             HitDetailColumn::Type => self.type_width,
             HitDetailColumn::Damage => self.damage_width,
             HitDetailColumn::TargetHp => self.target_hp_width,
+            HitDetailColumn::Critical => self.critical_width,
+            HitDetailColumn::Snapshot => self.snapshot_width,
         }
     }
 
@@ -811,6 +827,8 @@ impl HitDetailColumnsConfig {
             HitDetailColumn::Type => self.type_width = width,
             HitDetailColumn::Damage => self.damage_width = width,
             HitDetailColumn::TargetHp => self.target_hp_width = width,
+            HitDetailColumn::Critical => self.critical_width = width,
+            HitDetailColumn::Snapshot => self.snapshot_width = width,
         }
     }
 
@@ -821,6 +839,8 @@ impl HitDetailColumnsConfig {
             HitDetailColumn::Type,
             HitDetailColumn::Damage,
             HitDetailColumn::TargetHp,
+            HitDetailColumn::Critical,
+            HitDetailColumn::Snapshot,
         ] {
             self.set_width(column, self.width(column));
         }

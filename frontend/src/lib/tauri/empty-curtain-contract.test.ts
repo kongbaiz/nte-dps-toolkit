@@ -6,7 +6,8 @@ import {
 } from "@/lib/tauri/empty-curtain-contract";
 
 export const EMPTY_CURTAIN_FIXTURE = {
-  contractVersion: 2,
+  contractVersion: 3,
+  canOperate: true,
   generation: "9007199254740992",
   observedAtUnixMs: "1785542400000",
   hasData: true,
@@ -169,4 +170,17 @@ describe("Console equipment contract", () => {
       }),
     ).toThrow(/aggregate text bounds/);
   });
+});
+
+it("requires the backend equipment operation capability instead of guessing from data", () => {
+  expect(
+    parseEmptyCurtainSnapshot({ ...EMPTY_CURTAIN_FIXTURE, canOperate: false })
+      .canOperate,
+  ).toBe(false);
+  expect(() =>
+    parseEmptyCurtainSnapshot({
+      ...EMPTY_CURTAIN_FIXTURE,
+      canOperate: undefined,
+    }),
+  ).toThrow();
 });

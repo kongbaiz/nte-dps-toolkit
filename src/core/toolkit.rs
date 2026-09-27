@@ -1,23 +1,21 @@
 //! Bounded adapter for UE Tools combat report schema 14, independent of packet
 //! decoding. Unobserved identities stay unknown; gaps are errors, never zeros.
+#[path = "toolkit_stream.rs"]
+mod stream;
 use crate::{
     engine::{
         capture::EngineEventSink,
         model::{
-            CombatClockRuntimeHealth, EngineEvent, Hit, HitCharacterSource, HitDirection,
-            TimeStopEvent,
+            AbyssEvent, AbyssHalf, CombatClockRuntimeHealth, EngineEvent, Hit, HitCharacterSource,
+            HitDirection, TimeStopEvent,
         },
     },
-    platform::toolkit::{MAX_BLOB_BYTES, ToolkitClient, ToolkitError},
+    platform::toolkit::{MAX_BLOB_BYTES, ToolkitError},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
+    sync::{Arc, atomic::AtomicBool},
 };
 
 pub use crate::storage::config::DataMode;
@@ -54,9 +52,28 @@ struct Report {
     totals: Totals,
     quality: ReportQuality,
     game_clock: GameClock,
+    #[serde(default)]
+    abyss: Option<AbyssTimeline>,
     participants: Vec<Participant>,
     events: Vec<Damage>,
 }
+// Additive schema-14 extension. Older native plugins remain usable, but never
+// fabricate an initial half when no delivered stage notification was observed.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AbyssTimeline {
+    schema_version: u32,
+    dropped_events: u64,
+    transitions: Vec<AbyssTransition>,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AbyssTransition {
+    unix_us: u64,
+    from: u8,
+    to: u8,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GameClock {
@@ -86,26 +103,79 @@ struct ReportQuality {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Participant {
+pub(super) struct Participant {
     object_index: i32,
     role_id: String,
     display_name: String,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Damage {
+pub(super) struct Damage {
+    #[serde(deserialize_with = "wire_u64")]
     unix_us: u64,
     damage: f64,
     attacker_object_index: i32,
     victim_object_index: i32,
+    #[serde(deserialize_with = "wire_quality")]
     quality: String,
     direction: String,
     victim_name: String,
+    #[serde(default)]
+    attacker_name: String,
     victim_hp: Option<f64>,
     victim_max_hp: Option<f64>,
     skill_name: String,
+    #[serde(default)]
+    skill_key: String,
+    #[serde(default)]
+    attack_detail_key: String,
+    #[serde(default)]
+    attack_detail_name: String,
+    #[serde(default)]
+    display_type: Option<i32>,
+    #[serde(default)]
+    association: String,
+    #[serde(default)]
     damage_attribute: String,
+    #[serde(default)]
     damage_lane: String,
+}
+fn wire_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Value {
+        Number(u64),
+        Text(String),
+    }
+    match Value::deserialize(d)? {
+        Value::Number(v) => Ok(v),
+        Value::Text(v)
+            if !v.is_empty() && v.len() <= 20 && v.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            v.parse().map_err(serde::de::Error::custom)
+        }
+        _ => Err(serde::de::Error::custom("invalid decimal identity")),
+    }
+}
+fn wire_quality<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Value {
+        Number(u8),
+        Text(String),
+    }
+    match Value::deserialize(d)? {
+        Value::Number(v) => ["direct", "correlated", "inferred", "unknown"]
+            .get(v as usize)
+            .map(|s| s.to_string())
+            .ok_or_else(|| serde::de::Error::custom("invalid quality")),
+        Value::Text(v)
+            if matches!(v.as_str(), "direct" | "correlated" | "inferred" | "unknown") =>
+        {
+            Ok(v)
+        }
+        _ => Err(serde::de::Error::custom("invalid quality")),
+    }
 }
 fn direction(value: &str) -> Result<HitDirection, ToolkitError> {
     if value == "other" {
@@ -121,6 +191,8 @@ pub struct ReportCursor {
     consumed: u64,
     previous: Vec<Damage>,
     clock: Vec<ClockTransition>,
+    abyss: Vec<AbyssTransition>,
+    abyss_supported: bool,
     clock_health: Option<CombatClockRuntimeHealth>,
 }
 impl ReportCursor {
@@ -189,12 +261,58 @@ impl ReportCursor {
         }
         // Native validity can preserve the previous last-hit interval after a later
         // sampling failure. Conservatively expose unobserved boundaries as unavailable.
-        let clock_available = clock.valid && clock.transitions.iter().skip(1).all(|t| t.boundary);
+        // Native `valid` describes an anchored outgoing DPS interval, not whether
+        // pause acquisition is ready. Before the first outgoing hit the clock
+        // reports awaiting_outgoing_damage even after observing valid pause edges.
+        let awaiting_first_hit = clock.status == "awaiting_outgoing_damage"
+            && !clock.transitions.is_empty()
+            && report
+                .events
+                .iter()
+                .all(|event| event.direction != "outgoing");
+        let clock_available = (clock.valid || awaiting_first_hit)
+            && clock.transitions.iter().skip(1).all(|t| t.boundary);
         let health = if clock_available {
             CombatClockRuntimeHealth::Available
         } else {
             CombatClockRuntimeHealth::DataUnavailable
         };
+        let abyss = match &report.abyss {
+            Some(abyss) => {
+                if abyss.schema_version != 1 {
+                    return Err(ToolkitError::Unsupported);
+                }
+                if abyss.transitions.len() > 4096 {
+                    return Err(ToolkitError::TooLarge);
+                }
+                if abyss.dropped_events != 0 {
+                    return Err(ToolkitError::DataGap);
+                }
+                if abyss.transitions.iter().any(|t| {
+                    t.unix_us == 0 || t.unix_us > 9_007_199_254_740_991 || t.from > 2 || t.to > 2
+                }) || abyss
+                    .transitions
+                    .windows(2)
+                    .any(|p| p[1].unix_us < p[0].unix_us)
+                {
+                    return Err(ToolkitError::InvalidProtocol);
+                }
+                abyss.transitions.as_slice()
+            }
+            None if self.abyss_supported => return Err(ToolkitError::DataGap),
+            None => &[],
+        };
+        if abyss.len() < self.abyss.len() || abyss[..self.abyss.len()] != self.abyss {
+            return Err(ToolkitError::DataGap);
+        }
+        // A newly disclosed stage edge cannot silently reassign hits already delivered.
+        if let Some(last) = self.previous.last()
+            && abyss[self.abyss.len()..]
+                .iter()
+                .any(|t| t.unix_us < last.unix_us)
+        {
+            return Err(ToolkitError::DataGap);
+        }
         let mut participants = HashMap::new();
         for p in &report.participants {
             if p.role_id.len() > 64
@@ -218,6 +336,10 @@ impl ReportCursor {
                     &event.skill_name,
                     &event.damage_attribute,
                     &event.damage_lane,
+                    &event.skill_key,
+                    &event.attack_detail_key,
+                    &event.attack_detail_name,
+                    &event.association,
                 ]
                 .iter()
                 .any(|x| x.len() > 512)
@@ -231,66 +353,29 @@ impl ReportCursor {
             direction(&event.direction)?;
         }
         for event in &report.events[retained..] {
-            let participant = participants.get(&if event.direction == "incoming" {
-                event.victim_object_index
-            } else {
-                event.attacker_object_index
-            });
-            let role = participant
-                .and_then(|p| p.role_id.parse::<u32>().ok())
-                .filter(|id| *id != 0);
-            let known = role.is_some() && matches!(event.quality.as_str(), "direct" | "correlated");
-            hits.push(Hit {
-                timestamp: event.unix_us as f64 / 1_000_000.0,
-                char_id: if known { role.unwrap_or(0) } else { 0 },
-                char_name: if known {
-                    participant
-                        .map(|p| p.display_name.clone())
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                },
-                char_known: known,
-                damage: event.damage,
-                byte_offset: 0,
-                bit_shift: 0,
-                char_source: HitCharacterSource::Plugin,
-                direction: direction(&event.direction)?,
-                // Report only supplies post-hit HP. Never invent pre-hit HP or overkill.
-                target_hp_before: 0.0,
-                target_hp_after: event.victim_hp.unwrap_or(0.0),
-                target_max_hp: event.victim_max_hp.unwrap_or(0.0),
-                max_hp_reduction: 0.0,
-                target_hp_percent: 0.0,
-                target_id: (event.victim_object_index > 0)
-                    .then(|| event.victim_object_index.to_string()),
-                target_name: (!event.victim_name.is_empty()).then(|| event.victim_name.clone()),
-                target_name_en: None,
-                target_name_ja: None,
-                target_monster_id: None,
-                target_context: vec![
-                    format!("plugin_quality:{}", event.quality),
-                    format!("plugin_direction:{}", event.direction),
-                ],
-                gameplay_effect_index: None,
-                gameplay_effect_name: None,
-                ability_name: (!event.skill_name.is_empty()).then(|| event.skill_name.clone()),
-                damage_name: None,
-                damage_component: Some(event.damage_lane.clone()),
-                attack_type: None,
-                damage_attribute: (!event.damage_attribute.is_empty())
-                    .then(|| event.damage_attribute.clone()),
-                follow_up_damage: 0.0,
-                follow_up_timestamp: None,
-                follow_up_damage_name: None,
-                follow_up_attack_type: None,
-                follow_up_damage_attribute: None,
-                reconciled_overkill_damage: Some(0.0),
-                exact: None,
-                wire_event: None,
-            });
+            hits.push(project_damage(event, &participants)?);
         }
         let mut timed = Vec::with_capacity(hits.len() + clock.transitions.len() - self.clock.len());
+        for transition in &abyss[self.abyss.len()..] {
+            let timestamp = transition.unix_us as f64 / 1_000_000.0;
+            let event = match transition.to {
+                0 => AbyssEvent::Exit { timestamp },
+                1 | 2 => AbyssEvent::Stage {
+                    timestamp,
+                    cycle: None,
+                    floor: None,
+                    half: if transition.to == 1 {
+                        AbyssHalf::First
+                    } else {
+                        AbyssHalf::Second
+                    },
+                    // A delivered notification only proves state from its timestamp.
+                    allow_late_backfill: false,
+                },
+                _ => unreachable!("validated stage"),
+            };
+            timed.push((transition.unix_us, EngineEvent::Abyss(event)));
+        }
         let mut mask = self.clock.last().map_or(0, |t| t.pause_mask);
         for transition in &clock.transitions[self.clock.len()..] {
             let timestamp = transition.unix_us as f64 / 1_000_000.0;
@@ -318,7 +403,7 @@ impl ReportCursor {
         for (hit, raw) in hits.into_iter().zip(&report.events[retained..]) {
             timed.push((raw.unix_us, EngineEvent::Hit(Box::new(hit))));
         }
-        // Pause transitions precede hits at the same timestamp. This preserves
+        // Stage and pause transitions precede hits at the same timestamp. This preserves
         // authoritative event order through the existing capture/reducer path.
         timed.sort_by_key(|(timestamp, _)| *timestamp);
         let mut events = Vec::with_capacity(timed.len() + 1);
@@ -326,9 +411,11 @@ impl ReportCursor {
             events.push(EngineEvent::CombatClockHealth(health));
         }
         events.extend(timed.into_iter().map(|(_, event)| event));
+        self.abyss = abyss.to_vec();
+        self.abyss_supported = report.abyss.is_some();
         self.clock_health = Some(health);
         self.clock = report.game_clock.transitions;
-        if count > 0 || !identity.1.is_empty() {
+        if count > 0 || !identity.1.is_empty() || !self.abyss.is_empty() {
             self.identity = Some(identity);
         }
         self.consumed = count;
@@ -337,91 +424,106 @@ impl ReportCursor {
     }
 }
 
-pub fn run(pid: u32, sender: EngineEventSink, stop: Arc<AtomicBool>) {
-    let cancelled = || stop.load(Ordering::Acquire);
-    // Wait for the existing session delivery permit before starting any foreign operation.
-    if sender
-        .send(EngineEvent::Status("plugin connecting".into()))
-        .is_err()
-    {
-        return;
-    }
-    if cancelled() {
-        let _ = sender.send(EngineEvent::CaptureStopped);
-        return;
-    }
-    let mut started = false;
-    let result = (|| {
-        let client = ToolkitClient::open(pid)?;
-        client.describe()?;
-        let initial: CombatStatus = client.json(100, 0, "", &cancelled)?;
-        // Do not reset a foreign capture that this session does not own.
-        if initial.capturing {
-            return Err(ToolkitError::Busy);
-        }
-        client.call(101, 0, "", &cancelled)?;
-        started = true;
-        wait_operation(&client, &cancelled)?;
-        let mut cursor = ReportCursor::default();
-        while !cancelled() {
-            let status: CombatStatus = client.json(100, 0, "", &cancelled)?;
-            let bytes = client.call(107, 0, "", &cancelled)?;
-            for event in cursor.ingest(&bytes)? {
-                if cancelled() || sender.send(event).is_err() {
-                    return Err(ToolkitError::Cancelled);
-                }
-            }
-            if !status.capturing {
-                return Ok(());
-            }
-            // Full reports are bounded to one per second, never per frame/hit.
-            for _ in 0..100 {
-                if cancelled() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-        Ok(())
-    })();
-    if started {
-        // A fresh finite group can stop our capture after cancellation. A failed
-        // or timed-out stop is surfaced; mutation requests are never retried.
-        let stopped = ToolkitClient::open(pid).and_then(|c| {
-            c.call(102, 0, "", &|| false)?;
-            wait_operation(&c, &|| false)
-        });
-        if let Err(error) = stopped {
-            let _ = sender.send(EngineEvent::Error(format!("plugin stop: {error}")));
-        }
-    }
-    if let Err(error) = result
-        && error != ToolkitError::Cancelled
-    {
-        let _ = sender.send(EngineEvent::Error(format!("plugin data source: {error}")));
-    }
-    let _ = sender.send(EngineEvent::CaptureStopped);
+fn project_damage(
+    event: &Damage,
+    participants: &HashMap<i32, &Participant>,
+) -> Result<Hit, ToolkitError> {
+    let participant = participants.get(&if event.direction == "incoming" {
+        event.victim_object_index
+    } else {
+        event.attacker_object_index
+    });
+    let role = participant
+        .and_then(|p| p.role_id.parse::<u32>().ok())
+        .filter(|id| *id != 0);
+    // Attribution quality also describes missing skill/critical metadata.
+    // Explicit server categories retain their independently observed actor.
+    let server_category = event.display_type.is_some_and(|v| (22..=28).contains(&v))
+        && event.association == "server_reaction_category";
+    let known = role.is_some()
+        && (matches!(event.quality.as_str(), "direct" | "correlated") || server_category);
+    let special = event
+        .display_type
+        .and_then(|v| crate::engine::parser::DamageDisplayType::try_from(v).ok())
+        .and_then(|v| v.damage_name().map(|name| (name, v.attack_type())));
+    let effect = event
+        .attack_detail_key
+        .strip_suffix("_C")
+        .unwrap_or(&event.attack_detail_key);
+    let effect = (!effect.is_empty()).then_some(effect);
+    let skill = event
+        .skill_key
+        .strip_suffix("_C")
+        .unwrap_or(&event.skill_key);
+    let component = if special.is_none() || event.display_type == Some(22) {
+        effect
+            .and_then(crate::storage::ability_names::resolve_damage_name)
+            .or_else(|| {
+                (!event.attack_detail_name.is_empty()).then(|| event.attack_detail_name.clone())
+            })
+    } else {
+        None
+    };
+    Ok(Hit {
+        timestamp: event.unix_us as f64 / 1_000_000.0,
+        char_id: if known { role.unwrap_or(0) } else { 0 },
+        char_name: if known {
+            participant
+                .map(|p| p.display_name.clone())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        },
+        char_known: known,
+        damage: event.damage,
+        byte_offset: 0,
+        bit_shift: 0,
+        char_source: HitCharacterSource::Plugin,
+        direction: direction(&event.direction)?,
+        // Report only supplies post-hit HP. Never invent pre-hit HP or overkill.
+        target_hp_before: 0.0,
+        target_hp_after: event.victim_hp.unwrap_or(0.0),
+        target_max_hp: event.victim_max_hp.unwrap_or(0.0),
+        max_hp_reduction: 0.0,
+        target_hp_percent: 0.0,
+        target_id: (event.victim_object_index > 0).then(|| event.victim_object_index.to_string()),
+        target_name: (!event.victim_name.is_empty()).then(|| event.victim_name.clone()),
+        target_name_en: None,
+        target_name_ja: None,
+        target_monster_id: None,
+        target_context: vec![
+            format!("plugin_quality:{}", event.quality),
+            format!("plugin_direction:{}", event.direction),
+        ],
+        gameplay_effect_index: None,
+        gameplay_effect_name: effect.map(str::to_owned),
+        ability_name: (!skill.is_empty()).then(|| skill.to_owned()),
+        damage_name: special
+            .map(|v| v.0.to_owned())
+            .or_else(|| (!event.skill_name.is_empty()).then(|| event.skill_name.clone())),
+        damage_component: component,
+        attack_type: special.and_then(|v| v.1.map(str::to_owned)),
+        damage_attribute: (!event.damage_attribute.is_empty())
+            .then(|| event.damage_attribute.clone()),
+        follow_up_damage: 0.0,
+        follow_up_timestamp: None,
+        follow_up_damage_name: None,
+        follow_up_attack_type: None,
+        follow_up_damage_attribute: None,
+        reconciled_overkill_damage: Some(0.0),
+        exact: None,
+        plugin_snapshot: None,
+        wire_event: None,
+    })
 }
-fn wait_operation(
-    client: &ToolkitClient,
-    cancelled: &dyn Fn() -> bool,
-) -> Result<(), ToolkitError> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        let operation: Operation = client.json(106, 0, "", cancelled)?;
-        if !operation.busy {
-            return if operation.ok {
-                Ok(())
-            } else {
-                Err(ToolkitError::Failed)
-            };
-        }
-        if cancelled() {
-            return Err(ToolkitError::Cancelled);
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    Err(ToolkitError::Timeout)
+
+pub fn run(
+    pid: u32,
+    sender: EngineEventSink,
+    stop: Arc<AtomicBool>,
+    router: Arc<super::equipment_rpc::Router>,
+) {
+    stream::run(pid, sender, stop, router);
 }
 
 #[cfg(test)]
@@ -483,6 +585,68 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn plugin_clock_ready_before_first_outgoing_hit_is_not_a_missing_pause_state() {
+        let mut value = clock_report();
+        value["events"] = serde_json::json!([]);
+        value["totals"]["allHits"] = serde_json::json!(0);
+        value["gameClock"]["valid"] = serde_json::json!(false);
+        value["gameClock"]["status"] = serde_json::json!("awaiting_outgoing_damage");
+        let mut cursor = ReportCursor::default();
+        let events = cursor.ingest(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(matches!(
+            events.first(),
+            Some(EngineEvent::CombatClockHealth(
+                CombatClockRuntimeHealth::Available
+            ))
+        ));
+        assert!(
+            cursor
+                .ingest(&serde_json::to_vec(&value).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+
+        // A real sampling failure must still degrade, even with no outgoing hits.
+        value["gameClock"]["status"] = serde_json::json!("pause_clock_read_failed");
+        let events = cursor.ingest(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [EngineEvent::CombatClockHealth(
+                CombatClockRuntimeHealth::DataUnavailable
+            )]
+        ));
+    }
+
+    #[test]
+    fn awaiting_plugin_clock_requires_observed_boundaries_and_no_outgoing_hits() {
+        let mut value = clock_report();
+        value["gameClock"]["valid"] = serde_json::json!(false);
+        value["gameClock"]["status"] = serde_json::json!("awaiting_outgoing_damage");
+        for variant in 0..3 {
+            let mut invalid = value.clone();
+            if variant != 0 {
+                invalid["events"] = serde_json::json!([]);
+                invalid["totals"]["allHits"] = serde_json::json!(0);
+            }
+            if variant == 1 {
+                invalid["gameClock"]["transitions"] = serde_json::json!([]);
+            }
+            if variant == 2 {
+                invalid["gameClock"]["transitions"][1]["boundary"] = serde_json::json!(false);
+            }
+            let events = ReportCursor::default()
+                .ingest(&serde_json::to_vec(&invalid).unwrap())
+                .unwrap();
+            assert!(matches!(
+                events.first(),
+                Some(EngineEvent::CombatClockHealth(
+                    CombatClockRuntimeHealth::DataUnavailable
+                ))
+            ));
+        }
     }
 
     #[test]
@@ -558,6 +722,190 @@ mod tests {
                 .is_empty()
         );
     }
+    fn with_abyss(mut value: serde_json::Value) -> serde_json::Value {
+        value["abyss"] = serde_json::json!({"schemaVersion":1,"droppedEvents":0,"transitions":[
+            {"unixUs":1_000_000,"from":0,"to":1},
+            {"unixUs":11_000_000,"from":1,"to":2}
+        ]});
+        value
+    }
+
+    #[test]
+    fn plugin_stage_notifications_split_halves_before_same_timestamp_hits() {
+        use crate::{core::reducer::apply_engine_event, engine::model::CombatState};
+        let mut value = with_abyss(clock_report());
+        // Separate team members, as in a two-team Abyss challenge.
+        value["participants"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "objectIndex":3,"roleId":"1010","displayName":"second role"
+            }));
+        value["events"][1]["attackerObjectIndex"] = 3.into();
+        let mut cursor = ReportCursor::default();
+        let mut state = CombatState::default();
+        for event in cursor.ingest(&serde_json::to_vec(&value).unwrap()).unwrap() {
+            apply_engine_event(&mut state, event);
+        }
+        assert_eq!(state.abyss.active_half, Some(AbyssHalf::Second));
+        assert_eq!(state.abyss.first_half.total_damage, 100.0);
+        assert_eq!(state.abyss.second_half.total_damage, 100.0);
+        assert_eq!(state.total_damage, 200.0);
+        assert_eq!(
+            state.abyss.floor, None,
+            "a layer notification does not prove a floor number"
+        );
+        assert!(
+            cursor
+                .ingest(&serde_json::to_vec(&value).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+
+        value["abyss"]["transitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "unixUs":12_000_000,"from":2,"to":0
+            }));
+        let events = cursor.ingest(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [EngineEvent::Abyss(AbyssEvent::Exit { .. })]
+        ));
+        for event in events {
+            apply_engine_event(&mut state, event);
+        }
+        assert_eq!(state.abyss.active_half, None);
+    }
+
+    #[test]
+    fn plugin_stage_switch_without_damage_emits_once_and_never_backfills_unknown_hits() {
+        use crate::{core::reducer::apply_engine_event, engine::model::CombatState};
+        let mut cursor = ReportCursor::default();
+        let mut state = CombatState::default();
+        let mut value = report(100.0, "direct");
+        value["abyss"] = serde_json::json!({"schemaVersion":1,"droppedEvents":0,"transitions":[]});
+        for event in cursor.ingest(&serde_json::to_vec(&value).unwrap()).unwrap() {
+            apply_engine_event(&mut state, event);
+        }
+        value["abyss"]["transitions"] = serde_json::json!([{ "unixUs":2_000_000,"from":1,"to":2 }]);
+        let events = cursor.ingest(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [EngineEvent::Abyss(AbyssEvent::Stage {
+                half: AbyssHalf::Second,
+                allow_late_backfill: false,
+                ..
+            })]
+        ));
+        for event in events {
+            apply_engine_event(&mut state, event);
+        }
+        assert_eq!(state.abyss.active_half, Some(AbyssHalf::Second));
+        assert_eq!(state.abyss.first_half.total_damage, 0.0);
+        assert_eq!(state.abyss.second_half.total_damage, 0.0);
+        assert!(
+            cursor
+                .ingest(&serde_json::to_vec(&value).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn plugin_stage_malformed_gap_and_budget_failure_leave_cursor_retryable() {
+        let good = with_abyss(clock_report());
+        for (field, value, expected) in [
+            ("schemaVersion", 2.into(), ToolkitError::Unsupported),
+            ("droppedEvents", 1.into(), ToolkitError::DataGap),
+            (
+                "transitions",
+                serde_json::json!([{"unixUs":0,"from":0,"to":1}]),
+                ToolkitError::InvalidProtocol,
+            ),
+            (
+                "transitions",
+                serde_json::json!([{"unixUs":1,"from":0,"to":3}]),
+                ToolkitError::InvalidProtocol,
+            ),
+            (
+                "transitions",
+                serde_json::json!([{"unixUs":2,"from":0,"to":1},{"unixUs":1,"from":1,"to":2}]),
+                ToolkitError::InvalidProtocol,
+            ),
+            (
+                "transitions",
+                serde_json::json!([{ "unixUs":9_007_199_254_740_992_u64,"from":0,"to":1 }]),
+                ToolkitError::InvalidProtocol,
+            ),
+            (
+                "transitions",
+                serde_json::json!(vec![serde_json::json!({"unixUs":1,"from":0,"to":1}); 4097]),
+                ToolkitError::TooLarge,
+            ),
+        ] {
+            let mut cursor = ReportCursor::default();
+            let mut bad = good.clone();
+            bad["abyss"][field] = value;
+            assert_eq!(
+                cursor
+                    .ingest(&serde_json::to_vec(&bad).unwrap())
+                    .unwrap_err(),
+                expected
+            );
+            assert!(cursor.ingest(&serde_json::to_vec(&good).unwrap()).is_ok());
+        }
+    }
+
+    #[test]
+    fn plugin_stage_observation_freezes_generation_even_before_damage_or_encounter_label() {
+        let mut value = with_abyss(clock_report());
+        value["events"] = serde_json::json!([]);
+        value["totals"]["allHits"] = 0.into();
+        value["encounterId"] = "".into();
+        let mut cursor = ReportCursor::default();
+        cursor.ingest(&serde_json::to_vec(&value).unwrap()).unwrap();
+        value["captureGeneration"] = 2.into();
+        assert_eq!(
+            cursor
+                .ingest(&serde_json::to_vec(&value).unwrap())
+                .unwrap_err(),
+            ToolkitError::SessionChanged
+        );
+    }
+
+    #[test]
+    fn plugin_stage_prefix_cannot_change_shrink_or_disappear() {
+        let good = with_abyss(clock_report());
+        let mut cursor = ReportCursor::default();
+        cursor.ingest(&serde_json::to_vec(&good).unwrap()).unwrap();
+        for variant in 0..3 {
+            let mut bad = good.clone();
+            match variant {
+                0 => bad["abyss"]["transitions"][0]["to"] = 2.into(),
+                1 => {
+                    bad["abyss"]["transitions"].as_array_mut().unwrap().pop();
+                }
+                _ => {
+                    bad.as_object_mut().unwrap().remove("abyss");
+                }
+            }
+            assert_eq!(
+                cursor
+                    .ingest(&serde_json::to_vec(&bad).unwrap())
+                    .unwrap_err(),
+                ToolkitError::DataGap
+            );
+            assert!(
+                cursor
+                    .ingest(&serde_json::to_vec(&good).unwrap())
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
     fn report(damage: f64, quality: &str) -> serde_json::Value {
         serde_json::json!({"schemaVersion":14,"captureGeneration":1,"encounterId":"one",
             "totals":{"allHits":1},"quality":{"droppedEvents":0},

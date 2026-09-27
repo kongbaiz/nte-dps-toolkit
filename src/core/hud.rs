@@ -212,12 +212,11 @@ pub fn project_hud(
     hidden_character_ids: &HashSet<u32>,
     options: HudProjectionOptions,
 ) -> HudSnapshot {
-    let selected_half = state.abyss.is_active().then(|| {
-        options
-            .selected_abyss_half
-            .or(state.abyss.active_half)
-            .unwrap_or(AbyssHalf::First)
-    });
+    let selected_half = state
+        .abyss
+        .is_active()
+        .then_some(options.selected_abyss_half.or(state.abyss.active_half))
+        .flatten();
     let subtract_time_stop = options.dps_time_basis.subtracts_time_stop();
 
     let (characters, summary) = selected_half.map_or_else(
@@ -596,10 +595,28 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
 
+    #[test]
+    fn abyss_location_projects_detected_floor_with_unknown_half() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Location {
+            timestamp: 1.0,
+            floor: 11,
+        });
+        let snapshot = project_hud(
+            &state,
+            &HudConfig::default(),
+            &HashSet::new(),
+            HudProjectionOptions::default(),
+        );
+        assert!(snapshot.status.abyss_detected);
+        assert_eq!(snapshot.status.abyss_floor, Some(11));
+        assert_eq!(snapshot.status.abyss_half, None);
+    }
     #[test]
     fn empty_state_projects_preview_only_when_requested() {
         let state = CombatState::default();

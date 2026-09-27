@@ -176,6 +176,13 @@ impl TryFrom<&str> for HitDirection {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "plugin_snapshot::serialize",
+        deserialize_with = "plugin_snapshot::deserialize"
+    )]
+    pub plugin_snapshot: Option<std::sync::Arc<plugin_snapshot::PluginHitSnapshot>>,
     /// Persisted protocol evidence; absent only for historical/legacy records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exact: Option<crate::engine::settlement::application::Evidence>,
@@ -244,6 +251,7 @@ pub struct Hit {
 }
 
 mod exact;
+pub mod plugin_snapshot;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DamageWireEvent {
@@ -295,7 +303,17 @@ impl Hit {
         self.exact.is_none().then(|| self.overkill_damage())
     }
     pub fn known_max_hp_reduction(&self) -> Option<f64> {
-        self.exact.is_none().then_some(self.max_hp_reduction)
+        match &self.exact {
+            None => Some(self.max_hp_reduction),
+            Some(e) => e
+                .hp_adjustment
+                .as_ref()
+                .filter(|a| {
+                    a.valid(e.current_hp_bits)
+                        && f64::from(a.direct_damage).to_bits() == self.damage.to_bits()
+                })
+                .map(|a| a.reduction()),
+        }
     }
     pub fn total_damage(&self) -> f64 {
         self.damage + self.follow_up_damage
@@ -3572,7 +3590,12 @@ pub const UNBALANCE_ATTACK_TYPE: &str = "倾陷伤害";
 /// target's HP) but excluded from any single character's personal totals so
 /// it can't inflate one character's ranking/DPS share.
 pub fn is_unbalance_damage_hit(hit: &Hit) -> bool {
-    hit.exact.is_none() && hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE)
+    match &hit.exact {
+        // Wire display type is authoritative, even before request/GE metadata
+        // arrives. A presentation label alone cannot classify an exact hit.
+        Some(evidence) => evidence.display_type == 22,
+        None => hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE),
+    }
 }
 
 fn summarize_damage_attribution<'a>(
@@ -4024,8 +4047,16 @@ impl AbyssHalf {
 
 #[derive(Clone, Debug)]
 pub enum AbyssEvent {
+    Location {
+        timestamp: f64,
+        floor: u32,
+    },
     RestartDetected {
         timestamp: f64,
+    },
+    RestartHalf {
+        timestamp: f64,
+        half: AbyssHalf,
     },
     Stage {
         timestamp: f64,
@@ -4786,6 +4817,25 @@ impl AbyssRunState {
     pub fn apply_event(&mut self, event: AbyssEvent) {
         self.event_count = self.event_count.saturating_add(1);
         match event {
+            AbyssEvent::Location { floor, .. } => {
+                if self.floor.is_some_and(|current| current != floor) {
+                    self.clear_restarted_floor();
+                    self.active_half = None;
+                    self.pending_restart_at = None;
+                    self.pending_restart_half = None;
+                    self.last_half_switch_at = None;
+                    self.last_half_switch_from = None;
+                }
+                self.floor = Some(floor);
+            }
+            AbyssEvent::RestartHalf { timestamp, half } => {
+                self.clear_restarted_half(half, timestamp);
+                self.active_half = Some(half);
+                self.pending_restart_at = None;
+                self.pending_restart_half = None;
+                self.last_half_switch_at = None;
+                self.last_half_switch_from = None;
+            }
             AbyssEvent::RestartDetected { timestamp } => {
                 if let Some(half) = self.active_half {
                     self.clear_restarted_half(half, timestamp);
@@ -5968,6 +6018,36 @@ impl CombatState {
     }
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {
+        if let AbyssEvent::RestartHalf { half, .. } = event {
+            self.abyss.apply_event(event);
+            // Remove only this half's failed attempt. Preserve upper-half and
+            // unclassified hits, provenance, inventory and the provider clock.
+            self.global_hit_abyss_halves.resize(self.hits.len(), None);
+            self.retire_exact_half(half);
+            let retained = std::mem::take(&mut self.hits)
+                .into_iter()
+                .zip(std::mem::take(&mut self.global_hit_abyss_halves))
+                .filter(|(_, owner)| *owner != Some(half));
+            (self.hits, self.global_hit_abyss_halves) = retained.unzip();
+            self.recent_hit_records
+                .retain(|row| row.abyss_half != Some(half));
+            self.rebuild_exact_index();
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_all_combat_indexes(
+                &self.hits,
+                &mut self.stats,
+                &mut self.compact_timeline,
+                &mut self.skill_breakdown_index,
+                &mut self.combat_detail_index,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+                &mut self.max_hp_reduction,
+            );
+            self.sync_clock_with_time_stops();
+            return;
+        }
         let first_half_had_hits = !self.abyss.first_half.hits.is_empty();
         let second_half_had_hits = !self.abyss.second_half.hits.is_empty();
         let late_detected_half = match &event {
@@ -6585,6 +6665,11 @@ impl ModScriptEvent {
 
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
+    /// Confirmed game-side restart, not a UI request. 9=AdvVision, 16=DiyBossClone.
+    ChallengeRestart {
+        timestamp: f64,
+        clone_type: u8,
+    },
     ExactSettlement(Box<crate::engine::settlement::application::Projection>),
     Hit(Box<Hit>),
     HitFollowUp(HitFollowUp),
@@ -6597,6 +6682,11 @@ pub enum EngineEvent {
     CombatClockHealth(CombatClockRuntimeHealth),
     EmptyCurtain(Vec<EmptyCurtainItem>),
     EmptyCurtainCharacters(Vec<EmptyCurtainCharacter>),
+    /// One packet-inventory observation: publish ownership and item rows atomically.
+    PacketInventory {
+        items: Vec<EmptyCurtainItem>,
+        characters: Vec<EmptyCurtainCharacter>,
+    },
     ModScript(ModScriptEvent),
     Status(String),
     Warning(String),
@@ -7222,6 +7312,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }

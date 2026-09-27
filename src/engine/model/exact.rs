@@ -69,6 +69,17 @@ impl CombatState {
         }
     }
 
+    pub(super) fn retire_exact_half(&mut self, half: AbyssHalf) {
+        for (hit, owner) in self.hits.iter().zip(&self.global_hit_abyss_halves) {
+            if *owner == Some(half)
+                && let Some(evidence) = &hit.exact
+                && let Some(slot) = self.exact_index.get_mut(&evidence.message)
+            {
+                slot.retired = true;
+            }
+        }
+    }
+
     pub fn apply_exact_projection(
         &mut self,
         mut projection: Projection,
@@ -97,7 +108,17 @@ impl CombatState {
                     .is_some_and(|v| !f32::from_bits(v).is_finite() || f32::from_bits(v) <= 0.0)
                 || e.hp_before_request_bits
                     .is_some_and(|v| !f32::from_bits(v).is_finite() || f32::from_bits(v) < 0.0)
-                || h.follow_up_damage != 0.0
+                || match &e.hp_adjustment {
+                    Some(a) => {
+                        !a.valid(e.current_hp_bits)
+                            || e.component_ordinal != 0
+                            || f64::from(a.direct_damage).to_bits() != h.damage.to_bits()
+                            || a.additional_loss(e.current_hp_bits).to_bits()
+                                != h.follow_up_damage.to_bits()
+                            || a.reduction().to_bits() != h.max_hp_reduction.to_bits()
+                    }
+                    None => h.follow_up_damage != 0.0 || h.max_hp_reduction != 0.0,
+                }
                 || h.wire_event.is_some()
             {
                 return Err("exact_projection_invalid_row");
@@ -185,7 +206,20 @@ impl CombatState {
                     || a.current_hp_bits != b.current_hp_bits
                     || a.display_type != b.display_type
                     || old.damage.to_bits() != new.damage.to_bits()
-                    || old.char_id != new.char_id
+                    || (old.char_id != new.char_id
+                        && !(old.direction == HitDirection::Outgoing
+                            && old.char_known
+                            && new.char_known
+                            && a.request_source
+                                .as_ref()
+                                .unwrap_or(&a.source)
+                                .character_id()
+                                == Some(old.char_id)
+                            && b.request_source
+                                .as_ref()
+                                .unwrap_or(&b.source)
+                                .character_id()
+                                == Some(new.char_id)))
                     || old.direction != new.direction
                 {
                     return Err("exact_projection_immutable_field_changed");
@@ -214,6 +248,8 @@ impl CombatState {
                     && old.ability_name == new.ability_name
                     && old.damage_name == new.damage_name
                     && old.gameplay_effect_index == new.gameplay_effect_index
+                    && old.damage_component == new.damage_component
+                    && old.gameplay_effect_name == new.gameplay_effect_name
                 {
                     continue;
                 }
@@ -223,8 +259,22 @@ impl CombatState {
                 self.skill_breakdown_index.replace_hit(&before, after);
                 self.combat_detail_index
                     .replace_hit(position, &before, after);
-                // Identity, amount, direction and time are immutable; only skill
-                // grouping and metadata changed, not team/character damage totals.
+                // Raw settlement damage is immutable. A late request can add
+                // or retract a validated HP-scaling contribution, so update all
+                // cached totals/timeline projections through the existing delta.
+                let mutation =
+                    HitAggregateMutation::new(HitAggregateContribution::from(&before), after);
+                apply_combat_totals_delta(
+                    &self.hits,
+                    &mut self.stats,
+                    &mut self.compact_timeline,
+                    &mut self.started_at,
+                    &mut self.ended_at,
+                    &mut self.total_damage,
+                    &mut self.total_damage_taken,
+                    &mut self.max_hp_reduction,
+                    mutation,
+                );
                 if let Some(half) = self
                     .global_hit_abyss_halves
                     .get(position)
@@ -289,6 +339,18 @@ impl PartyCombatState {
         self.combat_detail_index
             .replace_hit(position, before, after);
         self.hits[position] = after.clone();
+        let mutation = HitAggregateMutation::new(HitAggregateContribution::from(before), after);
+        apply_combat_totals_delta(
+            &self.hits,
+            &mut self.stats,
+            &mut self.compact_timeline,
+            &mut self.started_at,
+            &mut self.ended_at,
+            &mut self.total_damage,
+            &mut self.total_damage_taken,
+            &mut self.max_hp_reduction,
+            mutation,
+        );
         self.hits_generation = self.hits_generation.wrapping_add(1);
         Ok(())
     }
@@ -343,6 +405,7 @@ mod tests {
                 name: None,
                 fields: vec![(0, 1), (24, 2)],
             },
+            request_source: None,
             character_id: Some(1),
             damage: 100,
             display_type: 0,
@@ -357,6 +420,9 @@ mod tests {
             } else {
                 Attribution::RequestMissing
             },
+            mechanic: None,
+            effect_name: None,
+            hp_adjustment: None,
         };
         let characters = HashMap::from([(
             1,
@@ -375,6 +441,278 @@ mod tests {
             true,
         )
     }
+    fn hp_projection(adjusted: bool) -> Projection {
+        let mut p = projection("hp", true);
+        let h = &mut p.hits[0];
+        h.exact.as_mut().unwrap().current_hp_bits = 720f32.to_bits();
+        h.target_hp_after = 720.0;
+        if adjusted {
+            h.exact.as_mut().unwrap().hp_adjustment =
+                Some(crate::engine::settlement::HpAdjustment {
+                    kind: crate::engine::settlement::HpAdjustmentKind::RuleVerifiedScaling,
+                    preceding_message: "4".into(),
+                    preceding_timestamp_bits: "100".into(),
+                    preceding_target_ordinal: 0,
+                    hp_before_bits: 1000f32.to_bits(),
+                    max_hp_before_bits: 1000f32.to_bits(),
+                    max_hp_after_bits: 800f32.to_bits(),
+                    direct_damage: 100,
+                    rule_percent: 200,
+                });
+            h.follow_up_damage = 180.0;
+            h.max_hp_reduction = 200.0;
+            h.follow_up_damage_name = Some("Max HP scaling loss".into());
+        }
+        p
+    }
+
+    #[test]
+    fn late_child_source_moves_existing_totals_and_original_half_and_roundtrips() {
+        use crate::storage::history::HistoryCombatDetails;
+        let mut s = CombatState::default();
+        s.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        let initial = projection("child-source", false);
+        s.apply_exact_projection(initial.clone()).unwrap();
+        s.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        let mut update = initial.clone();
+        let h = &mut update.hits[0];
+        h.char_id = 2;
+        h.char_name = "Child".into();
+        h.timestamp = 20.0;
+        h.exact.as_mut().unwrap().request_source = Some(ActorRef {
+            flags: 1,
+            name: Some(Name::Text {
+                text: "2".into(),
+                number: 0,
+            }),
+            fields: vec![],
+        });
+        let revision = s.hits_generation;
+        assert!(s.apply_exact_projection(update.clone()).unwrap());
+        assert_eq!(s.hits_generation, revision + 1);
+        assert_eq!(s.hits.len(), 1);
+        assert_eq!(s.hits[0].timestamp, 1.0);
+        assert_eq!(s.total_damage, 100.0);
+        assert_eq!(s.stats[&2].damage, 100.0);
+        assert_eq!(s.stats.get(&1).map_or(0.0, |v| v.damage), 0.0);
+        assert_eq!(s.abyss.first_half.stats[&2].damage, 100.0);
+        assert_eq!(s.abyss.second_half.total_damage, 0.0);
+        assert_eq!(s.timeline(1.0, false).total_damage, 100.0);
+        assert!(!s.apply_exact_projection(update.clone()).unwrap());
+        let data = serde_json::to_vec(&HistoryCombatDetails::from_state(&s).unwrap()).unwrap();
+        let restored: HistoryCombatDetails = serde_json::from_slice(&data).unwrap();
+        let mut restored = restored.into_combat_state();
+        assert_eq!(restored.stats[&2].damage, 100.0);
+        assert!(!restored.apply_exact_projection(update).unwrap());
+        assert!(s.apply_exact_projection(initial).unwrap());
+        assert_eq!(s.stats[&1].damage, 100.0);
+        assert_eq!(s.stats.get(&2).map_or(0.0, |v| v.damage), 0.0);
+        assert_eq!(s.abyss.first_half.stats[&1].damage, 100.0);
+    }
+
+    #[test]
+    fn character_reassignment_without_matching_request_source_is_rejected() {
+        let mut s = CombatState::default();
+        s.apply_exact_projection(projection("bad-source", false))
+            .unwrap();
+        let mut bad = projection("bad-source", false);
+        bad.hits[0].char_id = 2;
+        assert_eq!(
+            s.apply_exact_projection(bad),
+            Err("exact_projection_immutable_field_changed")
+        );
+        assert_eq!(s.stats[&1].damage, 100.0);
+    }
+
+    #[test]
+    fn exact_break_damage_is_shared_before_and_after_subtype_enrichment_and_history() {
+        use crate::storage::history::HistoryCombatDetails;
+        let mut s = CombatState::default();
+        s.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        s.apply_exact_projection(projection("ordinary", false))
+            .unwrap();
+        let mut normal = projection("break", false);
+        normal.hits[0].exact.as_mut().unwrap().display_type = 22;
+        normal.hits[0].attack_type = Some(UNBALANCE_ATTACK_TYPE.into());
+        let mut extra = normal.clone();
+        extra.identity.generation = "extra-break".into();
+        extra.hits[0].exact.as_mut().unwrap().message = extra.identity.clone();
+        s.apply_exact_projection(normal.clone()).unwrap();
+        s.apply_exact_projection(extra.clone()).unwrap();
+        s.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        normal.hits[0].damage_component = Some("普通倾陷伤害".into());
+        extra.hits[0].damage_component = Some("达芙蒂尔·额外倾陷伤害".into());
+        let revision = s.hits_generation;
+        assert!(s.apply_exact_projection(normal.clone()).unwrap());
+        assert!(s.apply_exact_projection(extra.clone()).unwrap());
+        assert_eq!(s.hits_generation, revision + 2);
+        assert!(!s.apply_exact_projection(extra).unwrap());
+        assert_eq!(s.total_damage, 300.0);
+        assert_eq!(s.stats[&1].damage, 100.0);
+        assert_eq!(s.damage_attribution_summary().shared_damage, 200.0);
+        assert_eq!(
+            s.abyss
+                .first_half
+                .damage_attribution_summary()
+                .shared_damage,
+            200.0
+        );
+        assert_eq!(s.abyss.second_half.total_damage, 0.0);
+        let page = s.indexed_combat_details(
+            None,
+            &IndexedCombatDetailFilter::SharedMechanics,
+            None,
+            0,
+            10,
+        );
+        assert_eq!(page.total_hits, 2);
+        assert_eq!(page.total_damage, 200.0);
+        assert_ne!(
+            page.rows[0].1.damage_component,
+            page.rows[1].1.damage_component
+        );
+        assert_eq!(
+            s.indexed_combat_details(
+                None,
+                &IndexedCombatDetailFilter::CharacterAttributed,
+                None,
+                0,
+                10
+            )
+            .total_damage,
+            100.0
+        );
+        let data = serde_json::to_vec(&HistoryCombatDetails::from_state(&s).unwrap()).unwrap();
+        let restored: HistoryCombatDetails = serde_json::from_slice(&data).unwrap();
+        let mut restored = restored.into_combat_state();
+        assert_eq!(restored.damage_attribution_summary().shared_damage, 200.0);
+        assert_eq!(
+            restored
+                .indexed_combat_details(
+                    None,
+                    &IndexedCombatDetailFilter::SharedMechanics,
+                    None,
+                    0,
+                    10
+                )
+                .total_hits,
+            2
+        );
+        assert!(!restored.apply_exact_projection(normal).unwrap());
+        let mut non_break = projection("not-break", false).hits.remove(0);
+        non_break.attack_type = Some(UNBALANCE_ATTACK_TYPE.into());
+        assert!(
+            !is_unbalance_damage_hit(&non_break),
+            "an ordinary exact hit cannot be reclassified by a label"
+        );
+    }
+
+    #[test]
+    fn hp_enrichment_updates_totals_timeline_and_original_half_without_a_new_hit() {
+        let mut s = CombatState::default();
+        s.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        s.apply_exact_projection(hp_projection(false)).unwrap();
+        s.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        let generation = s.hits_generation;
+        COMBAT_TOTAL_REBUILD_COUNT.with(|v| v.set(0));
+        assert!(s.apply_exact_projection(hp_projection(true)).unwrap());
+        assert_eq!(s.total_damage, 280.0);
+        assert_eq!(s.stats[&1].damage, 280.0);
+        assert_eq!(s.max_hp_reduction, 200.0);
+        assert_eq!(s.timeline(1.0, false).total_damage, 280.0);
+        assert_eq!(s.hits.len(), 1);
+        assert_eq!(s.abyss.first_half.total_damage, 280.0);
+        assert_eq!(s.abyss.first_half.max_hp_reduction, 200.0);
+        assert_eq!(s.abyss.second_half.total_damage, 0.0);
+        assert_eq!(s.hits_generation, generation + 1);
+        assert!(!s.apply_exact_projection(hp_projection(true)).unwrap());
+        assert_eq!(s.hits_generation, generation + 1);
+        assert!(s.apply_exact_projection(hp_projection(false)).unwrap());
+        assert_eq!(s.total_damage, 100.0);
+        assert_eq!(s.max_hp_reduction, 0.0);
+        assert_eq!(s.abyss.first_half.total_damage, 100.0);
+        assert_eq!(s.timeline(1.0, false).total_damage, 100.0);
+        COMBAT_TOTAL_REBUILD_COUNT.with(|v| assert_eq!(v.get(), 0));
+    }
+
+    #[test]
+    fn hp_adjustment_history_roundtrip_and_reset_preserve_derived_provenance() {
+        use crate::storage::history::HistoryCombatDetails;
+        let mut s = CombatState::default();
+        let p = hp_projection(true);
+        s.apply_exact_projection(p.clone()).unwrap();
+        let encoded = serde_json::to_vec(&HistoryCombatDetails::from_state(&s).unwrap()).unwrap();
+        let restored: HistoryCombatDetails = serde_json::from_slice(&encoded).unwrap();
+        let mut restored = restored.into_combat_state();
+        assert_eq!(restored.total_damage, 280.0);
+        assert_eq!(restored.max_hp_reduction, 200.0);
+        assert_eq!(restored.hits[0].known_max_hp_reduction(), Some(200.0));
+        assert!(!restored.apply_exact_projection(p).unwrap());
+        restored.clear();
+        assert!(
+            !restored
+                .apply_exact_projection(hp_projection(true))
+                .unwrap()
+        );
+        assert_eq!(restored.total_damage, 0.0);
+    }
+
+    #[test]
+    fn forged_hp_bonus_is_rejected_before_mutation() {
+        let mut s = CombatState::default();
+        let mut bad = hp_projection(true);
+        bad.hits[0].follow_up_damage = 181.0;
+        assert!(s.apply_exact_projection(bad).is_err());
+        assert!(s.hits.is_empty());
+        let mut bad = hp_projection(true);
+        bad.hits[0]
+            .exact
+            .as_mut()
+            .unwrap()
+            .hp_adjustment
+            .as_mut()
+            .unwrap()
+            .max_hp_after_bits = 799f32.to_bits();
+        assert!(s.apply_exact_projection(bad).is_err());
+        assert_eq!(s.total_damage, 0.0);
+    }
+
     #[test]
     fn late_metadata_is_upsert_and_duplicate_is_noop() {
         let mut s = CombatState::default();
@@ -563,6 +901,35 @@ mod tests {
         assert!(!restored.apply_exact_projection(b).unwrap());
     }
 
+    #[test]
+    fn half_retry_retires_removed_exact_messages_without_reviving_failed_damage() {
+        let mut s = CombatState::default();
+        s.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: None,
+            floor: Some(11),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        s.apply_exact_projection(projection("failed-lower", false))
+            .unwrap();
+        assert_eq!(s.abyss.second_half.total_damage, 100.0);
+        s.apply_abyss_event(AbyssEvent::RestartHalf {
+            timestamp: 2.0,
+            half: AbyssHalf::Second,
+        });
+        assert_eq!(s.total_damage, 0.0);
+        assert!(
+            !s.apply_exact_projection(projection("failed-lower", true))
+                .unwrap()
+        );
+        assert_eq!(s.total_damage, 0.0);
+        assert!(
+            s.apply_exact_projection(projection("new-lower", true))
+                .unwrap()
+        );
+        assert_eq!(s.abyss.second_half.total_damage, 100.0);
+    }
     #[test]
     fn round_cut_and_reset_reject_old_enrichment_without_new_damage() {
         let mut s = CombatState::default();

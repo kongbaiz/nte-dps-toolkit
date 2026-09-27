@@ -507,6 +507,26 @@ fn capture_issue_snapshot(issue: LiveCaptureIssue) -> CaptureIssueSnapshot {
             message_key: "Capture warning",
             message_arguments: Vec::new(),
         },
+        LiveCaptureIssue::DamageProfileMissing => CaptureIssueSnapshot {
+            code: "damage_profile_missing",
+            message_key: "Damage parsing is unavailable: configure exact-packet.json for this game session. Raw capture can continue.",
+            message_arguments: Vec::new(),
+        },
+        LiveCaptureIssue::DamageWaiting => CaptureIssueSnapshot {
+            code: "damage_waiting",
+            message_key: "Waiting for matching damage traffic. You can start capture during combat.",
+            message_arguments: Vec::new(),
+        },
+        LiveCaptureIssue::DamageIncomplete => CaptureIssueSnapshot {
+            code: "damage_incomplete",
+            message_key: "An incomplete damage message was skipped. Later complete messages can still be recorded.",
+            message_arguments: Vec::new(),
+        },
+        LiveCaptureIssue::DamageUnavailable => CaptureIssueSnapshot {
+            code: "damage_unavailable",
+            message_key: "Damage parsing for a connection is unavailable. Raw capture continues; no legacy estimates are used.",
+            message_arguments: Vec::new(),
+        },
         LiveCaptureIssue::RuntimeError => CaptureIssueSnapshot {
             code: "capture_failed",
             message_key: "Capture parser stopped unexpectedly",
@@ -636,6 +656,20 @@ mod tests {
             value["payload"]["contractVersion"],
             TECHNICAL_CONTRACT_VERSION
         );
+    }
+
+    #[test]
+    fn missing_damage_profile_has_actionable_message_without_private_paths() {
+        let capture: CaptureSnapshot = LiveCaptureStatus {
+            phase: LiveCapturePhase::Running,
+            issue: Some(LiveCaptureIssue::DamageProfileMissing),
+        }
+        .into();
+        assert_eq!(capture.phase, "running");
+        let issue = capture.issue.unwrap();
+        assert_eq!(issue.code, "damage_profile_missing");
+        assert!(issue.message_key.contains("exact-packet.json"));
+        assert!(issue.message_arguments.is_empty());
     }
 
     #[test]

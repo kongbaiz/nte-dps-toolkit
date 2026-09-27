@@ -969,6 +969,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }

@@ -12,7 +12,8 @@ describe("Console sidebar presentation", () => {
     const disabled = consoleSidebarRowClasses(false, true);
 
     expect(idle).toContain("hover:bg-sidebar-accent");
-    expect(selected).toContain("bg-sidebar-primary");
+    expect(selected).toContain("bg-sidebar-accent");
+    expect(selected).toContain("text-sidebar-accent-foreground");
     expect(selected).not.toContain("hover:bg-sidebar-accent");
     expect(disabled).toContain("opacity-45");
     expect(disabled).not.toContain("hover:bg-sidebar-accent");

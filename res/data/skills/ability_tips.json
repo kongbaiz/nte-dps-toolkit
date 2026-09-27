@@ -1,5 +1,77 @@
 {
   "abilities": {
+    "GA_2_Ginger_WXM_Defend_1": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_2_Ginger_WXM_Defend_2": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_2_Ginger_WXM_Defend_3": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_2_Ginger_WXM_Shoot": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_3_Ginger_WXM_Defend_1": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_3_Ginger_WXM_Defend_2": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_3_Ginger_WXM_Defend_3": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_3_Ginger_WXM_Shoot": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_4_Ginger_WXM_Defend_1": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_4_Ginger_WXM_Defend_2": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_4_Ginger_WXM_Defend_3": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_4_Ginger_WXM_Shoot": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
     "GA_Adler_Evade": {
       "name_zh": "",
       "name_en": "",
@@ -228,74 +300,44 @@
         }
       ]
     },
-    "GA_Bat_UltraSkill": {
-      "name_zh": "",
-      "name_en": "",
-      "name_ja": "",
-      "descriptions": []
-    },
-    "GA_BlackBird_Melee": {
-      "name_zh": "1",
+    "GA_Akane_Melee": {
+      "name_zh": "弦刃",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "<Title>普通攻击1</>",
+          "title_zh": "<Title>普通攻击：弦刃</>",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "明音凛使用电吉他与音刃进行<NumGreen>4</>段连续攻击，造成<Xiang>相属性异能伤害</>。明音凛的各类伤害命中目标时，可以获得<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>；<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>的上限为<NumGreen>30</>。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "1",
+          "short_description_zh": "明音凛进行至多<NumGreen>4</>段的连续攻击，造成<Xiang>相属性异能伤害</>，并且积攒<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "1",
+          "title_zh": "<Title>普通攻击：舞台跳水</>",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "明音凛滞空时点按普通攻击，落地后造成<NumGreen>1</>次范围的<Xiang>相属性异能伤害</>。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "1",
+          "short_description_zh": "明音凛滞空时点按普通攻击，落地后造成<NumGreen>1</>次范围的<Xiang>相属性异能伤害</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "1",
+          "title_zh": "<Title>极限反击：羽刃回响</>",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "触发极限闪避后点按普通攻击，明音凛使用音刃羽片轰击目标，造成<Xiang>相属性异能伤害</>。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "1",
-          "short_description_en": "",
-          "short_description_ja": ""
-        },
-        {
-          "type": "ADT_DES",
-          "title_zh": "1",
-          "title_en": "",
-          "title_ja": "",
-          "description_zh": "1",
-          "description_en": "",
-          "description_ja": "",
-          "short_description_zh": "1",
-          "short_description_en": "",
-          "short_description_ja": ""
-        },
-        {
-          "type": "ADT_DES",
-          "title_zh": "1",
-          "title_en": "",
-          "title_ja": "",
-          "description_zh": "1",
-          "description_en": "",
-          "description_ja": "",
-          "short_description_zh": "1",
+          "short_description_zh": "触发极限闪避后点按普通攻击，造成<Xiang>相属性异能伤害</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -304,7 +346,607 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<Italic>哪怕是最简单的扫弦也拥有震撼人心的力量。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_Passive_1": {
+      "name_zh": "绝对音准",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<TextHLT>「延滞」强化</>：全队首次触发「延滞」后，明音凛获得持续至脱离战斗的强化：每隔<NumGreen>X</>秒，<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>为其附着的目标施加「延滞」，<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>为范围内所有敌人施加「延滞」。\r\n全队每次对处于「延滞」状态的目标重新施加「延滞」时，明音凛根据目标剩余的「延滞」时间，对其造成相当于明音凛<NumGreen>X%</>攻击力的<Xiang>相属性异能伤害</>。每剩余<NumGreen>1</>秒，该次伤害整体提升<NumGreen>X%</>，最多提升<NumGreen>X%</>。\r\n每个目标的剩余「延滞」时间独立计算；同一目标每<NumGreen>X</>秒至多触发<NumGreen>1</>次该伤害。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "全队首次触发「延滞」后，<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>和<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>会定期向各自目标施加「延滞」，持续至脱离战斗。\r\n全队对延滞目标再次施加「延滞」时，明音凛造成额外<Xiang>相属性异能伤害</>；各目标剩余延滞时间越长，增伤越高，增伤有上限，同一目标的触发存在间隔。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>不需要任何工具的辅助就能调整好全部乐器的音准，拥有绝对音准的明音凛简直是行走的调音器。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_Passive_2": {
+      "name_zh": "烁星激昂",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「极轨终结：音障爆鸣」后，明音凛自身造成的伤害提升<NumGreen>20%</>，持续<NumGreen>25</>秒，不可叠加；重复触发时刷新持续时间。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "释放极轨终结后，明音凛造成的伤害提升<NumGreen>20%</>，持续<NumGreen>25</>秒，不可叠加；重复触发刷新持续时间。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>舞台上闪烁着的星光，便是她自我的证明。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_QTE": {
+      "name_zh": "变奏和弦",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>变奏和弦</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "明音凛重扫琴弦，对目标造成<NumGreen>1</>次<Xiang>相属性异能伤害</>，并触发反应效果。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "对目标造成<Xiang>相属性异能伤害</>，并触发反应效果。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>真正优秀的吉他，总是能够在最完美的时机切入。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_Skill": {
+      "name_zh": "律动音浪",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>变轨技能：律动音浪</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "明音凛的「变轨技能：律动音浪」具有两种释放方式。\r\n点按技能：给目标附着持续<NumGreen>25</>秒的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>，并造成<Xiang>相属性异能伤害</>。明音凛进行普通攻击时，<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>发出共鸣，将本次普通攻击远距离传导至其附着的目标，传导普通攻击的倍率提升<NumGreen>32.5%</>。\r\n长按技能：展开持续<NumGreen>25</>秒的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>，对范围内的敌人造成<Xiang>相属性异能伤害</>。明音凛进行普通攻击时，<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>发出共鸣，将本次普通攻击传导至<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>，对范围内所有敌人造成<NumGreen>1</>次普通攻击伤害，本次传导普通攻击获得额外<NumGreen>36%</>伤害提升。\r\n场上只能存在<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>中的一个，新形态成功建立后取代旧形态。两种释放方式共享同一冷却时间，冷却结束后可重新选择形态。\r\n当<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>达到<NumGreen>30</>且场上存在有效<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>时，可以释放强化技能「同调共振」，根据当前形态产生对应效果：\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>：对其附着的目标造成<NumGreen>1</>次高额单体<Xiang>相属性异能伤害</>；\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>：对范围内的敌人造成<NumGreen>1</>次强化扩散<Xiang>相属性异能伤害</>。\r\n强化技能命中后消耗<NumGreen>30</>点<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>，未命中则不消耗。原本的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>继续存在，剩余持续时间不刷新。\r\n强化技能没有独立冷却时间，也不会影响普通技能的冷却时间。\r\n场上没有<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>时，无法释放强化技能，需要先使用普通技能建立形态。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "明音凛的变轨技能具有两种释放方式。\r\n点按技能：给目标附着<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>。明音凛进行普通攻击时，将本次攻击的伤害远距离传导至带有<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>的目标。\r\n长按技能：展开<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>。普通攻击时，将本次攻击伤害传导至<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>的其他目标。\r\n场上的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>和<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>只能同时存在一个。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>伴随着掌声与欢呼，就让美妙的音乐如浪潮般传播到每一个人身边吧。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_Skill_Gitar": {
+      "name_zh": "随心拨弦",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "在大世界中，明音凛可以拿起吉他自由弹奏，随心奏响自己的旋律。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "在大世界中，明音凛可以自由弹奏吉他。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>从街角到远方，总有一段旋律等待奏响。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_Skill_instead": {
+      "name_zh": "同调共振",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>强化技能：同调共振</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "当<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>达到<NumGreen>30</>且场上存在有效<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>时，可以释放强化技能「同调共振」，根据当前形态产生对应效果：\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>：对其附着的目标造成<NumGreen>1</>次高额单体<Xiang>相属性异能伤害</>；\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>：对范围内的敌人造成<NumGreen>1</>次强化扩散<Xiang>相属性异能伤害</>。\r\n强化技能命中后消耗<NumGreen>30</>点<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>，未命中则不消耗。原本的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>继续存在，剩余持续时间不刷新。\r\n强化技能没有独立冷却时间，也不会影响普通技能的冷却时间。\r\n场上没有<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>时，无法释放强化技能，需要先使用普通技能建立形态。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "当<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>达到<NumGreen>30</>且场上存在有效<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>时，可以释放强化技能「同调共振」，根据当前形态产生对应效果：\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>：对其附着的目标造成<NumGreen>1</>次高额单体<Xiang>相属性异能伤害</>；\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>：对范围内的敌人造成<NumGreen>1</>次强化扩散<Xiang>相属性异能伤害</>。\r\n强化技能命中后消耗<NumGreen>30</>点<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneChordEnergy\">「弦能」</>，未命中则不消耗。原本的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>继续存在，剩余持续时间不刷新。\r\n强化技能没有独立冷却时间，也不会影响普通技能的冷却时间。\r\n场上没有<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>时，无法释放强化技能，需要先使用普通技能建立形态。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_UltraSkill": {
+      "name_zh": "音障爆鸣",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「极轨终结：音障爆鸣」第一段时，明音凛对目标范围内的敌人造成<NumGreen>1</>次高额<Xiang>相属性异能伤害</>，并进入持续<NumGreen>X</>秒的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态。\n在<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>持续时间的后半段，可随时再次点按极轨终结，释放第二段，对目标范围内的敌人造成<NumGreen>1</>次高额<Xiang>相属性异能伤害</>。第二段需手动释放，不会在状态结束时自动触发。\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态独立于<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>和<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>，不会移除或替代当前生效的效果。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "释放极轨终结第一段，对目标范围内的敌人造成高额<Xiang>相属性异能伤害</>，并进入<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态。\n状态持续时间的后半段，可随时再次点按极轨终结释放第二段，再次对目标范围内的敌人造成高额<Xiang>相属性异能伤害</>。第二段需手动释放，不会在状态结束时自动触发。\n该状态不会移除或替代当前生效的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>效果。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「这才是真正的音乐啊！」台下的粉丝泪流满面地如是说道。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Akane_UltraSkill_End": {
+      "name_zh": "音障爆鸣",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>极轨终结：音障爆鸣·第二段</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "在<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>持续时间的后半段，可随时再次点按极轨终结，释放「极轨终结：音障爆鸣」第二段，对目标范围内的敌人造成<NumGreen>1</>次高额<Xiang>相属性异能伤害</>。第二段需手动释放，不会在状态结束时自动触发。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "在<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>持续时间的后半段，再次点按极轨终结可释放第二段，对目标范围内的敌人造成高额<Xiang>相属性异能伤害</>。第二段需手动释放，不会在状态结束时自动触发。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Bat_UltraSkill": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_BlackBird_Evolve_Melee": {
+      "name_zh": "掠影",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：掠影",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽使用「链笼」，进行至多五段的连续攻击，造成<Hun>魂属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Hun>魂属性异能伤害</>。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：归巢",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：掠影」第1/2/3段中，长按普通攻击可发动「普通攻击：归巢」，黑羽使用「链笼」囚禁目标，造成<Hun>魂属性异能伤害</>，并在一定时间内大幅度降低目标移动速度。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：掠影」第1/2/3段中长按普攻，造成<Hun>魂属性异能伤害</>，并降低目标移速。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：顽疾",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽滞空时点按普攻，落地后造成1次范围性的<Hun>魂属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "滞空时点按普攻，造成<Hun>魂属性异能伤害</>。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "极限反击：鸟类本能",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽触发极限闪避后使用「普通攻击：掠影」触发，对目标发动攻击，造成<Hun>魂属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Hun>魂属性异能伤害</>。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：祭火",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽被烈火吞没，火光中<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>出现，进行至多五段的连续攻击，造成<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下滞空时点按普攻，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：予尔等之恩泽",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：祭火」第2段中，长按普通攻击可发动「普通攻击：予尔等之恩泽」，<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>升空，短暂蓄力后造成大范围<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：祭火」第2段中长按普攻，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：赐众生之福音",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：予尔等之恩泽」或变轨技能「渡世死焰」期间，长按普通攻击可发动「普通攻击：赐众生之福音」，并对目标造成多段<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：予尔等之恩泽」或「变轨技能：渡世死焰」期间长按普攻，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：灼痕",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>滞空时点按普攻，落地后造成1次范围性的<Hun>魂属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下滞空时点按普攻，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "极限反击：生于灾厄",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>触发极限闪避后使用「普通攻击：祭火」触发，对目标发动攻击，造成<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "祝祷",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽发动「普通攻击：掠影」、「普通攻击：归巢」、「普通攻击：顽疾」、「极限反击：鸟类本能」、「承轨反击：裁灭」、「变轨技能：葬羽冥」后，分别获得不同点数的<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n入战立即获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n黑羽处于<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下时，无法获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，发动「普通攻击：祭火」、「普通攻击：灼痕」、「普通攻击：予尔等之恩泽」、「普通攻击：赐众生之福音」、「极限反击：生于灾厄」、「变轨技能：渡世死焰」、「援护技：唯余慈悲」后，可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，造成额外<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>伤害。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "发动「掠影」、「顽疾」、「鸟类本能」、「裁灭」与「葬羽冥」后获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n入战立即获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n\r\n黑羽处于<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下时，无法获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，此时发动「祭火」、「灼痕」、「予尔等之恩泽」、「赐众生之福音」「生于灾厄」、「渡世死焰」、「唯余慈悲」后可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，造成额外<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>伤害。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>鸟群在大地投下阴影，恰似谁人的命运。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_BlackBird_Evolve_Skill": {
+      "name_zh": "葬羽冥",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "葬羽冥",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽使用「链笼」，对目标造成<Hun>魂属性异能伤害</>，并对命中的目标附加<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoePlume\">「失乐羽」</>印记，持续一段时间。释放可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoePlume\">「失乐羽」</>印记持续期间，队伍中其他角色驻场对带有印记的目标造成伤害时，会触发<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoeBird\">「失乐鸟」</>协同攻击。<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoeBird\">「失乐鸟」</>对该目标造成范围性<Hun>魂属性异能伤害</>，最短间隔2秒触发一次，至多可触发5次。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "对命中的目标附加<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoePlume\">「失乐羽」</>印记。队伍中其他角色驻场对带有印记的目标造成伤害时，会触发<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoeBird\">「失乐鸟」</>协同攻击，造成范围性<Hun>魂属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "渡世死焰",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽处于<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下时，高速冲向目标，并造成<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n激活条件：<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>通过发动「普通攻击：祭火」第5段、承轨反击「无悲」后可激活「变轨技能：渡世死焰」。该技能默认处于未激活状态。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>通过发动「普通攻击：祭火」第5段、承轨反击「无悲」后激活「变轨技能：渡世死焰」，对目标造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>将肉和骨归还给烈火，将羽和爪归还给天空。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_BlackBird_Evolve_UltraSkill": {
+      "name_zh": "恳请众魂安息",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "恳请众魂安息",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽化身<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>，发起多段攻击，对目标造成高额<Hun>魂属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>拥有持续时间，期间免疫硬直、移动速度提高，持续时间结束后自动恢复到黑羽。处于后台时，持续时间不再减少。\r\n发动「极轨终结：恳请众魂安息」后提升全队角色的攻击力。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "黑羽化身<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>，造成多段高额<Hun>魂属性异能伤害</>。释放后提升全队角色的攻击力。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "万火归一",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽退出<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态，对目标发起多段攻击，造成高额<Hun>魂属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "黑羽退出<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态，造成多段高额<Hun>魂属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>那时天色漆黑如墨，鸟儿如雨般落下。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_BlackBird_GSkill": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_BlackBird_Melee": {
+      "name_zh": "掠影",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：掠影",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽使用「链笼」，进行至多五段的连续攻击，造成<Hun>魂属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Hun>魂属性异能伤害</>。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：归巢",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：掠影」第1/2/3段中，长按普通攻击可发动「普通攻击：归巢」，黑羽使用「链笼」囚禁目标，造成<Hun>魂属性异能伤害</>，并在一定时间内大幅度降低目标移动速度。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：掠影」第1/2/3段中长按普攻，造成<Hun>魂属性异能伤害</>，并降低目标移速。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：顽疾",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽滞空时点按普攻，落地后造成1次范围性的<Hun>魂属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "滞空时点按普攻，造成<Hun>魂属性异能伤害</>。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "极限反击：鸟类本能",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽触发极限闪避后使用「普通攻击：掠影」触发，对目标发动攻击，造成<Hun>魂属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Hun>魂属性异能伤害</>。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：祭火",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽被烈火吞没，火光中<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>出现，进行至多五段的连续攻击，造成<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：予尔等之恩泽",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：祭火」第2段中，长按普通攻击可发动「普通攻击：予尔等之恩泽」，<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>升空，短暂蓄力后造成大范围<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：祭火」第2段中长按普攻，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：赐众生之福音",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：予尔等之恩泽」或变轨技能「渡世死焰」期间，长按普通攻击可发动「普通攻击：赐众生之福音」，并对目标造成多段<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：予尔等之恩泽」或「变轨技能：渡世死焰」期间长按普攻，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：灼痕",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>滞空时点按普攻，落地后造成1次范围性的<Hun>魂属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下滞空时点按普攻，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "极限反击：生于灾厄",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>触发极限闪避后使用「普通攻击：祭火」触发，对目标发动攻击，造成<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "祝祷",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽发动「普通攻击：掠影」、「普通攻击：归巢」、「普通攻击：顽疾」、「极限反击：鸟类本能」、「承轨反击：裁灭」、「变轨技能：葬羽冥」后，分别获得不同点数的<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n入战立即获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n黑羽处于<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下时，无法获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，发动「普通攻击：祭火」、「普通攻击：灼痕」、「普通攻击：予尔等之恩泽」、「普通攻击：赐众生之福音」、「极限反击：生于灾厄」、「变轨技能：渡世死焰」、「援护技：唯余慈悲」后，可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，造成额外<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>伤害。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "发动「掠影」、「顽疾」、「鸟类本能」、「裁灭」与「葬羽冥」后获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n入战立即获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n\r\n黑羽处于<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下时，无法获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，此时发动「祭火」、「灼痕」、「予尔等之恩泽」、「赐众生之福音」「生于灾厄」、「渡世死焰」、「唯余慈悲」后可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>，造成额外<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>伤害。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>鸟群在大地投下阴影，恰似谁人的命运。</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -314,7 +956,7 @@
       ]
     },
     "GA_BlackBird_Passive_1": {
-      "name_zh": "1",
+      "name_zh": "鸫歌",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
@@ -323,7 +965,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<TextHLT>「浸染」强化</>：「浸染」的基础增伤效果提升至<NumGreen>30%</>，持续时间延长至<NumGreen>20</>秒。\r\n\r\n<TextHLT>「黯星」强化</>：「黯星」状态结束时，根据「黯星」期间目标实际受到的累计伤害，黑羽额外对其造成相当于累计伤害<NumGreen>20%</>的心灵伤害（累计伤害不包含触发该次黯星状态的援护技和该次黯星状态自身造成的伤害），最高不超过黑羽基础攻击力的<NumGreen>1000</>倍，且不受其他伤害增减益效果影响。随后，由黑羽为目标施加1次「黯星」。\r\n通过本效果施加的「黯星」无法再次触发施加「黯星」效果。",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -335,7 +977,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<Italic>「完了，结束了，完了，结束了。我们在死亡，在死亡。」</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -345,7 +987,7 @@
       ]
     },
     "GA_BlackBird_Passive_2": {
-      "name_zh": "1",
+      "name_zh": "长路",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
@@ -354,7 +996,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "黑羽发动「援护技：断罪于我」时，获得<NumGreen>20</>点<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -366,7 +1008,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<Italic>「一百年行走，一百年飞翔，一百年追寻，一百年歌唱。」</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -376,7 +1018,7 @@
       ]
     },
     "GA_BlackBird_Passive_3": {
-      "name_zh": "1",
+      "name_zh": "巡翼",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
@@ -385,7 +1027,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "黑羽在非战斗状态下，地面状态长按摇杆和闪避或者空中下落状态按瞄准键，可化作<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdlornBird\">「伶仃鸟」</>高速飞行，可收取一定范围内的谕石，飞行期间会消耗耐力。",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -397,7 +1039,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<Italic>「你是我的火呀歌呀爱呀眼泪呀祈祷呀厄运呀灵魂呀世界呀，而我是你呀。」</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -407,19 +1049,31 @@
       ]
     },
     "GA_BlackBird_QTE": {
-      "name_zh": "1",
+      "name_zh": "断罪于我",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "",
+          "title_zh": "断罪于我",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "鸟儿会将找到的一切尽数交付与我……黑羽化作「伶仃鸟」，对目标造成<Hun>魂属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "1",
+          "short_description_zh": "造成<Hun>魂属性异能伤害</>。命中获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "唯余慈悲",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "接受魔女的祝福吧。<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>对目标造成<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下，造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -428,7 +1082,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<Italic>祂来到这里，降福于大地，于是人们赞美祂，歌颂祂，奉养祂，吞食祂。</>\r\n<Italic>「啊！祂是多么无私的救世主！」</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -438,43 +1092,31 @@
       ]
     },
     "GA_BlackBird_Skill": {
-      "name_zh": "1",
+      "name_zh": "葬羽冥",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "1",
+          "title_zh": "葬羽冥",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "黑羽使用「链笼」，对目标造成<Hun>魂属性异能伤害</>，并对命中的目标附加<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoePlume\">「失乐羽」</>印记，持续一段时间。释放可获得<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoePlume\">「失乐羽」</>印记持续期间，队伍中其他角色驻场对带有印记的目标造成伤害时，会触发<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoeBird\">「失乐鸟」</>协同攻击。<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoeBird\">「失乐鸟」</>对该目标造成范围性<Hun>魂属性异能伤害</>，最短间隔2秒触发一次，至多可触发5次。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "1",
+          "short_description_zh": "对命中的目标附加<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoePlume\">「失乐羽」</>印记。队伍中其他角色驻场对带有印记的目标造成伤害时，会触发<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdwoeBird\">「失乐鸟」</>协同攻击，造成范围性<Hun>魂属性异能伤害</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
         {
-          "type": "ADT_AFFIX",
-          "title_zh": "1",
+          "type": "ADT_DES",
+          "title_zh": "渡世死焰",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "黑羽处于<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态下时，高速冲向目标，并造成<Hun>魂属性异能伤害</>。命中目标可消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。\r\n激活条件：<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>通过发动「普通攻击：祭火」第5段、承轨反击「无悲」后可激活「变轨技能：渡世死焰」。该技能默认处于未激活状态。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "1",
-          "short_description_en": "",
-          "short_description_ja": ""
-        },
-        {
-          "type": "ADT_AFFIX",
-          "title_zh": "1",
-          "title_en": "",
-          "title_ja": "",
-          "description_zh": "1",
-          "description_en": "",
-          "description_ja": "",
-          "short_description_zh": "1",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>通过发动「普通攻击：祭火」第5段、承轨反击「无悲」后激活「变轨技能：渡世死焰」，对目标造成<Hun>魂属性异能伤害</>。命中消耗<hot textstyle=\"TextEXPL\" param=\"nouns&Blackbirdmalice\">「恶意」</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -483,7 +1125,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<Italic>将肉和骨归还给烈火，将羽和爪归还给天空。</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -493,19 +1135,31 @@
       ]
     },
     "GA_BlackBird_UltraSkill": {
-      "name_zh": "1",
+      "name_zh": "恳请众魂安息",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "",
+          "title_zh": "恳请众魂安息",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "黑羽化身<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>，发起多段攻击，对目标造成高额<Hun>魂属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>拥有持续时间，期间免疫硬直、移动速度提高，持续时间结束后自动恢复到黑羽。处于后台时，持续时间不再减少。\r\n发动「极轨终结：恳请众魂安息」后提升全队角色的攻击力。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "1",
+          "short_description_zh": "黑羽化身<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>，造成多段高额<Hun>魂属性异能伤害</>。释放后提升全队角色的攻击力。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "万火归一",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "黑羽退出<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态，对目标发起多段攻击，造成高额<Hun>魂属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "黑羽退出<hot textstyle=\"TextEXPL\" param=\"nouns&BlackbirdSaviorWitch\">「救世的魔女」</>状态，造成多段高额<Hun>魂属性异能伤害</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -514,7 +1168,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "1",
+          "description_zh": "<Italic>那时天色漆黑如墨，鸟儿如雨般落下。</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",
@@ -2586,6 +3240,54 @@
       ]
     },
     "GA_ForkTrigger_rishi_RemoveSkill": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WT_1": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WT_2": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WT_3": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WT_4": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WXM_Defend_1": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WXM_Defend_2": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WXM_Defend_3": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Ginger_WXM_Shoot": {
       "name_zh": "",
       "name_en": "",
       "name_ja": "",
@@ -5011,7 +5713,7 @@
       "descriptions": []
     },
     "GA_Radio072_Melee": {
-      "name_zh": "普通攻击：恶灵CQC",
+      "name_zh": "恶灵CQC",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
@@ -5099,10 +5801,10 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "灵可在队伍中时，覆纹的额外追加攻击伤害提升至30%；受覆纹状态影响的目标，所受追加攻击伤害提高10%。",
+          "description_zh": "<TextHLT>「覆纹」强化</>：灵可在队伍中时，「覆纹」的额外追加攻击伤害基础值提升至30%；受「覆纹」状态影响的目标，队伍造成的追加攻击伤害提高10%。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "灵可在队伍中时，覆纹的额外追加攻击伤害提升至30%；受覆纹状态影响的目标，所受追加攻击伤害提高10%。",
+          "short_description_zh": "<TextHLT>「覆纹」强化</>：灵可在队伍中时，「覆纹」的额外追加攻击伤害基础值提升至30%；受「覆纹」状态影响的目标，队伍造成的追加攻击伤害提高10%。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -5214,7 +5916,7 @@
       ]
     },
     "GA_Radio072_Skill": {
-      "name_zh": "变轨技能：瞬息全频振",
+      "name_zh": "瞬息全频振",
       "name_en": "",
       "name_ja": "",
       "descriptions": [
@@ -5223,7 +5925,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "释放「变轨技能：瞬息全频振」，灵可激发异能，用幽灵能量体轰击目标，造成最多4段<Ling>灵属性异能伤害</>，并呼唤小贞或一名队友发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>；此时，将出现可选择发起攻击者的轮盘，可通过点按选择一名队友或者小贞，来释放该角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应的属性伤害。该次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>将获得伤害增益，且会消耗此前积攒的「谐频」点数，转化为额外的伤害增益。\r\n在点选队友、发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的这段时间内，将有短暂的暂停计时效果。\r\n队友不可行动或未编入队伍时，小贞会替代轮盘中队友的位置，每额外有一个小贞，选择小贞触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>额外获得一次伤害增益。",
+          "description_zh": "释放「变轨技能：瞬息全频振」，灵可激发异能，用幽灵能量体轰击目标，造成最多4段<Ling>灵属性异能伤害</>，并呼唤小贞或一名队友发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>；此时，将出现可选择发起攻击者的轮盘，可通过点按选择一名队友或者小贞，来释放该角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应的属性伤害。该次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>将获得伤害增益，且会消耗此前积攒的「谐频」点数，转化为额外的伤害增益。\r\n在点选队友、发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的这段时间内，将有短暂的暂停计时效果。\r\n队友不可行动或未编入队伍时，小贞会替代轮盘中队友的位置，每额外有一个小贞，选择小贞触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>额外获得一次伤害增益。\r\n若在“设置-系统功能”中开启自动释放技能，默认选择队伍第一个角色释放<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "点按发动，造成<Ling>灵属性异能伤害</>，选择并发动小贞或一名同队角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应属性异能伤害，并消耗已有「谐频」点数，增幅此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的伤害。",
@@ -5244,6 +5946,12 @@
         }
       ]
     },
+    "GA_Radio072_SkillChild": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
     "GA_Radio072_SubUltraSkill": {
       "name_zh": "",
       "name_en": "",
@@ -5260,7 +5968,7 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "释放「极轨终结：超负荷共鸣」，灵可进入异能过载状态，展开持续一定时间的「共鸣领域」，并与至多3名同队角色达成同频。可以通过点按变轨技能依次呼唤队友释放的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成范围伤害，最多释放3次；\r\n等待异能过载状态结束、或者点按「极轨终结：超负荷共鸣」提前结束时，灵可释放过载的噪波，对「共鸣领域」内的所有敌方单位造成多次范围性的<Ling>灵属性异能伤害</>和一次<Ling>灵属性爆发伤害</>。该<Ling>灵属性爆发伤害</>根据目标身上的负面状态种类数提升。\r\n在「超负荷共鸣」持续时间结束后，灵可的「共鸣领域」将延续一段时间。「共鸣领域」内队伍角色触发的援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，视为追加攻击伤害，并额外享受「精确调频」、「星星也说悄悄话！」、「世界将予你回声！」的加成。",
+          "description_zh": "释放「极轨终结：超负荷共鸣」，灵可进入异能过载状态，展开持续一定时间的「共鸣领域」，并与至多3名同队角色达成同频。可以通过点按变轨技能依次呼唤队友释放<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，最多释放3次，「共鸣领域」内释放<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>时灵可会额外造成1次范围性<Ling>灵属性异能伤害</>。\r\n等待异能过载状态结束、或者点按「极轨终结：超负荷共鸣」提前结束时，灵可释放过载的噪波，对「共鸣领域」内的所有敌方单位造成多次范围性的<Ling>灵属性异能伤害</>和一次<Ling>灵属性爆发伤害</>。该<Ling>灵属性爆发伤害</>根据目标身上的负面状态数量提升。\r\n在「超负荷共鸣」持续时间结束后，灵可的「共鸣领域」将延续一段时间。「共鸣领域」内队伍角色触发的援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，视为追加攻击伤害，并额外享受「精确调频」、「星星也说悄悄话！」、「世界将予你回声！」的加成。\r\n若在“设置-系统功能”中开启自动释放技能，默认队伍角色依次释放<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "点按发动，展开持续一定时间的「共鸣领域」；点按变轨技能发动同队角色<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，最多发动三次；再次点按极轨终结技能，造成范围性<Ling>灵属性异能伤害</>。\r\n「共鸣领域」内，角色援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",

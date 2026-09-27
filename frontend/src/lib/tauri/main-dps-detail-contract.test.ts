@@ -29,6 +29,10 @@ function snapshot(overrides: Record<string, unknown> = {}) {
       typeWidth: 250,
       damageWidth: 130,
       targetWidth: 180,
+      showCritical: true,
+      showSnapshot: true,
+      criticalWidth: 80,
+      snapshotWidth: 250,
     },
     actions: { canStartCapture: true, canImportReplay: true },
     metrics: {
@@ -85,6 +89,11 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     rows: [
       {
         id: "1:0",
+        critical: null,
+        snapshotKey: null,
+        snapshotRetention: null,
+        roleEffects: null,
+        enemyEffects: null,
         timestamp: 1,
         characterId: 1004,
         characterName: "角色",

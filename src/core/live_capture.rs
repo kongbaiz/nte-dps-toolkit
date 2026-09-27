@@ -75,6 +75,10 @@ pub enum LiveCaptureIssue {
     Start(CoreErrorCode),
     NetworkProbeDegraded(NetworkProbeErrorCode),
     RuntimeWarning,
+    DamageProfileMissing,
+    DamageWaiting,
+    DamageIncomplete,
+    DamageUnavailable,
     RuntimeError,
     StateUnavailable,
 }
@@ -263,6 +267,8 @@ impl FailureProducers {
 }
 
 struct LiveCaptureInner {
+    #[cfg(feature = "desktop")]
+    equipment_rpc: Arc<super::equipment_rpc::Router>,
     // Session transactions acquire `event_gate` first, then shared session
     // locks in this order: state -> quality_source -> last_outgoing_hit_at ->
     // producer owner (controller/replay) -> status. Cleanup takes owners only
@@ -299,6 +305,8 @@ impl LiveCaptureService {
         let (reliable_sender, reliable_receiver) = bounded(RELIABLE_ENGINE_EVENT_CAPACITY);
         let (debug_sender, debug_receiver) = bounded(DEBUG_ENGINE_EVENT_CAPACITY);
         Self(Arc::new(LiveCaptureInner {
+            #[cfg(feature = "desktop")]
+            equipment_rpc: Arc::new(super::equipment_rpc::Router::default()),
             state: Mutex::new(CombatState::default()),
             event_gate: Mutex::new(()),
             controller: Mutex::new(CaptureController::default()),
@@ -702,11 +710,17 @@ impl LiveCaptureService {
 
     #[cfg(feature = "desktop")]
     pub fn request_plugin_start(&self, pid: u32) -> Result<(), CoreError> {
+        let router = self.0.equipment_rpc.clone();
         self.start_replay(CaptureQualitySource::Plugin, move |sender, stop| {
             thread::Builder::new()
                 .name("nte-plugin-session".into())
-                .spawn(move || super::toolkit::run(pid, sender, stop))
+                .spawn(move || super::toolkit::run(pid, sender, stop, router))
         })
+    }
+
+    #[cfg(feature = "desktop")]
+    pub fn equipment_rpc(&self) -> Arc<super::equipment_rpc::Router> {
+        self.0.equipment_rpc.clone()
     }
 
     pub fn request_start(&self, options: CaptureControllerOptions) -> Result<(), CoreError> {
@@ -1245,10 +1259,11 @@ impl LiveCaptureInner {
         source: CaptureQualitySource,
         policy: HistoryArchivePolicy,
         idle_timer: &mut Option<Instant>,
+        include_non_abyss: bool,
     ) -> Option<DetachedAbyssRound> {
         let has_abyss_hits =
             !state.abyss.first_half.hits.is_empty() || !state.abyss.second_half.hits.is_empty();
-        if !has_abyss_hits {
+        if !has_abyss_hits && !(include_non_abyss && !state.hits.is_empty()) {
             return None;
         }
         let detached = state.take_battle_preserving_inventory();
@@ -1299,11 +1314,12 @@ impl LiveCaptureInner {
         let (signal, detached_abyss_round) = {
             let _gate = checked_lock(&self.event_gate)?;
             let mut state = checked_lock(&self.state)?;
-            let pre_event_abyss_boundary = matches!(
-                &event,
-                EngineEvent::Abyss(abyss)
-                    if abyss_event_starts_new_round(state.abyss.floor, abyss)
-            );
+            let pre_event_abyss_boundary =
+                matches!(
+                    &event,
+                    EngineEvent::Abyss(abyss)
+                        if abyss_event_starts_new_round(state.abyss.floor, abyss)
+                ) || matches!(&event, EngineEvent::ChallengeRestart { .. });
             let post_event_abyss_archive = matches!(&event, EngineEvent::CaptureStopped)
                 || matches!(&event, EngineEvent::Abyss(AbyssEvent::Exit { .. }));
             let outgoing_hit = matches!(
@@ -1331,11 +1347,11 @@ impl LiveCaptureInner {
                 let Some(policy) = history_policy else {
                     return Err(());
                 };
-                self.detach_abyss_round_if_changed(&mut state, source, policy, idle_timer)
+                self.detach_abyss_round_if_changed(&mut state, source, policy, idle_timer, true)
             } else {
                 None
             };
-            let signal = apply_engine_event(&mut state, event);
+            let mut signal = apply_engine_event(&mut state, event);
             if post_event_abyss_archive && detached_abyss_round.is_none() {
                 let (Some(source), Some(idle_timer)) = (source, idle_timer.as_deref_mut()) else {
                     return Err(());
@@ -1343,8 +1359,8 @@ impl LiveCaptureInner {
                 let Some(policy) = history_policy else {
                     return Err(());
                 };
-                detached_abyss_round =
-                    self.detach_abyss_round_if_changed(&mut state, source, policy, idle_timer);
+                detached_abyss_round = self
+                    .detach_abyss_round_if_changed(&mut state, source, policy, idle_timer, false);
             }
             if outgoing_hit && matches!(&signal, CoreSignal::StateChanged) {
                 let Some(idle_timer) = idle_timer.as_mut() else {
@@ -1355,6 +1371,9 @@ impl LiveCaptureInner {
             }
             if detached_abyss_round.is_some() {
                 self.bump_packet_session();
+                if signal == CoreSignal::Unchanged {
+                    signal = CoreSignal::StateChanged;
+                }
             }
             (signal, detached_abyss_round)
         };
@@ -1378,18 +1397,58 @@ impl LiveCaptureInner {
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => false,
             CoreSignal::ModScript { state_changed, .. } => state_changed,
-            CoreSignal::Status(_) => {
+            CoreSignal::Status(message) => {
                 let mut status = checked_lock(&self.status)?;
+                let mut changed = false;
                 if status.phase == LiveCapturePhase::Starting {
                     status.phase = LiveCapturePhase::Running;
+                    changed = true;
+                }
+                if message == crate::engine::settlement::automatic::READY
+                    && status.issue == Some(LiveCaptureIssue::DamageWaiting)
+                {
+                    status.issue = None;
+                    changed = true;
+                }
+                changed
+            }
+            CoreSignal::Warning(warning) => {
+                let mut status = checked_lock(&self.status)?;
+                let automatic_issue = match warning.as_str() {
+                    crate::engine::settlement::automatic::WAITING => {
+                        Some(LiveCaptureIssue::DamageWaiting)
+                    }
+                    crate::engine::settlement::automatic::GAP => {
+                        Some(LiveCaptureIssue::DamageIncomplete)
+                    }
+                    crate::engine::settlement::automatic::UNAVAILABLE => {
+                        Some(LiveCaptureIssue::DamageUnavailable)
+                    }
+                    _ => None,
+                };
+                if let Some(issue) = automatic_issue {
+                    if matches!(
+                        status.issue,
+                        None | Some(
+                            LiveCaptureIssue::RuntimeWarning | LiveCaptureIssue::DamageWaiting
+                        )
+                    ) || (status.issue == Some(LiveCaptureIssue::DamageIncomplete)
+                        && issue == LiveCaptureIssue::DamageUnavailable)
+                    {
+                        let changed = status.issue != Some(issue);
+                        status.issue = Some(issue);
+                        changed
+                    } else {
+                        false
+                    }
+                } else if warning == crate::engine::settlement::runtime::PROFILE_MISSING
+                    && matches!(status.issue, None | Some(LiveCaptureIssue::RuntimeWarning))
+                {
+                    status.issue = Some(LiveCaptureIssue::DamageProfileMissing);
                     true
                 } else {
-                    false
+                    merge_runtime_warning(&mut status.issue)
                 }
-            }
-            CoreSignal::Warning(_) => {
-                let mut status = checked_lock(&self.status)?;
-                merge_runtime_warning(&mut status.issue)
             }
             CoreSignal::Error(_) => {
                 *checked_lock(&self.status)? = LiveCaptureStatus {
@@ -1784,6 +1843,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }))
     }
@@ -2426,6 +2486,115 @@ mod tests {
     }
 
     #[test]
+    fn abyss_second_half_retry_preserves_first_half_until_explicit_floor_reset() {
+        use crate::engine::model::AbyssHalf;
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let inventory = install_test_inventory(&service);
+        let stage = |timestamp, half| {
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp,
+                cycle: None,
+                floor: Some(11),
+                half,
+                allow_late_backfill: false,
+            })
+        };
+        let damage = |timestamp, character, amount| {
+            let EngineEvent::Hit(mut h) = hit(amount) else {
+                unreachable!()
+            };
+            h.timestamp = timestamp;
+            h.char_id = character;
+            EngineEvent::Hit(h)
+        };
+        process(&service, damage(0.5, 99, 7.0));
+        process(&service, stage(1.0, AbyssHalf::First));
+        process(&service, damage(2.0, 1, 100.0));
+        process(&service, stage(3.0, AbyssHalf::Second));
+        process(&service, damage(4.0, 2, 200.0));
+        for (timestamp, amount) in [(5.0, 30.0), (7.0, 40.0)] {
+            let revision = service.revision();
+            process(
+                &service,
+                EngineEvent::Abyss(AbyssEvent::RestartHalf {
+                    timestamp,
+                    half: AbyssHalf::Second,
+                }),
+            );
+            assert!(service.revision() > revision);
+            project(&service, |state| {
+                assert_eq!(state.abyss.first_half.total_damage, 100.0);
+                assert_eq!(state.abyss.first_half.hits.len(), 1);
+                assert_eq!(state.abyss.first_half_at, Some(1.0));
+                assert_eq!(state.abyss.second_half.total_damage, 0.0);
+                assert_eq!(state.abyss.active_half, Some(AbyssHalf::Second));
+                assert_eq!(state.total_damage, 107.0);
+                assert_eq!(state.hits.len(), 2);
+            });
+            assert!(take_archives(&service).is_empty());
+            assert_test_inventory(&service, inventory);
+            process(&service, stage(timestamp, AbyssHalf::Second));
+            process(&service, damage(timestamp + 1.0, 2, amount));
+            assert_eq!(project(&service, |s| s.total_damage), 107.0 + amount);
+        }
+        process(
+            &service,
+            EngineEvent::Abyss(AbyssEvent::RestartDetected { timestamp: 9.0 }),
+        );
+        let archives = take_archives(&service);
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].summary.total_damage, 147.0);
+        process(&service, stage(9.0, AbyssHalf::First));
+        project(&service, |s| {
+            assert_eq!(s.total_damage, 0.0);
+            assert!(s.abyss.first_half.hits.is_empty());
+            assert!(s.abyss.second_half.hits.is_empty());
+        });
+    }
+    #[test]
+    fn challenge_restarts_archive_each_round_and_preserve_inventory_and_source() {
+        for clone_type in [9, 16] {
+            let service = LiveCaptureService::new(LiveCaptureResources::default());
+            let inventory = install_test_inventory(&service);
+            *service.0.quality_source.lock().unwrap() = CaptureQualitySource::Plugin;
+            process(&service, hit(321.0));
+            process(
+                &service,
+                EngineEvent::ChallengeRestart {
+                    timestamp: 3.0,
+                    clone_type,
+                },
+            );
+            let archives = take_archives(&service);
+            assert_eq!(archives.len(), 1);
+            assert_eq!(archives[0].source, CaptureQualitySource::Plugin);
+            assert_eq!(archives[0].summary.total_damage, 321.0);
+            assert!(project(&service, |state| state.hits.is_empty()));
+            assert_test_inventory(&service, inventory);
+            // No hit between repeated boundaries: no empty history record.
+            process(
+                &service,
+                EngineEvent::ChallengeRestart {
+                    timestamp: 4.0,
+                    clone_type,
+                },
+            );
+            assert!(take_archives(&service).is_empty());
+            process(&service, hit(123.0));
+            process(
+                &service,
+                EngineEvent::ChallengeRestart {
+                    timestamp: 5.0,
+                    clone_type,
+                },
+            );
+            let archives = take_archives(&service);
+            assert_eq!(archives.len(), 1);
+            assert_eq!(archives[0].summary.total_damage, 123.0);
+            assert!(!project(&service, |state| state.abyss.is_active()));
+        }
+    }
+    #[test]
     fn abyss_restart_queues_the_previous_round_before_reducer_changes_state() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         let inventory_generations = install_test_inventory(&service);
@@ -2778,6 +2947,86 @@ mod tests {
     }
 
     #[test]
+    fn automatic_waiting_clears_on_qualification_without_hiding_a_gap() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::automatic::WAITING.into()),
+        );
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageWaiting)
+        );
+        let revision = service.revision();
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::automatic::WAITING.into()),
+        );
+        assert_eq!(service.revision(), revision);
+        process(
+            &service,
+            EngineEvent::Status(crate::engine::settlement::automatic::READY.into()),
+        );
+        assert!(service.status().issue.is_none());
+        assert!(service.revision() > revision);
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::automatic::GAP.into()),
+        );
+        process(
+            &service,
+            EngineEvent::Status(crate::engine::settlement::automatic::READY.into()),
+        );
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageIncomplete)
+        );
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::automatic::UNAVAILABLE.into()),
+        );
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageUnavailable)
+        );
+    }
+
+    #[test]
+    fn damage_profile_warning_is_specific_sticky_and_idempotent() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        process(&service, EngineEvent::Warning("generic warning".into()));
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::runtime::PROFILE_MISSING.into()),
+        );
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageProfileMissing)
+        );
+        let revision = service.revision();
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::runtime::PROFILE_MISSING.into()),
+        );
+        process(
+            &service,
+            EngineEvent::Warning("another generic warning".into()),
+        );
+        process(&service, EngineEvent::Status("capture running".into()));
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageProfileMissing)
+        );
+        assert_eq!(service.revision(), revision);
+        process(&service, EngineEvent::Error("failure".into()));
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::runtime::PROFILE_MISSING.into()),
+        );
+        assert_eq!(service.status().issue, Some(LiveCaptureIssue::RuntimeError));
+    }
+
+    #[test]
     fn runtime_failures_keep_private_details_out_of_status() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         let initial_revision = service.revision();
@@ -2985,12 +3234,14 @@ mod tests {
             target_ordinal: 0,
             component_ordinal: 0,
             source: reference.clone(),
+            request_source: None,
             target: reference,
             display_type: 0,
             attribution: Attribution::RequestMissing,
             current_hp_bits: 0,
             hp_before_request_bits: None,
             max_hp_at_request_bits: None,
+            hp_adjustment: None,
         });
         let mut p = Projection {
             identity,

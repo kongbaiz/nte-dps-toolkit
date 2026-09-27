@@ -9,7 +9,7 @@ use nte_dps_tool::{
 
 use crate::equipment_operation_service::EmptyCurtainOperationState;
 
-pub(crate) const EMPTY_CURTAIN_CONTRACT_VERSION: u32 = 2;
+pub(crate) const EMPTY_CURTAIN_CONTRACT_VERSION: u32 = 3;
 pub(crate) const EMPTY_CURTAIN_MAX_CHARACTERS: usize = 64;
 pub(crate) const EMPTY_CURTAIN_MAX_ITEMS: usize = 4_096;
 pub(crate) const EMPTY_CURTAIN_MAX_DETAILS_PER_ITEM: usize = 16;
@@ -25,6 +25,7 @@ pub(crate) struct EmptyCurtainSnapshot {
     pub generation: String,
     pub observed_at_unix_ms: String,
     pub has_data: bool,
+    pub can_operate: bool,
     pub complete: bool,
     pub characters: Vec<EmptyCurtainCharacterSnapshot>,
     pub items: Vec<EmptyCurtainItemSnapshot>,
@@ -105,6 +106,7 @@ impl EmptyCurtainSnapshot {
             generation: inventory.generation.to_string(),
             observed_at_unix_ms: inventory.observed_at_unix_ms.to_string(),
             has_data,
+            can_operate: false,
             complete,
             characters: projected_characters,
             items: projected_items,

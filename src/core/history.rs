@@ -16,7 +16,8 @@ pub fn abyss_event_starts_new_round(current_floor: Option<u32>, event: &AbyssEve
             AbyssEvent::Stage {
                 floor: Some(next_floor),
                 ..
-            } if current_floor.is_some_and(|floor| floor != *next_floor)
+            } | AbyssEvent::Location { floor: next_floor, .. }
+                if current_floor.is_some_and(|floor| floor != *next_floor)
         )
 }
 
@@ -123,6 +124,30 @@ mod tests {
     use crate::engine::model::{Hit, HitCharacterSource, HitDirection};
 
     #[test]
+    fn explicit_half_retry_is_not_a_whole_floor_boundary() {
+        assert!(!abyss_event_starts_new_round(
+            Some(11),
+            &AbyssEvent::RestartHalf {
+                timestamp: 1.0,
+                half: crate::engine::model::AbyssHalf::Second,
+            }
+        ));
+        assert!(abyss_event_starts_new_round(
+            Some(11),
+            &AbyssEvent::RestartDetected { timestamp: 1.0 }
+        ));
+    }
+    #[test]
+    fn location_only_cuts_round_when_known_floor_changes() {
+        let event = AbyssEvent::Location {
+            timestamp: 1.0,
+            floor: 11,
+        };
+        assert!(!abyss_event_starts_new_round(None, &event));
+        assert!(!abyss_event_starts_new_round(Some(11), &event));
+        assert!(abyss_event_starts_new_round(Some(12), &event));
+    }
+    #[test]
     fn abyss_exit_is_not_a_pre_event_archive_boundary() {
         assert!(!abyss_event_starts_new_round(
             Some(12),
@@ -218,6 +243,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         });
 

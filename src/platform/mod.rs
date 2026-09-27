@@ -17,3 +17,6 @@ pub mod update_http;
 pub mod update_install;
 #[cfg(windows)]
 pub mod window_style;
+
+#[cfg(feature = "desktop")]
+pub mod capture_pipe;
