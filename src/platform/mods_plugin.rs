@@ -159,311 +159,6 @@ const MAX_LEGACY_MOD_TOTAL_BYTES: usize = 512 * 1024;
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
 #[cfg(feature = "desktop")]
 const MOD_DIRECTORY_NAME: &str = "nte-mods";
-#[cfg(feature = "desktop")]
-const EQUIPMENT_MOD_FILE_NAME: &str = "equipment.nte";
-#[cfg(feature = "desktop")]
-const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
-#[cfg(feature = "desktop")]
-const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
-#[cfg(feature = "desktop")]
-const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
-#[cfg(feature = "desktop")]
-const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_V1: &[u8] =
-    b"nte_mod 1\nmod equipment\non viewport_tick equipment.prepare\non viewport_tick ipc.pump\n";
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_V1: &[u8] =
-    b"nte_mod 1\nmod combat-clock\non viewport_tick combat_clock.observe\non viewport_tick ipc.pump\n";
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_V2: &[u8] = b"nte_mod 2\nmod equipment\ncapability equipment\n\non viewport_tick\nload r0 event.viewport\nread_ptr r1 r0 0x80\nread_tarray_first r2 r1 0x38\nread_ptr r3 r2 0x30\nread_ptr r4 r3 0x2d0\nif equipment.cache_missing\ncall equipment.prepare r4\nend\ncall ipc.pump r4 null\nend\n";
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_V2: &[u8] = b"nte_mod 2\nmod combat-clock\ncapability combat-clock\n\non viewport_tick\nload r0 event.viewport\nread_ptr r1 r0 0x80\nread_tarray_first r2 r1 0x38\nread_ptr r3 r2 0x30\ncall combat_clock.observe r3\ncall ipc.pump null r3\nend\n";
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_V3: &[u8] = b"nte_mod(3)\nmod(\"equipment\")\ncapability(\"equipment\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = read_ptr(viewport, 0x80)\n    local_player = read_tarray_first(game_instance, 0x38)\n    player_controller = read_ptr(local_player, 0x30)\n    player_state = read_ptr(player_controller, 0x2d0)\n    if equipment.cache_missing():\n        equipment.prepare(player_state)\n    ipc.pump(player_state, None)\n";
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_V3: &[u8] = b"nte_mod(3)\nmod(\"combat-clock\")\ncapability(\"combat-clock\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = read_ptr(viewport, 0x80)\n    local_player = read_tarray_first(game_instance, 0x38)\n    player_controller = read_ptr(local_player, 0x30)\n    combat_clock.observe(player_controller)\n    ipc.pump(None, player_controller)\n";
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_V4: &[u8] = b"nte_mod(4)\nmod(\"equipment\")\nrequires(\"viewport.tick\")\nrequires(\"memory.read\")\nrequires(\"sdk.read\")\nrequires(\"equipment\")\nrequires(\"ipc\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = memory.read_ptr(viewport, 0x80)\n    local_player = memory.tarray_first(game_instance, 0x38)\n    player_controller = memory.read_ptr(local_player, 0x30)\n    player_state = sdk.player_state(player_controller)\n    if equipment.cache_missing():\n        equipment.prepare(player_state)\n    ipc.bind(player_state, None)\n";
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_V4: &[u8] = b"nte_mod(4)\nmod(\"combat-clock\")\nrequires(\"viewport.tick\")\nrequires(\"memory.read\")\nrequires(\"combat-clock\")\nrequires(\"ipc\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = memory.read_ptr(viewport, 0x80)\n    local_player = memory.tarray_first(game_instance, 0x38)\n    player_controller = memory.read_ptr(local_player, 0x30)\n    combat_clock.observe(player_controller)\n    ipc.bind(None, player_controller)\n";
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_V4_OFFSETS: &[u8] = br#"nte_mod(4)
-mod("equipment")
-requires("viewport.tick")
-requires("memory.read")
-requires("sdk.read")
-requires("equipment")
-requires("ipc")
-
-# The script owns session discovery, cache retry, and IPC activation.
-# Host APIs only perform checked reads or one bounded native operation.
-state.last_player_state = 0
-state.next_prepare_at = 0
-
-def on_viewport_tick(event):
-    # Resolve the current local session. A failed step returns None.
-    game_instance = memory.read_ptr(event.viewport, 0x80)
-    local_player = memory.tarray_first(game_instance, 0x38)
-    player_controller = memory.read_ptr(local_player, 0x30)
-    player_state = sdk.player_state(player_controller)
-    now = time.now_ms()
-
-    if player_state != None:
-        # A new PlayerState starts a fresh cache lifecycle.
-        if player_state != state.last_player_state:
-            state.last_player_state = player_state
-            state.next_prepare_at = 0
-
-        cache_ready = equipment.cache_ready(player_state)
-        if cache_ready == False:
-            # Retry at most once per second while UE functions are unavailable.
-            if now >= state.next_prepare_at:
-                equipment.prepare(player_state)
-                state.next_prepare_at = now + 1000
-                cache_ready = equipment.cache_ready(player_state)
-
-        # Equipment IPC becomes actionable only after this Mod prepared it.
-        if cache_ready == True:
-            ipc.bind(player_state, None)
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS: &[u8] = br#"nte_mod(4)
-mod("combat-clock")
-requires("viewport.tick")
-requires("memory.read")
-requires("combat-clock")
-requires("ipc")
-
-# The script owns sampling, transition detection, and forwarding.
-# sample() packs state_flags in the high 32 bits and pause_mask below.
-state.initialized = 0
-state.last_controller = 0
-state.last_pause_mask = 0
-state.last_state_flags = 0
-
-def on_viewport_tick(event):
-    # Resolve the controller independently from the equipment Mod.
-    game_instance = memory.read_ptr(event.viewport, 0x80)
-    local_player = memory.tarray_first(game_instance, 0x38)
-    player_controller = memory.read_ptr(local_player, 0x30)
-
-    # A zero sample represents an unavailable controller or pause API.
-    sample = 0
-    if player_controller != None:
-        sample = combat_clock.sample(player_controller)
-        ipc.bind(None, player_controller)
-    pause_mask = sample & 0xFFFFFFFF
-    state_flags = sample >> 32
-
-    # Forward only the first sample or a real state transition.
-    changed = state.initialized == False
-    if player_controller != state.last_controller:
-        changed = True
-    if pause_mask != state.last_pause_mask:
-        changed = True
-    if state_flags != state.last_state_flags:
-        changed = True
-
-    if changed == True:
-        combat_clock.forward(pause_mask, state_flags)
-        state.initialized = 1
-        state.last_controller = player_controller
-        state.last_pause_mask = pause_mask
-        state.last_state_flags = state_flags
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
-mod("equipment")
-requires("viewport.tick")
-requires("game.session")
-requires("equipment")
-requires("ipc")
-
-# The script owns PlayerState lifecycle, cache retry, and IPC activation.
-# game.player_state is a stable built-in; client offsets stay in the host.
-state.last_player_state = 0
-state.next_prepare_at = 0
-
-def on_viewport_tick(event):
-    player_state = game.player_state
-    now = time.now_ms()
-
-    if player_state != None:
-        # A new PlayerState starts a fresh cache lifecycle.
-        if player_state != state.last_player_state:
-            state.last_player_state = player_state
-            state.next_prepare_at = 0
-
-        cache_ready = equipment.cache_ready(player_state)
-        if cache_ready == False:
-            # Retry at most once per second while UE functions are unavailable.
-            if now >= state.next_prepare_at:
-                equipment.prepare(player_state)
-                state.next_prepare_at = now + 1000
-                cache_ready = equipment.cache_ready(player_state)
-
-        # Equipment IPC becomes actionable only after this Mod prepared it.
-        if cache_ready == True:
-            ipc.bind(player_state, None)
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
-mod("combat-clock")
-requires("viewport.tick")
-requires("game.session")
-requires("combat-clock")
-requires("ipc")
-
-# The script owns sampling, transition detection, and forwarding.
-# Stable host properties hide the session offsets and packed sample format.
-state.initialized = 0
-state.last_controller = 0
-state.last_pause_mask = 0
-state.last_state_flags = 0
-
-def on_viewport_tick(event):
-    player_controller = game.player_controller
-
-    pause_mask = 0
-    state_flags = 0
-    if player_controller != None:
-        pause_mask = combat_clock.pause_mask(player_controller)
-        state_flags = combat_clock.state_flags(player_controller)
-        ipc.bind(None, player_controller)
-
-    # Forward only the first sample or a real state transition.
-    changed = state.initialized == False
-    if player_controller != state.last_controller:
-        changed = True
-    if pause_mask != state.last_pause_mask:
-        changed = True
-    if state_flags != state.last_state_flags:
-        changed = True
-
-    if changed == True:
-        combat_clock.forward(pause_mask, state_flags)
-        state.initialized = 1
-        state.last_controller = player_controller
-        state.last_pause_mask = pause_mask
-        state.last_state_flags = state_flags
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
-mod("equipment")
-requires("viewport.tick")
-requires("game.session")
-requires("equipment")
-requires("ipc")
-
-# External routing is the Mod's service table; the DLL only exposes validated kernel calls.
-route_ipc(1, "equipment.equip_module")
-route_ipc(2, "equipment.equip_core")
-route_ipc(3, "equipment.unequip_module")
-route_ipc(4, "equipment.unequip_core")
-route_ipc(5, "equipment.unequip_all")
-route_ipc(6, "equipment.equip_one_key")
-route_ipc(7, "equipment.move_module_to_character")
-route_ipc(8, "equipment.move_core_to_character")
-route_ipc(9, "equipment.set_item_discarded")
-route_ipc(10, "equipment.set_item_locked")
-route_ipc(12, "ipc.query_mod_events")
-
-# The script owns PlayerState lifecycle, cache retry, and IPC activation.
-# game.player_state is a stable built-in; client offsets stay in the host.
-state.last_player_state = 0
-state.next_prepare_at = 0
-
-def on_viewport_tick(event):
-    player_state = game.player_state
-    now = time.now_ms()
-    if player_state != None:
-        # A new PlayerState starts a fresh cache lifecycle.
-        if player_state != state.last_player_state:
-            state.last_player_state = player_state
-            state.next_prepare_at = 0
-
-        cache_ready = equipment.cache_ready(player_state)
-        if cache_ready == False:
-            # Retry at most once per second while UE functions are unavailable.
-            if now >= state.next_prepare_at:
-                equipment.prepare(player_state)
-                state.next_prepare_at = now + 1000
-                cache_ready = equipment.cache_ready(player_state)
-
-        # Equipment IPC becomes actionable only after this Mod prepared it.
-        if cache_ready == True:
-            ipc.bind(player_state, None)
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
-mod("combat-clock")
-requires("viewport.tick")
-requires("game.session")
-requires("combat-clock")
-requires("ipc")
-
-# External routing publishes the services owned by this Mod.
-route_ipc(11, "combat_clock.query_transitions")
-route_ipc(12, "ipc.query_mod_events")
-
-# The script owns sampling, transition detection, and forwarding.
-# Stable host properties hide the session offsets and packed sample format.
-state.initialized = 0
-state.last_controller = 0
-state.last_pause_mask = 0
-state.last_state_flags = 0
-
-def on_viewport_tick(event):
-    player_controller = game.player_controller
-    pause_mask = 0
-    state_flags = 0
-    if player_controller != None:
-        pause_mask = combat_clock.pause_mask(player_controller)
-        state_flags = combat_clock.state_flags(player_controller)
-        ipc.bind(None, player_controller)
-
-    # Forward only the first sample or a real state transition.
-    changed = state.initialized == False
-    if player_controller != state.last_controller:
-        changed = True
-    if pause_mask != state.last_pause_mask:
-        changed = True
-    if state_flags != state.last_state_flags:
-        changed = True
-
-    if changed == True:
-        combat_clock.forward(pause_mask, state_flags)
-        state.initialized = 1
-        state.last_controller = player_controller
-        state.last_pause_mask = pause_mask
-        state.last_state_flags = state_flags
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[
-    b"nte_mod_set 1\nload equipment\nload combat-clock\n",
-    b"nte_mod_set 1\nload combat-clock\nload enemy-telemetry\nload equipment\n",
-];
-#[cfg(feature = "desktop")]
-const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
-    LEGACY_EQUIPMENT_MOD_V1,
-    LEGACY_EQUIPMENT_MOD_V2,
-    LEGACY_EQUIPMENT_MOD_V3,
-    LEGACY_EQUIPMENT_MOD_V4,
-    LEGACY_EQUIPMENT_MOD_V4_OFFSETS,
-    LEGACY_EQUIPMENT_MOD_V4_SESSION,
-    LEGACY_EQUIPMENT_MOD_V4_ROUTES,
-];
-#[cfg(feature = "desktop")]
-const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
-    LEGACY_COMBAT_CLOCK_MOD_V1,
-    LEGACY_COMBAT_CLOCK_MOD_V2,
-    LEGACY_COMBAT_CLOCK_MOD_V3,
-    LEGACY_COMBAT_CLOCK_MOD_V4,
-    LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS,
-    LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
-    LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES,
-];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModsPluginPlacement {
     pub equipment: HtItemNetId,
@@ -1809,7 +1504,7 @@ fn ensure_game_is_closed() -> Result<(), ModsPluginDeploymentError> {
 #[cfg(feature = "desktop")]
 pub fn prepare_mod_workspace() -> Result<PathBuf, ModsPluginDeploymentError> {
     let workspace = mod_script_workspace_directory();
-    install_default_mod_files(&workspace).map_err(file_system_error)?;
+    ensure_mod_workspace_directory(&workspace).map_err(file_system_error)?;
     let workspace = workspace.canonicalize().map_err(file_system_error)?;
     register_mod_workspace(&workspace)?;
     Ok(workspace)
@@ -2393,25 +2088,12 @@ fn migrate_legacy_mod_workspace(
                         path.display()
                     ))
                 })?;
-            let mut bytes = read_legacy_mod_file(&path)?;
+            let bytes = read_legacy_mod_file(&path)?;
             total_source_bytes = total_source_bytes.saturating_add(bytes.len());
             if total_source_bytes > MAX_LEGACY_MOD_TOTAL_BYTES {
                 return Err(ModsPluginDeploymentError::FileSystem(
                     "legacy Mod workspace exceeds its total byte budget".to_owned(),
                 ));
-            }
-            if file_name.eq_ignore_ascii_case(EQUIPMENT_MOD_FILE_NAME)
-                && LEGACY_EQUIPMENT_MOD_PROGRAMS
-                    .iter()
-                    .any(|legacy| bytes == *legacy)
-            {
-                bytes = EQUIPMENT_MOD.to_vec();
-            } else if file_name.eq_ignore_ascii_case(COMBAT_CLOCK_MOD_FILE_NAME)
-                && LEGACY_COMBAT_CLOCK_MOD_PROGRAMS
-                    .iter()
-                    .any(|legacy| bytes == *legacy)
-            {
-                bytes = COMBAT_CLOCK_MOD.to_vec();
             }
             let source = std::str::from_utf8(&bytes).map_err(|_| {
                 ModsPluginDeploymentError::FileSystem(format!("{} is not UTF-8", path.display()))
@@ -2547,68 +2229,10 @@ fn remove_legacy_game_mod_files(directory: &Path) -> io::Result<()> {
 }
 
 #[cfg(feature = "desktop")]
-fn rollback_default_mod_files(created: &[PathBuf], migrated: &[(PathBuf, Vec<u8>)]) {
-    for created_path in created.iter().rev() {
-        let _ = fs::remove_file(created_path);
-    }
-    for (migrated_path, previous) in migrated.iter().rev() {
-        let _ = fs::write(migrated_path, previous);
-    }
-}
-
-#[cfg(feature = "desktop")]
-fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
-    let mod_directory = workspace_directory.join(MOD_DIRECTORY_NAME);
-    fs::create_dir_all(&mod_directory)?;
-    let workspace_initialized = workspace_directory.join(MOD_SET_FILE_NAME).is_file();
-    let mut created = Vec::new();
-    let mut migrated = Vec::new();
-    for (path, bytes, legacy) in [
-        (
-            workspace_directory.join(MOD_SET_FILE_NAME),
-            DEFAULT_MOD_SET,
-            LEGACY_DEFAULT_MOD_SETS,
-        ),
-        (
-            mod_directory.join(EQUIPMENT_MOD_FILE_NAME),
-            EQUIPMENT_MOD,
-            LEGACY_EQUIPMENT_MOD_PROGRAMS,
-        ),
-        (
-            mod_directory.join(COMBAT_CLOCK_MOD_FILE_NAME),
-            COMBAT_CLOCK_MOD,
-            LEGACY_COMBAT_CLOCK_MOD_PROGRAMS,
-        ),
-    ] {
-        if !path.exists() {
-            if workspace_initialized {
-                continue;
-            }
-            if let Err(error) = fs::write(&path, bytes) {
-                rollback_default_mod_files(&created, &migrated);
-                let _ = fs::remove_dir(&mod_directory);
-                return Err(error);
-            }
-            created.push(path);
-        } else {
-            let existing = match read_deployment_file_bounded(&path, MAX_LEGACY_MOD_FILE_BYTES) {
-                Ok(existing) => existing,
-                Err(error) => {
-                    rollback_default_mod_files(&created, &migrated);
-                    return Err(error);
-                }
-            };
-            if !legacy.iter().any(|previous| existing == *previous) {
-                continue;
-            }
-            if let Err(error) = fs::write(&path, bytes) {
-                rollback_default_mod_files(&created, &migrated);
-                return Err(error);
-            }
-            migrated.push((path, existing));
-        }
-    }
-    Ok(())
+fn ensure_mod_workspace_directory(workspace_directory: &Path) -> io::Result<()> {
+    // Retired scripts are neither bundled nor recreated. Existing user sources
+    // and enabled sets remain untouched, including intentionally deleted files.
+    fs::create_dir_all(workspace_directory.join(MOD_DIRECTORY_NAME))
 }
 
 #[cfg(feature = "desktop")]
@@ -2628,6 +2252,11 @@ fn file_system_error(error: io::Error) -> ModsPluginDeploymentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "desktop")]
+    const EQUIPMENT_MOD_FILE_NAME: &str = "equipment.nte";
+    #[cfg(feature = "desktop")]
+    const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
 
     #[cfg(feature = "desktop")]
     #[test]
@@ -2700,34 +2329,6 @@ mod tests {
             .unwrap_or_else(|| panic!("native IPC header is missing {name}"))
             .parse()
             .expect("native IPC enum value must be valid")
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn bundled_mods_keep_distinct_control_flow_in_external_sources() {
-        let equipment =
-            std::str::from_utf8(EQUIPMENT_MOD).expect("bundled equipment Mod must be UTF-8");
-        let combat_clock =
-            std::str::from_utf8(COMBAT_CLOCK_MOD).expect("bundled combat-clock Mod must be UTF-8");
-
-        crate::storage::mod_scripts::validate_mod_source("equipment", equipment).unwrap();
-        crate::storage::mod_scripts::validate_mod_source("combat-clock", combat_clock).unwrap();
-        assert!(equipment.contains("nte::game::player_state"));
-        assert!(equipment.contains("std::uint64_t next_prepare_at"));
-        assert!(equipment.contains("nte::equipment::cache_ready(player_state)"));
-        assert!(equipment.contains("nte::ipc::bind(player_state, nullptr)"));
-        assert!(equipment.contains("NTE_ROUTE_IPC(1, \"equipment.equip_module\")"));
-        assert!(equipment.contains("NTE_ROUTE_IPC(10, \"equipment.set_item_locked\")"));
-        assert!(!equipment.contains("0x"));
-        assert!(combat_clock.contains("nte::game::player_controller"));
-        assert!(combat_clock.contains("std::uint64_t last_pause_mask"));
-        assert!(combat_clock.contains("nte::combat_clock::pause_mask(player_controller)"));
-        assert!(combat_clock.contains("nte::combat_clock::state_flags(player_controller)"));
-        assert!(combat_clock.contains("nte::combat_clock::forward(pause_mask, state_flags)"));
-        assert!(combat_clock.contains("NTE_ROUTE_IPC(11, \"combat_clock.query_transitions\")"));
-        assert!(!combat_clock.contains("nte::combat_clock::observe("));
-        assert!(!combat_clock.contains("0x"));
-        assert_ne!(equipment, combat_clock);
     }
 
     #[test]
@@ -3354,68 +2955,37 @@ mod tests {
             encode_plugin_marker(plugin),
         )
         .unwrap();
-        install_default_mod_files(directory).unwrap();
+        ensure_mod_workspace_directory(directory).unwrap();
     }
 
     #[test]
     #[cfg(feature = "desktop")]
-    fn default_workspace_installs_only_stable_mods() {
-        let workspace = deployment_test_directory("stable-mod-defaults");
+    fn workspace_initialization_preserves_user_files_without_restoring_retired_defaults() {
+        let workspace = deployment_test_directory("retired-mod-defaults");
+        ensure_mod_workspace_directory(&workspace).unwrap();
+        let mod_directory = workspace.join(MOD_DIRECTORY_NAME);
+        assert_eq!(fs::read_dir(&mod_directory).unwrap().count(), 0);
+        assert!(!workspace.join(MOD_SET_FILE_NAME).exists());
 
-        install_default_mod_files(&workspace).unwrap();
-
+        let enabled = b"nte_mod_set 1\nload equipment\nload combat-clock\n";
+        let source = b"user-owned script bytes";
+        let equipment = mod_directory.join(EQUIPMENT_MOD_FILE_NAME);
+        fs::write(workspace.join(MOD_SET_FILE_NAME), enabled).unwrap();
+        fs::write(&equipment, source).unwrap();
+        ensure_mod_workspace_directory(&workspace).unwrap();
+        assert_eq!(fs::read(&equipment).unwrap(), source);
         assert_eq!(
             fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
-            DEFAULT_MOD_SET
+            enabled
         );
-        let mut installed = fs::read_dir(workspace.join(MOD_DIRECTORY_NAME))
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        installed.sort();
-        assert_eq!(installed, ["combat-clock.nte", "equipment.nte"]);
-        fs::remove_dir_all(workspace).unwrap();
-    }
+        assert!(!mod_directory.join(COMBAT_CLOCK_MOD_FILE_NAME).exists());
 
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn default_workspace_upgrades_the_previous_exact_enabled_set() {
-        let workspace = deployment_test_directory("stable-enabled-set-upgrade");
-        fs::write(
-            workspace.join(MOD_SET_FILE_NAME),
-            LEGACY_DEFAULT_MOD_SETS[1],
-        )
-        .unwrap();
-
-        install_default_mod_files(&workspace).unwrap();
-
+        fs::remove_file(&equipment).unwrap();
+        ensure_mod_workspace_directory(&workspace).unwrap();
+        assert!(!equipment.exists());
         assert_eq!(
             fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
-            DEFAULT_MOD_SET
-        );
-        fs::remove_dir_all(workspace).unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn initialized_workspace_does_not_restore_a_deleted_default_mod() {
-        let workspace = deployment_test_directory("deleted-default-mod");
-        install_default_mod_files(&workspace).unwrap();
-        crate::storage::mod_scripts::delete_mod_script(&workspace, "equipment").unwrap();
-
-        install_default_mod_files(&workspace).unwrap();
-
-        assert!(
-            !workspace
-                .join(MOD_DIRECTORY_NAME)
-                .join(EQUIPMENT_MOD_FILE_NAME)
-                .exists()
-        );
-        assert!(
-            !fs::read_to_string(workspace.join(MOD_SET_FILE_NAME))
-                .unwrap()
-                .lines()
-                .any(|line| line == "equipment")
+            enabled
         );
         fs::remove_dir_all(workspace).unwrap();
     }
@@ -3628,62 +3198,32 @@ mod tests {
 
     #[test]
     #[cfg(feature = "desktop")]
-    fn managed_plugin_refresh_migrates_legacy_mod_programs() {
-        for (version, equipment, combat_clock) in [
-            ("v1", LEGACY_EQUIPMENT_MOD_V1, LEGACY_COMBAT_CLOCK_MOD_V1),
-            ("v2", LEGACY_EQUIPMENT_MOD_V2, LEGACY_COMBAT_CLOCK_MOD_V2),
-            ("v3", LEGACY_EQUIPMENT_MOD_V3, LEGACY_COMBAT_CLOCK_MOD_V3),
-            ("v4", LEGACY_EQUIPMENT_MOD_V4, LEGACY_COMBAT_CLOCK_MOD_V4),
-            (
-                "v4-offsets",
-                LEGACY_EQUIPMENT_MOD_V4_OFFSETS,
-                LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS,
-            ),
-            (
-                "v4-session",
-                LEGACY_EQUIPMENT_MOD_V4_SESSION,
-                LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
-            ),
-        ] {
-            let directory = deployment_test_directory(&format!("{version}-program-migration"));
-            let workspace = deployment_test_directory(&format!("{version}-software-workspace"));
-            install_default_mod_files(&workspace).unwrap();
-            install_legacy_managed_plugin(&directory, b"old plugin");
-            let mod_directory = directory.join(MOD_DIRECTORY_NAME);
-            fs::write(mod_directory.join(EQUIPMENT_MOD_FILE_NAME), equipment).unwrap();
-            fs::write(mod_directory.join(COMBAT_CLOCK_MOD_FILE_NAME), combat_clock).unwrap();
-
-            migrate_legacy_mod_workspace(std::slice::from_ref(&directory), &workspace).unwrap();
-            replace_managed_plugin_directories(
-                std::slice::from_ref(&directory),
-                &managed_plugin("new"),
-            )
-            .unwrap();
-
-            assert_eq!(
-                fs::read(
-                    workspace
-                        .join(MOD_DIRECTORY_NAME)
-                        .join(EQUIPMENT_MOD_FILE_NAME)
-                )
-                .unwrap(),
-                EQUIPMENT_MOD
-            );
-            assert_eq!(
-                fs::read(
-                    workspace
-                        .join(MOD_DIRECTORY_NAME)
-                        .join(COMBAT_CLOCK_MOD_FILE_NAME)
-                )
-                .unwrap(),
-                COMBAT_CLOCK_MOD
-            );
-            assert!(!directory.join(LEGACY_PLUGIN_MARKER_FILE_NAME).exists());
-            assert!(!directory.join(MOD_SET_FILE_NAME).exists());
-            assert!(!mod_directory.exists());
-            fs::remove_dir_all(directory).unwrap();
-            fs::remove_dir_all(workspace).unwrap();
-        }
+    fn retired_script_migration_failure_preserves_original_files() {
+        let directory = deployment_test_directory("retired-script-migration");
+        let workspace = deployment_test_directory("retired-script-workspace");
+        install_legacy_managed_plugin(&directory, b"old plugin");
+        let path = directory
+            .join(MOD_DIRECTORY_NAME)
+            .join(EQUIPMENT_MOD_FILE_NAME);
+        let unsupported = b"nte_mod 1\nmod equipment\ncapability equipment\n";
+        fs::write(&path, unsupported).unwrap();
+        assert!(
+            migrate_legacy_mod_workspace(std::slice::from_ref(&directory), &workspace).is_err()
+        );
+        assert_eq!(fs::read(&path).unwrap(), unsupported);
+        assert_eq!(
+            fs::read(directory.join(PLUGIN_FILE_NAME)).unwrap(),
+            b"old plugin"
+        );
+        assert!(directory.join(LEGACY_PLUGIN_MARKER_FILE_NAME).is_file());
+        assert!(
+            !workspace
+                .join(MOD_DIRECTORY_NAME)
+                .join(EQUIPMENT_MOD_FILE_NAME)
+                .exists()
+        );
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]
@@ -3691,7 +3231,7 @@ mod tests {
     fn managed_plugin_refresh_preserves_custom_mod_programs() {
         let directory = deployment_test_directory("custom-program-refresh");
         let workspace = deployment_test_directory("custom-program-workspace");
-        install_default_mod_files(&workspace).unwrap();
+        ensure_mod_workspace_directory(&workspace).unwrap();
         install_legacy_managed_plugin(&directory, b"old plugin");
         let custom = b"nte_mod(4)\nmod(\"equipment\")\nrequires(\"viewport.tick\")\n\ndef on_viewport_tick(event):\n    value = 1\n";
         let path = directory
