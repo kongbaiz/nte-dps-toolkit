@@ -432,13 +432,6 @@
         },
         "UniqueIndex": 60
       },
-      "Buff_PeriodMaxHPDamage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WZY/Buff_PeriodMaxHPDamage.Buff_PeriodMaxHPDamage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 61
-      },
       "Buff_PeriodCurHPDamage": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WZY/Buff_PeriodCurHPDamage.Buff_PeriodCurHPDamage_C",
@@ -37765,7 +37758,7 @@
       },
       "Buff_Character_StopTime": {
         "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Level/World/WorldAnomaly/PillowDreams/Buff_Character_StopTime.Buff_Character_StopTime_C",
+          "AssetPathName": "/Game/Blueprints/Level/World/WorldAnomaly/PillowDreams/Buff/Buff_Character_StopTime.Buff_Character_StopTime_C",
           "SubPathString": ""
         },
         "UniqueIndex": 5404
@@ -38974,27 +38967,6 @@
         },
         "UniqueIndex": 5568
       },
-      "Buff_HPcut_SPE_XZ": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Character/Monster/Buff/Buff_HPcut_SPE_XZ.Buff_HPcut_SPE_XZ_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5569
-      },
-      "Buff_Story_DeathReLife": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Character/Monster/Buff/Buff_Story_DeathReLife.Buff_Story_DeathReLife_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5570
-      },
-      "Buff_Story_RelifeRecoverHP": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Character/Monster/Buff/Buff_Story_RelifeRecoverHP.Buff_Story_RelifeRecoverHP_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5571
-      },
       "Buff_mon_55_TimeDilation_2s": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_55_player/Buff_mon_55_TimeDilation_2s.Buff_mon_55_TimeDilation_2s_C",
@@ -39387,13 +39359,6 @@
         },
         "UniqueIndex": 5627
       },
-      "GE_REcut_FT16": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Dragon/Exbuff/GE_REcut_FT16.GE_REcut_FT16_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5628
-      },
       "Buff_mon_52_Seq": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/WuChao/Buff_mon_52_Seq.Buff_mon_52_Seq_C",
@@ -39722,13 +39687,6 @@
           "SubPathString": ""
         },
         "UniqueIndex": 5675
-      },
-      "Buff_BlackBird_AddEnergy": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Effect/Buff_BlackBird_AddEnergy.Buff_BlackBird_AddEnergy_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5676
       },
       "Buff_Radio072_Level3_1": {
         "GameplayEffectClass": {
@@ -40086,13 +40044,6 @@
           "SubPathString": ""
         },
         "UniqueIndex": 5725
-      },
-      "Buff_Rouge_Shield_2": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Buff_Rouge_Shield_2.Buff_Rouge_Shield_2_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5726
       },
       "GE_CoolDown_Rouge_Bullet1": {
         "GameplayEffectClass": {
@@ -40934,13 +40885,6 @@
         },
         "UniqueIndex": 5846
       },
-      "Buff_Chaos_LevelEX_DmgResistDown_CheckAdd": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_071_Chaos/Upgrade/LevelExtra/Buff_Chaos_LevelEX_DmgResistDown_CheckAdd.Buff_Chaos_LevelEX_DmgResistDown_CheckAdd_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5847
-      },
       "Buff_boss36_s2_LockUnbal": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/Buff_boss36_s2_LockUnbal.Buff_boss36_s2_LockUnbal_C",
@@ -41683,26 +41627,12 @@
         },
         "UniqueIndex": 5954
       },
-      "GE_Rouge_Fire2_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire2/GE_Rouge_Fire2_Damage.GE_Rouge_Fire2_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5955
-      },
       "Buff_Rouge_Fire2": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire2/Buff_Rouge_Fire2.Buff_Rouge_Fire2_C",
           "SubPathString": ""
         },
         "UniqueIndex": 5956
-      },
-      "GE_Rouge_Fire3_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire3/GE_Rouge_Fire3_Damage.GE_Rouge_Fire3_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5957
       },
       "Buff_Rouge_Fire3": {
         "GameplayEffectClass": {
@@ -41774,13 +41704,6 @@
         },
         "UniqueIndex": 5967
       },
-      "GE_Rouge_Light2_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light2/GE_Rouge_Light2_Damage.GE_Rouge_Light2_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5968
-      },
       "Buff_Rouge_Light2_Hurted": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light2/Buff_Rouge_Light2_Hurted.Buff_Rouge_Light2_Hurted_C",
@@ -41794,13 +41717,6 @@
           "SubPathString": ""
         },
         "UniqueIndex": 5970
-      },
-      "GE_Rouge_Light3_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light3/GE_Rouge_Light3_Damage.GE_Rouge_Light3_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5971
       },
       "Buff_Rouge_Light3_Hurted": {
         "GameplayEffectClass": {
@@ -41851,13 +41767,6 @@
         },
         "UniqueIndex": 5978
       },
-      "GE_Rouge_Quake2_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake2/GE_Rouge_Quake2_Damage.GE_Rouge_Quake2_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5979
-      },
       "Buff_Rouge_Quake2_Hurted": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake2/Buff_Rouge_Quake2_Hurted.Buff_Rouge_Quake2_Hurted_C",
@@ -41871,13 +41780,6 @@
           "SubPathString": ""
         },
         "UniqueIndex": 5981
-      },
-      "GE_Rouge_Quake3_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake3/GE_Rouge_Quake3_Damage.GE_Rouge_Quake3_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5982
       },
       "Buff_Rouge_Quake3_Hurted": {
         "GameplayEffectClass": {
@@ -41914,13 +41816,6 @@
         },
         "UniqueIndex": 5987
       },
-      "GE_Rouge_Thunder2_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder2/GE_Rouge_Thunder2_Damage.GE_Rouge_Thunder2_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5988
-      },
       "Buff_Rouge_Thunder2_Hurted": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder2/Buff_Rouge_Thunder2_Hurted.Buff_Rouge_Thunder2_Hurted_C",
@@ -41934,13 +41829,6 @@
           "SubPathString": ""
         },
         "UniqueIndex": 5990
-      },
-      "GE_Rouge_Thunder3_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder3/GE_Rouge_Thunder3_Damage.GE_Rouge_Thunder3_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5991
       },
       "Buff_Rouge_Thunder3_Hurted": {
         "GameplayEffectClass": {
@@ -41970,26 +41858,12 @@
         },
         "UniqueIndex": 5995
       },
-      "GE_Rouge_Wave2_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave2/GE_Rouge_Wave2_Damage.GE_Rouge_Wave2_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5996
-      },
       "Buff_Rouge_Wave2": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave2/Buff_Rouge_Wave2.Buff_Rouge_Wave2_C",
           "SubPathString": ""
         },
         "UniqueIndex": 5997
-      },
-      "GE_Rouge_Wave3_Damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave3/GE_Rouge_Wave3_Damage.GE_Rouge_Wave3_Damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 5998
       },
       "Buff_Rouge_Wave3": {
         "GameplayEffectClass": {
@@ -42172,6 +42046,3779 @@
           "SubPathString": ""
         },
         "UniqueIndex": 6023
+      },
+      "GE_Boss_039_2_Dmg_skill06b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill06b_BP.GE_Boss_039_2_Dmg_skill06b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6024
+      },
+      "GE_Boss_039_2_Dmg_skill06a_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill06a_BP.GE_Boss_039_2_Dmg_skill06a_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6025
+      },
+      "Buff_BlackBird042_TanFan_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_TanFan_Add.Buff_BlackBird042_TanFan_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6026
+      },
+      "Buff_BlackBird042_TanFan": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_TanFan.Buff_BlackBird042_TanFan_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6027
+      },
+      "Buff_BlackBird042_LeaveBattle_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_LeaveBattle_Add.Buff_BlackBird042_LeaveBattle_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6028
+      },
+      "Buff_BlackBird042_LeaveBattle": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_LeaveBattle.Buff_BlackBird042_LeaveBattle_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6029
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill_AtkUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill_AtkUP.Buff_BlackBird042_Evolve_UltraSkill_AtkUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6030
+      },
+      "Buff_BlackBird042_Level1_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Upgrade/Buff_BlackBird042_Level1_Add.Buff_BlackBird042_Level1_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6031
+      },
+      "Buff_BlackBird042_QTE_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_QTE_Add.Buff_BlackBird042_QTE_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6032
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill_AtkUP_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill_AtkUP_Level4.Buff_BlackBird042_Evolve_UltraSkill_AtkUP_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6033
+      },
+      "Buff_BlackBird042_Level6_DamUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Upgrade/Buff_BlackBird042_Level6_DamUP.Buff_BlackBird042_Level6_DamUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6035
+      },
+      "GE_Rouge_Wave_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave2/GE_Rouge_Wave_Damage2.GE_Rouge_Wave_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6036
+      },
+      "GE_Rouge_Wave_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave3/GE_Rouge_Wave_Damage3.GE_Rouge_Wave_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6037
+      },
+      "GE_Rouge_Fire_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire2/GE_Rouge_Fire_Damage2.GE_Rouge_Fire_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5996
+      },
+      "GE_Rouge_Fire_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire3/GE_Rouge_Fire_Damage3.GE_Rouge_Fire_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5998
+      },
+      "GE_Rouge_Light_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light2/GE_Rouge_Light_Damage2.GE_Rouge_Light_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6038
+      },
+      "GE_Rouge_Light_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light3/GE_Rouge_Light_Damage3.GE_Rouge_Light_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6039
+      },
+      "GE_Rouge_Quake_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake2/GE_Rouge_Quake_Damage2.GE_Rouge_Quake_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6040
+      },
+      "GE_Rouge_Quake_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake3/GE_Rouge_Quake_Damage3.GE_Rouge_Quake_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6041
+      },
+      "GE_Rouge_Thunder_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder2/GE_Rouge_Thunder_Damage2.GE_Rouge_Thunder_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6042
+      },
+      "GE_Rouge_Thunder_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder3/GE_Rouge_Thunder_Damage3.GE_Rouge_Thunder_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6043
+      },
+      "Buff_Reaction_5_new_1036_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction5/New/Buff_Reaction_5_new_1036_Add.Buff_Reaction_5_new_1036_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5955
+      },
+      "Buff_Element_10": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_10.Buff_Element_10_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5957
+      },
+      "Buff_Element_08": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_08.Buff_Element_08_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5968
+      },
+      "Buff_Element_07": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_07.Buff_Element_07_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5971
+      },
+      "Buff_Element_06": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_06.Buff_Element_06_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5979
+      },
+      "Buff_Element_05": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_05.Buff_Element_05_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5982
+      },
+      "Buff_Element_04": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_04.Buff_Element_04_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5988
+      },
+      "Buff_Element_03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_03.Buff_Element_03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5991
+      },
+      "Buff_Element_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_02.Buff_Element_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6044
+      },
+      "Buff_Element_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_01.Buff_Element_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6045
+      },
+      "GE_Light02_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Light02_Dam.GE_Light02_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6046
+      },
+      "Buff_Light03_Charge": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Light03_Charge.Buff_Light03_Charge_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6047
+      },
+      "Buff_Light02_DFUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Light02_DFUP.Buff_Light02_DFUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6048
+      },
+      "Buff_Light02_DFN": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Light02_DFN.Buff_Light02_DFN_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6049
+      },
+      "Buff_Light02_CritDamUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Light02_CritDamUP.Buff_Light02_CritDamUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6050
+      },
+      "Buff_Element_10_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_10_01.Buff_Element_10_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6051
+      },
+      "Buff_DragonScal_Light": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_DragonScal_Light.Buff_DragonScal_Light_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6052
+      },
+      "Buff_DragonScale_Wind": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_DragonScale_Wind.Buff_DragonScale_Wind_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6053
+      },
+      "Buff_DragonScale_Grass": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_DragonScale_Grass.Buff_DragonScale_Grass_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6054
+      },
+      "Buff_DragonScale_Fire": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_DragonScale_Fire.Buff_DragonScale_Fire_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6055
+      },
+      "GE_Boss_039_2_Dmg_skill03c_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill03c_BP.GE_Boss_039_2_Dmg_skill03c_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6056
+      },
+      "GE_Boss_039_2_Dmg_skill03b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill03b_BP.GE_Boss_039_2_Dmg_skill03b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6057
+      },
+      "GE_Boss_039_2_Dmg_skill03a_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill03a_BP.GE_Boss_039_2_Dmg_skill03a_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6058
+      },
+      "Buff_Force_08": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_08.Buff_Force_08_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6059
+      },
+      "Buff_Force_07": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_07.Buff_Force_07_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6060
+      },
+      "Buff_Force_06": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_06.Buff_Force_06_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6061
+      },
+      "Buff_Force_05": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_05.Buff_Force_05_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6062
+      },
+      "Buff_Force_04": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_04.Buff_Force_04_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6063
+      },
+      "Buff_Force_03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_03.Buff_Force_03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6064
+      },
+      "Buff_Force_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_02.Buff_Force_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6065
+      },
+      "Buff_Force_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_01.Buff_Force_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6066
+      },
+      "Buff_SheepForce_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_SheepForce_Dam.Buff_SheepForce_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6067
+      },
+      "Buff_Force02_Trigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_Force02_Trigger.Buff_Force02_Trigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6068
+      },
+      "GE_Player_Akane_Melee3_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Damage/GE_Player_Akane_Melee3_1_Damage.GE_Player_Akane_Melee3_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6069
+      },
+      "Buff_Element_16": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_16.Buff_Element_16_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6070
+      },
+      "Buff_Element_15": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_15.Buff_Element_15_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6071
+      },
+      "Buff_Element_14": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_14.Buff_Element_14_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6072
+      },
+      "Buff_Element_13": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_13.Buff_Element_13_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6073
+      },
+      "Buff_Element_12": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_12.Buff_Element_12_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6074
+      },
+      "Buff_Element_11": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_11.Buff_Element_11_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6075
+      },
+      "Buff_Element_09": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Buff_Element_09.Buff_Element_09_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6076
+      },
+      "GE_buff_element_10_bullet_FireBall_act_out_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Actor/GE_buff_element_10_bullet_FireBall_act_out_BP.GE_buff_element_10_bullet_FireBall_act_out_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6077
+      },
+      "GE_buff_element_11_bullet_TinyFireBall_act_out_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Actor/GE_buff_element_11_bullet_TinyFireBall_act_out_BP.GE_buff_element_11_bullet_TinyFireBall_act_out_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6078
+      },
+      "GE_Element_09_FlameEX": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Element_09_FlameEX.GE_Element_09_FlameEX_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6079
+      },
+      "GE_Element_12_Burn": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Element_12_Burn.GE_Element_12_Burn_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6080
+      },
+      "Buff_Element_10_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_10_02.Buff_Element_10_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6081
+      },
+      "Buff_Element_09_ScaleApply": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_09_ScaleApply.Buff_Element_09_ScaleApply_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6082
+      },
+      "Buff_PukaBombState": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Puka/Buff_PukaBombState.Buff_PukaBombState_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6083
+      },
+      "Buff_PukaAirGunSate": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Puka/Buff_PukaAirGunSate.Buff_PukaAirGunSate_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6084
+      },
+      "GE_Player_BlackBird_Evolve_Skill_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Skill_Extra_Damage.GE_Player_BlackBird_Evolve_Skill_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6085
+      },
+      "GE_Player_BlackBird_Evolve_QTE_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_QTE_Extra_Damage.GE_Player_BlackBird_Evolve_QTE_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6086
+      },
+      "GE_Player_BlackBird_Evolve_Melee5_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee5_Extra_Damage.GE_Player_BlackBird_Evolve_Melee5_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6087
+      },
+      "GE_Player_BlackBird_Evolve_Melee4_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee4_Extra_Damage.GE_Player_BlackBird_Evolve_Melee4_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6088
+      },
+      "GE_Player_BlackBird_Evolve_Melee3_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee3_Extra_Damage.GE_Player_BlackBird_Evolve_Melee3_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6089
+      },
+      "GE_Player_BlackBird_Evolve_Melee2_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee2_Extra_Damage.GE_Player_BlackBird_Evolve_Melee2_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6090
+      },
+      "GE_Player_BlackBird_Evolve_Melee1_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee1_Extra_Damage.GE_Player_BlackBird_Evolve_Melee1_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6091
+      },
+      "GE_Player_BlackBird_Evolve_AirAttack_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_AirAttack_Extra_Damage.GE_Player_BlackBird_Evolve_AirAttack_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6092
+      },
+      "Buff_PlayerRadio072_UltralSkill_UISlot": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/Effect/Buff_PlayerRadio072_UltralSkill_UISlot.Buff_PlayerRadio072_UltralSkill_UISlot_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6093
+      },
+      "GE_Reaction_4_new_1042_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction4/New/GE_Reaction_4_new_1042_Damage.GE_Reaction_4_new_1042_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6094
+      },
+      "GE_buff_element_14_bullet_Storm_act_out_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Actor/GE_buff_element_14_bullet_Storm_act_out_BP.GE_buff_element_14_bullet_Storm_act_out_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6095
+      },
+      "Buff_Element_16_Debuff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_16_Debuff.Buff_Element_16_Debuff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6096
+      },
+      "Buff_Element_15_Debuff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_15_Debuff.Buff_Element_15_Debuff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6097
+      },
+      "Buff_Element_13_ScaleApply": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_13_ScaleApply.Buff_Element_13_ScaleApply_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6098
+      },
+      "Buff_Force_16": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_16.Buff_Force_16_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6099
+      },
+      "Buff_Force_15": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_15.Buff_Force_15_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6100
+      },
+      "Buff_Force_14": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_14.Buff_Force_14_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6101
+      },
+      "Buff_Force_13": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_13.Buff_Force_13_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6102
+      },
+      "Buff_Force_12": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_12.Buff_Force_12_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6103
+      },
+      "Buff_Force_11": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_11.Buff_Force_11_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6104
+      },
+      "Buff_Force_09": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_09.Buff_Force_09_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6105
+      },
+      "Buff_Force_10": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/Buff_Force_10.Buff_Force_10_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6106
+      },
+      "Buff_Sheep_LowMon": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_Sheep_LowMon.Buff_Sheep_LowMon_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6107
+      },
+      "Buff_Force06_Trigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_Force06_Trigger.Buff_Force06_Trigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6108
+      },
+      "Buff_Force04_Atk": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_Force04_Atk.Buff_Force04_Atk_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6109
+      },
+      "Buff_Force10_Trigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_Force10_Trigger.Buff_Force10_Trigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6110
+      },
+      "Buff_Explore_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_Explore_Dam.Buff_Explore_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6111
+      },
+      "buff_boss_039_LockHPQuest": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Buff/buff_boss_039_LockHPQuest.buff_boss_039_LockHPQuest_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6112
+      },
+      "Buff_BlackBird042_Skill_Count": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Skill_Count.Buff_BlackBird042_Skill_Count_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6113
+      },
+      "GE_Player_BlackBird_SkillAssist_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Damage/GE_Player_BlackBird_SkillAssist_Damage.GE_Player_BlackBird_SkillAssist_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6114
+      },
+      "Buff_Radio072_ExtraXiaozenMark": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/PassiveEffect/Passive2/Buff_Radio072_ExtraXiaozenMark.Buff_Radio072_ExtraXiaozenMark_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6116
+      },
+      "Buff_Radio072_CantAddPower_Q_Trigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/Upgrade/Level6/Buff_Radio072_CantAddPower_Q_Trigger.Buff_Radio072_CantAddPower_Q_Trigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6117
+      },
+      "GE_Element_Storm_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Element_Storm_Dam.GE_Element_Storm_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6118
+      },
+      "Buff_Element_Shield_Trigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_Shield_Trigger.Buff_Element_Shield_Trigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6119
+      },
+      "Buff_Element02_Tirgger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element02_Tirgger.Buff_Element02_Tirgger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6120
+      },
+      "Buff_ForceEX_Spawn_CD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_ForceEX_Spawn_CD.Buff_ForceEX_Spawn_CD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6121
+      },
+      "Buff_ForceEX_CD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_ForceEX_CD.Buff_ForceEX_CD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6122
+      },
+      "Buff_Force14_Trigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Force/ExtraBuff/Buff_Force14_Trigger.Buff_Force14_Trigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6123
+      },
+      "Buff_Useless_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Buff_Useless_2.Buff_Useless_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6124
+      },
+      "Buff_Useless_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Buff_Useless_1.Buff_Useless_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6125
+      },
+      "GE_Useless_02_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/GE_Useless_02_Dam.GE_Useless_02_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6126
+      },
+      "GE_Useless_01_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/GE_Useless_01_Dam.GE_Useless_01_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6127
+      },
+      "Buff_Useless_02_StackUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/Buff_Useless_02_StackUp.Buff_Useless_02_StackUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6128
+      },
+      "Buff_Useless_02_Ex": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/Buff_Useless_02_Ex.Buff_Useless_02_Ex_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6129
+      },
+      "Buff_Useless_02_BaseUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/Buff_Useless_02_BaseUp.Buff_Useless_02_BaseUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6130
+      },
+      "Buff_Useless_01_StackUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/Buff_Useless_01_StackUp.Buff_Useless_01_StackUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6131
+      },
+      "Buff_Useless_01_Ex": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/Buff_Useless_01_Ex.Buff_Useless_01_Ex_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6132
+      },
+      "Buff_Useless_01_BaseUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Useless/Extra/Buff_Useless_01_BaseUp.Buff_Useless_01_BaseUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6133
+      },
+      "Buff_PukaHookState": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Puka/Buff_PukaHookState.Buff_PukaHookState_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6134
+      },
+      "GE_Boss_039_2_Dmg_skill04_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill04_BP.GE_Boss_039_2_Dmg_skill04_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6135
+      },
+      "Buff_BlackBird042_Evolve_Melee5_Skill_delete": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_Melee5_Skill_delete.Buff_BlackBird042_Evolve_Melee5_Skill_delete_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6136
+      },
+      "Buff_Player_Radio072_TriggerSkillLTE_AOE": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/Effect/Buff_Player_Radio072_TriggerSkillLTE_AOE.Buff_Player_Radio072_TriggerSkillLTE_AOE_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6137
+      },
+      "Buff_PlayerRadio072_UltralSkill_PlayerCamera": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/Effect/Buff_PlayerRadio072_UltralSkill_PlayerCamera.Buff_PlayerRadio072_UltralSkill_PlayerCamera_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6138
+      },
+      "Buff_Grass_Recover": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Grass_Recover.Buff_Grass_Recover_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6139
+      },
+      "Buff_Grass_Count": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Grass_Count.Buff_Grass_Count_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6140
+      },
+      "Buff_Element_Shield_Trigger_07": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_Shield_Trigger_07.Buff_Element_Shield_Trigger_07_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6141
+      },
+      "Buff_Element05_Monster": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element05_Monster.Buff_Element05_Monster_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6142
+      },
+      "Buff_DamUP_08": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_DamUP_08.Buff_DamUP_08_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6143
+      },
+      "Buff_Blessing_Gress": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Blessing_Gress.Buff_Blessing_Gress_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6144
+      },
+      "Buff_08_SingleDam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_08_SingleDam.Buff_08_SingleDam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6145
+      },
+      "Buff_Animal_004_PlayerDown": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Animal_004/Buff_Animal_004_PlayerDown.Buff_Animal_004_PlayerDown_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6146
+      },
+      "Buff_BlackBird042_UltraSkill_Transform_test": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_UltraSkill_Transform_test.Buff_BlackBird042_UltraSkill_Transform_test_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6147
+      },
+      "GE_Player_BlackBird_Branch1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Damage/GE_Player_BlackBird_Branch1_Damage.GE_Player_BlackBird_Branch1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6148
+      },
+      "Buff_BlackBird042_Level3_extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Upgrade/Buff_BlackBird042_Level3_extra.Buff_BlackBird042_Level3_extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6149
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill_Cut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill_Cut.Buff_BlackBird042_Evolve_UltraSkill_Cut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6150
+      },
+      "Buff_Akane_Skill_SoundField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_SoundField.Buff_Akane_Skill_SoundField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6151
+      },
+      "GE_Tiny_FireBall_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Tiny_FireBall_Dam.GE_Tiny_FireBall_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6152
+      },
+      "GE_Tiny_FireBallStrong_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Tiny_FireBallStrong_Dam.GE_Tiny_FireBallStrong_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6153
+      },
+      "GE_FireBall_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_FireBall_Dam.GE_FireBall_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6154
+      },
+      "Buff_Akane_Skill_insteadSkill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_insteadSkill.Buff_Akane_Skill_insteadSkill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6155
+      },
+      "GE_Element03_Charge": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Element03_Charge.GE_Element03_Charge_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6156
+      },
+      "Buff_Rouge_Heal_OnPickup": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Heal/Buff_Rouge_Heal_OnPickup.Buff_Rouge_Heal_OnPickup_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6157
+      },
+      "GE_RogueDeadSkill_Boom": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/PVERogueLike/Monster/DeadSkill/GE_RogueDeadSkill_Boom.GE_RogueDeadSkill_Boom_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6158
+      },
+      "Buff_BlackBird_Skill_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird_Skill_Add.Buff_BlackBird_Skill_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6159
+      },
+      "Buff_BlackBird042_UltraSkill_Transform_UltraSkill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_UltraSkill_Transform_UltraSkill.Buff_BlackBird042_UltraSkill_Transform_UltraSkill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6160
+      },
+      "Buff_BlackBird042_Level3_Extra_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Upgrade/Buff_BlackBird042_Level3_Extra_Add.Buff_BlackBird042_Level3_Extra_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6161
+      },
+      "GE_Player_BlackBird_Evolve_UltraSkill_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_UltraSkill_Extra_Damage.GE_Player_BlackBird_Evolve_UltraSkill_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6162
+      },
+      "Buff_Akane057_Passive2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/PassiveEffect/Buff_Akane057_Passive2.Buff_Akane057_Passive2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6163
+      },
+      "Buff_Akane057_Passive1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/PassiveEffect/Buff_Akane057_Passive1.Buff_Akane057_Passive1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6164
+      },
+      "Buff_Akane057_Level6_extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level6_extra.Buff_Akane057_Level6_extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6165
+      },
+      "Buff_Akane057_Level6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level6.Buff_Akane057_Level6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6166
+      },
+      "Buff_Akane057_Level5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level5.Buff_Akane057_Level5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6167
+      },
+      "Buff_Akane057_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level4.Buff_Akane057_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6168
+      },
+      "Buff_Akane057_Level3_extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level3_extra.Buff_Akane057_Level3_extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6169
+      },
+      "Buff_Akane057_Level3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level3.Buff_Akane057_Level3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6170
+      },
+      "Buff_Akane057_Level2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level2.Buff_Akane057_Level2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6171
+      },
+      "Buff_Akane057_Level1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Buff_Akane057_Level1.Buff_Akane057_Level1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6172
+      },
+      "Buff_BlackBird042_Branch_SpeedCut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Branch_SpeedCut.Buff_BlackBird042_Branch_SpeedCut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6173
+      },
+      "Buff_BlackBird_AddEnergy": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird_AddEnergy.Buff_BlackBird_AddEnergy_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5676
+      },
+      "GE_Element_Storm_DamAdd": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/GE_Element_Storm_DamAdd.GE_Element_Storm_DamAdd_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6174
+      },
+      "GE_mon_70_act01_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_70/GE/GE_mon_70_act01_Dmg01_BP.GE_mon_70_act01_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6175
+      },
+      "GE_Player_BlackBird_Evolve_Melee1_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee1_Extra.GE_Player_BlackBird_Evolve_Melee1_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6176
+      },
+      "Buff_Akane_Skill_UltraSkill_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_UltraSkill_1.Buff_Akane_Skill_UltraSkill_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6177
+      },
+      "Buff_PlayerRadio072_xiaozhenDisplay": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/Effect/Buff_PlayerRadio072_xiaozhenDisplay.Buff_PlayerRadio072_xiaozhenDisplay_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6178
+      },
+      "GE_Reaction_3_new_1057_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction3/New/GE_Reaction_3_new_1057_Damage.GE_Reaction_3_new_1057_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6179
+      },
+      "Buff_Ginger_WXM_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_4.Buff_Ginger_WXM_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6180
+      },
+      "Buff_Ginger_WXM_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_3.Buff_Ginger_WXM_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6181
+      },
+      "Buff_Ginger_WXM_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_2.Buff_Ginger_WXM_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6182
+      },
+      "Buff_Ginger_WXM_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_1.Buff_Ginger_WXM_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6183
+      },
+      "GE_Player_BlackBird_Evolve_UltraSkill_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_UltraSkill_Extra.GE_Player_BlackBird_Evolve_UltraSkill_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6184
+      },
+      "GE_Player_BlackBird_Evolve_Skill_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Skill_Extra.GE_Player_BlackBird_Evolve_Skill_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6185
+      },
+      "GE_Player_BlackBird_Evolve_QTE_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_QTE_Extra.GE_Player_BlackBird_Evolve_QTE_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6186
+      },
+      "GE_Player_BlackBird_Evolve_PerfectEvade_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_PerfectEvade_Extra_Damage.GE_Player_BlackBird_Evolve_PerfectEvade_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6187
+      },
+      "GE_Player_BlackBird_Evolve_PerfectAtk_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_PerfectAtk_Extra.GE_Player_BlackBird_Evolve_PerfectAtk_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6188
+      },
+      "GE_Player_BlackBird_Evolve_Melee5_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee5_Extra.GE_Player_BlackBird_Evolve_Melee5_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6189
+      },
+      "GE_Player_BlackBird_Evolve_Melee4_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee4_Extra.GE_Player_BlackBird_Evolve_Melee4_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6190
+      },
+      "GE_Player_BlackBird_Evolve_Melee3_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee3_Extra.GE_Player_BlackBird_Evolve_Melee3_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6191
+      },
+      "GE_Player_BlackBird_Evolve_Melee2_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee2_Extra.GE_Player_BlackBird_Evolve_Melee2_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6192
+      },
+      "GE_Player_BlackBird_Evolve_AirAttack_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_AirAttack_Extra.GE_Player_BlackBird_Evolve_AirAttack_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6193
+      },
+      "GE_Player_Akane_UpgradeSkill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Damage/GE_Player_Akane_UpgradeSkill_Damage.GE_Player_Akane_UpgradeSkill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6194
+      },
+      "GE_Damage_DefendAthenaTower": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/DefendAthena/Damage/GE_Damage_DefendAthenaTower.GE_Damage_DefendAthenaTower_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6195
+      },
+      "Buff_Akane_Reaction_Time": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Reaction_Time.Buff_Akane_Reaction_Time_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6196
+      },
+      "GE_Player_Elyms_QTE_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_QTE_Damage.GE_Player_Elyms_QTE_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6197
+      },
+      "GE_Player_Elyms_Melee5_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Melee5_Damage.GE_Player_Elyms_Melee5_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6198
+      },
+      "GE_Player_Elyms_Melee4_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Melee4_Damage.GE_Player_Elyms_Melee4_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6199
+      },
+      "GE_Player_Elyms_Melee3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Melee3_Damage.GE_Player_Elyms_Melee3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6200
+      },
+      "GE_Player_Elyms_Melee2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Melee2_Damage.GE_Player_Elyms_Melee2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6201
+      },
+      "GE_Player_Elyms_Melee1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Melee1_Damage.GE_Player_Elyms_Melee1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6202
+      },
+      "Buff_Elyms_Passive2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/PassiveEffect/Buff_Elyms_Passive2.Buff_Elyms_Passive2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6203
+      },
+      "Buff_Elyms_Passive1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/PassiveEffect/Buff_Elyms_Passive1.Buff_Elyms_Passive1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6204
+      },
+      "GE_Elyms_DamageBase": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/DamageShare/GE_Elyms_DamageBase.GE_Elyms_DamageBase_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6205
+      },
+      "GE_Rogue_Boss_017_act13a_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/PVERogueLike/Monster/Boss_17/GE_Rogue_Boss_017_act13a_Dmg_BP.GE_Rogue_Boss_017_act13a_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6206
+      },
+      "GE_Rogue_Boss_017_GatherEnergy_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/PVERogueLike/Monster/Boss_17/GE_Rogue_Boss_017_GatherEnergy_Dmg_BP.GE_Rogue_Boss_017_GatherEnergy_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6207
+      },
+      "GE_Player_BlackBird_Evolve_Branch1_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Branch1_Extra.GE_Player_BlackBird_Evolve_Branch1_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6208
+      },
+      "GE_Player_BlackBird_Evolve_Branch1_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Branch1_Extra_Damage.GE_Player_BlackBird_Evolve_Branch1_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6209
+      },
+      "GE_Player_BlackBird_Evolve_Branch1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Branch1_Damage.GE_Player_BlackBird_Evolve_Branch1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6210
+      },
+      "GE_Player_BlackBird_Evolve_Branch2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Branch2_Damage.GE_Player_BlackBird_Evolve_Branch2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6211
+      },
+      "GE_Player_BlackBird_Evolve_Branch1_Float": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Effect/GE_Player_BlackBird_Evolve_Branch1_Float.GE_Player_BlackBird_Evolve_Branch1_Float_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6212
+      },
+      "Buff_Grass_Show": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Grass_Show.Buff_Grass_Show_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6213
+      },
+      "Ge_mon_69_act02_dam_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_69/Ge_mon_69_act02_dam_BP.Ge_mon_69_act02_dam_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6214
+      },
+      "Ge_mon_69_act01_dam_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_69/Ge_mon_69_act01_dam_BP.Ge_mon_69_act01_dam_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6215
+      },
+      "GE_Player_BlackBird_Evolve_Branch2_Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Branch2_Extra_Damage.GE_Player_BlackBird_Evolve_Branch2_Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6216
+      },
+      "GE_Player_BlackBird_Evolve_Branch2_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Branch2_Extra.GE_Player_BlackBird_Evolve_Branch2_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6217
+      },
+      "Buff_Akane_Skill_UltraSkill_passive2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_UltraSkill_passive2.Buff_Akane_Skill_UltraSkill_passive2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6218
+      },
+      "GE_Player_Akane_UltraSkill2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Damage/GE_Player_Akane_UltraSkill2_Damage.GE_Player_Akane_UltraSkill2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6219
+      },
+      "GE_Player_Akane_UltraSkill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Damage/GE_Player_Akane_UltraSkill1_Damage.GE_Player_Akane_UltraSkill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6220
+      },
+      "GE_Player_Akane_Skill2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Damage/GE_Player_Akane_Skill2_Damage.GE_Player_Akane_Skill2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6221
+      },
+      "GE_Player_Akane_Branch_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Damage/GE_Player_Akane_Branch_Damage.GE_Player_Akane_Branch_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6222
+      },
+      "buff_boss_039_LockHPQuest_20": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Buff/buff_boss_039_LockHPQuest_20.buff_boss_039_LockHPQuest_20_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6223
+      },
+      "GE_Hitout_boss_39_L": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/GE/GE_Hitout_boss_39_L.GE_Hitout_boss_39_L_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6224
+      },
+      "GE_Hitout_boss_39": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/GE/GE_Hitout_boss_39.GE_Hitout_boss_39_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6225
+      },
+      "Buff_Akane_Skill_UltraSkill_passive2addDamage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_UltraSkill_passive2addDamage.Buff_Akane_Skill_UltraSkill_passive2addDamage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6226
+      },
+      "Buff_Akane057_Level1_HPcover": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level1/Buff_Akane057_Level1_HPcover.Buff_Akane057_Level1_HPcover_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6227
+      },
+      "Buff_Akane057_Level1_Con": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level1/Buff_Akane057_Level1_Con.Buff_Akane057_Level1_Con_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6228
+      },
+      "GE_Player_Exe_Melee5_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Melee5_Damage.GE_Player_Exe_Melee5_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6229
+      },
+      "GE_Player_Exe_Melee4_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Melee4_Damage.GE_Player_Exe_Melee4_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6230
+      },
+      "GE_Player_Exe_Melee4_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Melee4_2_Damage.GE_Player_Exe_Melee4_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6231
+      },
+      "GE_Player_Exe_Melee4_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Melee4_1_Damage.GE_Player_Exe_Melee4_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6232
+      },
+      "GE_Player_Exe_Melee3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Melee3_Damage.GE_Player_Exe_Melee3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6233
+      },
+      "GE_Player_Exe_Melee2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Melee2_Damage.GE_Player_Exe_Melee2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6234
+      },
+      "GE_Player_Exe_Melee1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Melee1_Damage.GE_Player_Exe_Melee1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6235
+      },
+      "GE_Player_Exe_CloneAtk_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_CloneAtk_Damage.GE_Player_Exe_CloneAtk_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6236
+      },
+      "GE_Player_Exe_AirAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_AirAttack_Damage.GE_Player_Exe_AirAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6237
+      },
+      "GE_Player_Exe_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_Melee1_HitBack.GE_Player_Exe_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6238
+      },
+      "GE_Player_Exe_AirAttack_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_AirAttack_HitBack.GE_Player_Exe_AirAttack_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6239
+      },
+      "GE_Exe_DamageBase": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/DamageShare/GE_Exe_DamageBase.GE_Exe_DamageBase_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6240
+      },
+      "Buff_Akane057_Level1_Treat": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level1/Buff_Akane057_Level1_Treat.Buff_Akane057_Level1_Treat_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6241
+      },
+      "Buff_Fork_TwinBirds_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Lv1.Buff_Fork_TwinBirds_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6242
+      },
+      "Buff_Fork_TwinBirds_Effect_NightCrow_CritUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Effect_NightCrow_CritUp.Buff_Fork_TwinBirds_Effect_NightCrow_CritUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6243
+      },
+      "Buff_Fork_TwinBirds_Effect_NightCrow": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Effect_NightCrow.Buff_Fork_TwinBirds_Effect_NightCrow_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6244
+      },
+      "Buff_Fork_TwinBirds_Effect_CritUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Effect_CritUp.Buff_Fork_TwinBirds_Effect_CritUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6245
+      },
+      "Buff_Ginger_WXM_Defend": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_Defend.Buff_Ginger_WXM_Defend_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6246
+      },
+      "Buff_Rouge_Shield_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield2/Buff_Rouge_Shield_2.Buff_Rouge_Shield_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5569
+      },
+      "Buff_Fork_TwinBirds_Lv5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Lv5.Buff_Fork_TwinBirds_Lv5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 61
+      },
+      "Buff_Fork_TwinBirds_Lv4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Lv4.Buff_Fork_TwinBirds_Lv4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5570
+      },
+      "Buff_Fork_TwinBirds_Lv3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Lv3.Buff_Fork_TwinBirds_Lv3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5571
+      },
+      "Buff_Fork_TwinBirds_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Lv2.Buff_Fork_TwinBirds_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5628
+      },
+      "Buff_Ginger_WT_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WT/Ginger/Buff_Ginger_WT_1.Buff_Ginger_WT_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5726
+      },
+      "Buff_Ginger_WT_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WT/Ginger/Buff_Ginger_WT_2.Buff_Ginger_WT_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5847
+      },
+      "Buff_Ginger_WT_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WT/Ginger/Buff_Ginger_WT_3.Buff_Ginger_WT_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6115
+      },
+      "Buff_Ginger_WT_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WT/Ginger/Buff_Ginger_WT_4.Buff_Ginger_WT_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6247
+      },
+      "Buff_Akane_Skill_insteadSkill_Level3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_insteadSkill_Level3.Buff_Akane_Skill_insteadSkill_Level3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6248
+      },
+      "Buff_Akane057_Skill_short": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane057_Skill_short.Buff_Akane057_Skill_short_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6249
+      },
+      "Buff_Akane057_Skill_Long": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane057_Skill_Long.Buff_Akane057_Skill_Long_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6250
+      },
+      "Buff_Akane057_Level2_DamageResistALLBase": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level2/Buff_Akane057_Level2_DamageResistALLBase.Buff_Akane057_Level2_DamageResistALLBase_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6251
+      },
+      "Buff_Akane057_Level3_DamageUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level3/Buff_Akane057_Level3_DamageUP.Buff_Akane057_Level3_DamageUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6252
+      },
+      "Buff_Akane057_Level3_Con": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level3/Buff_Akane057_Level3_Con.Buff_Akane057_Level3_Con_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6253
+      },
+      "Buff_Akane057_Level6_GlableDamageUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level6/Buff_Akane057_Level6_GlableDamageUP.Buff_Akane057_Level6_GlableDamageUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6254
+      },
+      "Buff_Akane057_Level6EX_DamageUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/LevelEX/Buff_Akane057_Level6EX_DamageUP.Buff_Akane057_Level6EX_DamageUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6255
+      },
+      "Buff_Akane057_Level6EX_Con": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/LevelEX/Buff_Akane057_Level6EX_Con.Buff_Akane057_Level6EX_Con_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6256
+      },
+      "Buff_Exe_Ultra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_Ultra.Buff_Exe_Ultra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6257
+      },
+      "Buff_Athera_11": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_11.Buff_Athera_11_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6258
+      },
+      "Buff_Athera_10": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_10.Buff_Athera_10_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6259
+      },
+      "Buff_Athera_09": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_09.Buff_Athera_09_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6260
+      },
+      "Buff_Athera_08": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_08.Buff_Athera_08_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6261
+      },
+      "Buff_Athera_07": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_07.Buff_Athera_07_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6262
+      },
+      "Buff_Athera_06": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_06.Buff_Athera_06_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6263
+      },
+      "Buff_Athera_05": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_05.Buff_Athera_05_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6264
+      },
+      "Buff_Athera_04": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_04.Buff_Athera_04_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6265
+      },
+      "Buff_Athera_03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_03.Buff_Athera_03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6266
+      },
+      "Buff_Athera_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_02.Buff_Athera_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6267
+      },
+      "Buff_Athera_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Buff_Athera_01.Buff_Athera_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6268
+      },
+      "GE_Athera_08_Dam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/GE_Athera_08_Dam.GE_Athera_08_Dam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6269
+      },
+      "Buff_Athera_09_Slow": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_Athera_09_Slow.Buff_Athera_09_Slow_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6270
+      },
+      "Buff_Athera_09_Dele": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_Athera_09_Dele.Buff_Athera_09_Dele_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6271
+      },
+      "Buff_Athera_07_Slow": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_Athera_07_Slow.Buff_Athera_07_Slow_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6272
+      },
+      "Buff_Athera_06_Shield": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_Athera_06_Shield.Buff_Athera_06_Shield_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6273
+      },
+      "Buff_Athera_05_Recover": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_Athera_05_Recover.Buff_Athera_05_Recover_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6274
+      },
+      "GE_PukaHookDamage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Puka/GE_PukaHookDamage.GE_PukaHookDamage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6275
+      },
+      "GE_PukaBombDamage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Puka/GE_PukaBombDamage.GE_PukaBombDamage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6276
+      },
+      "Buff_Fork_Prism_Lv5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Lv5.Buff_Fork_Prism_Lv5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6277
+      },
+      "Buff_Fork_Prism_Lv4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Lv4.Buff_Fork_Prism_Lv4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6278
+      },
+      "Buff_Fork_Prism_Lv3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Lv3.Buff_Fork_Prism_Lv3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6279
+      },
+      "Buff_Fork_Prism_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Lv2.Buff_Fork_Prism_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6280
+      },
+      "Buff_Fork_Prism_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Lv1.Buff_Fork_Prism_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6281
+      },
+      "Buff_Fork_Prism_Effect_LakshanaUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Effect_LakshanaUp.Buff_Fork_Prism_Effect_LakshanaUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6282
+      },
+      "Buff_Fork_Prism_Effect_DamageUp2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Effect_DamageUp2.Buff_Fork_Prism_Effect_DamageUp2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6283
+      },
+      "Buff_Fork_Prism_Effect_DamageUp1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Calculation/Fork/Fork_Prism/Buff_Fork_Prism_Effect_DamageUp1.Buff_Fork_Prism_Effect_DamageUp1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6284
+      },
+      "GE_Boss_039_2_Dmg_skill06e_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill06e_BP.GE_Boss_039_2_Dmg_skill06e_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6285
+      },
+      "Buff_Akane_Show_UltraSkillUI": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Show_UltraSkillUI.Buff_Akane_Show_UltraSkillUI_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6286
+      },
+      "Buff_Akane057_Level2_Damageup": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level2/Buff_Akane057_Level2_Damageup.Buff_Akane057_Level2_Damageup_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6287
+      },
+      "GE_Ginger_WXM_Shoot_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/GA/GE/GE_Ginger_WXM_Shoot_Damage.GE_Ginger_WXM_Shoot_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6288
+      },
+      "Buff_DefendAthena_XZC_Item_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item1/Buff_DefendAthena_XZC_Item_1.Buff_DefendAthena_XZC_Item_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6289
+      },
+      "Buff_DefendAthena_XZC_Item_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item2/Buff_DefendAthena_XZC_Item_2.Buff_DefendAthena_XZC_Item_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6290
+      },
+      "Buff_DefendAthena_XZC_Item_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item3/Buff_DefendAthena_XZC_Item_3.Buff_DefendAthena_XZC_Item_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6291
+      },
+      "Buff_DefendAthena_XZC_Item_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item4/Buff_DefendAthena_XZC_Item_4.Buff_DefendAthena_XZC_Item_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6292
+      },
+      "Buff_DefendAthena_XZC_Item_5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item5/Buff_DefendAthena_XZC_Item_5.Buff_DefendAthena_XZC_Item_5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6293
+      },
+      "Buff_DefendAthena_XZC_Item_6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item6/Buff_DefendAthena_XZC_Item_6.Buff_DefendAthena_XZC_Item_6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6294
+      },
+      "Buff_DefendAthena_XZC_Item_6_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item6/Buff_DefendAthena_XZC_Item_6_1.Buff_DefendAthena_XZC_Item_6_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6295
+      },
+      "Buff_DefendAthena_XZC_Item_7": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item7/Buff_DefendAthena_XZC_Item_7.Buff_DefendAthena_XZC_Item_7_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6296
+      },
+      "Buff_DefendAthena_XZC_Item_7_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item7/Buff_DefendAthena_XZC_Item_7_1.Buff_DefendAthena_XZC_Item_7_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6297
+      },
+      "Buff_DefendAthena_XZC_Item_8": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item8/Buff_DefendAthena_XZC_Item_8.Buff_DefendAthena_XZC_Item_8_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6298
+      },
+      "Buff_DefendAthena_XZC_Item_8_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item8/Buff_DefendAthena_XZC_Item_8_1.Buff_DefendAthena_XZC_Item_8_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6299
+      },
+      "Buff_DefendAthena_XZC_Item_9": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item9/Buff_DefendAthena_XZC_Item_9.Buff_DefendAthena_XZC_Item_9_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6300
+      },
+      "Buff_DefendAthena_XZC_Item_9_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item9/Buff_DefendAthena_XZC_Item_9_1.Buff_DefendAthena_XZC_Item_9_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6301
+      },
+      "Buff_DefendAthena_XZC_Red_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Red/Buff_DefendAthena_XZC_Red_1.Buff_DefendAthena_XZC_Red_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6302
+      },
+      "Buff_DefendAthena_XZC_Red_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Red/Buff_DefendAthena_XZC_Red_2.Buff_DefendAthena_XZC_Red_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6303
+      },
+      "Buff_DefendAthena_XZC_Red_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Red/Buff_DefendAthena_XZC_Red_3.Buff_DefendAthena_XZC_Red_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6304
+      },
+      "Buff_DefendAthena_XZC_Red_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Red/Buff_DefendAthena_XZC_Red_4.Buff_DefendAthena_XZC_Red_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6305
+      },
+      "Buff_DefendAthena_XZC_Red_5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Red/Buff_DefendAthena_XZC_Red_5.Buff_DefendAthena_XZC_Red_5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6306
+      },
+      "Buff_DefendAthena_XZC_Green_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Green/Buff_DefendAthena_XZC_Green_1.Buff_DefendAthena_XZC_Green_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6307
+      },
+      "Buff_DefendAthena_XZC_Green_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Green/Buff_DefendAthena_XZC_Green_2.Buff_DefendAthena_XZC_Green_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6308
+      },
+      "Buff_DefendAthena_XZC_Green_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Green/Buff_DefendAthena_XZC_Green_3.Buff_DefendAthena_XZC_Green_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6309
+      },
+      "Buff_DefendAthena_XZC_Green_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Green/Buff_DefendAthena_XZC_Green_4.Buff_DefendAthena_XZC_Green_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6310
+      },
+      "Buff_DefendAthena_XZC_Green_5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Green/Buff_DefendAthena_XZC_Green_5.Buff_DefendAthena_XZC_Green_5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6311
+      },
+      "Buff_DefendAthena_XZC_Blue_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_1.Buff_DefendAthena_XZC_Blue_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6312
+      },
+      "Buff_DefendAthena_XZC_Blue_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_2.Buff_DefendAthena_XZC_Blue_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6313
+      },
+      "Buff_DefendAthena_XZC_Blue_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_3.Buff_DefendAthena_XZC_Blue_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6314
+      },
+      "Buff_DefendAthena_XZC_Blue_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_4.Buff_DefendAthena_XZC_Blue_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6315
+      },
+      "Buff_EndlessTrial_Base": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Buff_EndlessTrial_Base.Buff_EndlessTrial_Base_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6317
+      },
+      "Buff_EndlessTrial_Card1_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card1/Buff_EndlessTrial_Card1_positive_Lv2.Buff_EndlessTrial_Card1_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6318
+      },
+      "Buff_EndlessTrial_Card1_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card1/Buff_EndlessTrial_Card1_positive_Lv1.Buff_EndlessTrial_Card1_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6319
+      },
+      "Buff_EndlessTrial_Card1_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card1/Buff_EndlessTrial_Card1_negative_Lv2.Buff_EndlessTrial_Card1_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6320
+      },
+      "Buff_EndlessTrial_Card1_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card1/Buff_EndlessTrial_Card1_negative_Lv1.Buff_EndlessTrial_Card1_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6321
+      },
+      "Buff_EndlessTrial_Card10_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card10/Buff_EndlessTrial_Card10_positive_Lv2.Buff_EndlessTrial_Card10_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6322
+      },
+      "Buff_EndlessTrial_Card10_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card10/Buff_EndlessTrial_Card10_positive_Lv1.Buff_EndlessTrial_Card10_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6323
+      },
+      "Buff_EndlessTrial_Card10_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card10/Buff_EndlessTrial_Card10_negative_Lv2.Buff_EndlessTrial_Card10_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6324
+      },
+      "Buff_EndlessTrial_Card10_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card10/Buff_EndlessTrial_Card10_negative_Lv1.Buff_EndlessTrial_Card10_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6325
+      },
+      "Buff_EndlessTrial_Card11_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card11/Buff_EndlessTrial_Card11_positive_Lv2.Buff_EndlessTrial_Card11_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6326
+      },
+      "Buff_EndlessTrial_Card11_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card11/Buff_EndlessTrial_Card11_positive_Lv1.Buff_EndlessTrial_Card11_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6327
+      },
+      "Buff_EndlessTrial_Card11_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card11/Buff_EndlessTrial_Card11_negative_Lv2.Buff_EndlessTrial_Card11_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6328
+      },
+      "Buff_EndlessTrial_Card11_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card11/Buff_EndlessTrial_Card11_negative_Lv1.Buff_EndlessTrial_Card11_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6329
+      },
+      "Buff_EndlessTrial_Card12_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card12/Buff_EndlessTrial_Card12_positive_Lv2.Buff_EndlessTrial_Card12_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6330
+      },
+      "Buff_EndlessTrial_Card12_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card12/Buff_EndlessTrial_Card12_positive_Lv1.Buff_EndlessTrial_Card12_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6331
+      },
+      "Buff_EndlessTrial_Card12_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card12/Buff_EndlessTrial_Card12_negative_Lv2.Buff_EndlessTrial_Card12_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6332
+      },
+      "Buff_EndlessTrial_Card12_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card12/Buff_EndlessTrial_Card12_negative_Lv1.Buff_EndlessTrial_Card12_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6333
+      },
+      "Buff_EndlessTrial_Card13_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card13/Buff_EndlessTrial_Card13_positive_Lv2.Buff_EndlessTrial_Card13_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6334
+      },
+      "Buff_EndlessTrial_Card13_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card13/Buff_EndlessTrial_Card13_positive_Lv1.Buff_EndlessTrial_Card13_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6335
+      },
+      "Buff_EndlessTrial_Card14_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card14/Buff_EndlessTrial_Card14_positive_Lv2.Buff_EndlessTrial_Card14_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6336
+      },
+      "Buff_EndlessTrial_Card14_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card14/Buff_EndlessTrial_Card14_positive_Lv1.Buff_EndlessTrial_Card14_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6337
+      },
+      "Buff_EndlessTrial_Card14_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card14/Buff_EndlessTrial_Card14_negative_Lv2.Buff_EndlessTrial_Card14_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6338
+      },
+      "Buff_EndlessTrial_Card14_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card14/Buff_EndlessTrial_Card14_negative_Lv1.Buff_EndlessTrial_Card14_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6339
+      },
+      "Buff_EndlessTrial_Card15_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card15/Buff_EndlessTrial_Card15_positive_Lv2.Buff_EndlessTrial_Card15_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6340
+      },
+      "Buff_EndlessTrial_Card15_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card15/Buff_EndlessTrial_Card15_positive_Lv1.Buff_EndlessTrial_Card15_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6341
+      },
+      "Buff_EndlessTrial_Card16_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card16/Buff_EndlessTrial_Card16_positive_Lv2.Buff_EndlessTrial_Card16_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6342
+      },
+      "Buff_EndlessTrial_Card16_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card16/Buff_EndlessTrial_Card16_positive_Lv1.Buff_EndlessTrial_Card16_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6343
+      },
+      "Buff_EndlessTrial_Card17_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card17/Buff_EndlessTrial_Card17_positive_Lv2.Buff_EndlessTrial_Card17_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6344
+      },
+      "Buff_EndlessTrial_Card17_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card17/Buff_EndlessTrial_Card17_positive_Lv1.Buff_EndlessTrial_Card17_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6345
+      },
+      "Buff_EndlessTrial_Card18_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card18/Buff_EndlessTrial_Card18_positive_Lv2.Buff_EndlessTrial_Card18_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6346
+      },
+      "Buff_EndlessTrial_Card18_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card18/Buff_EndlessTrial_Card18_positive_Lv1.Buff_EndlessTrial_Card18_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6347
+      },
+      "Buff_EndlessTrial_Card18_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card18/Buff_EndlessTrial_Card18_negative_Lv2.Buff_EndlessTrial_Card18_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6348
+      },
+      "Buff_EndlessTrial_Card18_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card18/Buff_EndlessTrial_Card18_negative_Lv1.Buff_EndlessTrial_Card18_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6349
+      },
+      "Buff_EndlessTrial_Card2_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card2/Buff_EndlessTrial_Card2_positive_Lv2.Buff_EndlessTrial_Card2_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6350
+      },
+      "Buff_EndlessTrial_Card2_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card2/Buff_EndlessTrial_Card2_positive_Lv1.Buff_EndlessTrial_Card2_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6351
+      },
+      "Buff_EndlessTrial_Card3_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card3/Buff_EndlessTrial_Card3_positive_Lv2.Buff_EndlessTrial_Card3_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6352
+      },
+      "Buff_EndlessTrial_Card3_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card3/Buff_EndlessTrial_Card3_positive_Lv1.Buff_EndlessTrial_Card3_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6353
+      },
+      "Buff_EndlessTrial_Card4_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card4/Buff_EndlessTrial_Card4_positive_Lv2.Buff_EndlessTrial_Card4_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6354
+      },
+      "Buff_EndlessTrial_Card4_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card4/Buff_EndlessTrial_Card4_positive_Lv1.Buff_EndlessTrial_Card4_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6355
+      },
+      "Buff_EndlessTrial_Card5_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card5/Buff_EndlessTrial_Card5_positive_Lv2.Buff_EndlessTrial_Card5_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6356
+      },
+      "Buff_EndlessTrial_Card5_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card5/Buff_EndlessTrial_Card5_positive_Lv1.Buff_EndlessTrial_Card5_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6357
+      },
+      "Buff_EndlessTrial_Card6_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card6/Buff_EndlessTrial_Card6_positive_Lv2.Buff_EndlessTrial_Card6_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6358
+      },
+      "Buff_EndlessTrial_Card6_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card6/Buff_EndlessTrial_Card6_positive_Lv1.Buff_EndlessTrial_Card6_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6359
+      },
+      "Buff_EndlessTrial_Card7_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card7/Buff_EndlessTrial_Card7_positive_Lv2.Buff_EndlessTrial_Card7_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6360
+      },
+      "Buff_EndlessTrial_Card7_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card7/Buff_EndlessTrial_Card7_positive_Lv1.Buff_EndlessTrial_Card7_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6361
+      },
+      "Buff_EndlessTrial_Card7_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card7/Buff_EndlessTrial_Card7_negative_Lv2.Buff_EndlessTrial_Card7_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6362
+      },
+      "Buff_EndlessTrial_Card7_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card7/Buff_EndlessTrial_Card7_negative_Lv1.Buff_EndlessTrial_Card7_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6363
+      },
+      "Buff_EndlessTrial_Card8_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card8/Buff_EndlessTrial_Card8_positive_Lv2.Buff_EndlessTrial_Card8_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6364
+      },
+      "Buff_EndlessTrial_Card8_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card8/Buff_EndlessTrial_Card8_positive_Lv1.Buff_EndlessTrial_Card8_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6365
+      },
+      "Buff_EndlessTrial_Card8_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card8/Buff_EndlessTrial_Card8_negative_Lv2.Buff_EndlessTrial_Card8_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6366
+      },
+      "Buff_EndlessTrial_Card8_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card8/Buff_EndlessTrial_Card8_negative_Lv1.Buff_EndlessTrial_Card8_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6367
+      },
+      "Buff_EndlessTrial_Card8_negative_Lv1_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card8/Buff_EndlessTrial_Card8_negative_Lv1_1.Buff_EndlessTrial_Card8_negative_Lv1_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6368
+      },
+      "Buff_EndlessTrial_Card8_negative_Lv2_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card8/Buff_EndlessTrial_Card8_negative_Lv2_1.Buff_EndlessTrial_Card8_negative_Lv2_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6369
+      },
+      "Buff_EndlessTrial_Card9_positive_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card9/Buff_EndlessTrial_Card9_positive_Lv2.Buff_EndlessTrial_Card9_positive_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6370
+      },
+      "Buff_EndlessTrial_Card9_positive_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card9/Buff_EndlessTrial_Card9_positive_Lv1.Buff_EndlessTrial_Card9_positive_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6371
+      },
+      "Buff_EndlessTrial_Card9_negative_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card9/Buff_EndlessTrial_Card9_negative_Lv2.Buff_EndlessTrial_Card9_negative_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6372
+      },
+      "Buff_EndlessTrial_Card9_negative_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/EndlessTrial/Card9/Buff_EndlessTrial_Card9_negative_Lv1.Buff_EndlessTrial_Card9_negative_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6373
+      },
+      "Buff_DefendAthena_XZC_Red_6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Red/Buff_DefendAthena_XZC_Red_6.Buff_DefendAthena_XZC_Red_6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6374
+      },
+      "GE_Boss_039_2_Dmg_skill02Der_b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill02Der_b_BP.GE_Boss_039_2_Dmg_skill02Der_b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6375
+      },
+      "GE_Boss_039_2_Dmg_skill02Der_a_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill02Der_a_BP.GE_Boss_039_2_Dmg_skill02Der_a_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6376
+      },
+      "GE_Boss_039_2_Dmg_skill02Der02_b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill02Der02_b_BP.GE_Boss_039_2_Dmg_skill02Der02_b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6377
+      },
+      "GE_Boss_039_2_Dmg_skill02Der02_a_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill02Der02_a_BP.GE_Boss_039_2_Dmg_skill02Der02_a_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6378
+      },
+      "GE_Boss_039_2_Dmg_skill02b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill02b_BP.GE_Boss_039_2_Dmg_skill02b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6379
+      },
+      "GE_Boss_039_2_Dmg_skill02a_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill02a_BP.GE_Boss_039_2_Dmg_skill02a_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6380
+      },
+      "Buff_BlackBird042_LongEvade_SpeedUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_LongEvade_SpeedUP.Buff_BlackBird042_LongEvade_SpeedUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6381
+      },
+      "Buff_Akane_Skill_UltraSkill_Enhanced": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_UltraSkill_Enhanced.Buff_Akane_Skill_UltraSkill_Enhanced_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6382
+      },
+      "Buff_Akane_Skill_UltraSkill_Begin": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_UltraSkill_Begin.Buff_Akane_Skill_UltraSkill_Begin_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6383
+      },
+      "Buff_Akane_Auto_UseEnhancedUltraSkill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Auto_UseEnhancedUltraSkill.Buff_Akane_Auto_UseEnhancedUltraSkill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6384
+      },
+      "Buff_Exe_CloneCost": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_CloneCost.Buff_Exe_CloneCost_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6385
+      },
+      "Buff_Exe_BasePas": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_BasePas.Buff_Exe_BasePas_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6386
+      },
+      "GE_Player_Exe_QTE_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_QTE_Damage.GE_Player_Exe_QTE_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6387
+      },
+      "GE_Player_Exe_PerfectEvadeAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_PerfectEvadeAttack_Damage.GE_Player_Exe_PerfectEvadeAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6388
+      },
+      "GE_Player_Exe_PerfectEvadeAtk_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_PerfectEvadeAtk_HitBack.GE_Player_Exe_PerfectEvadeAtk_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6389
+      },
+      "Buff_Female_Park_torch": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WT/Park/Buff_Female_Park_torch.Buff_Female_Park_torch_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6390
+      },
+      "Buff_DefendAthena_XZC_Blue_3_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_3_1.Buff_DefendAthena_XZC_Blue_3_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6316
+      },
+      "Buff_DefendAthena_XZC_Blue_1_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_1_1.Buff_DefendAthena_XZC_Blue_1_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6391
+      },
+      "Buff_DefendAthena_XZC_Blue_2_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_2_1.Buff_DefendAthena_XZC_Blue_2_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6392
+      },
+      "Buff_Radio072_Daffodill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/Effect/Buff_Radio072_Daffodill.Buff_Radio072_Daffodill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6393
+      },
+      "Buff_mon_35_Recover": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_mon_35_Recover.Buff_mon_35_Recover_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6394
+      },
+      "Buff_Boss35_SetDeadDmg": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_Boss35_SetDeadDmg.Buff_Boss35_SetDeadDmg_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6395
+      },
+      "Buff_PukaSkyDanceState": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Puka/Buff_PukaSkyDanceState.Buff_PukaSkyDanceState_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6396
+      },
+      "GE_Boss_039_2_Dmg_skill02Der02_c_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill02Der02_c_BP.GE_Boss_039_2_Dmg_skill02Der02_c_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6397
+      },
+      "Buff_BlackBird042_Branch_SpeedCut1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Branch_SpeedCut1.Buff_BlackBird042_Branch_SpeedCut1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6398
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill_CD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill_CD.Buff_BlackBird042_Evolve_UltraSkill_CD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6399
+      },
+      "Buff_Elyms_EDur": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_EDur.Buff_Elyms_EDur_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6400
+      },
+      "Buff_Elyms_Level1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level1/Buff_Elyms_Level1.Buff_Elyms_Level1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6401
+      },
+      "Buff_Elyms_Level2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level2/Buff_Elyms_Level2.Buff_Elyms_Level2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6402
+      },
+      "Buff_Elyms_Level3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level3/Buff_Elyms_Level3.Buff_Elyms_Level3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6403
+      },
+      "Buff_Elyms_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level4/Buff_Elyms_Level4.Buff_Elyms_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6404
+      },
+      "Buff_Elyms_Level5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level5/Buff_Elyms_Level5.Buff_Elyms_Level5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6405
+      },
+      "Buff_Elyms_Level6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level6/Buff_Elyms_Level6.Buff_Elyms_Level6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6406
+      },
+      "Buff_Elyms_LevelExtra6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/LevelExtra/Buff_Elyms_LevelExtra6.Buff_Elyms_LevelExtra6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6407
+      },
+      "Buff_Exe_Score_Evade": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_Score_Evade.Buff_Exe_Score_Evade_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6408
+      },
+      "Buff_Exe_Score_Parry": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_Score_Parry.Buff_Exe_Score_Parry_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6409
+      },
+      "GE_Player_Exe_Skill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Skill_Damage.GE_Player_Exe_Skill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6410
+      },
+      "GE_Player_Exe_Skill_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_Skill_HitBack.GE_Player_Exe_Skill_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6411
+      },
+      "Buff_Ginger_WXM_Defend_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_Defend_4.Buff_Ginger_WXM_Defend_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6412
+      },
+      "Buff_Ginger_WXM_Defend_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_Defend_3.Buff_Ginger_WXM_Defend_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6413
+      },
+      "Buff_Ginger_WXM_Defend_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/Buff_Ginger_WXM_Defend_2.Buff_Ginger_WXM_Defend_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6414
+      },
+      "GE_DefendAthena_XZC_Energy_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Energy/GE_DefendAthena_XZC_Energy_Damage.GE_DefendAthena_XZC_Energy_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6415
+      },
+      "Buff_DefendAthena_XZC_Energy": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Energy/Buff_DefendAthena_XZC_Energy.Buff_DefendAthena_XZC_Energy_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6416
+      },
+      "Buff_Akane_Skill_CantUseGitar": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_CantUseGitar.Buff_Akane_Skill_CantUseGitar_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6417
+      },
+      "Buff_Abyss_Phase_011_effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P11/Buff_Abyss_Phase_011_effect.Buff_Abyss_Phase_011_effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6418
+      },
+      "Buff_Abyss_Phase_011": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P11/Buff_Abyss_Phase_011.Buff_Abyss_Phase_011_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6419
+      },
+      "Buff_Abyss_Phase_012": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P12/Buff_Abyss_Phase_012.Buff_Abyss_Phase_012_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6420
+      },
+      "GE_Hitout_boss_39_N": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/GE/GE_Hitout_boss_39_N.GE_Hitout_boss_39_N_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6421
+      },
+      "Buff_Ginger_Wxm_Defend_delay_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/GA/Buff_Ginger_Wxm_Defend_delay_1.Buff_Ginger_Wxm_Defend_delay_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6422
+      },
+      "Buff_Ginger_Wxm_Defend_delay_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/GA_2/Buff_Ginger_Wxm_Defend_delay_2.Buff_Ginger_Wxm_Defend_delay_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6423
+      },
+      "Buff_Ginger_Wxm_Defend_delay_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/GA_3/Buff_Ginger_Wxm_Defend_delay_3.Buff_Ginger_Wxm_Defend_delay_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6424
+      },
+      "Buff_Ginger_Wxm_Defend_delay_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXM/Ginger/GA_4/Buff_Ginger_Wxm_Defend_delay_4.Buff_Ginger_Wxm_Defend_delay_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6425
+      },
+      "Buff_Elyms_QRecoverEnergy": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_QRecoverEnergy.Buff_Elyms_QRecoverEnergy_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6426
+      },
+      "Buff_Elyms_QAtkBuff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_QAtkBuff.Buff_Elyms_QAtkBuff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6427
+      },
+      "Buff_Elyms_ETargetDebuff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_ETargetDebuff.Buff_Elyms_ETargetDebuff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6428
+      },
+      "Ge_mon_69_act03_dam_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_69/Ge_mon_69_act03_dam_BP.Ge_mon_69_act03_dam_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6429
+      },
+      "Buff_Exe_BranchMark": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_BranchMark.Buff_Exe_BranchMark_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6430
+      },
+      "Buff_Exe_BranchCheck": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_BranchCheck.Buff_Exe_BranchCheck_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6431
+      },
+      "GE_Player_Elyms_Melee4_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Melee4_1_Damage.GE_Player_Elyms_Melee4_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6432
+      },
+      "GE_Player_Elyms_Melee3_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Melee3_1_Damage.GE_Player_Elyms_Melee3_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6433
+      },
+      "GE_Player_Elyms_Melee4_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_Melee4_HitBack.GE_Player_Elyms_Melee4_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6434
+      },
+      "GE_Player_Elyms_Melee4_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_Melee4_1_HitBack.GE_Player_Elyms_Melee4_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6435
+      },
+      "GE_Player_Elyms_Melee3_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_Melee3_1_HitBack.GE_Player_Elyms_Melee3_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6436
+      },
+      "GE_Player_Elyms_Melee2_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_Melee2_HitBack.GE_Player_Elyms_Melee2_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6437
+      },
+      "GE_Player_Elyms_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_Melee1_HitBack.GE_Player_Elyms_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6438
+      },
+      "Buff_Level_PlayerLimit_WCY_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WCY/Buff_Level_PlayerLimit_WCY_1.Buff_Level_PlayerLimit_WCY_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6439
+      },
+      "Buff_speeddown_YTX_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YTX/Buff_speeddown_YTX_1.Buff_speeddown_YTX_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6440
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill_Delete": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill_Delete.Buff_BlackBird042_Evolve_UltraSkill_Delete_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6441
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill_Cut1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill_Cut1.Buff_BlackBird042_Evolve_UltraSkill_Cut1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6442
+      },
+      "Buff_DefendAthena_XZC_Blue_2_CD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Blue/Buff_DefendAthena_XZC_Blue_2_CD.Buff_DefendAthena_XZC_Blue_2_CD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6443
+      },
+      "Ge_mon_69_act03_dam_Steal": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_69/Ge_mon_69_act03_dam_Steal.Ge_mon_69_act03_dam_Steal_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6444
+      },
+      "buff_boss_039_2_CheckAttacked": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/Buff/buff_boss_039_2_CheckAttacked.buff_boss_039_2_CheckAttacked_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6445
+      },
+      "GE_Boss_039_2_Dmg_skill09c_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill09c_BP.GE_Boss_039_2_Dmg_skill09c_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6446
+      },
+      "GE_Boss_039_2_Dmg_skill09b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill09b_BP.GE_Boss_039_2_Dmg_skill09b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6447
+      },
+      "GE_Boss_039_2_Dmg_skill09a_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill09a_BP.GE_Boss_039_2_Dmg_skill09a_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6448
+      },
+      "GE_Boss_039_2_Dmg_skill08c_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill08c_BP.GE_Boss_039_2_Dmg_skill08c_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6449
+      },
+      "GE_Boss_039_2_Dmg_skill08b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill08b_BP.GE_Boss_039_2_Dmg_skill08b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6450
+      },
+      "GE_Boss_039_2_Dmg_skill05b_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill05b_BP.GE_Boss_039_2_Dmg_skill05b_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6451
+      },
+      "Buff_Elyms_QuickResponse": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_QuickResponse.Buff_Elyms_QuickResponse_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6452
+      },
+      "Buff_Elyms_BackendManagement": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_BackendManagement.Buff_Elyms_BackendManagement_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6453
+      },
+      "Buff_Elyms_Authority": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_Authority.Buff_Elyms_Authority_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6454
+      },
+      "Buff_DefendAthena_AddHate_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Buff_DefendAthena_AddHate_1.Buff_DefendAthena_AddHate_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6455
+      },
+      "Buff_DefendAthena_AddHate": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Buff_DefendAthena_AddHate.Buff_DefendAthena_AddHate_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6456
+      },
+      "GE_Boss_039_2_Dmg_skill08f_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill08f_BP.GE_Boss_039_2_Dmg_skill08f_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6457
+      },
+      "GE_Boss_039_2_Dmg_skill08e_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill08e_BP.GE_Boss_039_2_Dmg_skill08e_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6458
+      },
+      "GE_Boss_039_2_Dmg_skill08d_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skill08d_BP.GE_Boss_039_2_Dmg_skill08d_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6459
+      },
+      "GE_Boss_039_2_Dmg_ChangeStage02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_ChangeStage02_BP.GE_Boss_039_2_Dmg_ChangeStage02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6460
+      },
+      "GE_Boss_039_2_Dmg_ChangeStage01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_ChangeStage01_BP.GE_Boss_039_2_Dmg_ChangeStage01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6461
+      },
+      "GE_Boss_039_2_Dmg_skillRunback_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/GE/GE_Boss_039_2_Dmg_skillRunback_BP.GE_Boss_039_2_Dmg_skillRunback_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6462
+      },
+      "Buff_Player_Exe_Kill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Player_Exe_Kill.Buff_Player_Exe_Kill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6463
+      },
+      "Buff_Exe_DmgResistDownChaosL3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_DmgResistDownChaosL3.Buff_Exe_DmgResistDownChaosL3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6464
+      },
+      "Buff_Exe_ChaosDmgUp_L1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_ChaosDmgUp_L1.Buff_Exe_ChaosDmgUp_L1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6465
+      },
+      "GE_Player_Exe_Branch_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Branch_Damage.GE_Player_Exe_Branch_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6466
+      },
+      "GE_Player_Exe_Skill_Traction": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_Skill_Traction.GE_Player_Exe_Skill_Traction_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6467
+      },
+      "Buff_Exe074_Passive2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/PassiveEffect/Buff_Exe074_Passive2.Buff_Exe074_Passive2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6468
+      },
+      "Buff_Exe074_Passive1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/PassiveEffect/Buff_Exe074_Passive1.Buff_Exe074_Passive1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6469
+      },
+      "Buff_Exe074_Level6_extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level6_extra.Buff_Exe074_Level6_extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6470
+      },
+      "Buff_Exe074_Level6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level6.Buff_Exe074_Level6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6471
+      },
+      "Buff_Exe074_Level5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level5.Buff_Exe074_Level5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6472
+      },
+      "Buff_Exe074_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level4.Buff_Exe074_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6473
+      },
+      "Buff_Exe074_Level3_extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level3_extra.Buff_Exe074_Level3_extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6474
+      },
+      "Buff_Exe074_Level3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level3.Buff_Exe074_Level3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6475
+      },
+      "Buff_Exe074_Level2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level2.Buff_Exe074_Level2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6476
+      },
+      "Buff_Exe074_Level1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Upgrade/Buff_Exe074_Level1.Buff_Exe074_Level1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6477
+      },
+      "Buff_ChangeMateries_ZDC_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/ZDC/Buff_ChangeMateries_ZDC_1.Buff_ChangeMateries_ZDC_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6478
+      },
+      "GE_Boss_39_act12": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act12.GE_Boss_39_act12_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6479
+      },
+      "GE_Boss_39_act10": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act10.GE_Boss_39_act10_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6480
+      },
+      "GE_Boss_39_act09": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act09.GE_Boss_39_act09_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6481
+      },
+      "GE_Boss_39_act08": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act08.GE_Boss_39_act08_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6482
+      },
+      "GE_Boss_39_act07": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act07.GE_Boss_39_act07_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6483
+      },
+      "GE_Boss_39_act06": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act06.GE_Boss_39_act06_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6484
+      },
+      "GE_Boss_39_act05": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act05.GE_Boss_39_act05_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6485
+      },
+      "GE_Boss_39_act04": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act04.GE_Boss_39_act04_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6486
+      },
+      "GE_Boss_39_act03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act03.GE_Boss_39_act03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6487
+      },
+      "GE_Boss_39_act02_Fly": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02_Fly.GE_Boss_39_act02_Fly_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6488
+      },
+      "GE_Boss_39_act02_der_Fly": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02_der_Fly.GE_Boss_39_act02_der_Fly_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6489
+      },
+      "GE_Boss_39_act02_der_B2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02_der_B2.GE_Boss_39_act02_der_B2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6490
+      },
+      "GE_Boss_39_act02_der_B": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02_der_B.GE_Boss_39_act02_der_B_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6491
+      },
+      "GE_Boss_39_act02_derA2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02_derA2.GE_Boss_39_act02_derA2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6492
+      },
+      "GE_Boss_39_act02_derA": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02_derA.GE_Boss_39_act02_derA_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6493
+      },
+      "GE_Boss_39_act02_der": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02_der.GE_Boss_39_act02_der_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6494
+      },
+      "GE_Boss_39_act02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act02.GE_Boss_39_act02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6495
+      },
+      "GE_Boss_39_act01_der": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act01_der.GE_Boss_39_act01_der_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6496
+      },
+      "GE_Boss_39_act01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act01.GE_Boss_39_act01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6497
+      },
+      "GE_Hitout_boss_39_S": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/GE/GE_Hitout_boss_39_S.GE_Hitout_boss_39_S_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6498
+      },
+      "GE_mon_039_2_Skill10CD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/Buff/GE_mon_039_2_Skill10CD.GE_mon_039_2_Skill10CD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6499
+      },
+      "Buff_Boss039ChangeStage_ImmuneUnbal": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/Buff/Buff_Boss039ChangeStage_ImmuneUnbal.Buff_Boss039ChangeStage_ImmuneUnbal_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6500
+      },
+      "buff_mon_70_ghostAtk_tag": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_70/buff_mon_70_ghostAtk_tag.buff_mon_70_ghostAtk_tag_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6501
+      },
+      "buff_mon_70_addfear": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_70/buff_mon_70_addfear.buff_mon_70_addfear_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6502
+      },
+      "Buff_Athera_Tower_MonsterDead": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_Athera_Tower_MonsterDead.Buff_Athera_Tower_MonsterDead_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6503
+      },
+      "Buff_ChangeNpc_CY_001": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/CY/Buff_ChangeNpc_CY_001.Buff_ChangeNpc_CY_001_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6504
+      },
+      "Buff_Exe_AtkUpL2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_AtkUpL2.Buff_Exe_AtkUpL2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6505
+      },
+      "Buff_BlackBird042_Skill_Bati": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Skill_Bati.Buff_BlackBird042_Skill_Bati_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6506
+      },
+      "Buff_CantLeisureState_Infnity": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/SLY/Buff_CantLeisureState_Infnity.Buff_CantLeisureState_Infnity_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6507
+      },
+      "GE_Test_SignalJam": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_09/GameplayEffects/Test/GE_Test_SignalJam.GE_Test_SignalJam_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6508
+      },
+      "GE_Boss_39_act10_Hit": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act10_Hit.GE_Boss_39_act10_Hit_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6509
+      },
+      "GE_Boss_39_act10_Boom": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act10_Boom.GE_Boss_39_act10_Boom_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6510
+      },
+      "GE_Boss_39_act06_Fire": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act06_Fire.GE_Boss_39_act06_Fire_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6511
+      },
+      "GE_Boss_39_act05_Boom": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act05_Boom.GE_Boss_39_act05_Boom_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6512
+      },
+      "GE_Boss_39_act04_Fly": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act04_Fly.GE_Boss_39_act04_Fly_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6513
+      },
+      "GE_Boss_39_act03_HitG": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act03_HitG.GE_Boss_39_act03_HitG_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6514
+      },
+      "buff_mon_71_addfear": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_71/buff_mon_71_addfear.buff_mon_71_addfear_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6515
+      },
+      "Buff_Fork_TwinBirds_Effect_CritUp2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_TwinBirds/Buff_Fork_TwinBirds_Effect_CritUp2.Buff_Fork_TwinBirds_Effect_CritUp2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6516
+      },
+      "Buff_Element_15_down": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_15_down.Buff_Element_15_down_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6517
+      },
+      "Buff_Element_16_Down": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Tower/Element/Extra/Buff_Element_16_Down.Buff_Element_16_Down_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6518
+      },
+      "GE_Boss_39_act08_Fly": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act08_Fly.GE_Boss_39_act08_Fly_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6519
+      },
+      "GE_Boss_39_act08_B": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act08_B.GE_Boss_39_act08_B_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6520
+      },
+      "GE_Boss_39_act08_A": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39/Dam/GE_Boss_39_act08_A.GE_Boss_39_act08_A_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6521
+      },
+      "buff_boss_039_2_CheckAttacked02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_39_2/Buff/buff_boss_039_2_CheckAttacked02.buff_boss_039_2_CheckAttacked02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6522
+      },
+      "buff_mon_70_CombatStun": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_70/buff_mon_70_CombatStun.buff_mon_70_CombatStun_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6523
+      },
+      "Buff_BlackBird042_Level5_CutDef_hun": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Upgrade/Buff_BlackBird042_Level5_CutDef_hun.Buff_BlackBird042_Level5_CutDef_hun_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6524
+      },
+      "Buff_BlackBird042_Level5_CutDef_xiang": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Upgrade/Buff_BlackBird042_Level5_CutDef_xiang.Buff_BlackBird042_Level5_CutDef_xiang_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6525
+      },
+      "Buff_BlackBird042_Level5_CutDef_an": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Upgrade/Buff_BlackBird042_Level5_CutDef_an.Buff_BlackBird042_Level5_CutDef_an_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6526
+      },
+      "Buff_Oneiroi_Skill_AtkUP_Add": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_075_Oneiroi/Buff/Buff_Oneiroi_Skill_AtkUP_Add.Buff_Oneiroi_Skill_AtkUP_Add_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6527
+      },
+      "Buff_mon_35_Recover02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_mon_35_Recover02.Buff_mon_35_Recover02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6034
+      },
+      "buff_mon_035_LockHP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/buff_mon_035_LockHP.buff_mon_035_LockHP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6528
+      },
+      "GE_Test_SignalJam_LockSkill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_09/GameplayEffects/Test/GE_Test_SignalJam_LockSkill.GE_Test_SignalJam_LockSkill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6529
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill_DamUP_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill_DamUP_Level4.Buff_BlackBird042_Evolve_UltraSkill_DamUP_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6530
+      },
+      "Buff_BlackBird042_Evolve_Skill_Treat": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_Skill_Treat.Buff_BlackBird042_Evolve_Skill_Treat_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6531
+      },
+      "Buff_Exe_SummonDmgUp_L4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_SummonDmgUp_L4.Buff_Exe_SummonDmgUp_L4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6532
+      },
+      "buff_mon_70_Invisible": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_70/buff_mon_70_Invisible.buff_mon_70_Invisible_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6533
+      },
+      "Buff_BlackBird042_UltraSkill_Transform_UI": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_UltraSkill_Transform_UI.Buff_BlackBird042_UltraSkill_Transform_UI_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6534
+      },
+      "Buff_Akane_Skill_Passive1_display": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_Passive1_display.Buff_Akane_Skill_Passive1_display_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6535
+      },
+      "GE_Player_BlackBird_Evolve_UltraSkill_Damage_checkLV1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_UltraSkill_Damage_checkLV1.GE_Player_BlackBird_Evolve_UltraSkill_Damage_checkLV1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6536
+      },
+      "Buff_DefendAthena_XZC_DelayTrigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item6/Buff_DefendAthena_XZC_DelayTrigger.Buff_DefendAthena_XZC_DelayTrigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6537
+      },
+      "GE_Player_Elyms_UltraSkillA1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_UltraSkillA1_Damage.GE_Player_Elyms_UltraSkillA1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6538
+      },
+      "GE_Player_Elyms_UltraSkillB1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_UltraSkillB1_Damage.GE_Player_Elyms_UltraSkillB1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6539
+      },
+      "Buff_DefendAthena_XZC_Green_2_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Green/Buff_DefendAthena_XZC_Green_2_1.Buff_DefendAthena_XZC_Green_2_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6540
+      },
+      "Buff_BlackBird042_LongEvade": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_LongEvade.Buff_BlackBird042_LongEvade_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6541
+      },
+      "Buff_DefendAthena_LastMonster": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Buff_DefendAthena_LastMonster.Buff_DefendAthena_LastMonster_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6542
+      },
+      "Buff_DefendAthena_LastMonster_Get": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Buff_DefendAthena_LastMonster_Get.Buff_DefendAthena_LastMonster_Get_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6543
+      },
+      "Buff_BlackBird042_Evolve_UltraSkill2_CD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_UltraSkill2_CD.Buff_BlackBird042_Evolve_UltraSkill2_CD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6544
       }
     }
   }

@@ -3,7 +3,7 @@ use nte_dps_tool::core::mod_market::{
     ModMarketCatalog, ModMarketError, ModMarketErrorCode, ModMarketItem, ModMarketLocalizations,
 };
 use serde::Serialize;
-pub(crate) const MOD_MARKET_CONTRACT_VERSION: u32 = 12;
+pub(crate) const MOD_MARKET_CONTRACT_VERSION: u32 = 13;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModMarketCatalogSnapshot {
@@ -16,6 +16,7 @@ pub(crate) struct ModMarketCatalogSnapshot {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModMarketItemSnapshot {
+    pub component: nte_dps_tool::core::mod_market::ComponentKind,
     pub id: String,
     pub bindings: Vec<String>,
     pub localizations: ModMarketLocalizationsSnapshot,
@@ -93,6 +94,7 @@ impl ModMarketCatalogSnapshot {
                 .map(|item| {
                     let local_state = local_status(&item);
                     ModMarketItemSnapshot {
+                        component: item.component,
                         id: item.id,
                         bindings: item.bindings,
                         localizations: item.localizations.into(),
@@ -131,6 +133,10 @@ impl CommandError {
             ModMarketErrorCode::InvalidPackage => (
                 "mod_market_package_invalid",
                 "The downloaded Mod package failed verification.",
+            ),
+            ModMarketErrorCode::DeploymentConflict => (
+                "mod_proxy_deployment_conflict",
+                "Existing game files differ from the managed components. No existing files were replaced.",
             ),
             ModMarketErrorCode::ItemNotFound => (
                 "mod_market_item_not_found",

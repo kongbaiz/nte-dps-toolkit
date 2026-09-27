@@ -147,6 +147,62 @@ fn delivery_fits<T: Serialize>(delivery: &StreamDeliveryBody<T>) -> bool {
         .unwrap_or(false)
 }
 
+/// Subscription-owned blocking work; cancellation is passed into finite IPC.
+/// Unlike projection-only streams, this must not occupy a Tokio executor thread.
+pub(crate) fn spawn_blocking_polling_stream<T, Poll>(
+    delivery: StreamDeliveryEndpoint<T>,
+    state: AppState,
+    registration: StreamRegistration,
+    interval_ms: u32,
+    mut poll: Poll,
+) -> Result<(), CommandError>
+where
+    T: Serialize + Send + 'static,
+    Poll: FnMut(&AppState, &std::sync::Arc<std::sync::atomic::AtomicBool>) -> PollingStreamOutput<T>
+        + Send
+        + 'static,
+{
+    match state.activate_stream(&registration) {
+        Ok(true) => {}
+        _ => {
+            registration.cancel();
+            let _ = state.finish_stream(&registration);
+            return Err(CommandError::stream_runtime_unavailable());
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let stop = registration.stop_token();
+        let active = registration.activation_token();
+        while !stop.load(Ordering::Acquire) {
+            if active.load(Ordering::Acquire) {
+                let output = catch_unwind(AssertUnwindSafe(|| poll(&state, &stop)));
+                match output {
+                    Ok(PollingStreamOutput::NoChange) => {}
+                    Ok(PollingStreamOutput::Event(event)) => {
+                        let body = StreamDeliveryBody::new(vec![event]);
+                        if stop.load(Ordering::Acquire)
+                            || !delivery_fits(&body)
+                            || delivery.channel.send(body).is_err()
+                        {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            for _ in 0..interval_ms.div_ceil(25) {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+        registration.cancel();
+        let _ = state.finish_stream(&registration);
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn serialize_stream_events<T: Serialize>(events: Vec<T>) -> std::io::Result<Vec<u8>> {
     let bytes =

@@ -1195,7 +1195,16 @@ fn await_overlapped(
     Err(OverlappedWaitError::Undrained)
 }
 
-fn overlapped_write_exact(pipe: HANDLE, bytes: &[u8], deadline: Instant) -> Result<(), String> {
+#[cfg(feature = "desktop")]
+pub(super) fn pipe_io_ready() -> bool {
+    !IPC_CLIENT_QUARANTINED.load(Ordering::Acquire)
+}
+
+pub(super) fn overlapped_write_exact(
+    pipe: HANDLE,
+    bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), String> {
     let mut operation = OverlappedPipeOperation::with_buffer(bytes.to_vec().into_boxed_slice())?;
     // SAFETY: pipe is opened for overlapped writes and the boxed buffer plus
     // OVERLAPPED remain stable until completion or quarantine.
@@ -1231,7 +1240,7 @@ fn overlapped_write_exact(pipe: HANDLE, bytes: &[u8], deadline: Instant) -> Resu
     Ok(())
 }
 
-fn overlapped_read_exact(
+pub(super) fn overlapped_read_exact(
     pipe: HANDLE,
     byte_len: usize,
     deadline: Instant,
@@ -1846,6 +1855,16 @@ fn register_mod_workspace(workspace: &Path) -> Result<(), ModsPluginDeploymentEr
         )));
     }
     Ok(())
+}
+
+#[cfg(feature = "desktop")]
+/// Automatic proxy deployment never guesses between installations or uses a stale manual path.
+pub fn automatic_toolkit_game_directory() -> Result<PathBuf, ModsPluginDeploymentError> {
+    let directories = game_installation_directories()?;
+    if directories.len() != 1 {
+        return Err(ModsPluginDeploymentError::GameInstallationNotFound);
+    }
+    Ok(directories[0].1.clone())
 }
 
 #[cfg(feature = "desktop")]

@@ -1,11 +1,14 @@
 /target/
+# Local verification workspaces and generated output; may contain private source.
+/out/
 /node_modules/
 /logs/
 /data/
 /NTE_Assets/
 /res/data/direct_export_report.json
 /nte-debug-tool/
-/UETools-NTE/
+# UE Tools is an independent private repository, including any copied workspace.
+**/UETools-NTE/
 # Retired native plugin build/cache files are not source deliverables.
 /native/nte-mods-plugin/.vs/
 /native/nte-mods-plugin/x64/

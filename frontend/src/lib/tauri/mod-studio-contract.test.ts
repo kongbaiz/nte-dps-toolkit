@@ -20,7 +20,7 @@ import {
 
 function marketCatalogFixture() {
   return {
-    contractVersion: 12,
+    contractVersion: 13,
     publishedAt: "2026-08-03T00:00:00Z",
     privacyMode: "anonymous-read-only",
     mods: [
@@ -35,6 +35,7 @@ function marketCatalogFixture() {
         version: "1.0.0",
         author: "NTE",
         capabilities: ["combat-clock", "ipc"],
+        component: "plugin",
         packageSize: 1024,
         localState: { status: "notInstalled" },
       },
@@ -175,7 +176,7 @@ describe("Mod Studio contract", () => {
   it("parses privacy-bounded Mod Market catalog items", () => {
     expect(
       parseModMarketCatalog({
-        contractVersion: 12,
+        contractVersion: 13,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "anonymous-read-only",
         mods: [
@@ -190,6 +191,7 @@ describe("Mod Studio contract", () => {
             version: "1.0.0",
             author: "NTE",
             capabilities: ["combat-clock", "ipc"],
+            component: "plugin",
             packageSize: 1024,
             localState: { status: "notInstalled" },
           },
@@ -204,6 +206,7 @@ describe("Mod Studio contract", () => {
             version: "1.0.0",
             author: "NTE",
             capabilities: ["equipment", "ipc"],
+            component: "plugin",
             packageSize: 2048,
             localState: {
               status: "installed",
@@ -219,6 +222,7 @@ describe("Mod Studio contract", () => {
         {
           id: "combat-clock",
           bindings: ["feature.dps-time-stop"],
+          component: "plugin",
           packageSize: 1024,
           localizations: { "zh-CN": { summary: "追踪游戏时停。" } },
         },
@@ -235,7 +239,7 @@ describe("Mod Studio contract", () => {
     });
     expect(() =>
       parseModMarketCatalog({
-        contractVersion: 12,
+        contractVersion: 13,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "tracks-device",
         mods: [],
@@ -245,7 +249,7 @@ describe("Mod Studio contract", () => {
 
   it("preserves unreadable local Mod state without accepting private detail", () => {
     const parsed = parseModMarketCatalog({
-      contractVersion: 12,
+      contractVersion: 13,
       publishedAt: "2026-08-03T00:00:00Z",
       privacyMode: "anonymous-read-only",
       mods: [
@@ -260,6 +264,7 @@ describe("Mod Studio contract", () => {
           version: "1.0.0",
           author: "NTE",
           capabilities: ["equipment", "ipc"],
+          component: "plugin",
           packageSize: 2048,
           localState: {
             status: "unreadable",
@@ -290,10 +295,11 @@ describe("Mod Studio contract", () => {
       version: "1.0.0",
       author: "NTE",
       capabilities: ["equipment", "ipc"],
+      component: "plugin",
       packageSize: 2048,
     };
     const catalog = (localState: unknown) => ({
-      contractVersion: 12,
+      contractVersion: 13,
       publishedAt: "2026-08-03T00:00:00Z",
       privacyMode: "anonymous-read-only",
       mods: [{ ...item, localState }],
@@ -733,4 +739,39 @@ describe("Mod Studio contract", () => {
       }),
     ).toThrow(ModStudioContractError);
   });
+});
+
+it("requires explicit market component kinds", () => {
+  const item = {
+    id: "nte-host",
+    component: "host",
+    bindings: ["toolkit.host"],
+    localizations: {
+      en: { name: "Host", summary: "Host" },
+      "zh-CN": { name: "Host", summary: "Host" },
+      ja: { name: "Host", summary: "Host" },
+    },
+    version: "1.0.0",
+    author: "NTE",
+    capabilities: [],
+    packageSize: 192,
+    localState: { status: "notInstalled" },
+  };
+  const catalog = {
+    contractVersion: 13,
+    publishedAt: "2026-09-27",
+    privacyMode: "anonymous-read-only",
+    mods: [item],
+  };
+  for (const component of ["host", "loader", "driver", "plugin"]) {
+    expect(
+      parseModMarketCatalog({ ...catalog, mods: [{ ...item, component }] })
+        .mods[0]?.component,
+    ).toBe(component);
+  }
+  for (const component of [undefined, "script", "../host"]) {
+    expect(() =>
+      parseModMarketCatalog({ ...catalog, mods: [{ ...item, component }] }),
+    ).toThrow();
+  }
 });

@@ -1,63 +1,51 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Cable,
+  Activity,
+  Check,
+  Cpu,
   Network,
-  RefreshCw,
+  Server,
+  Users,
   Settings2,
   Store,
   TriangleAlert,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogBackdrop,
-  AlertDialogPortal,
-  AlertDialogPopup,
-  AlertDialogTitle,
-  AlertDialogDescription,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { t, useTranslationRevision } from "@/lib/i18n";
-import {
-  toolkitClient,
-  type DataMode,
-  type PluginPanel,
-} from "@/lib/tauri/toolkit-client";
-import { consoleControlClient } from "@/lib/tauri/console-control-client";
+import { toolkitClient, type PluginPanel } from "@/lib/tauri/toolkit-client";
+import { HostControls } from "./host-controls";
+import { PluginControls } from "./plugin-controls";
+import { pluginControlGroup } from "./release-control-groups";
 import { ModMarketPanel } from "./mod-market-panel";
-
-const CONNECTION = {
-  notRequested: "Plugin mode is off",
-  connected: "Connected",
-  unavailable: "Waiting for UE Tools",
-  busy: "Plugin busy",
-  error: "Plugin connection failed",
-} as const;
 const PLUGIN_STATE = {
   loaded: "Loaded",
   unloaded: "Disabled",
   unload_pending: "Unloading",
   failed: "Load failed",
 } as const;
-
+const PLUGIN_NAMES: Record<string, string> = {
+  "nte_plugincombat.dll": "Combat plugin",
+  "nte_pluginuser.dll": "Account plugin",
+  "nte_pluginnetwork.dll": "Network plugin",
+  "nte_pluginperformance.dll": "Performance plugin",
+};
+const ICONS = {
+  combat: Activity,
+  account: Users,
+  network: Network,
+  host: Server,
+};
 export function ModStudioWorkspace() {
   useTranslationRevision();
   const [panel, setPanel] = useState<PluginPanel | null>(null);
   const [tab, setTab] = useState<"control" | "market">("control");
+  const [selectedPage, setSelectedPage] = useState("host");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmMode, setConfirmMode] = useState<DataMode | null>(null);
   const alive = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
   const serial = useRef(0);
   const busy = useRef(false);
   const refresh = useCallback(async () => {
@@ -76,8 +64,9 @@ export function ModStudioWorkspace() {
     alive.current = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      if (!busy.current) await refresh();
-      if (alive.current) timer = setTimeout(() => void poll(), 1000);
+      if (!busy.current && document.visibilityState === "visible")
+        await refresh();
+      if (alive.current) timer = setTimeout(() => void poll(), 3000);
     };
     void poll();
     return () => {
@@ -110,332 +99,166 @@ export function ModStudioWorkspace() {
       if (alive.current) setPending(false);
     }
   };
+  const selectedPlugin = panel?.plugins.find(
+    (plugin) => plugin.file === selectedPage,
+  );
+  const activePage = selectedPlugin?.file ?? "host";
+  const selectPage = (page: string) => {
+    setSelectedPage(page);
+    setError(null);
+    contentRef.current?.scrollTo({ top: 0 });
+  };
+  const errorBanner = error ? (
+    <Alert variant="destructive" className="shrink-0">
+      <TriangleAlert />
+      <AlertTitle>{t("Operation failed")}</AlertTitle>
+      <AlertDescription>{t(error)}</AlertDescription>
+    </Alert>
+  ) : null;
   return (
-    <section className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
         <div>
           <h1 className="text-lg font-semibold">{t("Mod Workshop")}</h1>
-          <p className="text-sm text-muted-foreground">
-            {t("Data sources and compiled plugins")}
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(
+              "Install components, connect the host, then manage your plugins.",
+            )}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div
+          className="flex items-center gap-1 rounded-lg bg-muted/70 p-1"
+          aria-label={t("Mod Workshop")}
+        >
           <Button
-            variant={tab === "control" ? "secondary" : "outline"}
+            size="sm"
+            variant={tab === "control" ? "default" : "ghost"}
+            aria-pressed={tab === "control"}
+            disabled={pending}
             onClick={() => setTab("control")}
           >
-            <Settings2 data-icon="inline-start" />
+            {tab === "control" ? <Check aria-hidden="true" /> : <Settings2 />}
             {t("Control panel")}
           </Button>
           <Button
-            variant={tab === "market" ? "secondary" : "outline"}
+            size="sm"
+            variant={tab === "market" ? "default" : "ghost"}
+            aria-pressed={tab === "market"}
+            disabled={pending}
             onClick={() => setTab("market")}
           >
-            <Store data-icon="inline-start" />
+            {tab === "market" ? <Check aria-hidden="true" /> : <Store />}
             {t("Mod Market")}
           </Button>
         </div>
       </header>
-      {error && (
-        <Alert variant="destructive">
-          <TriangleAlert />
-          <AlertTitle>{t("Operation failed")}</AlertTitle>
-          <AlertDescription>{t(error)}</AlertDescription>
-        </Alert>
-      )}
-      {panel === null ? (
-        <Skeleton className="h-40 w-full" />
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("Data source")}</CardTitle>
-            <CardDescription>
-              {t(
-                "Switching modes stops the current collector. Recorded data is retained until the next confirmed start.",
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="flex gap-3">
-                <Network className="size-5 shrink-0" />
-                <div>
-                  <p className="font-medium">
-                    {t("Packet capture mode")}
-                    {panel.mode === "packet_capture" && (
-                      <Badge className="ml-2" variant="secondary">
-                        {t("Current")}
-                      </Badge>
-                    )}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t(
-                      "Default mode. Lower risk; available data is limited and packet-derived results may be inaccurate.",
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <Cable className="size-5 shrink-0" />
-                <div className="flex-1">
-                  <label htmlFor="plugin-mode" className="font-medium">
-                    {t("Plugin mode")}
-                  </label>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t(
-                      "Reads UE Tools directly without packet parsing. More complete native data, with plugin risk; unknown and inferred values stay marked.",
-                    )}
-                  </p>
-                </div>
-                <Switch
-                  id="plugin-mode"
-                  checked={panel.mode === "plugin"}
-                  disabled={pending}
-                  onCheckedChange={(on) =>
-                    setConfirmMode(on ? "plugin" : "packet_capture")
-                  }
-                />
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{t(CONNECTION[panel.connection])}</Badge>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => void run(() => toolkitClient.chooseDirectory())}
-              >
-                {t("Select installed Toolkit folder")}
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                {t(
-                  panel.directorySelected
-                    ? "Toolkit folder selected"
-                    : "Install the compiled Toolkit package first; do not mix it with the legacy Mod DLL.",
-                )}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
       {tab === "market" ? (
-        <ModMarketPanel onInstalled={refresh} />
-      ) : (
-        panel && (
-          <div className="grid items-start gap-5 min-[1200px]:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("Combat data")}</CardTitle>
-                <CardDescription>
-                  {t(
-                    "Collection uses only the selected data source. Disconnection never starts packet capture automatically.",
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {panel.combat ? (
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                    {[
-                      [
-                        "Total damage",
-                        panel.combat.totalDamage.toLocaleString(undefined, {
-                          maximumFractionDigits: 6,
-                        }),
-                      ],
-                      ["Hits", panel.combat.hits],
-                      ["Inferred", panel.combat.inferred.toLocaleString()],
-                      ["Unknown", panel.combat.unknown.toLocaleString()],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <p className="text-xs text-muted-foreground">
-                          {t(label)}
-                        </p>
-                        <p className="mt-1 font-mono text-xl tabular-nums">
-                          {value}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {t(
-                      panel.mode === "plugin"
-                        ? "No live plugin data. Check the game, host version and plugin loading state."
-                        : "Packet capture does not load or query game plugins.",
-                    )}
-                  </p>
-                )}
-                <div>
-                  <Button
-                    disabled={
-                      pending ||
-                      (panel.mode === "plugin" &&
-                        panel.connection !== "connected")
-                    }
-                    onClick={() =>
-                      void run(() =>
-                        consoleControlClient.execute("toggle-capture"),
-                      )
-                    }
-                  >
-                    {t("Start / stop collection")}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("Plugins")}</CardTitle>
-                <CardDescription>
-                  {t(
-                    "Loading state is reported by the host, not inferred from files on disk.",
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                {panel.plugins.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    {t(
-                      panel.connection === "connected"
-                        ? "No compiled plugins found"
-                        : "Plugin loading state is unavailable",
-                    )}
-                  </p>
-                )}
-                {panel.plugins.map((plugin) => (
-                  <div
-                    key={plugin.file}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
-                  >
-                    <div>
-                      <p className="font-mono text-sm">{plugin.file}</p>
-                      <Badge className="mt-1" variant="outline">
-                        {t(PLUGIN_STATE[plugin.state])}
-                      </Badge>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={
-                          pending ||
-                          panel.combat?.capturing ||
-                          plugin.state === "unload_pending"
-                        }
-                        onClick={() =>
-                          void run(() =>
-                            toolkitClient.control(
-                              plugin.state === "loaded" ? "disable" : "enable",
-                              plugin.file,
-                            ),
-                          )
-                        }
-                      >
-                        {t(plugin.state === "loaded" ? "Disable" : "Enable")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={pending || panel.combat?.capturing}
-                        onClick={() =>
-                          void run(() =>
-                            toolkitClient.control("reload", plugin.file),
-                          )
-                        }
-                      >
-                        <RefreshCw data-icon="inline-start" />
-                        {t("Reload")}
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                {panel.operation?.state && (
-                  <p className="text-sm text-muted-foreground">
-                    {t("Plugin operation")}: {panel.operation.state}
-                    {panel.operation.error && ` · ${t(panel.operation.error)}`}
-                  </p>
-                )}
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-sm">{t("Host logging")}</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={pending || panel.connection !== "connected"}
-                    onClick={() =>
-                      void run(() => toolkitClient.control("logLevel", null, 2))
-                    }
-                  >
-                    {t("Info logging")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={pending || panel.connection !== "connected"}
-                    onClick={() =>
-                      void run(() => toolkitClient.control("logLevel", null, 6))
-                    }
-                  >
-                    {t("Logging off")}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t(
-                    "Legacy script execution and equipment changes are not supported by this Toolkit protocol.",
-                  )}
-                </p>
-              </CardContent>
-            </Card>
+        <div className="min-h-0 flex-1 overflow-y-auto" ref={contentRef}>
+          <div className="mx-auto w-full max-w-7xl space-y-5 p-5">
+            {errorBanner}
+            <ModMarketPanel onInstalled={refresh} />
           </div>
-        )
-      )}
-      <AlertDialog
-        open={confirmMode !== null}
-        onOpenChange={(open) => {
-          if (!open && !pending) setConfirmMode(null);
-        }}
-      >
-        <AlertDialogPortal>
-          <AlertDialogBackdrop />
-          <AlertDialogPopup className="left-1/2 top-1/2 flex w-[min(90vw,30rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border bg-background p-6 shadow-lg">
-            <AlertDialogTitle>
-              {t(
-                confirmMode === "plugin"
-                  ? "Enable plugin mode?"
-                  : "Return to packet capture?",
-              )}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                confirmMode === "plugin"
-                  ? "Plugins run inside the game and carry compatibility and account risks. Switching stops current collection; no plugin data is claimed until the host connects. Continue only if you accept these risks."
-                  : "Stop plugin collection and use packet capture. This does not unload the DLL from the game; close the game to remove it completely.",
-              )}
-            </AlertDialogDescription>
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                disabled={pending}
-                onClick={() => setConfirmMode(null)}
-              >
-                {t("Cancel")}
-              </Button>
-              <Button
-                disabled={pending}
-                onClick={() => {
-                  const mode = confirmMode;
-                  if (mode)
-                    void run(async () => {
-                      await toolkitClient.setMode(mode, mode === "plugin");
-                      if (alive.current) setConfirmMode(null);
-                    });
-                }}
-              >
-                {t("Confirm")}
-              </Button>
+        </div>
+      ) : panel === null ? (
+        <div className="space-y-4 p-5">
+          {errorBanner}
+          <Skeleton className="h-40" />
+        </div>
+      ) : (
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          data-testid="plugin-split-view"
+        >
+          <nav
+            aria-label={t("Plugin control pages")}
+            className="flex shrink-0 items-center gap-2 overflow-x-auto border-b bg-muted/25 px-4 py-2"
+          >
+            <Button
+              variant={activePage === "host" ? "secondary" : "ghost"}
+              className="shrink-0 justify-start"
+              aria-current={activePage === "host" ? "page" : undefined}
+              disabled={pending}
+              onClick={() => selectPage("host")}
+            >
+              <Server />
+              {t("Host controls")}
+            </Button>
+            <div className="flex shrink-0 items-center gap-1 border-l pl-2">
+              {panel.plugins.map((plugin) => {
+                const group = pluginControlGroup(plugin.file);
+                const Icon = group ? ICONS[group.id] : Cpu;
+                return (
+                  <button
+                    type="button"
+                    key={plugin.file}
+                    disabled={pending}
+                    aria-current={
+                      activePage === plugin.file ? "page" : undefined
+                    }
+                    onClick={() => selectPage(plugin.file)}
+                    className={`flex min-w-0 shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${activePage === plugin.file ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="whitespace-nowrap text-sm font-medium">
+                        {t(
+                          PLUGIN_NAMES[plugin.file.toLowerCase()] ??
+                            plugin.file,
+                        )}
+                      </span>
+                      <span className="whitespace-nowrap rounded bg-background px-1.5 py-0.5 text-[11px]">
+                        {t(PLUGIN_STATE[plugin.state])}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          </AlertDialogPopup>
-        </AlertDialogPortal>
-      </AlertDialog>
+            {panel.plugins.length === 0 && (
+              <p className="px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                {t(
+                  panel.connection === "connected"
+                    ? "No compiled plugins found"
+                    : "Plugin list will appear after connection.",
+                )}
+              </p>
+            )}
+          </nav>
+
+          <div
+            className="@container/detail min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+            ref={contentRef}
+            data-testid="plugin-workspace-scroll"
+          >
+            <div className="w-full space-y-4 p-4">
+              {errorBanner}
+              <div key={`${activePage}:${panel.connectionIdentity}`}>
+                {selectedPlugin ? (
+                  <PluginControls
+                    panel={panel}
+                    plugin={selectedPlugin}
+                    refresh={refresh}
+                    title={t(
+                      PLUGIN_NAMES[selectedPlugin.file.toLowerCase()] ??
+                        selectedPlugin.file,
+                    )}
+                    pending={pending}
+                    run={run}
+                  />
+                ) : (
+                  <HostControls
+                    onOpenMarket={() => setTab("market")}
+                    panel={panel}
+                    pending={pending}
+                    run={run}
+                    refresh={refresh}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

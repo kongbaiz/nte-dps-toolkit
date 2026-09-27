@@ -4,6 +4,7 @@
 use super::wire::Bits;
 use super::{Error, Name, Request, Settlement, decode_request, decode_settlement};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Profile {
@@ -16,10 +17,18 @@ pub struct Profile {
 
 #[derive(Debug)]
 pub enum Rpc {
+    Inventory {
+        data: Vec<u8>,
+        bits: usize,
+    },
     Request(Request),
     Settlement(Settlement),
+    /// A bounded RPC body whose extra-damage array is not yet supported.
+    /// Preserve surrounding RPCs and sequence state; do not invent a hit.
+    UnsupportedSettlementExtras,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Bunch {
     data: Vec<u8>,
     bits: usize,
@@ -44,6 +53,15 @@ struct Pending {
 pub struct Decoder {
     profile: Profile,
     pending: [Option<Pending>; 2],
+    // Reliable Bunches can be retransmitted in a different packet. Retain a
+    // bounded exact-byte window (well below the 1024 sequence modulus), not
+    // packet IDs or damage values, to avoid assembling a duplicate tail twice.
+    reliable_seen: [VecDeque<Bunch>; 2],
+    pub(super) saw_channel: bool,
+    inventory_mode: bool,
+    pub(crate) controller_bound: bool,
+    controller_actor: u64,
+    exports: std::collections::HashMap<u64, (u64, String, Option<u32>)>,
 }
 
 impl Decoder {
@@ -60,22 +78,55 @@ impl Decoder {
         Ok(Self {
             profile,
             pending: [None, None],
+            reliable_seen: Default::default(),
+            saw_channel: false,
+            inventory_mode: false,
+            controller_bound: false,
+            controller_actor: 0,
+            exports: Default::default(),
         })
+    }
+    pub(crate) fn inventory(prefix: u8) -> Result<Self, Error> {
+        let mut decoder = Self::new(Profile {
+            component_prefix: prefix,
+            channel: 3,
+            field_upper_exclusive: 219,
+            request_index: 100,
+            settlement_index: 142,
+        })?;
+        decoder.inventory_mode = true;
+        Ok(decoder)
     }
     pub fn has_incomplete_fragments(&self) -> bool {
         self.pending.iter().any(Option::is_some)
     }
     pub fn clear(&mut self) {
         self.pending = [None, None];
+        self.reliable_seen.iter_mut().for_each(VecDeque::clear);
+        self.exports.clear();
+        self.controller_bound = false;
+        self.controller_actor = 0;
+    }
+
+    pub(super) fn discard_incomplete(&mut self) {
+        self.pending = [None, None];
     }
 
     pub fn datagram(&mut self, data: &[u8], inbound: bool) -> Result<Vec<Rpc>, Error> {
+        self.saw_channel = false;
         if data.len() > 65535 {
             return Err(Error::BudgetExceeded);
         }
         let outer_len = termination(data)?;
         let mut outer = Bits::new(data, outer_len)?;
-        if outer.take(6)? != u64::from(self.profile.component_prefix) {
+        let prefix = outer.take(6)? as u8;
+        // The non-data branch precedes sequenced traffic on login. It carries
+        // no Bunch/RPC stream and must not be interpreted as a sequenced header.
+        if prefix == (self.profile.component_prefix | 32) && self.profile.component_prefix & 32 == 0
+        {
+            return Ok(Vec::new());
+        }
+        if prefix != self.profile.component_prefix {
             return Err(Error::Unsupported);
         }
         let intermediate = blob(&mut outer, outer_len - 6)?;
@@ -148,7 +199,27 @@ impl Decoder {
             }
         }
         let mut result = Vec::new();
+        self.saw_channel = !bunches.is_empty();
         for b in bunches {
+            if self.reliable_duplicate(&b, inbound)? {
+                continue;
+            }
+            if self.inventory_mode && b.exports {
+                let mut r = Bits::new(&b.data, b.bits)?;
+                if r.take(1)? != 0 {
+                    return Err(Error::Unsupported);
+                }
+                let count = r.take(32)?;
+                if count > 2048 {
+                    return Err(Error::BudgetExceeded);
+                }
+                for _ in 0..count {
+                    self.export_guid(&mut r, 0)?;
+                }
+                if r.pos != r.len {
+                    return Err(Error::InvalidValue);
+                }
+            }
             if !b.partial {
                 if !b.exports && b.bits > 0 {
                     result.extend(self.message(&b.data, b.bits, b.must_map, b.open, inbound)?);
@@ -204,8 +275,30 @@ impl Decoder {
         Ok(result)
     }
 
+    fn reliable_duplicate(&mut self, bunch: &Bunch, inbound: bool) -> Result<bool, Error> {
+        if !bunch.reliable {
+            return Ok(false);
+        }
+        let seen = &mut self.reliable_seen[usize::from(inbound)];
+        if let Some(previous) = seen
+            .iter()
+            .find(|previous| previous.sequence == bunch.sequence)
+        {
+            return if previous == bunch {
+                Ok(true)
+            } else {
+                Err(Error::InvalidValue)
+            };
+        }
+        if seen.len() == 256 {
+            seen.pop_front();
+        }
+        seen.push_back(bunch.clone());
+        Ok(false)
+    }
+
     fn message(
-        &self,
+        &mut self,
         data: &[u8],
         bits: usize,
         must_map: bool,
@@ -227,10 +320,37 @@ impl Decoder {
         }
         if open {
             let guid = object(&mut r, 0)?;
-            // Actor reference only; spawning a new dynamic actor needs its own
-            // qualified spawn profile and is not silently skipped here.
+            if self.inventory_mode && self.controller_actor != 0 && self.controller_actor != guid {
+                return Err(Error::InvalidValue);
+            }
+            if self.inventory_mode {
+                self.controller_actor = guid;
+            }
+            // Consume the verified new-actor framing before content blocks.
+            // These fields are framing only, never damage/HP evidence.
             if guid != 0 && guid & 1 == 0 {
-                return Err(Error::Unsupported);
+                let archetype = object(&mut r, 0)?;
+                if self.inventory_mode {
+                    self.controller_bound = self.export_path(archetype, 0).as_deref()
+                        == Some(
+                            "/Game/Blueprints/Share/Character/Player/BP_PlayerControllerBase.Default__BP_PlayerControllerBase_C",
+                        )
+                        && self
+                            .exports
+                            .get(&archetype)
+                            .is_some_and(|v| v.2 == Some(3604383830));
+                }
+                object(&mut r, 0)?; // level
+                spawn_vector(&mut r)?;
+                if r.take(1)? != 0 {
+                    for _ in 0..3 {
+                        if r.take(1)? != 0 {
+                            r.take(16)?;
+                        }
+                    }
+                }
+                spawn_vector(&mut r)?; // scale
+                spawn_vector(&mut r)?; // velocity
             }
         }
         let mut result = Vec::new();
@@ -262,6 +382,15 @@ impl Decoder {
                 let index = bounded(&mut f, self.profile.field_upper_exclusive)?;
                 let count = f.packed()? as usize;
                 let raw = blob(&mut f, count)?;
+                if self.inventory_mode {
+                    if self.controller_bound && inbound && index == 131 {
+                        result.push(Rpc::Inventory {
+                            data: raw,
+                            bits: count,
+                        });
+                    }
+                    continue;
+                }
                 if index == self.profile.request_index {
                     if inbound {
                         return Err(Error::InvalidValue);
@@ -275,16 +404,80 @@ impl Decoder {
                     if !inbound {
                         return Err(Error::InvalidValue);
                     }
-                    result.push(Rpc::Settlement(decode_settlement(
-                        &raw,
-                        count,
-                        self.profile.channel,
-                    )?));
+                    result.push(match decode_settlement(&raw, count, self.profile.channel) {
+                        Ok(settlement) => Rpc::Settlement(settlement),
+                        Err(Error::UnsupportedSettlementExtras) => Rpc::UnsupportedSettlementExtras,
+                        Err(error) => return Err(error),
+                    });
                 }
             }
         }
         Ok(result)
     }
+    fn export_guid(&mut self, r: &mut Bits<'_>, depth: usize) -> Result<u64, Error> {
+        if depth > 16 || self.exports.len() > 4096 {
+            return Err(Error::BudgetExceeded);
+        }
+        let guid = packed64(r)?;
+        if guid == 0 {
+            return Ok(guid);
+        }
+        let flags = r.take(8)?;
+        if flags & 1 != 0 {
+            let outer = self.export_guid(r, depth + 1)?;
+            let name = r.string()?;
+            if name.len() > 512 {
+                return Err(Error::BudgetExceeded);
+            }
+            let checksum = if flags & 4 != 0 {
+                Some(r.take(32)? as u32)
+            } else {
+                None
+            };
+            let value = (outer, name, checksum);
+            if self.exports.get(&guid).is_some_and(|old| old != &value) {
+                return Err(Error::InvalidValue);
+            }
+            self.exports.insert(guid, value);
+        }
+        Ok(guid)
+    }
+    fn export_path(&self, guid: u64, depth: usize) -> Option<String> {
+        if depth > 16 {
+            return None;
+        }
+        let (outer, name, _) = self.exports.get(&guid)?;
+        if *outer == 0 {
+            Some(name.clone())
+        } else {
+            Some(format!("{}.{}", self.export_path(*outer, depth + 1)?, name))
+        }
+    }
+}
+
+fn spawn_vector(r: &mut Bits<'_>) -> Result<(), Error> {
+    if r.take(1)? == 0 {
+        return Ok(());
+    }
+    if r.take(1)? == 0 {
+        for _ in 0..3 {
+            r.take(64)?;
+        }
+        return Ok(());
+    }
+    let header = bounded(r, 128)?;
+    let width = header & 63;
+    let width = if width != 0 {
+        width
+    } else if header & 64 != 0 {
+        64
+    } else {
+        32
+    };
+    for _ in 0..3 {
+        r.take(width as usize)?;
+    }
+    Ok(())
 }
 
 fn termination(data: &[u8]) -> Result<usize, Error> {
@@ -352,4 +545,271 @@ fn object(r: &mut Bits<'_>, depth: usize) -> Result<u64, Error> {
         }
     }
     Ok(guid)
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+
+    fn decoder() -> Decoder {
+        Decoder::new(Profile {
+            component_prefix: 28,
+            channel: 3,
+            field_upper_exclusive: 219,
+            request_index: 100,
+            settlement_index: 142,
+        })
+        .unwrap()
+    }
+    #[test]
+    fn inventory_requires_captured_archetype_checksum_and_fixed_actor() {
+        let mut d = Decoder::inventory(28).unwrap();
+        d.exports.insert(
+            11,
+            (
+                0,
+                "/Game/Blueprints/Share/Character/Player/BP_PlayerControllerBase".into(),
+                None,
+            ),
+        );
+        d.exports.insert(
+            9,
+            (11, "Default__BP_PlayerControllerBase_C".into(), Some(0)),
+        );
+        d.message(&[4, 18, 6, 0], 28, false, true, true).unwrap();
+        assert!(!d.controller_bound);
+        d.exports.get_mut(&9).unwrap().2 = Some(3604383830);
+        d.message(&[4, 18, 6, 0], 28, false, true, true).unwrap();
+        assert!(d.controller_bound);
+        assert!(d.message(&[8, 18, 6, 0], 28, false, true, true).is_err());
+    }
+
+    fn bunch(sequence: u32) -> Bunch {
+        Bunch {
+            data: vec![0],
+            bits: 2,
+            sequence,
+            reliable: true,
+            exports: false,
+            must_map: false,
+            open: false,
+            partial: true,
+            initial: false,
+            final_part: true,
+            aux: false,
+        }
+    }
+
+    #[derive(Default)]
+    struct Writer {
+        data: Vec<u8>,
+        bits: usize,
+    }
+    impl Writer {
+        fn put(&mut self, value: u64, bits: usize) {
+            self.data.resize((self.bits + bits).div_ceil(8), 0);
+            for i in 0..bits {
+                self.data[(self.bits + i) / 8] |=
+                    (((value >> i) & 1) as u8) << ((self.bits + i) % 8);
+            }
+            self.bits += bits;
+        }
+        fn finish(mut self) -> Vec<u8> {
+            self.put(1, 1);
+            self.data
+        }
+    }
+
+    pub(crate) fn fragment(
+        sequence: u32,
+        initial: bool,
+        final_part: bool,
+        payload: u8,
+        bits: usize,
+    ) -> Vec<u8> {
+        let mut w = Writer::default();
+        w.put(u64::from(sequence) << 18, 32);
+        w.put(0, 32);
+        w.put(0, 1);
+        w.put(0, 1);
+        w.put(0, 1);
+        w.put(1, 1); // control, paused, reliable
+        w.put(6, 8); // packed channel 3
+        w.put(0, 1);
+        w.put(0, 1);
+        w.put(1, 1); // exports, must-map, partial
+        w.put(u64::from(sequence), 10);
+        w.put(u64::from(initial), 1);
+        w.put(0, 1);
+        w.put(u64::from(final_part), 1);
+        w.put(1, 1);
+        w.put(0, 8); // hardcoded channel name
+        w.put(bits as u64, 13);
+        w.put(u64::from(payload), bits);
+        let inner = w.finish();
+        let mut outer = Writer::default();
+        outer.put(28, 6);
+        for byte in inner {
+            outer.put(u64::from(byte), 8);
+        }
+        outer.finish()
+    }
+
+    #[test]
+    fn unsupported_bounded_rpc_preserves_later_rpc_in_same_content_block() {
+        fn packed(w: &mut Writer, mut n: usize) {
+            loop {
+                let next = n >> 7;
+                w.put((((n & 127) << 1) | usize::from(next != 0)) as u64, 8);
+                n = next;
+                if n == 0 {
+                    break;
+                }
+            }
+        }
+        let mut fields = Writer::default();
+        for extra in [1, 0] {
+            let (raw, bits) = super::super::wire::tests::recovery_rpc(extra, 1, 800.0);
+            let mut value = 0;
+            let mut mask = 1;
+            while value + mask < 219 {
+                let bit = 142 & mask != 0;
+                fields.put(u64::from(bit), 1);
+                if bit {
+                    value |= mask
+                }
+                mask <<= 1;
+            }
+            packed(&mut fields, bits);
+            for i in 0..bits {
+                fields.put(u64::from((raw[i / 8] >> (i % 8)) & 1), 1);
+            }
+        }
+        let mut content = Writer::default();
+        content.put(0, 1);
+        content.put(1, 1);
+        packed(&mut content, fields.bits);
+        for i in 0..fields.bits {
+            content.put(u64::from((fields.data[i / 8] >> (i % 8)) & 1), 1);
+        }
+        let mut d = decoder();
+        let r = d
+            .message(&content.data, content.bits, false, false, true)
+            .unwrap();
+        assert_eq!(r.len(), 2);
+        assert!(matches!(r[0], Rpc::UnsupportedSettlementExtras));
+        assert!(
+            matches!(&r[1],Rpc::Settlement(s) if s.targets.is_empty() && s.recoveries.len()==1)
+        );
+    }
+
+    #[test]
+    fn reliable_retransmitted_tail_is_not_a_missing_first_fragment() {
+        let mut d = decoder();
+        let first = fragment(10, true, false, 3, 8);
+        let last = fragment(11, false, true, 0, 2);
+        d.datagram(&first, true).unwrap();
+        assert!(d.has_incomplete_fragments());
+        d.datagram(&first, true).unwrap(); // duplicate initial keeps the group
+        d.datagram(&last, true).unwrap();
+        assert!(!d.has_incomplete_fragments());
+        assert!(d.datagram(&last, true).unwrap().is_empty());
+        d.datagram(&fragment(12, true, false, 3, 8), true).unwrap();
+        d.datagram(&fragment(13, false, true, 0, 2), true).unwrap();
+        assert!(!d.has_incomplete_fragments());
+    }
+
+    #[test]
+    fn genuinely_missing_or_discontinuous_fragment_still_fails() {
+        assert!(matches!(
+            decoder().datagram(&fragment(11, false, true, 0, 2), true),
+            Err(Error::Truncated)
+        ));
+        let mut d = decoder();
+        d.datagram(&fragment(10, true, false, 3, 8), true).unwrap();
+        assert!(matches!(
+            d.datagram(&fragment(12, false, true, 0, 2), true),
+            Err(Error::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn duplicate_identity_is_directional_exact_and_bounded_across_sequence_wrap() {
+        let mut d = decoder();
+        let b = bunch(10);
+        assert!(!d.reliable_duplicate(&b, true).unwrap());
+        assert!(!d.reliable_duplicate(&b, false).unwrap());
+        assert!(d.reliable_duplicate(&b, true).unwrap());
+        let mut conflicting = b.clone();
+        conflicting.data[0] = 1;
+        assert!(matches!(
+            d.reliable_duplicate(&conflicting, true),
+            Err(Error::InvalidValue)
+        ));
+        d.clear();
+        for i in 0..2048 {
+            assert!(!d.reliable_duplicate(&bunch(i % 1024), true).unwrap());
+        }
+        assert_eq!(d.reliable_seen[1].len(), 256);
+        d.clear();
+        assert!(d.reliable_seen.iter().all(VecDeque::is_empty));
+        assert!(!d.reliable_duplicate(&b, true).unwrap());
+    }
+
+    #[test]
+    fn non_data_branch_produces_no_rpc_and_other_prefix_still_fails() {
+        let mut d = decoder();
+        assert!(d.datagram(&[60 | 64], true).unwrap().is_empty());
+        assert!(matches!(
+            d.datagram(&[20 | 64], true),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(d.datagram(&[], true), Err(Error::Truncated)));
+    }
+
+    #[test]
+    fn dynamic_actor_spawn_header_is_consumed_but_truncation_fails() {
+        let mut d = decoder();
+        assert!(
+            d.message(&[4, 18, 6, 0], 28, false, true, true)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            d.message(&[4, 18, 6, 0], 27, false, true, true),
+            Err(Error::Truncated)
+        ));
+    }
+
+    #[test]
+    fn spawn_vector_forms_consume_only_their_declared_bits() {
+        for header in [0, 64, 22, 86] {
+            let mut w = Writer::default();
+            w.put(1, 1);
+            w.put(1, 1);
+            w.put(header, 7);
+            let width = match header {
+                0 => 32,
+                64 => 64,
+                _ => 22,
+            };
+            for _ in 0..3 {
+                w.put(0, width);
+            }
+            let mut r = Bits::new(&w.data, w.bits).unwrap();
+            spawn_vector(&mut r).unwrap();
+            assert_eq!(r.pos, w.bits);
+            let mut truncated = Bits::new(&w.data, w.bits - 1).unwrap();
+            assert!(spawn_vector(&mut truncated).is_err());
+        }
+        let mut w = Writer::default();
+        w.put(1, 1);
+        w.put(0, 1);
+        for _ in 0..3 {
+            w.put(0, 64);
+        }
+        let mut r = Bits::new(&w.data, w.bits).unwrap();
+        spawn_vector(&mut r).unwrap();
+        assert_eq!(r.pos, w.bits);
+    }
 }

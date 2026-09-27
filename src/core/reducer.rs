@@ -48,6 +48,14 @@ pub enum CoreSignal {
 
 pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSignal {
     match event {
+        EngineEvent::ChallengeRestart { .. } => {
+            if state.hits.is_empty() {
+                CoreSignal::Unchanged
+            } else {
+                state.clear_battle_preserving_inventory();
+                CoreSignal::StateChanged
+            }
+        }
         EngineEvent::ExactSettlement(projection) => match state.apply_exact_projection(*projection)
         {
             Ok(true) => CoreSignal::StateChanged,
@@ -104,6 +112,10 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             CoreSignal::PacketObserved
         }
         EngineEvent::Abyss(event) => {
+            if matches!(&event, AbyssEvent::Location { floor, .. } if state.abyss.floor == Some(*floor))
+            {
+                return CoreSignal::Unchanged;
+            }
             if matches!(&event, AbyssEvent::RestartDetected { .. })
                 && state.abyss.active_half.is_none()
                 && state.abyss.exited_at.is_some()
@@ -126,6 +138,18 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
         }
         EngineEvent::EmptyCurtain(items) => {
             if state.replace_empty_curtain(items) {
+                CoreSignal::InventoryReplaced
+            } else {
+                CoreSignal::Unchanged
+            }
+        }
+        EngineEvent::PacketInventory { items, characters } => {
+            let items_changed = state.replace_empty_curtain(items);
+            let characters_changed = state.replace_empty_curtain_characters(characters);
+            if characters_changed && !items_changed {
+                state.empty_curtain_generation = state.empty_curtain_generation.wrapping_add(1);
+            }
+            if items_changed || characters_changed {
                 CoreSignal::InventoryReplaced
             } else {
                 CoreSignal::Unchanged
@@ -204,6 +228,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
@@ -1247,6 +1272,56 @@ mod tests {
         );
         assert_eq!(duplicate, CoreSignal::Unchanged);
         assert_eq!(state.empty_curtain_characters_generation, generation);
+    }
+    #[test]
+    fn packet_inventory_updates_one_domain_and_duplicate_is_noop() {
+        let mut state = CombatState::default();
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 1, serial: 2 },
+            character_id: 1004,
+        };
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![character]
+                }
+            ),
+            CoreSignal::InventoryReplaced
+        );
+        let revision = (
+            state.empty_curtain_generation,
+            state.empty_curtain_characters_generation,
+        );
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![character]
+                }
+            ),
+            CoreSignal::Unchanged
+        );
+        assert_eq!(
+            (
+                state.empty_curtain_generation,
+                state.empty_curtain_characters_generation
+            ),
+            revision
+        );
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![]
+                }
+            ),
+            CoreSignal::InventoryReplaced
+        );
+        assert!(state.empty_curtain.is_empty() && state.empty_curtain_characters.is_empty());
     }
 
     #[test]

@@ -152,6 +152,8 @@ fn main() -> Result<()> {
     let mut counts = [0usize; 2];
     let mut accept = |message| -> Result<()> {
         let change = match message {
+            Rpc::Inventory { .. } => return Ok(()),
+            Rpc::UnsupportedSettlementExtras => bail!("unsupported_settlement_extras"),
             Rpc::Request(r) => {
                 counts[0] += 1;
                 ledger.request(r)

@@ -96,6 +96,14 @@
       "name_zh": "法帝娅",
       "verified": true
     },
+    "1042": {
+      "attribute": "魂",
+      "avatar": "res/images/characters/player_heiyu.png",
+      "codename": "BlackBird",
+      "name_en": "BlackBird",
+      "name_zh": "黑羽",
+      "verified": true
+    },
     "1046": {
       "attribute": "光",
       "avatar": "res/images/characters/player_046.png",
@@ -142,6 +150,14 @@
       "codename": "bat",
       "name_en": "bat",
       "name_zh": "安魂曲",
+      "verified": true
+    },
+    "1057": {
+      "attribute": "相",
+      "avatar": "res/images/characters/player_mingyin.png",
+      "codename": "Akane",
+      "name_en": "Akane",
+      "name_zh": "明音凛",
       "verified": true
     },
     "1070": {

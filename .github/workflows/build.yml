@@ -113,22 +113,6 @@ jobs:
             }
           }
 
-      # UE Tools is closed source. The desktop build must work without its source
-      # or binaries; private packaging can supply an already compiled bundle.
-      - name: Stage optional compiled UE Tools package
-        shell: pwsh
-        run: |
-          if ($env:NTE_TOOLKIT_BUNDLE) {
-            $source = (Resolve-Path -LiteralPath $env:NTE_TOOLKIT_BUNDLE).Path
-            foreach ($file in @("d3d12.dll", "plugins/NTE_PluginCombat.dll")) {
-              $input = Join-Path $source $file
-              if (-not (Test-Path -LiteralPath $input -PathType Leaf)) { throw "Incomplete compiled Toolkit bundle" }
-              $output = Join-Path "plugins/ue-tools" $file
-              New-Item -ItemType Directory -Force (Split-Path -Parent $output) | Out-Null
-              Copy-Item -LiteralPath $input -Destination $output
-            }
-          }
-
       - name: Check formatting
         run: cargo fmt --check
 
@@ -218,10 +202,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-x64/
-          if (Test-Path -LiteralPath plugins/ue-tools) {
-            New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64/plugins | Out-Null
-            Copy-Item plugins/ue-tools dist/nte-dps-tool-windows-x64/plugins/ue-tools -Recurse
-          }
+
 
           cargo build --release --bin nte-core --no-default-features --features cli
           New-Item -ItemType Directory -Force dist/nte-core-windows-x64 | Out-Null
@@ -235,10 +216,7 @@ jobs:
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
-          if (Test-Path -LiteralPath plugins/ue-tools) {
-            New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources/plugins | Out-Null
-            Copy-Item plugins/ue-tools dist/nte-dps-tool-windows-external-resources/plugins/ue-tools -Recurse
-          }
+
 
       - name: Compress release executables with UPX
         shell: pwsh

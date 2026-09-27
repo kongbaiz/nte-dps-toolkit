@@ -277,6 +277,28 @@ impl EquipmentCatalog {
         if level > item.max_level {
             return None;
         }
+        interpolate_curve(self.main_stat_curve(item, property)?, level as f32)
+    }
+    /// Packet read models never interpolate a missing source table sample.
+    pub fn main_stat_sample(
+        &self,
+        item: &EquipmentItemDefinition,
+        property: &str,
+        level: u32,
+    ) -> Option<f32> {
+        if level > item.max_level {
+            return None;
+        }
+        self.main_stat_curve(item, property)?
+            .iter()
+            .find(|p| p[0] == level as f32)
+            .map(|p| p[1])
+    }
+    fn main_stat_curve(
+        &self,
+        item: &EquipmentItemDefinition,
+        property: &str,
+    ) -> Option<&Vec<[f32; 2]>> {
         let quality = match item.quality.as_str() {
             "blue" => "ITEM_QUALITY_BLUE",
             "purple" => "ITEM_QUALITY_PURPLE",
@@ -289,7 +311,7 @@ impl EquipmentCatalog {
             }
             EquipmentKind::Core => format!("{property}_Core_{quality}"),
         };
-        interpolate_curve(self.curves.get(&curve_key)?, level as f32)
+        self.curves.get(&curve_key)
     }
 
     pub fn valid_module_positions(
@@ -974,13 +996,24 @@ impl AbilityCatalog {
 
     pub fn apply_semantics(&mut self, path: &Path) -> Result<()> {
         let semantics = load_gameplay_effect_semantics(path)?;
-        for effect_name in semantics.keys() {
+        let display_effects = if semantics.values().any(|s| s.display_only) {
+            load_gameplay_effect_mapping(Path::new(GAMEPLAY_EFFECT_MAPPING_PATH))?
+                .into_values()
+                .collect::<std::collections::HashSet<_>>()
+        } else {
+            std::collections::HashSet::new()
+        };
+        for (effect_name, semantic) in &semantics {
             ensure!(
-                self.skills.contains_key(effect_name),
+                self.skills.contains_key(effect_name)
+                    || (semantic.display_only && display_effects.contains(effect_name)),
                 "GE 语义表引用了技能表中不存在的 {effect_name}"
             );
         }
         for (effect_name, semantic) in semantics {
+            if semantic.display_only {
+                continue;
+            }
             let skill = self
                 .skills
                 .get_mut(&effect_name)
@@ -1018,6 +1051,10 @@ struct GameplayEffectSemanticDocument {
 
 #[derive(Clone, Debug, Deserialize)]
 struct GameplayEffectSemantic {
+    /// Names for registered GE mechanisms outside DT_SkillDamageData. They
+    /// cannot introduce a GA, owner, coefficient or damage-accounting rule.
+    #[serde(default)]
+    display_only: bool,
     #[serde(default)]
     owner_character_id: Option<u32>,
     #[serde(default)]
@@ -1053,6 +1090,15 @@ fn load_gameplay_effect_semantics(path: &Path) -> Result<HashMap<String, Gamepla
         document.format_version
     );
     for (effect_name, semantic) in &document.effects {
+        ensure!(
+            !semantic.display_only
+                || (semantic.owner_character_id.is_none()
+                    && semantic.ability.is_none()
+                    && semantic.attack_type.is_none()
+                    && !semantic.use_server_damage
+                    && semantic.max_hp_reduction_percent == 0),
+            "Display-only GE semantics must not change damage or ownership"
+        );
         ensure!(
             effect_name.starts_with("GE_") || effect_name.starts_with("Buff_"),
             "GE 语义表包含无效标识 {effect_name}"
@@ -3574,6 +3620,7 @@ pub fn parse_damage_payload(
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: Some(DamageWireEvent {
                 damage: record.damage,
                 target_hp_before: record.target_hp_before,
@@ -4498,7 +4545,7 @@ mod character_tests {
 
     #[test]
     #[cfg(not(feature = "external_resources"))]
-    fn bundled_ability_tips_include_lingke_release_skills() {
+    fn bundled_ability_tips_include_current_release_skills() {
         let names = load_ability_tip_names(
             Path::new("missing-root/res/data/skills/ability_tips.json"),
             Language::SimplifiedChinese,
@@ -4507,11 +4554,19 @@ mod character_tests {
 
         assert_eq!(
             names.get("GA_Radio072_Skill").map(String::as_str),
-            Some("变轨技能：瞬息全频振")
+            Some("瞬息全频振")
         );
         assert_eq!(
             names.get("GA_Radio072_UltraSkill").map(String::as_str),
             Some("超负荷共鸣")
+        );
+        assert_eq!(
+            names.get("GA_BlackBird_Melee").map(String::as_str),
+            Some("掠影")
+        );
+        assert_eq!(
+            names.get("GA_Akane_Skill").map(String::as_str),
+            Some("律动音浪")
         );
     }
 
@@ -5983,7 +6038,9 @@ mod empty_curtain_tests {
         assert_eq!(catalog.curves.len(), 74);
         assert_eq!(catalog.suits.len(), 12);
         assert_eq!(catalog.shapes.len(), 12);
-        assert_eq!(catalog.plans.len(), 21);
+        for character in [1036, 1042, 1057, 1072] {
+            assert!(catalog.plans.contains_key(&character));
+        }
         assert_eq!(catalog.main_stat_value(item, "AtkAdd", 20), Some(63.0));
         assert_eq!(catalog.main_stat_value(item, "HPMaxAdd", 20), Some(840.0));
     }

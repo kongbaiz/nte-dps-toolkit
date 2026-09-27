@@ -23,7 +23,7 @@ export function consoleSidebarRowClasses(
     return "cursor-default text-muted-foreground opacity-45";
   }
   if (active) {
-    return "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm";
+    return "bg-sidebar-accent text-sidebar-accent-foreground font-medium";
   }
   return "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 }

@@ -3,6 +3,8 @@ import {
   Check,
   Download,
   RefreshCw,
+  Server,
+  Puzzle,
   Search,
   ShieldCheck,
   Store,
@@ -30,7 +32,8 @@ import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
 import {
   localizedModMarketText,
   modMarketLocalStatus,
-  modMarketSearchText,
+  filterModMarketItems,
+  type ModMarketCategory,
 } from "./mod-market-model";
 import { useModMarket, type ModMarketInstallState } from "./use-mod-market";
 
@@ -43,23 +46,49 @@ export function ModMarketPanel({
   useTranslationRevision();
   const language = currentFrontendLanguage();
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<ModMarketCategory>("plugins");
   const visibleMods = useMemo(() => {
     if (state.status !== "ready") {
       return [];
     }
-    const normalized = query.trim().toLocaleLowerCase();
-    if (normalized.length === 0) {
-      return state.catalog.mods;
-    }
-    return state.catalog.mods.filter((item) =>
-      modMarketSearchText(item, language)
-        .toLocaleLowerCase()
-        .includes(normalized),
-    );
-  }, [language, query, state]);
+    return filterModMarketItems(state.catalog.mods, category, query, language);
+  }, [category, language, query, state]);
+  const foundation = category === "foundation";
+  const searchLabel = foundation
+    ? "Search foundation components"
+    : "Search feature plugins";
 
   return (
     <section className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden border bg-card">
+      <div
+        className="flex flex-wrap gap-2 border-b px-4 py-3"
+        role="group"
+        aria-label={t("Market categories")}
+      >
+        {(["plugins", "foundation"] as const).map((value) => (
+          <Button
+            key={value}
+            size="sm"
+            variant={category === value ? "default" : "outline"}
+            aria-pressed={category === value}
+            onClick={() => {
+              setCategory(value);
+              setQuery("");
+            }}
+          >
+            {category === value ? (
+              <Check aria-hidden="true" />
+            ) : value === "plugins" ? (
+              <Puzzle aria-hidden="true" />
+            ) : (
+              <Server aria-hidden="true" />
+            )}
+            {t(
+              value === "plugins" ? "Feature plugins" : "Foundation components",
+            )}
+          </Button>
+        ))}
+      </div>
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
         <div className="relative min-w-52 flex-1">
           <Search
@@ -70,8 +99,8 @@ export function ModMarketPanel({
             className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={t("Search Mods")}
-            aria-label={t("Search Mods")}
+            placeholder={t(searchLabel)}
+            aria-label={t(searchLabel)}
           />
         </div>
         <Button
@@ -86,8 +115,15 @@ export function ModMarketPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <p className="mb-3 text-sm text-muted-foreground">
-          {t("Compiled plugin packages only")}
+        <h2 className="text-base font-semibold">
+          {t(foundation ? "Foundation components" : "Feature plugins")}
+        </h2>
+        <p className="mb-4 mt-1 text-sm text-muted-foreground">
+          {t(
+            foundation
+              ? "Host, Loader and driver are shared runtime components, not feature plugins."
+              : "Optional combat, account, network and performance features. Runtime components are managed separately.",
+          )}
         </p>
         <Alert className="mb-4 border-[var(--console-success)]/40 bg-[var(--console-success)]/5">
           <ShieldCheck aria-hidden="true" />
@@ -123,9 +159,15 @@ export function ModMarketPanel({
               <EmptyMedia variant="icon">
                 <Store aria-hidden="true" />
               </EmptyMedia>
-              <EmptyTitle>{t("No matching Mods")}</EmptyTitle>
+              <EmptyTitle>
+                {t(
+                  foundation
+                    ? "No matching foundation components"
+                    : "No matching feature plugins",
+                )}
+              </EmptyTitle>
               <EmptyDescription>
-                {t("Try another name, author, capability, or Mod ID.")}
+                {t("Try another name or component ID.")}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -173,9 +215,9 @@ function MarketItem({
     <article className="flex min-h-64 flex-col rounded-lg border bg-background p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate font-heading text-base font-semibold">
+          <h3 className="truncate font-heading text-base font-semibold">
             {localized.name}
-          </h2>
+          </h3>
           <p className="mt-0.5 font-mono text-xs text-muted-foreground">
             {item.id} · v{item.version}
           </p>
@@ -184,6 +226,16 @@ function MarketItem({
           {(item.packageSize / 1024).toFixed(1)} KiB
         </span>
       </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t(
+          {
+            plugin: "Plugin component",
+            host: "Host component",
+            loader: "Loader component",
+            driver: "Driver component",
+          }[item.component],
+        )}
+      </p>
       <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
         {localized.summary}
       </p>
@@ -221,8 +273,12 @@ function MarketItem({
               : installState.status === "installing"
                 ? "Downloading and verifying..."
                 : installed
-                  ? "Update plugin"
-                  : "Download plugin",
+                  ? item.component === "plugin"
+                    ? "Update plugin"
+                    : "Update component"
+                  : item.component === "plugin"
+                    ? "Download plugin"
+                    : "Download component",
         )}
       </Button>
       {unreadable !== null ? (

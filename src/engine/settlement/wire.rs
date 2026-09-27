@@ -5,13 +5,13 @@ use super::*;
 const MAX_ITEMS: usize = 1024;
 const MAX_RPC_BITS: usize = 8 * 1024 * 1024;
 
-pub(super) struct Bits<'a> {
-    pub(super) data: &'a [u8],
-    pub(super) pos: usize,
-    pub(super) len: usize,
+pub(crate) struct Bits<'a> {
+    pub(crate) data: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) len: usize,
 }
 impl<'a> Bits<'a> {
-    pub(super) fn new(data: &'a [u8], len: usize) -> Result<Self, Error> {
+    pub(crate) fn new(data: &'a [u8], len: usize) -> Result<Self, Error> {
         if len > MAX_RPC_BITS {
             return Err(Error::BudgetExceeded);
         }
@@ -20,7 +20,7 @@ impl<'a> Bits<'a> {
         }
         Ok(Self { data, pos: 0, len })
     }
-    pub(super) fn take(&mut self, n: usize) -> Result<u64, Error> {
+    pub(crate) fn take(&mut self, n: usize) -> Result<u64, Error> {
         if n > 64 || n > self.len - self.pos {
             return Err(Error::Truncated);
         }
@@ -31,7 +31,7 @@ impl<'a> Bits<'a> {
         self.pos += n;
         Ok(out)
     }
-    pub(super) fn bytes(&mut self, n: usize) -> Result<Vec<u8>, Error> {
+    pub(crate) fn bytes(&mut self, n: usize) -> Result<Vec<u8>, Error> {
         if n > (self.len - self.pos) / 8 {
             return Err(Error::Truncated);
         }
@@ -61,7 +61,7 @@ impl<'a> Bits<'a> {
             Err(Error::Unsupported)
         }
     }
-    pub(super) fn string(&mut self) -> Result<String, Error> {
+    pub(crate) fn string(&mut self) -> Result<String, Error> {
         let n = self.take(32)? as i32;
         if n == 0 {
             return Ok(String::new());
@@ -86,7 +86,7 @@ impl<'a> Bits<'a> {
             String::from_utf8(values[..count - 1].to_vec()).map_err(|_| Error::InvalidValue)
         }
     }
-    pub(super) fn packed(&mut self) -> Result<u32, Error> {
+    pub(crate) fn packed(&mut self) -> Result<u32, Error> {
         let mut out = 0;
         for i in 0..5 {
             let byte = self.take(8)? as u32;
@@ -100,7 +100,7 @@ impl<'a> Bits<'a> {
         }
         Err(Error::InvalidValue)
     }
-    pub(super) fn name(&mut self) -> Result<Name, Error> {
+    pub(crate) fn name(&mut self) -> Result<Name, Error> {
         if self.take(1)? == 1 {
             Ok(Name::Hardcoded(self.packed()?))
         } else {
@@ -381,15 +381,31 @@ pub fn decode_settlement(data: &[u8], bits: usize, channel: u32) -> Result<Settl
             components,
         });
     }
-    // Do not silently skip an unimplemented nonempty recovery/extra-damage array.
-    if r.take(16)? != 0 || r.take(16)? != 0 {
-        return Err(Error::Unsupported);
+    // FClientReplicatedTargetDataContainer: extra-damage array first,
+    // recovery array second. Extra-damage records are not yet qualified on wire.
+    if r.count(16, 1)? != 0 {
+        return Err(Error::UnsupportedSettlementExtras);
+    }
+    let recovery_count = r.count(16, 36)?;
+    let mut recoveries = Vec::with_capacity(recovery_count);
+    for _ in 0..recovery_count {
+        let target = r.actor()?;
+        let current_hp_bits = r.take(32)? as u32;
+        let hp = f32::from_bits(current_hp_bits);
+        if !hp.is_finite() || hp < 0.0 {
+            return Err(Error::InvalidValue);
+        }
+        recoveries.push(RecoveredTarget {
+            target,
+            current_hp_bits,
+        });
     }
     let timestamp_bits = r.take(64)?;
     r.take(3)?;
     r.name()?;
     r.finish()?;
     Ok(Settlement {
+        recoveries,
         key: MessageKey {
             channel,
             message,
@@ -398,4 +414,78 @@ pub fn decode_settlement(data: &[u8], bits: usize, channel: u32) -> Result<Settl
         source,
         targets,
     })
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    #[derive(Default)]
+    struct Writer {
+        bytes: Vec<u8>,
+        bits: usize,
+    }
+    impl Writer {
+        fn put(&mut self, value: u64, count: usize) {
+            self.bytes.resize((self.bits + count).div_ceil(8), 0);
+            for i in 0..count {
+                self.bytes[(self.bits + i) / 8] |=
+                    (((value >> i) & 1) as u8) << ((self.bits + i) % 8);
+            }
+            self.bits += count;
+        }
+    }
+    pub(crate) fn recovery_rpc(extra_count: u16, recovery_count: u16, hp: f32) -> (Vec<u8>, usize) {
+        let mut w = Writer::default();
+        w.put(1, 1);
+        w.put(145, 64);
+        w.put(1, 3);
+        w.put(1, 1);
+        w.put(0, 8); // source FName
+        w.put(0, 16);
+        w.put(u64::from(extra_count), 16);
+        w.put(u64::from(recovery_count), 16);
+        for _ in 0..recovery_count.min(2) {
+            w.put(0, 3);
+            for value in [1, 2, 3, 4, 0, 0, 0] {
+                w.put(value, 32);
+            }
+            w.put(u64::from(hp.to_bits()), 32);
+        }
+        w.put(123, 64);
+        w.put(0, 3);
+        w.put(1, 1);
+        w.put(0, 8);
+        (w.bytes, w.bits)
+    }
+    #[test]
+    fn recovery_array_is_bounded_finite_and_fully_consumed_without_damage() {
+        let (bytes, bits) = recovery_rpc(0, 1, 800.0);
+        let r = decode_settlement(&bytes, bits, 3).unwrap();
+        assert!(r.targets.is_empty());
+        assert_eq!(r.recoveries.len(), 1);
+        assert_eq!(r.recoveries[0].current_hp_bits, 800f32.to_bits());
+        assert_eq!(r.key.message, 145);
+        assert_eq!(r.key.timestamp_bits, 123);
+        assert_eq!(
+            decode_settlement(&bytes, bits - 1, 3),
+            Err(Error::Truncated)
+        );
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert_eq!(
+            decode_settlement(&trailing, bits + 1, 3),
+            Err(Error::TrailingBits)
+        );
+        for hp in [f32::NAN, f32::INFINITY, -1.0] {
+            let (b, n) = recovery_rpc(0, 1, hp);
+            assert_eq!(decode_settlement(&b, n, 3), Err(Error::InvalidValue));
+        }
+        let (b, n) = recovery_rpc(0, 1025, 1.0);
+        assert_eq!(decode_settlement(&b, n, 3), Err(Error::BudgetExceeded));
+        let (b, n) = recovery_rpc(1, 1, 1.0);
+        assert_eq!(
+            decode_settlement(&b, n, 3),
+            Err(Error::UnsupportedSettlementExtras)
+        );
+    }
 }

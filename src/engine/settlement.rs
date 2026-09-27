@@ -2,15 +2,19 @@
 //!
 //! Input must be an independently bounded, qualified RPC payload, not an arbitrary
 //! UDP byte-pattern match. Requests never create damage. No amount/time proximity,
-//! active-character fallback, HP differencing, or inferred critical flags are used.
+//! active-character fallback, arbitrary HP residuals, or inferred critical flags
+//! are used. Derived scaling requires a registered rule and server HP witnesses.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 
 pub mod application;
+pub mod automatic;
+mod hp;
+pub use hp::{HpAdjustment, HpAdjustmentKind};
 pub mod runtime;
 pub mod transport;
-mod wire;
+pub(crate) mod wire;
 pub use wire::{decode_request, decode_settlement};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -78,9 +82,18 @@ pub struct SettledTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settlement {
+    /// Server HP-only recovery records. These never create damage hits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recoveries: Vec<RecoveredTarget>,
     pub key: MessageKey,
     pub source: ActorRef,
     pub targets: Vec<SettledTarget>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveredTarget {
+    pub target: ActorRef,
+    pub current_hp_bits: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +109,17 @@ pub struct SkillCatalog {
     pub effects: HashMap<u32, Vec<Skill>>,
     /// An index with any unresolved candidate cannot be promoted by dropping it.
     pub unresolved_effects: BTreeSet<u32>,
+    pub mechanics: HashMap<u32, EffectMechanic>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectMechanic {
+    /// Only refines a server-confirmed type-22 label; never creates that type.
+    pub unbalance_label: bool,
+    pub effect_name: String,
+    pub display_name: Option<String>,
+    pub max_hp_reduction_percent: u32,
+    pub owner: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +140,10 @@ pub struct Damage {
     pub target_ordinal: usize,
     pub component_ordinal: usize,
     pub source: ActorRef,
+    /// Per-target request source, only when the complete ordinal layout matches.
+    /// `source` remains the immutable settlement message initiator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_source: Option<ActorRef>,
     pub target: ActorRef,
     pub character_id: Option<u32>,
     pub damage: i32,
@@ -128,6 +156,12 @@ pub struct Damage {
     pub skill_name: Option<String>,
     pub effect_candidates: Vec<u32>,
     pub attribution: Attribution,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mechanic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hp_adjustment: Option<HpAdjustment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +171,7 @@ pub enum Error {
     Unsupported,
     BudgetExceeded,
     TrailingBits,
+    UnsupportedSettlementExtras,
     ConflictingRequest,
     ConflictingSettlement,
 }
@@ -156,6 +191,7 @@ struct Entry {
     settlement: Option<Settlement>,
     request_conflict: bool,
     settlement_conflict: bool,
+    hp_before: Vec<Option<hp::HpWitness>>,
 }
 
 /// One generation/connection per instance. Hard capacity failure requires an
@@ -164,6 +200,10 @@ pub struct Ledger {
     entries: HashMap<MessageKey, Entry>,
     capacity: usize,
     catalog: SkillCatalog,
+    hp_cursors: HashMap<ActorRef, hp::HpWitness>,
+    hp_dependents: HashMap<MessageKey, std::collections::HashSet<MessageKey>>,
+    hp_dependency_count: usize,
+    hp_updates: std::collections::HashSet<MessageKey>,
 }
 
 impl Ledger {
@@ -172,11 +212,19 @@ impl Ledger {
             entries: HashMap::new(),
             capacity,
             catalog,
+            hp_cursors: HashMap::new(),
+            hp_dependents: HashMap::new(),
+            hp_dependency_count: 0,
+            hp_updates: std::collections::HashSet::new(),
         }
     }
 
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.hp_cursors.clear();
+        self.hp_dependents.clear();
+        self.hp_updates.clear();
+        self.hp_dependency_count = 0;
     }
 
     fn entry(&mut self, key: MessageKey) -> Result<&mut Entry, Error> {
@@ -208,8 +256,12 @@ impl Ledger {
         }
         if entry.settlement.is_some() {
             entry.settlement_conflict = true;
+            if let Some(dependents) = self.hp_dependents.get(&key) {
+                self.hp_updates.extend(dependents.iter().copied());
+            }
         } else {
-            entry.settlement = Some(settlement);
+            self.freeze_hp_predecessors(&settlement)?;
+            self.entry(key)?.settlement = Some(settlement);
         }
         Ok(self.project(key))
     }
@@ -224,18 +276,49 @@ impl Ledger {
             });
         }
         let settlement = entry.settlement.as_ref()?;
+        // A response target entry corresponds to one request target entry, not
+        // to all requests sharing that victim. Validate the entire layout before
+        // using ordinal association; no damage/prediction/time matching.
+        let aligned = entry.request.as_ref().filter(|request| {
+            !entry.request_conflict
+                && request.targets.len() == settlement.targets.len()
+                && request
+                    .targets
+                    .first()
+                    .is_some_and(|r| r.source == settlement.source)
+                && request
+                    .targets
+                    .iter()
+                    .zip(&settlement.targets)
+                    .all(|(r, s)| r.target == s.target)
+        });
         let mut rows = Vec::new();
         for (target_ordinal, target) in settlement.targets.iter().enumerate() {
             let matching: Vec<_> = if entry.request_conflict {
                 vec![]
-            } else {
+            } else if let Some(request) = aligned {
+                vec![&request.targets[target_ordinal]]
+            } else if settlement
+                .targets
+                .iter()
+                .filter(|t| t.target == target.target)
+                .count()
+                == 1
+            {
+                // Distinct, reordered victims still admit identity-based consensus.
+                // Repeated victims without a complete layout remain unresolved.
                 entry
                     .request
                     .iter()
                     .flat_map(|r| &r.targets)
                     .filter(|r| r.source == settlement.source && r.target == target.target)
                     .collect()
+            } else {
+                vec![]
             };
+            let request_source = aligned
+                .map(|r| &r.targets[target_ordinal].source)
+                .filter(|source| **source != settlement.source);
             let before = consensus(&matching, |r| r.hp_before_bits);
             let maximum = consensus(&matching, |r| r.max_hp_bits);
             let mut effects = matching
@@ -244,13 +327,19 @@ impl Ledger {
                 .collect::<Vec<_>>();
             effects.sort_unstable();
             effects.dedup();
-            let character_id = settlement.source.character_id();
+            let mechanic = (effects.len() == 1)
+                .then(|| self.catalog.mechanics.get(&effects[0]))
+                .flatten();
+            let hp_adjustment =
+                self.hp_adjustment(key, target_ordinal, target, &matching, mechanic);
+            let character_id = request_source.unwrap_or(&settlement.source).character_id();
             for (component_ordinal, component) in target.components.iter().enumerate() {
                 let mut row = Damage {
                     key,
                     target_ordinal,
                     component_ordinal,
                     source: settlement.source.clone(),
+                    request_source: request_source.cloned(),
                     target: target.target.clone(),
                     character_id,
                     damage: component.damage,
@@ -262,6 +351,15 @@ impl Ledger {
                     skill_name: None,
                     effect_candidates: effects.clone(),
                     attribution: Attribution::RequestMissing,
+                    mechanic: mechanic
+                        .filter(|m| component.display_type != 22 || m.unbalance_label)
+                        .and_then(|m| m.display_name.clone()),
+                    effect_name: mechanic.map(|m| m.effect_name.clone()),
+                    hp_adjustment: if component_ordinal == 0 {
+                        hp_adjustment.clone()
+                    } else {
+                        None
+                    },
                 };
                 row.attribution = if (22..=28).contains(&component.display_type) {
                     Attribution::ExplicitSettlementCategory
@@ -301,6 +399,14 @@ impl Ledger {
                         }
                     }
                 };
+                if row.skill_key.is_none()
+                    && row.mechanic.is_none()
+                    && mechanic.is_some()
+                    && effects.len() == 1
+                    && component.display_type != 22
+                {
+                    row.mechanic = Some(format!("GE {}", effects[0]));
+                }
                 rows.push(row);
             }
         }

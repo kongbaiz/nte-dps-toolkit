@@ -5,7 +5,7 @@ import {
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const EMPTY_CURTAIN_CONTRACT_VERSION = 2;
+export const EMPTY_CURTAIN_CONTRACT_VERSION = 3;
 export const EMPTY_CURTAIN_MAX_CHARACTERS = 64;
 export const EMPTY_CURTAIN_MAX_ITEMS = 4096;
 export const EMPTY_CURTAIN_MAX_DETAILS_PER_ITEM = 16;
@@ -103,6 +103,7 @@ export interface EmptyCurtainSnapshot {
   generation: string;
   observedAtUnixMs: string;
   hasData: boolean;
+  canOperate: boolean;
   complete: boolean;
   characters: EmptyCurtainCharacter[];
   items: EmptyCurtainItem[];
@@ -165,6 +166,7 @@ export function parseEmptyCurtainSnapshot(
     generation: decimal(data.generation, "generation"),
     observedAtUnixMs: decimal(data.observedAtUnixMs, "observedAtUnixMs"),
     hasData: flag(data.hasData, "hasData"),
+    canOperate: flag(data.canOperate, "canOperate"),
     complete: flag(data.complete, "complete"),
     characters: parsedCharacters,
     items: parsedItems,

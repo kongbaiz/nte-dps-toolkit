@@ -1,3 +1,4 @@
+import { HitSnapshotDialog } from "./hit-snapshot-dialog";
 import { ChevronDown, RefreshCw, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -41,6 +42,8 @@ import {
 import { createDamageImageLookup } from "./damage-image-lookup";
 import {
   DEFAULT_DETAIL_COLUMNS,
+  criticalTranslationKey,
+  effectCountsText,
   DETAIL_ROW_HEIGHT,
   type DetailColumnKey,
   detailColumnVisible,
@@ -333,7 +336,9 @@ export function MainDpsDetailPage() {
                           "character",
                           "type",
                           "damage",
+                          "critical",
                           "target",
+                          "snapshot",
                         ] as const
                       ).map((column) => (
                         <label
@@ -627,6 +632,11 @@ function HitTable({
   importReplay(): void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const [selectedHit, setSelectedHit] = useState<MainDpsHit | null>(null);
+  useEffect(
+    () => setSelectedHit(null),
+    [snapshot.kind, snapshot.characterId, snapshot.abyssHalf],
+  );
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(480);
   const hasRows = snapshot.rows.length > 0;
@@ -741,6 +751,7 @@ function HitTable({
               team={snapshot.kind === "team"}
               columns={columns}
               maxDamage={snapshot.maxRowDamage}
+              openSnapshot={() => setSelectedHit(row)}
             />
           ))}
           {bottomSpacer > 0 && (
@@ -760,6 +771,13 @@ function HitTable({
           )}
         </tbody>
       </table>
+      {selectedHit && (
+        <HitSnapshotDialog
+          key={`${selectedHit.id}:${selectedHit.snapshotKey}`}
+          row={selectedHit}
+          onClose={() => setSelectedHit(null)}
+        />
+      )}
     </div>
   );
 }
@@ -823,7 +841,9 @@ function HitRow({
   team,
   columns,
   maxDamage,
+  openSnapshot,
 }: {
+  openSnapshot: () => void;
   row: MainDpsHit;
   team: boolean;
   columns: MainDpsDetailColumns;
@@ -949,6 +969,21 @@ function HitRow({
           </span>
         </td>
       )}
+      {columns.showCritical && (
+        <td className="border-r px-2 py-1.5 text-center text-xs">
+          <span
+            className={
+              row.critical === true
+                ? "font-semibold text-amber-600"
+                : row.critical === null
+                  ? "text-muted-foreground"
+                  : ""
+            }
+          >
+            {t(criticalTranslationKey(row.critical))}
+          </span>
+        </td>
+      )}
       {columns.showTarget && (
         <td className="relative overflow-hidden px-2 py-1.5">
           {row.targetMaxHp !== null &&
@@ -1020,6 +1055,40 @@ function HitRow({
               )}
             </span>
           </span>
+        </td>
+      )}
+      {columns.showSnapshot && (
+        <td className="border-l px-2 py-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div
+              className="min-w-0 flex-1 space-y-1 text-[11px]"
+              title={t("Positive / negative (+other), not added / removed.")}
+            >
+              <p className="truncate">
+                {t("Role effects")}:{" "}
+                {effectCountsText(row.roleEffects) ?? t("Unknown value")}
+                {row.roleEffects?.complete === false
+                  ? ` · ${t("Partial snapshot")}`
+                  : ""}
+              </p>
+              <p className="truncate">
+                {t("Enemy effects")}:{" "}
+                {effectCountsText(row.enemyEffects) ?? t("Unknown value")}
+                {row.enemyEffects?.complete === false
+                  ? ` · ${t("Partial snapshot")}`
+                  : ""}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={row.snapshotKey === null}
+              onClick={openSnapshot}
+              aria-label={`${t("Hit snapshot details")} · ${formatHitTime(row.timestamp)}`}
+            >
+              {t("Details")}
+            </Button>
+          </div>
         </td>
       )}
     </tr>
@@ -1126,7 +1195,17 @@ function detailColumnsFor(
   snapshot: MainDpsDetailSnapshot,
   columns: MainDpsDetailColumns,
 ): DetailColumnKey[] {
-  return (["time", "character", "type", "damage", "target"] as const).filter(
+  return (
+    [
+      "time",
+      "character",
+      "type",
+      "damage",
+      "critical",
+      "target",
+      "snapshot",
+    ] as const
+  ).filter(
     (column) =>
       detailColumnVisible(columns, column) &&
       !(snapshot.kind === "character" && column === "character"),
@@ -1192,6 +1271,10 @@ function columnLabel(column: DetailColumnKey): string {
       return t("Damage");
     case "target":
       return t("Target");
+    case "critical":
+      return t("Critical hit");
+    case "snapshot":
+      return t("Hit snapshot");
   }
 }
 

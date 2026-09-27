@@ -21,14 +21,12 @@ pub(crate) async fn get_mod_market_catalog(
     window: WebviewWindow,
 ) -> Result<ModMarketCatalogSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let directory = super::toolkit::plugin_directory(state.inner()).ok();
+    let _ = state;
+    let directory = nte_dps_tool::storage::paths::toolkit_dir();
     tauri::async_runtime::spawn_blocking(move || {
         let catalog = fetch_mod_market_catalog()?;
-        Ok(ModMarketCatalogSnapshot::from_catalog(
-            catalog,
-            |item| match directory.as_ref().map_or(Ok(None), |dir| {
-                nte_dps_tool::core::mod_market::read_installed_plugin(dir, &item.id)
-            }) {
+        Ok(ModMarketCatalogSnapshot::from_catalog(catalog, |item| {
+            match nte_dps_tool::core::mod_market::read_installed_component(&directory, item) {
                 Ok(Some(bytes)) => ModMarketLocalStateSnapshot::Installed {
                     enabled: None,
                     current: mod_market_package_is_current(item, &bytes),
@@ -38,8 +36,8 @@ pub(crate) async fn get_mod_market_catalog(
                     code: "mod_workspace_read_failed",
                     message_key: "Failed to read the Mod workspace.",
                 },
-            },
-        ))
+            }
+        }))
     })
     .await
     .map_err(|error| {
@@ -55,10 +53,8 @@ pub(crate) async fn install_mod_market_item(
     window: WebviewWindow,
 ) -> Result<bool, CommandError> {
     console::validate_window(&window)?;
-    if state.data_mode() != nte_dps_tool::core::toolkit::DataMode::Plugin {
-        return Err(CommandError::mod_studio_risk_acknowledgement_required());
-    }
-    let directory = super::toolkit::plugin_directory(state.inner())?;
+    let state = state.inner().clone();
+    let directory = nte_dps_tool::storage::paths::toolkit_dir();
     tauri::async_runtime::spawn_blocking(move || {
         let catalog = fetch_mod_market_catalog()?;
         let item = find_mod_market_item(&catalog, &id).map_err(CommandError::from_mod_market)?;
@@ -66,7 +62,20 @@ pub(crate) async fn install_mod_market_item(
             .map_err(|_| CommandError::mod_market_download_failed())?;
         let verified =
             verify_mod_market_package(item, &bytes).map_err(CommandError::from_mod_market)?;
-        nte_dps_tool::core::mod_market::install_plugin(&directory, &id, &verified)
+        let _permit = state
+            .reserve_plugin_control()
+            .map_err(CommandError::from_core)?;
+        if matches!(
+            state.capture_phase(),
+            nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
+        ) {
+            return Err(super::toolkit::error(
+                nte_dps_tool::platform::toolkit::ToolkitError::Busy,
+            ));
+        }
+        nte_dps_tool::core::mod_market::install_component(&directory, item, &verified)
             .map_err(CommandError::from_mod_market)?;
         Ok(true)
     })

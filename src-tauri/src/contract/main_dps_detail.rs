@@ -24,7 +24,7 @@ use nte_dps_tool::{
 
 use crate::state::{AppState, MainDpsDetailKind};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 8;
+pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 9;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
@@ -161,11 +161,10 @@ impl MainDpsDetailSnapshot {
             let rows = indexed
                 .rows
                 .into_iter()
-                .enumerate()
-                .map(|(page_index, (_, hit))| {
+                .map(|(hit_index, hit)| {
                     MainDpsHitSnapshot::from_hit(
                         hit,
-                        offset.saturating_add(page_index),
+                        hit_index,
                         &resources.characters,
                         language,
                         &generic_target_labels,
@@ -320,6 +319,10 @@ pub(crate) struct MainDpsDetailColumns {
     pub type_width: u16,
     pub damage_width: u16,
     pub target_width: u16,
+    pub show_critical: bool,
+    pub show_snapshot: bool,
+    pub critical_width: u16,
+    pub snapshot_width: u16,
 }
 
 impl From<HitDetailColumnsConfig> for MainDpsDetailColumns {
@@ -335,6 +338,10 @@ impl From<HitDetailColumnsConfig> for MainDpsDetailColumns {
             type_width: value.type_width,
             damage_width: value.damage_width,
             target_width: value.target_hp_width,
+            show_critical: value.show_critical,
+            show_snapshot: value.show_snapshot,
+            critical_width: value.critical_width,
+            snapshot_width: value.snapshot_width,
         }
     }
 }
@@ -352,6 +359,10 @@ impl From<MainDpsDetailColumns> for HitDetailColumnsConfig {
             type_width: value.type_width,
             damage_width: value.damage_width,
             target_hp_width: value.target_width,
+            show_critical: value.show_critical,
+            show_snapshot: value.show_snapshot,
+            critical_width: value.critical_width,
+            snapshot_width: value.snapshot_width,
         }
         .sanitized()
     }
@@ -725,6 +736,11 @@ fn percent(value: f64, total: f64) -> f64 {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsHitSnapshot {
+    pub critical: Option<bool>,
+    pub snapshot_key: Option<String>,
+    pub snapshot_retention: Option<String>,
+    pub role_effects: Option<nte_dps_tool::engine::model::plugin_snapshot::EffectCounts>,
+    pub enemy_effects: Option<nte_dps_tool::engine::model::plugin_snapshot::EffectCounts>,
     pub id: String,
     pub timestamp: f64,
     pub character_id: u32,
@@ -811,6 +827,11 @@ impl MainDpsHitSnapshot {
         let skill_id = text_budget.text(skill, "-");
         let skill = text_budget.text(skill_id.clone(), "-");
         Self {
+            critical: hit.plugin_snapshot.as_ref().and_then(|s| s.critical),
+            snapshot_key: text_budget.optional(hit.plugin_snapshot.as_ref().map(|s| s.reference())),
+            snapshot_retention: hit.plugin_snapshot.as_ref().map(|s| s.retention.clone()),
+            role_effects: hit.plugin_snapshot.as_ref().and_then(|s| s.role_effects),
+            enemy_effects: hit.plugin_snapshot.as_ref().and_then(|s| s.enemy_effects),
             id: text_budget.text(format!("{}:{index}", hit.timestamp.to_bits()), "-"),
             timestamp: hit.timestamp,
             character_id: hit.char_id,
@@ -983,6 +1004,38 @@ pub(crate) fn filter_id(filter: &CombatDetailFilter) -> &'static str {
     }
 }
 
+pub(crate) fn find_hit_snapshot(
+    state: &AppState,
+    kind: MainDpsDetailKind,
+    hit_id: &str,
+    snapshot_key: &str,
+) -> Result<
+    Option<std::sync::Arc<nte_dps_tool::engine::model::plugin_snapshot::PluginHitSnapshot>>,
+    CoreError,
+> {
+    if hit_id.len() > 64 || snapshot_key.is_empty() || snapshot_key.len() > 256 {
+        return Ok(None);
+    }
+    let Some((timestamp, index)) = hit_id.split_once(':') else {
+        return Ok(None);
+    };
+    let (Ok(timestamp), Ok(index)) = (timestamp.parse::<u64>(), index.parse::<usize>()) else {
+        return Ok(None);
+    };
+    let request = state.main_dps_detail_request(kind);
+    state.with_main_dps_detail_state(|combat, half| {
+        let hits = half.map_or(&combat.hits, |half| &combat.abyss.half(half).hits);
+        hits.get(index)
+            .filter(|hit| {
+                hit.timestamp.to_bits() == timestamp
+                    && request.character_id.is_none_or(|id| id == hit.char_id)
+            })
+            .and_then(|hit| hit.plugin_snapshot.as_ref())
+            .filter(|snapshot| snapshot.reference() == snapshot_key)
+            .cloned()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1033,6 +1086,7 @@ mod tests {
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
             exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
@@ -1236,6 +1290,15 @@ mod tests {
     }
 
     #[test]
+    fn detail_snapshot_columns_are_defaulted_for_old_configuration() {
+        let old: HitDetailColumnsConfig = serde_json::from_str("{}").unwrap();
+        assert!(old.show_critical && old.show_snapshot);
+        let dto = MainDpsDetailColumns::from(old);
+        assert_eq!(dto.critical_width, 80);
+        assert_eq!(dto.snapshot_width, 250);
+    }
+
+    #[test]
     fn hit_snapshot_records_primary_overkill_damage() {
         let mut hit = skill_hit(1_500.0, Some("GA_Test"), None, "Skill");
         hit.target_hp_before = 1_000.0;
@@ -1343,6 +1406,85 @@ mod tests {
         assert_eq!(value["actions"]["canStartCapture"], true);
         assert_eq!(value["maxRowDamage"], 1.0);
         assert_eq!(value["rows"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn filtered_hit_snapshot_lookup_uses_source_index_and_rejects_stale_capture_identity() {
+        use crate::state::MainDpsDetailRequest;
+        use nte_dps_tool::engine::model::{
+            CaptureQualitySource, plugin_snapshot::PluginHitSnapshot,
+        };
+        let snapshot = |key: &str, critical| {
+            PluginHitSnapshot {
+                instance_id: 0,
+                key: key.into(),
+                critical,
+                critical_source: Some("native_prediction".into()),
+                role_effects: None,
+                enemy_effects: None,
+                retention: "missing".into(),
+                data: None,
+            }
+            .seal()
+            .unwrap()
+        };
+        let mut first = skill_hit(1.0, Some("GA_First"), Some("First"), "Skill");
+        first.plugin_snapshot = Some(snapshot("capture:1", Some(true)));
+        let mut second = skill_hit(2.0, Some("GA_Second"), Some("Second"), "Skill");
+        second.plugin_snapshot = Some(snapshot("capture:2", Some(false)));
+        let filter = hit_skill_name_ref(&second).to_owned();
+        let mut combat = CombatState::default();
+        combat.push_hit(first);
+        combat.push_hit(second.clone());
+        let state = AppState::default();
+        state.restore_live_state_for_test(combat, CaptureQualitySource::Plugin);
+        state
+            .set_main_dps_detail_request(
+                MainDpsDetailKind::Team,
+                MainDpsDetailRequest {
+                    character_id: None,
+                    filter: CombatDetailFilter::All,
+                    skill_filter: Some(filter),
+                },
+            )
+            .unwrap();
+        let page =
+            MainDpsDetailSnapshot::from_state(&state, MainDpsDetailKind::Team, 0, 10).unwrap();
+        assert_eq!(page.rows.len(), 1);
+        let row = &page.rows[0];
+        assert!(row.id.ends_with(":1"));
+        assert_eq!(row.critical, Some(false));
+        let full = find_hit_snapshot(
+            &state,
+            MainDpsDetailKind::Team,
+            &row.id,
+            row.snapshot_key.as_deref().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(full.critical, Some(false));
+        let json = serde_json::to_string(row).unwrap();
+        assert!(!json.contains("attackerAttributes"));
+        assert!(
+            find_hit_snapshot(&state, MainDpsDetailKind::Team, &row.id, "old-capture:2")
+                .unwrap()
+                .is_none()
+        );
+        let mut replacement = CombatState::default();
+        replacement.push_hit(second.clone());
+        second.plugin_snapshot = Some(snapshot("capture:2", Some(true)));
+        replacement.push_hit(second);
+        state.restore_live_state_for_test(replacement, CaptureQualitySource::Plugin);
+        assert!(
+            find_hit_snapshot(
+                &state,
+                MainDpsDetailKind::Team,
+                &row.id,
+                row.snapshot_key.as_deref().unwrap()
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 
     #[test]

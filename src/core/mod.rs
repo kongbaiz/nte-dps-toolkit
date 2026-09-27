@@ -11,6 +11,10 @@ pub mod combat_details;
 pub mod diagnostics;
 pub mod empty_curtain;
 pub mod encrypted_ini;
+#[cfg(feature = "desktop")]
+pub mod equipment_rpc;
+#[cfg(feature = "desktop")]
+pub mod equipment_runtime;
 pub mod history;
 pub mod hud;
 pub mod live_capture;
@@ -31,6 +35,8 @@ pub mod timeline;
 pub mod toolkit;
 #[cfg(feature = "desktop")]
 pub mod update;
+pub mod user_characters;
+pub mod user_equipment;
 
 /// Stable machine-readable error category shared by both frontends. Tauri
 /// picks user-facing wording per code at its contract boundary; the CLI maps

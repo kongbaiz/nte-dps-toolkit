@@ -1,4 +1,5 @@
 // Synthetic browser preview data. No game data or native operations.
+import type { ModMarketCatalogSnapshot } from "@/lib/tauri/mod-studio-contract";
 import { SETTINGS_CONTRACT_VERSION } from "@/lib/tauri/settings-contract";
 import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
 import { PACKETS_CONTRACT_VERSION } from "@/lib/tauri/packets-contract";
@@ -359,7 +360,8 @@ export const diagnosticsFixture = {
 };
 
 export const equipmentFixture = {
-  contractVersion: 2,
+  contractVersion: 3,
+  canOperate: true,
   generation: "9007199254740992",
   observedAtUnixMs: "1785542400000",
   hasData: true,
@@ -415,4 +417,38 @@ export const iniFixture = {
   plaintext: "Value=1",
   encryptedLineCount: 4,
   maxBytes: 8 * 1024 * 1024,
+};
+
+export const marketFixture: ModMarketCatalogSnapshot = {
+  contractVersion: 13,
+  publishedAt: "2026-09-27T00:00:00Z",
+  privacyMode: "anonymous-read-only",
+  mods: (
+    [
+      ["nte-host", "host", "UE Tools Host", "UE Tools 宿主"],
+      ["nte-loader", "loader", "UE Tools Loader", "UE Tools 加载器"],
+      ["uetools-driver", "driver", "UE Tools Driver", "UE Tools 驱动"],
+      ["nte_plugincombat", "plugin", "Combat Plugin", "战斗插件"],
+      ["nte_pluginuser", "plugin", "Account Plugin", "账号插件"],
+      ["nte_pluginnetwork", "plugin", "Network Plugin", "网络插件"],
+      ["nte_pluginperformance", "plugin", "Performance Plugin", "性能插件"],
+    ] as const
+  ).map(([id, component, en, zh]) => ({
+    id,
+    component,
+    bindings: ["preview.component"],
+    localizations: {
+      en: { name: en, summary: "Synthetic UI preview component." },
+      "zh-CN": { name: zh, summary: "仅用于界面预览的示例组件。" },
+      ja: { name: en, summary: "UI プレビュー用のサンプルです。" },
+    },
+    version: "1.0.0",
+    author: "Preview",
+    capabilities: [],
+    packageSize: 1024,
+    localState:
+      component === "plugin"
+        ? { status: "notInstalled" }
+        : { status: "installed", current: true, enabled: null },
+  })),
 };

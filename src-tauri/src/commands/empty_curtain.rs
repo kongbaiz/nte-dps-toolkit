@@ -47,12 +47,18 @@ impl From<ItemUidInput> for HtItemNetId {
 }
 
 #[tauri::command]
-pub(crate) fn get_empty_curtain_snapshot(
+pub(crate) async fn get_empty_curtain_snapshot(
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
-    snapshot(state.inner())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        refresh_plugin(&state)?;
+        snapshot(&state)
+    })
+    .await
+    .map_err(|_| super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -95,7 +101,7 @@ pub(crate) fn get_empty_curtain_positions(
 }
 
 #[tauri::command]
-pub(crate) fn manage_empty_curtain_item(
+pub(crate) async fn manage_empty_curtain_item(
     item: ItemUidInput,
     action: String,
     character: Option<ItemUidInput>,
@@ -105,6 +111,22 @@ pub(crate) fn manage_empty_curtain_item(
     window: WebviewWindow,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manage_empty_curtain_item_inner(item, action, character, row, column, &state)
+    })
+    .await
+    .map_err(|_| super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
+}
+
+fn manage_empty_curtain_item_inner(
+    item: ItemUidInput,
+    action: String,
+    character: Option<ItemUidInput>,
+    row: Option<i32>,
+    column: Option<i32>,
+    state: &AppState,
+) -> Result<EmptyCurtainSnapshot, CommandError> {
     let item_id = HtItemNetId::from(item);
     let (items, characters, catalog) = state
         .empty_curtain_data_snapshot()
@@ -211,18 +233,31 @@ pub(crate) fn manage_empty_curtain_item(
             )),
         }
     }?;
-    submit(state.inner(), operation.0, operation.1)?;
-    snapshot(state.inner())
+    submit(state, operation.0, operation.1)?;
+    snapshot(state)
 }
 
 #[tauri::command]
-pub(crate) fn apply_empty_curtain_character_action(
+pub(crate) async fn apply_empty_curtain_character_action(
     character: ItemUidInput,
     action: String,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_empty_curtain_character_action_inner(character, action, &state)
+    })
+    .await
+    .map_err(|_| super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
+}
+
+fn apply_empty_curtain_character_action_inner(
+    character: ItemUidInput,
+    action: String,
+    state: &AppState,
+) -> Result<EmptyCurtainSnapshot, CommandError> {
     let character_uid = HtItemNetId::from(character);
     let (items, characters, catalog) = state
         .empty_curtain_data_snapshot()
@@ -256,8 +291,8 @@ pub(crate) fn apply_empty_curtain_character_action(
             )),
         }
     }?;
-    submit(state.inner(), character_uid, operation)?;
-    snapshot(state.inner())
+    submit(state, character_uid, operation)?;
+    snapshot(state)
 }
 
 #[tauri::command]
@@ -336,6 +371,12 @@ pub(crate) async fn import_empty_curtain_loadout(
     window: WebviewWindow,
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
+    if !state
+        .uses_plugin_equipment()
+        .map_err(CommandError::from_core)?
+    {
+        return Err(super::toolkit::unsupported());
+    }
     let Some(json) = open_json(&window, i18n::t("Console character loadout")).await? else {
         return Ok(EmptyCurtainFileResult {
             completed: false,
@@ -363,7 +404,12 @@ pub(crate) async fn import_empty_curtain_loadout(
             core: loadout.core,
         },
     );
-    submit(state.inner(), operation.0, operation.1)?;
+    let owned = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || submit(&owned, operation.0, operation.1))
+        .await
+        .map_err(|_| {
+            super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed)
+        })??;
     Ok(EmptyCurtainFileResult {
         completed: true,
         snapshot: snapshot(state.inner())?,
@@ -387,20 +433,330 @@ pub(crate) fn snapshot_with_operation(
         .map_err(CommandError::from_core)?;
     let catalog = state.equipment_catalog();
     let resources = state.live_capture_resources();
-    Ok(EmptyCurtainSnapshot::from_inventory(
-        inventory,
-        &catalog,
-        &resources.characters,
-        operation,
-    ))
+    let can_operate = state
+        .uses_plugin_equipment()
+        .map_err(CommandError::from_core)?;
+    let operation = if can_operate {
+        operation
+    } else {
+        EmptyCurtainOperationState::default()
+    };
+    let mut snapshot =
+        EmptyCurtainSnapshot::from_inventory(inventory, &catalog, &resources.characters, operation);
+    snapshot.can_operate = can_operate;
+    Ok(snapshot)
 }
 
-fn submit(
-    _state: &AppState,
-    _character: HtItemNetId,
-    _operation: ModsPluginOperation,
+const CONFIRMING: &str =
+    "Equipment operation is awaiting confirmation. Synchronizing inventory; do not repeat it.";
+const CONFIRMATION_TIMEOUT: &str = "Equipment request was sent, but its result could not be confirmed. Check the game before retrying.";
+pub(crate) fn settle_equipment_confirmation(
+    state: &AppState,
+    identity: &str,
+    data: Option<&nte_dps_tool::core::user_equipment::Inventory>,
+) -> Result<bool, CommandError> {
+    use nte_dps_tool::core::equipment_runtime::ConfirmationState;
+    let service = state.equipment_service();
+    let outcome = service
+        .inventory
+        .settle_confirmation(identity, data)
+        .map_err(runtime_error)?;
+    match outcome {
+        Some(ConfirmationState::Waiting) => service.set("pending", CONFIRMING),
+        Some(ConfirmationState::Confirmed) => service.set(
+            "success",
+            "Equipment change confirmed by refreshed inventory.",
+        ),
+        Some(ConfirmationState::Expired | ConfirmationState::SourceChanged) => {
+            service.set("error", CONFIRMATION_TIMEOUT)
+        }
+        None => return Ok(false),
+    }
+    .map_err(equipment_operation_error)?;
+    Ok(true)
+}
+fn runtime_error(error: nte_dps_tool::core::equipment_runtime::Error) -> CommandError {
+    use nte_dps_tool::core::{equipment_runtime::Error, user_equipment};
+    match error {
+        Error::Transport(e) => {
+            if e == nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged {
+                return CommandError::empty_curtain(
+                    "equipment_snapshot_changed",
+                    "Equipment data changed. Refresh before trying again.",
+                    vec![],
+                );
+            }
+            let mut error = super::toolkit::error(e);
+            error.message_key = match e {
+                nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged => {
+                    "Equipment data changed. Refresh before trying again."
+                }
+                nte_dps_tool::platform::toolkit::ToolkitError::Busy => {
+                    "Equipment synchronization is busy. Try again shortly."
+                }
+                nte_dps_tool::platform::toolkit::ToolkitError::InvalidProtocol
+                | nte_dps_tool::platform::toolkit::ToolkitError::Failed => {
+                    "The equipment request could not be verified. Refresh and try again."
+                }
+                _ => {
+                    "Equipment connection is unavailable. Check the User and Combat plugins, then refresh."
+                }
+            };
+            error
+        }
+        Error::ConfirmationPending(_) => {
+            CommandError::empty_curtain("equipment_confirmation_pending", CONFIRMING, vec![])
+        }
+        Error::Snapshot(user_equipment::Error::Changed) => CommandError::empty_curtain(
+            "equipment_snapshot_changed",
+            "Equipment data changed. Refresh before trying again.",
+            vec![],
+        ),
+        Error::Unconfirmed => CommandError::empty_curtain(
+            "equipment_unconfirmed",
+            "Equipment request sent, but the refreshed inventory did not confirm the change.",
+            vec![],
+        ),
+        Error::Snapshot(_) => CommandError::empty_curtain(
+            "equipment_snapshot_invalid",
+            "A complete, verified equipment snapshot could not be read.",
+            vec![],
+        ),
+    }
+}
+fn equipment_permit(
+    state: &AppState,
+) -> Result<crate::state::PluginControlReservation, CommandError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    loop {
+        match state.reserve_plugin_control() {
+            Ok(permit) => return Ok(permit),
+            Err(e) if e.code == nte_dps_tool::core::CoreErrorCode::CaptureAlreadyRunning => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(CommandError::empty_curtain(
+                        "equipment_sync_busy",
+                        "Equipment synchronization is busy. Try again shortly.",
+                        vec![],
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) => return Err(CommandError::from_core(e)),
+        }
+    }
+}
+fn equipment_host()
+-> Result<(nte_dps_tool::platform::toolkit::ToolkitClient, Vec<u32>), CommandError> {
+    super::toolkit::client().map_err(|mut e| {
+        e.message_key =
+            "Equipment connection is unavailable. Check the User and Combat plugins, then refresh.";
+        e
+    })
+}
+fn refresh_plugin(state: &AppState) -> Result<(), CommandError> {
+    use nte_dps_tool::core::equipment_runtime;
+    if !state
+        .uses_plugin_equipment()
+        .map_err(CommandError::from_core)?
+    {
+        return Ok(());
+    }
+    let _permit = equipment_permit(state)?;
+    let (host, _) = equipment_host()?;
+    let mut client =
+        equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)
+            .map_err(runtime_error)?;
+    let observed = equipment_runtime::watch(&host, &std::sync::atomic::AtomicBool::new(false))
+        .map_err(runtime_error)?;
+    let data = equipment_runtime::collect(&mut client, &state.equipment_catalog())
+        .map_err(runtime_error)?;
+    if !state
+        .uses_plugin_equipment()
+        .map_err(CommandError::from_core)?
+    {
+        return Err(super::toolkit::unsupported());
+    }
+    let settled = settle_equipment_confirmation(state, &host.identity(), Some(&data))?;
+    state
+        .equipment_service()
+        .inventory
+        .publish(host.identity(), data)
+        .map_err(runtime_error)?;
+    state
+        .equipment_service()
+        .inventory
+        .set_watch(observed)
+        .map_err(runtime_error)?;
+    if !settled {
+        state
+            .equipment_service()
+            .set("idle", "No equipment operation is pending")
+            .map_err(equipment_operation_error)?;
+    }
+    Ok(())
+}
+pub(crate) fn poll_plugin_changes(
+    state: &AppState,
+    stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), CommandError> {
-    Err(super::toolkit::unsupported())
+    use nte_dps_tool::core::equipment_runtime;
+    if stop.load(std::sync::atomic::Ordering::Acquire)
+        || !state
+            .uses_plugin_equipment()
+            .map_err(CommandError::from_core)?
+    {
+        return Ok(());
+    }
+    let service = state.equipment_service();
+    let (before, _) = service.inventory.get().map_err(runtime_error)?;
+    let Some(before) = before else { return Ok(()) };
+    let Ok(_permit) = state.reserve_plugin_control() else {
+        return Ok(());
+    };
+    let (host, _) = super::toolkit::client().map_err(|mut e| {
+        e.message_key =
+            "Equipment connection is unavailable. Check the User and Combat plugins, then refresh.";
+        e
+    })?;
+    let next = equipment_runtime::watch(&host, stop).map_err(runtime_error)?;
+    let previous = service.inventory.watch().map_err(runtime_error)?;
+    let confirming = service.inventory.confirming().map_err(runtime_error)?;
+    if !confirming
+        && service.inventory.identity().map_err(runtime_error)? == host.identity()
+        && previous.as_ref().is_some_and(|p| {
+            p.provider_id == next.provider_id && p.equipment_revision == next.equipment_revision
+        })
+    {
+        if service
+            .poll_snapshot()
+            .map_err(equipment_operation_error)?
+            .operation
+            .message_key
+            == "Equipment connection is unavailable. Check the User and Combat plugins, then refresh."
+        {
+            service
+                .set("idle", "No equipment operation is pending")
+                .map_err(equipment_operation_error)?;
+        }
+        return Ok(());
+    }
+    let mut client =
+        equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)
+            .map_err(runtime_error)?
+            .with_cancel(stop.clone());
+    let data = if confirming {
+        equipment_runtime::collect(&mut client, &state.equipment_catalog())
+            .map_err(runtime_error)?
+    } else if let Some(previous) = previous
+        .as_ref()
+        .filter(|p| p.provider_id == next.provider_id)
+    {
+        match equipment_runtime::update_flags(&mut client, &before, previous, &next) {
+            Ok(data) => data,
+            Err(equipment_runtime::Error::Snapshot(_)) => {
+                equipment_runtime::collect(&mut client, &state.equipment_catalog())
+                    .map_err(runtime_error)?
+            }
+            Err(error) => return Err(runtime_error(error)),
+        }
+    } else {
+        equipment_runtime::collect(&mut client, &state.equipment_catalog())
+            .map_err(runtime_error)?
+    };
+    if stop.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    let settled = settle_equipment_confirmation(state, &host.identity(), Some(&data))?;
+    service
+        .inventory
+        .publish(host.identity(), data)
+        .map_err(runtime_error)?;
+    service.inventory.set_watch(next).map_err(runtime_error)?;
+    if !settled
+        && service
+            .poll_snapshot()
+            .map_err(equipment_operation_error)?
+            .operation
+            .status
+            == "error"
+    {
+        service
+            .set("idle", "No equipment operation is pending")
+            .map_err(equipment_operation_error)?;
+    }
+    Ok(())
+}
+fn submit(
+    state: &AppState,
+    character: HtItemNetId,
+    operation: ModsPluginOperation,
+) -> Result<(), CommandError> {
+    use nte_dps_tool::core::equipment_runtime;
+    if !state
+        .uses_plugin_equipment()
+        .map_err(CommandError::from_core)?
+    {
+        return Err(super::toolkit::unsupported());
+    }
+    let _permit = equipment_permit(state)?;
+    let (host, _) = equipment_host()?;
+    let service = state.equipment_service();
+    if service.inventory.identity().map_err(runtime_error)? != host.identity() {
+        return Err(super::toolkit::error(
+            nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged,
+        ));
+    }
+    let (data, _) = service.inventory.get().map_err(runtime_error)?;
+    let before = data.ok_or_else(item_unavailable)?;
+    if service.inventory.confirming().map_err(runtime_error)? {
+        return Err(CommandError::empty_curtain(
+            "equipment_confirmation_pending",
+            CONFIRMING,
+            vec![],
+        ));
+    }
+    service
+        .set("pending", "Sending equipment request...")
+        .map_err(equipment_operation_error)?;
+    let result = (|| {
+        let mut client =
+            equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)
+                .map_err(runtime_error)?;
+        match equipment_runtime::execute(
+            &mut client,
+            &before,
+            character,
+            &operation,
+            &state.equipment_catalog(),
+        ) {
+            Ok(after) => {
+                service
+                    .inventory
+                    .publish(host.identity(), after)
+                    .map_err(runtime_error)?;
+                Ok(true)
+            }
+            Err(equipment_runtime::Error::ConfirmationPending(cause)) => {
+                log::warn!("equipment confirmation readback deferred: {cause:?}");
+                service
+                    .inventory
+                    .defer_confirmation(host.identity(), &before, character, operation.clone())
+                    .map_err(runtime_error)?;
+                Ok(false)
+            }
+            Err(error) => Err(runtime_error(error)),
+        }
+    })();
+    match &result {
+        Ok(false) => service.set("pending", CONFIRMING),
+        Ok(true) => service.set(
+            "success",
+            "Equipment change confirmed by refreshed inventory.",
+        ),
+        Err(e) => service.set("error", e.message_key),
+    }
+    .map_err(equipment_operation_error)?;
+    result.map(|_| ())
 }
 
 pub(crate) fn empty_curtain_runtime_error(error: EmptyCurtainRuntimeError) -> CommandError {
@@ -411,7 +767,11 @@ pub(crate) fn empty_curtain_runtime_error(error: EmptyCurtainRuntimeError) -> Co
 }
 
 fn equipment_operation_error(error: EquipmentOperationError) -> CommandError {
-    match error {}
+    match error {
+        EquipmentOperationError::Unavailable => {
+            super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Unavailable)
+        }
+    }
 }
 
 async fn save_json(
@@ -618,6 +978,49 @@ fn file_read_error() -> CommandError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn capture_inventory_is_read_only_without_probing_the_host_or_replaying_old_errors() {
+        let state = AppState::default();
+        state.equipment_service().set("error",
+            "Equipment connection is unavailable. Check the User and Combat plugins, then refresh.").unwrap();
+        refresh_plugin(&state).unwrap();
+        let view = snapshot(&state).unwrap();
+        assert!(!view.can_operate);
+        assert_eq!(view.operation.status, "idle");
+        assert_eq!(
+            state
+                .equipment_service()
+                .poll_snapshot()
+                .unwrap()
+                .operation
+                .status,
+            "error"
+        );
+        let result = submit(
+            &state,
+            HtItemNetId::ZERO,
+            ModsPluginOperation::SetItemLocked {
+                equipment: HtItemNetId::ZERO,
+                locked: true,
+            },
+        );
+        assert_eq!(result.unwrap_err().code, "plugin_unsupported");
+    }
+
+    #[test]
+    fn snapshot_changes_and_post_dispatch_readbacks_are_not_connection_failures() {
+        use nte_dps_tool::{
+            core::equipment_runtime::{Error, ReadbackFailure},
+            platform::toolkit::ToolkitError,
+        };
+        let changed = super::runtime_error(Error::Transport(ToolkitError::SessionChanged));
+        assert_eq!(changed.code, "equipment_snapshot_changed");
+        let pending = super::runtime_error(Error::ConfirmationPending(ReadbackFailure::Transport(
+            ToolkitError::Busy,
+        )));
+        assert_eq!(pending.code, "equipment_confirmation_pending");
+        assert_eq!(pending.message_key, super::CONFIRMING);
+    }
     use super::*;
 
     #[test]

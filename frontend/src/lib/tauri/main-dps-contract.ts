@@ -17,7 +17,7 @@ import {
   type MainDpsMetricId,
 } from "@/lib/tauri/settings-contract";
 
-export const MAIN_DPS_CONTRACT_VERSION = 8;
+export const MAIN_DPS_CONTRACT_VERSION = 9;
 export const MAIN_DPS_MAX_HISTORY_RECORDS = 200;
 export const MAIN_DPS_MAX_ROUNDS = MAIN_DPS_MAX_HISTORY_RECORDS + 1;
 export const MAIN_DPS_MAX_CHARACTERS = 4;
@@ -409,6 +409,14 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
     textTruncated: boolean(source.textTruncated, "textTruncated"),
   };
   validateProjectedTextBudget(snapshot);
+  if (
+    snapshot.dpsTime.effectiveMode === "pending" &&
+    snapshot.readout.dataState !== "empty"
+  ) {
+    throw new TechnicalContractError(
+      "Pending plugin time cannot label measured readouts",
+    );
+  }
   return snapshot;
 }
 

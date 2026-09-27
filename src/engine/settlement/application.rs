@@ -33,12 +33,18 @@ pub struct Evidence {
     pub target_ordinal: usize,
     pub component_ordinal: usize,
     pub source: super::ActorRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_source: Option<super::ActorRef>,
     pub target: super::ActorRef,
     pub display_type: i32,
     pub attribution: super::Attribution,
     pub current_hp_bits: u32,
     pub hp_before_request_bits: Option<u32>,
     pub max_hp_at_request_bits: Option<u32>,
+    /// Derived rule application, independently checked against server HP
+    /// continuity. Absent in old archives and unverified observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hp_adjustment: Option<super::HpAdjustment>,
 }
 
 #[derive(Clone, Debug)]
@@ -85,7 +91,9 @@ fn to_hit(
     include_incoming: bool,
 ) -> Option<Hit> {
     let source = row
-        .source
+        .request_source
+        .as_ref()
+        .unwrap_or(&row.source)
         .character_id()
         .filter(|id| characters.contains_key(id));
     let target = row
@@ -140,7 +148,10 @@ fn to_hit(
         target_hp_before: before.unwrap_or(-1.0),
         target_hp_after: hp,
         target_max_hp: maximum.unwrap_or(-1.0),
-        max_hp_reduction: 0.0,
+        max_hp_reduction: row
+            .hp_adjustment
+            .as_ref()
+            .map_or(0.0, super::HpAdjustment::reduction),
         target_hp_percent: maximum
             .filter(|v| *v > 0.0)
             .map(|v| hp / v * 100.0)
@@ -156,32 +167,43 @@ fn to_hit(
         } else {
             None
         },
-        gameplay_effect_name: None,
+        gameplay_effect_name: row.effect_name.clone(),
         ability_name: row.skill_key.clone(),
         damage_name: special
             .map(|s| s.0.to_owned())
             .or_else(|| row.skill_name.clone()),
-        damage_component: None,
+        damage_component: (special.is_none() || row.display_type == 22)
+            .then(|| row.mechanic.clone())
+            .flatten(),
         attack_type: special.and_then(|s| s.1.map(str::to_owned)),
         damage_attribute: None,
-        follow_up_damage: 0.0,
+        follow_up_damage: row
+            .hp_adjustment
+            .as_ref()
+            .map_or(0.0, |a| a.additional_loss(row.current_hp_bits)),
         follow_up_timestamp: None,
-        follow_up_damage_name: None,
+        follow_up_damage_name: row
+            .hp_adjustment
+            .as_ref()
+            .map(|_| "Max HP scaling loss".to_owned()),
         follow_up_attack_type: None,
         follow_up_damage_attribute: None,
         reconciled_overkill_damage: None,
+        plugin_snapshot: None,
         wire_event: None,
         exact: Some(Evidence {
             message: identity.clone(),
             target_ordinal: row.target_ordinal,
             component_ordinal: row.component_ordinal,
             source: row.source.clone(),
+            request_source: row.request_source.clone(),
             target: row.target.clone(),
             display_type: row.display_type,
             attribution: row.attribution.clone(),
             current_hp_bits: row.current_hp_bits,
             hp_before_request_bits: row.hp_before_request_bits,
             max_hp_at_request_bits: row.max_hp_at_request_bits,
+            hp_adjustment: row.hp_adjustment.clone(),
         }),
     })
 }

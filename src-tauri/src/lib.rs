@@ -160,9 +160,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::toolkit::get_plugin_panel,
+            commands::user_characters::get_user_characters,
             commands::toolkit::set_data_mode,
             commands::toolkit::control_plugin,
-            commands::toolkit::select_plugin_directory,
+            commands::toolkit::release_plugin_action,
+            commands::toolkit::set_host_loading_method,
+            commands::toolkit::launch_plugin_host,
             commands::abyss_values::clear_abyss_prediction_team,
             commands::abyss_values::get_abyss_values_snapshot,
             commands::abyss_values::import_abyss_prediction_team,
@@ -207,6 +210,7 @@ pub fn run() {
             commands::main_dps::get_main_dps_snapshot,
             commands::main_dps::get_main_dps_update_prompt,
             commands::main_dps::get_main_dps_detail_snapshot,
+            commands::main_dps::get_main_dps_hit_snapshot,
             commands::main_dps::download_main_dps_update,
             commands::main_dps::finish_main_dps_onboarding,
             commands::main_dps::set_main_dps_detail_view,

@@ -48,9 +48,22 @@ export function parseIslandSnapshot(value: unknown): IslandSnapshot {
   };
 }
 
-export const parseIslandCommandError = (
-  value: unknown,
-): TechnicalCommandError => parseTechnicalCommandError(value);
+export function parseIslandCommandError(value: unknown): TechnicalCommandError {
+  if (value instanceof TechnicalContractError)
+    return {
+      code: "island_invalid_snapshot",
+      messageKey: "Notification data is invalid.",
+      messageArguments: [],
+    };
+  const parsed = parseTechnicalCommandError(value);
+  return parsed.code === "unexpected_technical_error"
+    ? {
+        code: "island_unavailable",
+        messageKey: "Notification service is unavailable.",
+        messageArguments: [],
+      }
+    : parsed;
+}
 
 function parseNotice(source: Record<string, unknown>): IslandNotice {
   return {
