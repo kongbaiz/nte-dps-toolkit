@@ -152,7 +152,7 @@ export function PacketsPage() {
         {contentKind === "empty" ? <PacketsEmpty /> : null}
         {contentKind === "filtered-empty" ? <PacketsFilteredEmpty /> : null}
         {contentKind === "list" ? (
-          <div className="mx-auto w-full max-w-[1800px] divide-y">
+          <div className="packet-list mx-auto w-full max-w-[1800px] divide-y">
             {filteredPackets.map((packet) => (
               <PacketRow key={packet.sequence} packet={packet} />
             ))}
@@ -209,7 +209,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
       className="group px-3 py-1.5 open:bg-muted/20 min-[640px]:px-5"
       style={{ contentVisibility: "auto", containIntrinsicSize: "64px" }}
     >
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/45 [&::-webkit-details-marker]:hidden">
+      <summary className="packet-summary flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/45 [&::-webkit-details-marker]:hidden">
         <ChevronRight
           className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
           aria-hidden="true"

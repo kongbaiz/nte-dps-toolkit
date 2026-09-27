@@ -18,7 +18,7 @@ use crate::{
     state::{AppState, HistoryRoundIndex, MainDpsReadout},
 };
 
-pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 8;
+pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 9;
 pub(crate) const MAIN_DPS_MAX_TEXT_BYTES: usize = 256;
 pub(crate) const MAIN_DPS_MAX_PROJECTED_TEXT_BYTES: usize = 128 * 1024;
 
@@ -183,9 +183,10 @@ impl MainDpsSnapshot {
             history_generation: revisions.history.to_string(),
             adapter_version: env!("CARGO_PKG_VERSION"),
             capture: capture_status.into(),
-            dps_time: DpsTimeRuntimeSnapshot::new(
-                config.dps_time_mode,
+            dps_time: DpsTimeRuntimeSnapshot::for_readout(
+                state.main_presented_dps_time_mode()?,
                 state.main_presented_combat_clock_health()?,
+                data_empty,
             ),
             processing_paused,
             paused_pending_events: paused_pending_events.to_string(),

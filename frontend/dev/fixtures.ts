@@ -1,0 +1,454 @@
+// Synthetic browser preview data. No game data or native operations.
+import type { ModMarketCatalogSnapshot } from "@/lib/tauri/mod-studio-contract";
+import { SETTINGS_CONTRACT_VERSION } from "@/lib/tauri/settings-contract";
+import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
+import { PACKETS_CONTRACT_VERSION } from "@/lib/tauri/packets-contract";
+
+export function settingsFixture(): Record<string, unknown> {
+  return {
+    contractVersion: SETTINGS_CONTRACT_VERSION,
+    generation: "7",
+    adapterVersion: "0.3.6",
+    interface: {
+      language: "zh-CN",
+      darkMode: false,
+      themePreset: "zinc",
+      accent: "blue",
+      density: "cozy",
+      reduceMotion: false,
+      islandNotifications: true,
+      islandOffsetX: 0,
+    },
+    updates: {
+      currentVersion: "0.3.6",
+      autoCheck: true,
+      autoDownload: false,
+      status: "idle",
+      messageKey: "Updates have not been checked in this session",
+      messageArguments: [],
+      available: [],
+      activeComponent: null,
+      downloadedBytes: "0",
+      totalBytes: "0",
+      prepared: null,
+      installEnabled: false,
+      installBlockedMessageKey: null,
+    },
+    capture: {
+      bpfFilter: "udp",
+      devicesAvailable: true,
+      devices: [{ id: "device", label: "Ethernet · 192.0.2.1" }],
+      manualCaptureDevice: null,
+      serverDamageCalibration: false,
+      includeMaxHpReductionInTotalDamage: false,
+      separateReactionDamage: false,
+      autoRoundAfterIdle: false,
+      autoRoundIdleSeconds: 30,
+      autoRoundIdleSecondsMin: 5,
+      autoRoundIdleSecondsMax: 600,
+      dpsTimeMode: "real-time",
+      dpsTimeRuntime: {
+        configuredMode: "real-time",
+        effectiveMode: "real-time",
+        combatClockHealth: "unknown",
+        degraded: false,
+        warningMessageKey: null,
+      },
+      passthroughHotkey: {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        key: "Home",
+      },
+    },
+    hotkeys: {
+      enabled: true,
+      bindings: [
+        {
+          action: "capture",
+          binding: {
+            ctrl: true,
+            alt: false,
+            shift: false,
+            key: "F9",
+          },
+        },
+        {
+          action: "reset",
+          binding: {
+            ctrl: true,
+            alt: false,
+            shift: false,
+            key: "F10",
+          },
+        },
+        {
+          action: "hud",
+          binding: {
+            ctrl: true,
+            alt: false,
+            shift: false,
+            key: "F11",
+          },
+        },
+        {
+          action: "new-round",
+          binding: null,
+        },
+      ],
+    },
+    mainDps: {
+      metrics: ["team-dps", "total-damage", "total-damage-taken", "duration"],
+      attributions: [
+        "character",
+        "reaction",
+        "shared",
+        "unattributed",
+        "max-hp-reduction",
+      ],
+    },
+    captureFiles: { count: 0, totalBytes: "0", formattedSize: "0 B" },
+    teamData: {
+      available: true,
+      upperImported: false,
+      lowerImported: false,
+    },
+    alwaysOnTop: true,
+    hudWidthMin: 280,
+    hudWidthMax: 3840,
+    hud: {
+      width: 380,
+      moduleOrder: [...HUD_MODULE_IDS],
+      showTitle: false,
+      showTeamDps: true,
+      showDuration: true,
+      showTotalDamage: true,
+      showCharacterRows: true,
+      showDamageTaken: false,
+      showAbyssHalf: false,
+      showPassthroughState: false,
+      showMiniTimeline: false,
+    },
+  };
+}
+
+export function historyFixture() {
+  return {
+    contractVersion: 2,
+    revision: "7",
+    maxImportBytes: "134217728",
+    skippedFiles: 0,
+    records: [
+      {
+        id: "record-1",
+        displayTime: "2026-07-31 20:00:00",
+        recordedAt: "2026-07-31T12:00:00Z",
+        hasDetails: true,
+        partyLabel: "真红 · 哈索尔 · 娜娜莉",
+        canSetUpperPrediction: true,
+        canSetLowerPrediction: true,
+        summary: {
+          durationSeconds: 48,
+          dpsTimeBasis: "subtract_time_stop",
+          totalDamage: 5688311,
+          totalDps: 118506,
+          totalDamageTaken: 0,
+          totalHits: "1",
+          reactionDamageSeparated: false,
+          characters: [
+            {
+              charId: 7,
+              name: "真红",
+              hits: "48",
+              damage: 5688311,
+              dps: 118506,
+              damageSharePercent: 100,
+              hitsTaken: "0",
+              damageTaken: 0,
+            },
+          ],
+          skills: [
+            {
+              charId: 7,
+              charName: "真红",
+              name: "普通攻击",
+              category: "Skill",
+              hits: "48",
+              damage: 5688311,
+              damageSharePercent: 100,
+              isFollowUp: false,
+            },
+          ],
+          hiddenCharacterCount: 0,
+          hiddenSkillCount: 0,
+          abyss: {
+            detected: false,
+            floor: null,
+            activeHalf: null,
+            success: false,
+            firstHalf: null,
+            secondHalf: null,
+          },
+          quality: {
+            source: "live",
+            packetCount: "3",
+            hitCount: "1",
+            unmappedSkillHits: "0",
+            unknownCharacterHits: "0",
+          },
+        },
+      },
+    ],
+  };
+}
+
+export const skillsFixture = {
+  contractVersion: 1,
+  generation: "9007199254740992",
+  scope: "all",
+  hasData: true,
+  totalDamage: 125,
+  totalHits: "2",
+  characters: [
+    {
+      id: 7,
+      name: "真红",
+      color: "#123abc",
+      damage: 125,
+      entries: 1,
+    },
+  ],
+  rows: [
+    {
+      id: "skill-0123456789abcdef",
+      characterId: 7,
+      characterName: "真红",
+      name: "普通攻击",
+      category: "Skill",
+      abilityName: "GA_Test",
+      damageName: "Test Damage",
+      gameplayEffectIndex: 17,
+      gameplayEffectName: "GE_Test",
+      followUp: false,
+      hits: "2",
+      damage: 125,
+    },
+  ],
+  diagnostics: {
+    unknownCharacterCount: "0",
+    unknownCharacterHits: "0",
+    unknownDirectionHits: "0",
+    unknownDirectionDamage: 0,
+    unmappedSkillRows: "0",
+    unmappedSkillHits: "0",
+    unmappedSkillDamage: 0,
+    unmappedGameplayEffects: [],
+  },
+};
+
+export const packetsFixture = {
+  contractVersion: PACKETS_CONTRACT_VERSION,
+  generation: "9007199254740993",
+  sessionGeneration: "2",
+  packetGeneration: "8",
+  firstDisplaySequence: "1",
+  capturePhase: "running",
+  eventCount: 3,
+  observedPacketCount: "9",
+  packetsWithHits: "1",
+  retainedPacketCount: 8,
+  queuedEventCount: 2,
+  displayLimit: 500,
+  truncatedPacketCount: 0,
+  omittedTextBytes: "0",
+  omittedDeclaredIdCount: "0",
+  packets: [
+    {
+      sequence: "8",
+      timestamp: 1_786_000_000.125,
+      source: "127.0.0.1:3010",
+      destination: "127.0.0.1:7777",
+      direction: "outgoing",
+      payloadLen: 128,
+      declaredIds: [1076],
+      parsedHits: 1,
+      note: "accepted",
+      decodedText: "GameplayEffect Shinku",
+      omittedTextBytes: "0",
+      omittedDeclaredIdCount: "0",
+    },
+  ],
+};
+
+export const diagnosticsFixture = {
+  contractVersion: 3,
+  captureGeneration: "9007199254740993",
+  qualityGeneration: "9007199254740994",
+  reportGeneration: "2",
+  adapterVersion: "0.3.6",
+  capture: {
+    phase: "stopped",
+    replayRunning: false,
+    activeFilter: "udp",
+    droppedHistoryArchives: "0",
+    rawCapture: {
+      fileName: "nte_raw.pcapng",
+      packetCount: "1248",
+      capturedBytes: "128",
+      writeError: false,
+      writing: false,
+    },
+  },
+  environment: {
+    deviceLabel: "NIC",
+    manualDevice: false,
+    localIp: "192.0.2.1",
+    gameConnection: {
+      pid: 7,
+      localIp: "192.0.2.1",
+      remoteIp: "198.51.100.2",
+      remotePort: 30196,
+    },
+  },
+  report: {
+    failedCount: 0,
+    warningCount: 1,
+    checks: [
+      {
+        status: "warning",
+        titleKey: "Capture Status",
+        detail: {
+          messageKey: "No live capture task right now",
+          messageArguments: [],
+        },
+        suggestion: {
+          messageKey:
+            "Run diagnostics after clicking Start to see BPF and raw-capture write status",
+          messageArguments: [],
+        },
+      },
+    ],
+  },
+  quality: {
+    source: "live",
+    packetCount: 4,
+    packetsWithHits: 2,
+    hitCount: 3,
+    outgoingHits: "2",
+    outgoingDamage: 100,
+    unknownDirectionHits: "0",
+    unknownDirectionDamage: 0,
+    incomingHits: "1",
+    incomingDamage: 5,
+    unknownCharacterCount: 0,
+    unknownCharacterHits: "0",
+    unmappedSkillRows: 0,
+    unmappedSkillHits: "0",
+    unmappedGameplayEffectCount: 0,
+    timeStopEventCount: "1",
+    timeStopIntervalCount: 1,
+    abyssEventCount: "0",
+    serverDamageCorrections: "0",
+    unattributedServerDamageEvents: "0",
+    unattributedServerDamage: 0,
+  },
+  actions: {
+    canImport: true,
+    canExportParsed: true,
+    canExportRaw: true,
+  },
+};
+
+export const equipmentFixture = {
+  contractVersion: 3,
+  canOperate: true,
+  generation: "9007199254740992",
+  observedAtUnixMs: "1785542400000",
+  hasData: true,
+  complete: true,
+  characters: [
+    { uid: { slot: 1, serial: 2 }, characterId: 1076, name: "真红" },
+  ],
+  items: [
+    {
+      uid: { slot: 3, serial: 4 },
+      itemId: "cell4_style1_1_Orange",
+      filterId: "cell4_style1_1",
+      kind: "module",
+      quality: "orange",
+      name: "攻击模组",
+      icon: "",
+      level: 20,
+      maxLevel: 20,
+      locked: false,
+      discarded: false,
+      equippedCharacterUid: { slot: 1, serial: 2 },
+      equippedCharacterId: 1076,
+      equippedPlacement: { row: 0, column: 1 },
+      stats: [
+        {
+          property: "AtkAdd",
+          label: "Attack",
+          value: 12,
+          percent: false,
+          main: true,
+          unlockLevel: null,
+          unlocked: true,
+        },
+      ],
+      setName: null,
+      setEffects: [],
+    },
+  ],
+  operation: {
+    status: "idle",
+    messageKey: "No equipment operation is pending",
+    messageArguments: [],
+  },
+};
+
+export const iniFixture = {
+  contractVersion: 1,
+  generation: "9",
+  opened: true,
+  displayPath: "Engine.ini",
+  fileName: "Engine.ini",
+  key: "china",
+  plaintext: "Value=1",
+  encryptedLineCount: 4,
+  maxBytes: 8 * 1024 * 1024,
+};
+
+export const marketFixture: ModMarketCatalogSnapshot = {
+  contractVersion: 13,
+  publishedAt: "2026-09-27T00:00:00Z",
+  privacyMode: "anonymous-read-only",
+  mods: (
+    [
+      ["nte-host", "host", "UE Tools Host", "UE Tools 宿主"],
+      ["nte-loader", "loader", "UE Tools Loader", "UE Tools 加载器"],
+      ["uetools-driver", "driver", "UE Tools Driver", "UE Tools 驱动"],
+      ["nte_plugincombat", "plugin", "Combat Plugin", "战斗插件"],
+      ["nte_pluginuser", "plugin", "Account Plugin", "账号插件"],
+      ["nte_pluginnetwork", "plugin", "Network Plugin", "网络插件"],
+      ["nte_pluginperformance", "plugin", "Performance Plugin", "性能插件"],
+    ] as const
+  ).map(([id, component, en, zh]) => ({
+    id,
+    component,
+    bindings: ["preview.component"],
+    localizations: {
+      en: { name: en, summary: "Synthetic UI preview component." },
+      "zh-CN": { name: zh, summary: "仅用于界面预览的示例组件。" },
+      ja: { name: en, summary: "UI プレビュー用のサンプルです。" },
+    },
+    version: "1.0.0",
+    author: "Preview",
+    capabilities: [],
+    packageSize: 1024,
+    localState:
+      component === "plugin"
+        ? { status: "notInstalled" }
+        : { status: "installed", current: true, enabled: null },
+  })),
+};

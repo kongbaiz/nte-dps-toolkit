@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Write as _;
 
 const ABYSS_RESTART_STAGE_WINDOW_SECONDS: f64 = 10.0;
 
@@ -130,6 +129,7 @@ pub struct CharacterInfo {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HitCharacterSource {
+    Plugin,
     Packet,
     Session,
     GameplayEffect,
@@ -176,6 +176,16 @@ impl TryFrom<&str> for HitDirection {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "plugin_snapshot::serialize",
+        deserialize_with = "plugin_snapshot::deserialize"
+    )]
+    pub plugin_snapshot: Option<std::sync::Arc<plugin_snapshot::PluginHitSnapshot>>,
+    /// Persisted protocol evidence; absent only for historical/legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exact: Option<crate::engine::settlement::application::Evidence>,
     pub timestamp: f64,
     pub char_id: u32,
     pub char_name: String,
@@ -240,6 +250,9 @@ pub struct Hit {
     pub wire_event: Option<DamageWireEvent>,
 }
 
+mod exact;
+pub mod plugin_snapshot;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DamageWireEvent {
     pub damage: f32,
@@ -253,11 +266,63 @@ pub struct DamageWireEvent {
 }
 
 impl Hit {
+    pub fn known_hp_before(&self) -> Option<f64> {
+        match &self.exact {
+            Some(e) => e
+                .hp_before_request_bits
+                .map(|b| f64::from(f32::from_bits(b))),
+            None => Some(self.target_hp_before),
+        }
+        .filter(|v| v.is_finite() && *v >= 0.0)
+    }
+    pub fn known_hp_after(&self) -> Option<f64> {
+        let value = self.exact.as_ref().map_or(self.target_hp_after, |e| {
+            f64::from(f32::from_bits(e.current_hp_bits))
+        });
+        (value.is_finite() && value >= 0.0).then_some(value)
+    }
+    pub fn known_max_hp(&self) -> Option<f64> {
+        match &self.exact {
+            Some(e) => e
+                .max_hp_at_request_bits
+                .map(|b| f64::from(f32::from_bits(b))),
+            None => Some(self.target_max_hp),
+        }
+        .filter(|v| v.is_finite() && *v >= 0.0)
+    }
+    pub fn known_hp_percent(&self) -> Option<f64> {
+        if self.exact.is_none() {
+            return self
+                .target_hp_percent
+                .is_finite()
+                .then_some(self.target_hp_percent);
+        }
+        Some(self.known_hp_after()? / self.known_max_hp().filter(|v| *v > 0.0)? * 100.0)
+    }
+    pub fn known_overkill(&self) -> Option<f64> {
+        self.exact.is_none().then(|| self.overkill_damage())
+    }
+    pub fn known_max_hp_reduction(&self) -> Option<f64> {
+        match &self.exact {
+            None => Some(self.max_hp_reduction),
+            Some(e) => e
+                .hp_adjustment
+                .as_ref()
+                .filter(|a| {
+                    a.valid(e.current_hp_bits)
+                        && f64::from(a.direct_damage).to_bits() == self.damage.to_bits()
+                })
+                .map(|a| a.reduction()),
+        }
+    }
     pub fn total_damage(&self) -> f64 {
         self.damage + self.follow_up_damage
     }
 
     pub fn overkill_damage(&self) -> f64 {
+        if self.exact.is_some() {
+            return 0.0;
+        } // Unknown overkill is not inferred from a request snapshot.
         // Overkill starts only after the target reaches its terminal HP state.
         // This read-side invariant also repairs older persisted rows whose
         // interval estimate was recorded before a later server HP correction.
@@ -295,6 +360,9 @@ fn reconcile_latest_overkill_interval(hits: &mut VecDeque<Hit>) {
     let Some(latest) = hits.back() else {
         return;
     };
+    if latest.exact.is_some() {
+        return;
+    }
     let Some(latest_wire) = latest.wire_event else {
         return;
     };
@@ -318,6 +386,9 @@ fn reconcile_latest_overkill_interval(hits: &mut VecDeque<Hit>) {
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
         .filter_map(|(index, candidate)| {
+            if candidate.exact.is_some() {
+                return None;
+            }
             let wire = candidate.wire_event?;
             (candidate.direction.is_outgoing()
                 && candidate.target_id.as_deref() == Some(target_id.as_str())
@@ -348,6 +419,13 @@ fn reconcile_latest_overkill_interval(hits: &mut VecDeque<Hit>) {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HitFollowUp {
+    /// Original decoded hit location; absent only in older serialized events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_byte_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bit_shift: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_target_id: Option<String>,
     pub source_timestamp: f64,
     pub source_char_id: u32,
     pub source_damage: f64,
@@ -370,6 +448,13 @@ pub struct HitFollowUp {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HitDamageCorrection {
+    /// Original decoded hit location; absent only in older serialized events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_byte_offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bit_shift: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_target_id: Option<String>,
     pub source_timestamp: f64,
     pub source_char_id: u32,
     pub source_damage: f64,
@@ -571,34 +656,13 @@ impl HitDirectionSummary {
     }
 }
 
-pub fn summarize_hit_directions<'a>(
-    hits: impl IntoIterator<Item = &'a Hit>,
-) -> HitDirectionSummary {
-    let mut summary = HitDirectionSummary::default();
-    for hit in hits {
-        let damage = hit.total_damage();
-        match hit.direction {
-            HitDirection::Incoming => {
-                summary.incoming_damage += damage;
-                summary.incoming_hits += 1;
-            }
-            HitDirection::Outgoing => {
-                summary.outgoing_damage += damage;
-                summary.outgoing_hits += 1;
-            }
-            HitDirection::Unknown => {
-                summary.unknown_damage += damage;
-                summary.unknown_hits += 1;
-            }
-        }
-    }
-    summary
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TimelineTimeStopInterval {
     pub start_offset: f64,
     pub end_offset: f64,
+    /// Exact `EPausedGameType` bitset for this segment. `None` means an old
+    /// compacted prefix no longer has lossless per-type attribution.
+    pub pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -2940,22 +3004,12 @@ fn remove_inline_detail_aggregate(row: &mut IndexedDetailAggregate, hits: u64, d
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureQualitySource {
+    Plugin,
     Live,
     PcapngReplay,
     JsonReplay,
     #[default]
     Unknown,
-}
-
-impl CaptureQualitySource {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Live => "实时抓包",
-            Self::PcapngReplay => "PCAPNG 回放",
-            Self::JsonReplay => "JSON 回放",
-            Self::Unknown => "当前会话",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -2982,78 +3036,6 @@ pub struct CaptureQualitySummary {
     pub server_damage_corrections: u64,
     pub unattributed_server_damage_events: u64,
     pub unattributed_server_damage: f64,
-}
-
-/// Compact scalar snapshot retained for exact time-stop regression tests and
-/// low-level adapters. Live diagnostics no longer use it to reconstruct hit
-/// attribution; that data now comes from the reducer-maintained index.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg(feature = "desktop")]
-#[allow(dead_code)]
-pub(crate) struct CaptureQualityScalars {
-    pub hits_generation: u64,
-    pub packet_count: usize,
-    pub packets_with_hits: usize,
-    pub hit_count: usize,
-    pub time_stop_event_count: u64,
-    pub time_stop_interval_count: usize,
-    pub abyss_event_count: u64,
-    pub server_damage_corrections: u64,
-    pub unattributed_server_damage_events: u64,
-    pub unattributed_server_damage_bits: u64,
-}
-
-impl CaptureQualitySummary {
-    pub fn redacted_text(&self) -> String {
-        let mut text = String::new();
-        let _ = writeln!(text, "NTE DPS TOOL 解析质量报告");
-        let _ = writeln!(text, "统计来源：{}", self.source.label());
-        let _ = writeln!(
-            text,
-            "封包：{} 个（含命中 {} 个）",
-            self.packet_count, self.packets_with_hits
-        );
-        let _ = writeln!(text, "命中：{} 条", self.hit_count);
-        let _ = writeln!(
-            text,
-            "方向：输出 {} 条 / 候选 {} 条 / 受击 {} 条",
-            self.outgoing_hits, self.unknown_direction_hits, self.incoming_hits
-        );
-        let _ = writeln!(
-            text,
-            "伤害：输出 {:.0} / 候选 {:.0} / 受击 {:.0}",
-            self.outgoing_damage, self.unknown_direction_damage, self.incoming_damage
-        );
-        let _ = writeln!(
-            text,
-            "未知角色：{} 个，{} 条命中",
-            self.unknown_character_count, self.unknown_character_hits
-        );
-        let _ = writeln!(
-            text,
-            "待映射技能：{} 类，{} 条命中",
-            self.unmapped_skill_rows, self.unmapped_skill_hits
-        );
-        let _ = writeln!(
-            text,
-            "未映射 GE：{} 个",
-            self.unmapped_gameplay_effect_count
-        );
-        let _ = writeln!(
-            text,
-            "时停事件：{} 个，合并区间 {} 段",
-            self.time_stop_event_count, self.time_stop_interval_count
-        );
-        let _ = writeln!(text, "深渊事件：{} 个", self.abyss_event_count);
-        let _ = write!(
-            text,
-            "服务端伤害校准：{} 条；未归因观测：{} 条 / {:.0} 伤害",
-            self.server_damage_corrections,
-            self.unattributed_server_damage_events,
-            self.unattributed_server_damage,
-        );
-        text
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -3177,36 +3159,6 @@ pub struct CombatSessionAbyssHalfSummary {
     pub damage_attribution: DamageAttributionSummary,
     pub characters: Vec<CombatSessionCharacterSummary>,
     pub skills: Vec<CombatSessionSkillSummary>,
-}
-
-#[allow(dead_code)]
-pub fn summarize_timeline<'a, I>(hits: I, bucket_seconds: f64) -> TimelineSeries
-where
-    I: IntoIterator<Item = &'a Hit> + Clone,
-{
-    let mut start = None::<f64>;
-    let mut end = None::<f64>;
-    for hit in hits.clone() {
-        if hit.direction.is_incoming() || !hit.timestamp.is_finite() {
-            continue;
-        }
-        start = Some(start.map_or(hit.timestamp, |value| value.min(hit.timestamp)));
-        end = Some(end.map_or(hit.timestamp, |value| value.max(hit.timestamp)));
-    }
-    summarize_timeline_with_time_stop(
-        hits,
-        &TimeStopTracker::default(),
-        start,
-        end,
-        Vec::new(),
-        TimelineAggregationOptions {
-            bucket_seconds,
-            subtract_time_stop: false,
-            max_buckets: DEFAULT_MAX_TIMELINE_BUCKETS,
-            max_roles_per_bucket: DEFAULT_MAX_TIMELINE_ROLES_PER_BUCKET,
-            max_characters: DEFAULT_MAX_TIMELINE_CHARACTERS,
-        },
-    )
 }
 
 /// Default idle span (no outgoing damage) that separates one capture into
@@ -3638,7 +3590,12 @@ pub const UNBALANCE_ATTACK_TYPE: &str = "倾陷伤害";
 /// target's HP) but excluded from any single character's personal totals so
 /// it can't inflate one character's ranking/DPS share.
 pub fn is_unbalance_damage_hit(hit: &Hit) -> bool {
-    hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE)
+    match &hit.exact {
+        // Wire display type is authoritative, even before request/GE metadata
+        // arrives. A presentation label alone cannot classify an exact hit.
+        Some(evidence) => evidence.display_type == 22,
+        None => hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE),
+    }
 }
 
 fn summarize_damage_attribution<'a>(
@@ -4090,8 +4047,16 @@ impl AbyssHalf {
 
 #[derive(Clone, Debug)]
 pub enum AbyssEvent {
+    Location {
+        timestamp: f64,
+        floor: u32,
+    },
     RestartDetected {
         timestamp: f64,
+    },
+    RestartHalf {
+        timestamp: f64,
+        half: AbyssHalf,
     },
     Stage {
         timestamp: f64,
@@ -4116,6 +4081,10 @@ pub enum TimeStopEvent {
         pause_type_mask: u32,
     },
     GamePauseEnded {
+        timestamp: f64,
+        pause_type_mask: u32,
+    },
+    GamePauseMaskChanged {
         timestamp: f64,
         pause_type_mask: u32,
     },
@@ -4150,6 +4119,7 @@ impl CombatClockRuntimeHealth {
 struct TimeStopInterval {
     start: f64,
     end: f64,
+    pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -4196,7 +4166,74 @@ impl ArchivedTimeStopIntervals {
         Some(TimeStopInterval {
             start: (projected_end - duration).max(start),
             end: projected_end,
+            pause_type_mask: None,
         })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct TimeStopEventSegmenter {
+    active_game_pause: Option<(f64, u32)>,
+}
+
+impl TimeStopEventSegmenter {
+    pub(crate) fn apply_event(&mut self, event: &TimeStopEvent) -> Option<(f64, f64, u32)> {
+        match event {
+            TimeStopEvent::GamePauseStarted {
+                timestamp,
+                pause_type_mask,
+            } => {
+                if !timestamp.is_finite() {
+                    return None;
+                }
+                match self.active_game_pause.take() {
+                    Some((start, active_mask)) => {
+                        let next_mask = active_mask | *pause_type_mask;
+                        if next_mask != active_mask && *timestamp > start {
+                            self.active_game_pause = Some((*timestamp, next_mask));
+                            Some((start, *timestamp, active_mask))
+                        } else {
+                            self.active_game_pause = Some((start.min(*timestamp), next_mask));
+                            None
+                        }
+                    }
+                    None => {
+                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
+                        None
+                    }
+                }
+            }
+            TimeStopEvent::GamePauseEnded { timestamp, .. } => self
+                .active_game_pause
+                .take()
+                .map(|(start, pause_type_mask)| (start, *timestamp, pause_type_mask)),
+            TimeStopEvent::GamePauseMaskChanged {
+                timestamp,
+                pause_type_mask,
+            } => {
+                if !timestamp.is_finite() || *pause_type_mask == 0 {
+                    return None;
+                }
+                match self.active_game_pause.take() {
+                    Some((start, active_mask)) if *timestamp > start => {
+                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
+                        Some((start, *timestamp, active_mask))
+                    }
+                    Some((start, _)) => {
+                        self.active_game_pause = Some((start.min(*timestamp), *pause_type_mask));
+                        None
+                    }
+                    None => {
+                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn active_game_pause(&self) -> Option<(f64, u32)> {
+        self.active_game_pause
     }
 }
 
@@ -4204,40 +4241,33 @@ impl ArchivedTimeStopIntervals {
 struct TimeStopTracker {
     intervals: VecDeque<TimeStopInterval>,
     archived: Option<ArchivedTimeStopIntervals>,
-    active_game_pause: Option<(f64, u32)>,
+    event_segmenter: TimeStopEventSegmenter,
     latest_game_pause_transition: Option<f64>,
     event_count: u64,
 }
 
 impl TimeStopTracker {
     fn apply_event(&mut self, event: &TimeStopEvent) {
-        match event {
-            TimeStopEvent::GamePauseStarted {
+        let had_active_pause = self.event_segmenter.active_game_pause().is_some();
+        let transition_timestamp = match event {
+            TimeStopEvent::GamePauseStarted { timestamp, .. } if timestamp.is_finite() => {
+                Some(*timestamp)
+            }
+            TimeStopEvent::GamePauseEnded { timestamp, .. } if had_active_pause => Some(*timestamp),
+            TimeStopEvent::GamePauseMaskChanged {
                 timestamp,
                 pause_type_mask,
-            } => {
-                if !timestamp.is_finite() {
-                    return;
-                }
-                match &mut self.active_game_pause {
-                    Some((start, active_mask)) => {
-                        *start = start.min(*timestamp);
-                        *active_mask |= *pause_type_mask;
-                    }
-                    None => {
-                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
-                    }
-                }
-                self.record_game_pause_transition(*timestamp);
-            }
-            TimeStopEvent::GamePauseEnded { timestamp, .. } => {
-                let Some((start, _)) = self.active_game_pause.take() else {
-                    return;
-                };
-                self.event_count = self.event_count.saturating_add(1);
-                self.push_interval(start, *timestamp);
-                self.record_game_pause_transition(*timestamp);
-            }
+            } if timestamp.is_finite() && *pause_type_mask != 0 => Some(*timestamp),
+            _ => None,
+        };
+        if matches!(event, TimeStopEvent::GamePauseEnded { .. }) && had_active_pause {
+            self.event_count = self.event_count.saturating_add(1);
+        }
+        if let Some((start, end, pause_type_mask)) = self.event_segmenter.apply_event(event) {
+            self.push_interval(start, end, pause_type_mask);
+        }
+        if let Some(timestamp) = transition_timestamp {
+            self.record_game_pause_transition(timestamp);
         }
     }
 
@@ -4250,12 +4280,13 @@ impl TimeStopTracker {
         }
     }
 
-    fn push_interval(&mut self, start: f64, end: f64) {
+    fn push_interval(&mut self, start: f64, end: f64, pause_type_mask: u32) {
         if !start.is_finite() || !end.is_finite() || end <= start {
             return;
         }
         if let Some(last) = self.intervals.back_mut()
             && start <= last.end
+            && last.pause_type_mask == known_pause_type_mask(pause_type_mask)
         {
             last.end = last.end.max(end);
             return;
@@ -4274,7 +4305,11 @@ impl TimeStopTracker {
             archived.frozen_duration += expired.end - expired.start;
             archived.count = archived.count.saturating_add(1);
         }
-        self.intervals.push_back(TimeStopInterval { start, end });
+        self.intervals.push_back(TimeStopInterval {
+            start,
+            end,
+            pause_type_mask: known_pause_type_mask(pause_type_mask),
+        });
     }
 
     fn frozen_between(&self, start: f64, end: f64) -> f64 {
@@ -4293,130 +4328,29 @@ impl TimeStopTracker {
     }
 
     fn intervals_between(&self, start: f64, end: f64) -> Vec<TimeStopInterval> {
+        Self::merge_intervals(self.typed_intervals_between(start, end))
+    }
+
+    fn typed_intervals_between(&self, start: f64, end: f64) -> Vec<TimeStopInterval> {
         if !start.is_finite() || !end.is_finite() || end <= start {
             return Vec::new();
         }
-        let intervals = self
-            .archived
-            .and_then(|archived| archived.projected_interval(start, end))
-            .into_iter()
-            .chain(
-                self.intervals
-                    .iter()
-                    .copied()
-                    .chain(
-                        self.active_game_pause
-                            .map(|(active_start, _)| TimeStopInterval {
-                                start: active_start,
-                                end,
-                            }),
-                    ),
-            )
-            .filter_map(|interval| Self::clip_interval(interval, start, end))
-            .collect::<Vec<_>>();
-        Self::merge_intervals(intervals)
-    }
-
-    /// Counts the same clipped union as [`Self::intervals_between`] without
-    /// allocating or sorting a temporary vector. Capture events normally
-    /// arrive in timestamp order, so the first pass is linear. The allocation-
-    /// free fallback preserves exact semantics for older or out-of-order
-    /// replay fixtures.
-    #[cfg(feature = "desktop")]
-    #[allow(dead_code)]
-    fn interval_count_between(&self, start: f64, end: f64) -> usize {
-        if !start.is_finite() || !end.is_finite() || end <= start {
-            return 0;
-        }
-
-        let visit = |visitor: &mut dyn FnMut(TimeStopInterval)| {
-            if let Some(interval) = self
-                .archived
+        let intervals =
+            self.archived
                 .and_then(|archived| archived.projected_interval(start, end))
-            {
-                visitor(interval);
-            }
-            for interval in self.intervals.iter().copied() {
-                if let Some(interval) = Self::clip_interval(interval, start, end) {
-                    visitor(interval);
-                }
-            }
-            if let Some((active_start, _)) = self.active_game_pause
-                && let Some(interval) = Self::clip_interval(
-                    TimeStopInterval {
-                        start: active_start,
-                        end,
-                    },
-                    start,
-                    end,
-                )
-            {
-                visitor(interval);
-            }
-        };
-
-        let mut previous_start = None;
-        let mut sorted = true;
-        visit(&mut |interval| {
-            if previous_start.is_some_and(|previous| interval.start < previous) {
-                sorted = false;
-            }
-            previous_start = Some(interval.start);
-        });
-        if sorted {
-            let mut count = 0_usize;
-            let mut merged_end = None::<f64>;
-            visit(&mut |interval| match merged_end {
-                Some(current_end) if interval.start <= current_end => {
-                    merged_end = Some(current_end.max(interval.end));
-                }
-                Some(_) => {
-                    count = count.saturating_add(1);
-                    merged_end = Some(interval.end);
-                }
-                None => merged_end = Some(interval.end),
-            });
-            return count.saturating_add(usize::from(merged_end.is_some()));
-        }
-
-        // No-allocation union count for out-of-order input. Find the next
-        // component seed, then repeatedly extend its right edge until every
-        // touching/overlapping interval has been consumed.
-        let mut count = 0_usize;
-        let mut previous_component_end = None::<f64>;
-        loop {
-            let mut seed = None::<TimeStopInterval>;
-            visit(&mut |interval| {
-                if previous_component_end.is_some_and(|end| interval.start <= end) {
-                    return;
-                }
-                let replace = seed.is_none_or(|current| {
-                    interval.start < current.start
-                        || (interval.start == current.start && interval.end > current.end)
-                });
-                if replace {
-                    seed = Some(interval);
-                }
-            });
-            let Some(seed) = seed else {
-                break;
-            };
-            let mut component_end = seed.end;
-            loop {
-                let before = component_end;
-                visit(&mut |interval| {
-                    if interval.start <= component_end && interval.end > component_end {
-                        component_end = interval.end;
-                    }
-                });
-                if component_end == before {
-                    break;
-                }
-            }
-            count = count.saturating_add(1);
-            previous_component_end = Some(component_end);
-        }
-        count
+                .into_iter()
+                .chain(self.intervals.iter().copied().chain(
+                    self.event_segmenter.active_game_pause().map(
+                        |(active_start, pause_type_mask)| TimeStopInterval {
+                            start: active_start,
+                            end,
+                            pause_type_mask: known_pause_type_mask(pause_type_mask),
+                        },
+                    ),
+                ))
+                .filter_map(|interval| Self::clip_interval(interval, start, end))
+                .collect::<Vec<_>>();
+        Self::merge_typed_intervals(intervals)
     }
 
     fn clip_interval(interval: TimeStopInterval, start: f64, end: f64) -> Option<TimeStopInterval> {
@@ -4425,6 +4359,7 @@ impl TimeStopTracker {
         (clipped_end > clipped_start).then_some(TimeStopInterval {
             start: clipped_start,
             end: clipped_end,
+            pause_type_mask: interval.pause_type_mask,
         })
     }
 
@@ -4436,6 +4371,36 @@ impl TimeStopTracker {
         for interval in intervals {
             match merged {
                 Some(mut current) if interval.start <= current.end => {
+                    current.end = current.end.max(interval.end);
+                    if current.pause_type_mask != interval.pause_type_mask {
+                        current.pause_type_mask = None;
+                    }
+                    merged = Some(current);
+                }
+                Some(current) => {
+                    merged_intervals.push(current);
+                    merged = Some(interval);
+                }
+                None => merged = Some(interval),
+            }
+        }
+        if let Some(current) = merged {
+            merged_intervals.push(current);
+        }
+        merged_intervals
+    }
+
+    fn merge_typed_intervals(mut intervals: Vec<TimeStopInterval>) -> Vec<TimeStopInterval> {
+        intervals.sort_by(|left, right| left.start.total_cmp(&right.start));
+
+        let mut merged_intervals = Vec::new();
+        let mut merged: Option<TimeStopInterval> = None;
+        for interval in intervals {
+            match merged {
+                Some(mut current)
+                    if interval.start <= current.end
+                        && interval.pause_type_mask == current.pause_type_mask =>
+                {
                     current.end = current.end.max(interval.end);
                     merged = Some(current);
                 }
@@ -4450,6 +4415,16 @@ impl TimeStopTracker {
             merged_intervals.push(current);
         }
         merged_intervals
+    }
+}
+
+const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
+
+const fn known_pause_type_mask(pause_type_mask: u32) -> Option<u32> {
+    if pause_type_mask == 0 || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0 {
+        None
+    } else {
+        Some(pause_type_mask)
     }
 }
 
@@ -4481,7 +4456,7 @@ fn compact_time_stop_event_prefix(events: &mut Vec<TimeStopEvent>) {
             pause_type_mask: 0,
         });
     }
-    if let Some((active_start, active_mask)) = tracker.active_game_pause {
+    if let Some((active_start, active_mask)) = tracker.event_segmenter.active_game_pause() {
         prefix.push(TimeStopEvent::GamePauseStarted {
             timestamp: active_start,
             pause_type_mask: active_mask,
@@ -4493,6 +4468,14 @@ fn compact_time_stop_event_prefix(events: &mut Vec<TimeStopEvent>) {
 
 #[derive(Clone, Debug, Default)]
 pub struct PartyCombatState {
+    exact_positions: HashMap<
+        (
+            crate::engine::settlement::application::MessageIdentity,
+            usize,
+            usize,
+        ),
+        usize,
+    >,
     pub hits: VecDeque<Hit>,
     pub hits_generation: u64,
     pub stats: HashMap<u32, CharacterStats>,
@@ -4510,6 +4493,12 @@ pub struct PartyCombatState {
 impl PartyCombatState {
     pub fn push_hit(&mut self, hit: Hit) {
         let position = self.hits.len();
+        if let Some(e) = &hit.exact {
+            self.exact_positions.insert(
+                (e.message.clone(), e.target_ordinal, e.component_ordinal),
+                position,
+            );
+        }
         update_combat_totals(
             &mut self.stats,
             &mut self.compact_timeline,
@@ -4539,6 +4528,7 @@ impl PartyCombatState {
     /// in one pass; no hit strings are cloned.
     pub(crate) fn replace_hits_bulk(&mut self, hits: Vec<Hit>) {
         self.hits = hits.into();
+        self.rebuild_exact_positions();
         self.hits_generation = u64::try_from(self.hits.len()).unwrap_or(u64::MAX);
         rebuild_all_combat_indexes(
             &self.hits,
@@ -4555,7 +4545,7 @@ impl PartyCombatState {
         self.sync_clock_with_time_stops();
     }
 
-    fn apply_follow_up_at(&mut self, locator: HitLocator, follow_up: &HitFollowUp) -> bool {
+    fn apply_follow_up_at(&mut self, locator: &HitLocator, follow_up: &HitFollowUp) -> bool {
         let position = find_recent_hit_position(&self.hits, locator);
         let before = find_recent_hit(&self.hits, locator).cloned();
         let mutation = apply_follow_up_to_recent_hit(&mut self.hits, locator, follow_up);
@@ -4586,7 +4576,7 @@ impl PartyCombatState {
 
     fn apply_damage_correction_at(
         &mut self,
-        locator: HitLocator,
+        locator: &HitLocator,
         correction: &HitDamageCorrection,
     ) -> bool {
         let position = find_recent_hit_position(&self.hits, locator);
@@ -4827,6 +4817,25 @@ impl AbyssRunState {
     pub fn apply_event(&mut self, event: AbyssEvent) {
         self.event_count = self.event_count.saturating_add(1);
         match event {
+            AbyssEvent::Location { floor, .. } => {
+                if self.floor.is_some_and(|current| current != floor) {
+                    self.clear_restarted_floor();
+                    self.active_half = None;
+                    self.pending_restart_at = None;
+                    self.pending_restart_half = None;
+                    self.last_half_switch_at = None;
+                    self.last_half_switch_from = None;
+                }
+                self.floor = Some(floor);
+            }
+            AbyssEvent::RestartHalf { timestamp, half } => {
+                self.clear_restarted_half(half, timestamp);
+                self.active_half = Some(half);
+                self.pending_restart_at = None;
+                self.pending_restart_half = None;
+                self.last_half_switch_at = None;
+                self.last_half_switch_from = None;
+            }
             AbyssEvent::RestartDetected { timestamp } => {
                 if let Some(half) = self.active_half {
                     self.clear_restarted_half(half, timestamp);
@@ -4929,7 +4938,8 @@ impl AbyssRunState {
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
         let timestamp = match event {
             TimeStopEvent::GamePauseStarted { timestamp, .. }
-            | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+            | TimeStopEvent::GamePauseEnded { timestamp, .. }
+            | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
         };
         let half = if self
             .second_half_at
@@ -5120,7 +5130,7 @@ fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
 }
 
 fn hit_accepts_enemy_telemetry(hit: &Hit) -> bool {
-    !hit.direction.is_incoming()
+    hit.exact.is_none() && !hit.direction.is_incoming()
 }
 
 fn hit_has_exact_enemy_target(hit: &Hit) -> bool {
@@ -5290,6 +5300,7 @@ fn apply_enemy_hit_target_to_key(
 
 #[derive(Clone, Default)]
 pub struct CombatState {
+    exact_index: HashMap<crate::engine::settlement::application::MessageIdentity, exact::Slot>,
     pub hits: VecDeque<Hit>,
     /// Exact per-global-hit Abyss membership used by cursor pagination. This
     /// sidecar stays position-aligned with `hits`; unlike the old read path it
@@ -5369,10 +5380,19 @@ impl CombatState {
             packet_debug_bytes: 0,
             recent_hit_records: VecDeque::new(),
             server_target_damage_limits: HashMap::new(),
+            exact_index: self
+                .exact_index
+                .iter()
+                .filter(|(_, slot)| slot.quarantined)
+                .map(|(key, slot)| (key.clone(), slot.clone()))
+                .collect(),
         }
     }
 
     pub fn reconcile_server_target_damage(&mut self, marker: Hit) -> bool {
+        if marker.exact.is_some() || !self.exact_index.is_empty() {
+            return false;
+        }
         if !marker.is_server_damage_reconciliation()
             || !marker.target_hp_before.is_finite()
             || marker.target_hp_before <= 0.0
@@ -5412,6 +5432,9 @@ impl CombatState {
     }
 
     pub fn reconcile_known_server_target_limits(&mut self, source_timestamp: f64) -> bool {
+        if !self.exact_index.is_empty() {
+            return false;
+        }
         let limits = self
             .server_target_damage_limits
             .iter()
@@ -5481,6 +5504,9 @@ impl CombatState {
             let effective = (source.damage - source.overkill_damage()).max(0.0);
             let adjustment = excess.min(effective);
             let correction = HitDamageCorrection {
+                source_byte_offset: Some(source.byte_offset),
+                source_bit_shift: Some(source.bit_shift),
+                source_target_id: source.target_id.clone(),
                 source_timestamp: source.timestamp,
                 source_char_id: source.char_id,
                 source_damage: source.damage,
@@ -5506,24 +5532,31 @@ impl CombatState {
     }
 
     pub fn push_hit(&mut self, mut hit: Hit) {
+        let source_target_id = hit.target_id.clone();
         if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
             project_enemy_hit_target(&mut hit, &target);
         }
         let abyss_half = self.abyss.push_hit(hit.clone());
-        self.finish_push_hit(hit, abyss_half);
+        self.finish_push_hit(hit, abyss_half, source_target_id);
     }
 
     fn push_hit_at_recorded_half(&mut self, mut hit: Hit, abyss_half: Option<AbyssHalf>) {
+        let source_target_id = hit.target_id.clone();
         if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
             project_enemy_hit_target(&mut hit, &target);
         }
         if let Some(half) = abyss_half {
             self.abyss.half_mut(half).push_hit(hit.clone());
         }
-        self.finish_push_hit(hit, abyss_half);
+        self.finish_push_hit(hit, abyss_half, source_target_id);
     }
 
-    fn finish_push_hit(&mut self, hit: Hit, abyss_half: Option<AbyssHalf>) {
+    fn finish_push_hit(
+        &mut self,
+        hit: Hit,
+        abyss_half: Option<AbyssHalf>,
+        source_target_id: Option<String>,
+    ) {
         let position = self.hits.len();
         update_combat_totals(
             &mut self.stats,
@@ -5543,7 +5576,9 @@ impl CombatState {
             self.combat_detail_index.promote_stable_hit(stable_hit);
         }
         self.combat_detail_index.observe_hit(position, &hit);
-        remember_recent_hit(&mut self.recent_hit_records, &hit, abyss_half);
+        let mut record = RecentHitRecord::from_hit(&hit, abyss_half);
+        record.source_target_id = source_target_id;
+        push_recent_hit_record(&mut self.recent_hit_records, record);
         self.hits.push_back(hit);
         reconcile_latest_overkill_interval(&mut self.hits);
         self.global_hit_abyss_halves.push_back(abyss_half);
@@ -5556,6 +5591,7 @@ impl CombatState {
     /// bounded recent-mutation locator window is rebuilt afterward.
     pub(crate) fn replace_global_hits_bulk(&mut self, hits: Vec<Hit>) {
         self.hits = hits.into();
+        self.rebuild_exact_index();
         self.global_hit_abyss_halves =
             std::iter::repeat_n(None, self.hits.len()).collect::<VecDeque<_>>();
         self.hits_generation = u64::try_from(self.hits.len()).unwrap_or(u64::MAX);
@@ -5585,30 +5621,32 @@ impl CombatState {
     fn locate_recent_hit(
         &mut self,
         source: HitSourceIdentity,
+        target_id: Option<&str>,
     ) -> Option<(usize, HitLocator, Option<AbyssHalf>)> {
-        if let Some(index) = self
-            .recent_hit_records
-            .iter()
-            .rposition(|record| record.matches_source(source))
-        {
-            let record = self.recent_hit_records[index];
-            return Some((index, record.locator, record.abyss_half));
+        if let Some(index) = self.recent_hit_records.iter().rposition(|record| {
+            target_id.is_none_or(|id| {
+                record.source_target_id.as_deref() == Some(id)
+                    || record.locator.target_id.as_deref() == Some(id)
+            }) && record.matches_source(source)
+        }) {
+            let record = &self.recent_hit_records[index];
+            return Some((index, record.locator.clone(), record.abyss_half));
         }
 
         // Recovery path for states constructed by older in-memory fixtures or
         // an internal index invariant failure. The scan is deliberately capped;
         // an unbounded miss must not stall the capture reducer under its hot
         // event/state locks.
-        let locator = find_recent_hit_locator(&self.hits, source)?;
-        let abyss_half = if recent_hits_contain_locator(&self.abyss.first_half.hits, locator) {
+        let locator = find_recent_hit_locator(&self.hits, source, target_id)?;
+        let abyss_half = if recent_hits_contain_locator(&self.abyss.first_half.hits, &locator) {
             Some(AbyssHalf::First)
-        } else if recent_hits_contain_locator(&self.abyss.second_half.hits, locator) {
+        } else if recent_hits_contain_locator(&self.abyss.second_half.hits, &locator) {
             Some(AbyssHalf::Second)
         } else {
             None
         };
-        let mut record = RecentHitRecord::from_source(locator, source, abyss_half);
-        if let Some(hit) = find_recent_hit(&self.hits, locator) {
+        let mut record = RecentHitRecord::from_source(locator.clone(), source, abyss_half);
+        if let Some(hit) = find_recent_hit(&self.hits, &locator) {
             record.remember_source(HitSourceIdentity::from(hit));
         }
         push_recent_hit_record(&mut self.recent_hit_records, record);
@@ -5618,16 +5656,18 @@ impl CombatState {
 
     pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) -> bool {
         let source = HitSourceIdentity::from(&follow_up);
-        let Some((record_index, locator, abyss_half)) = self.locate_recent_hit(source) else {
-            return false;
-        };
-        let position = find_recent_hit_position(&self.hits, locator);
-        let before = find_recent_hit(&self.hits, locator).cloned();
-        let Some(mutation) = apply_follow_up_to_recent_hit(&mut self.hits, locator, &follow_up)
+        let Some((record_index, locator, abyss_half)) =
+            self.locate_recent_hit(source, follow_up.source_target_id.as_deref())
         else {
             return false;
         };
-        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, locator)) {
+        let position = find_recent_hit_position(&self.hits, &locator);
+        let before = find_recent_hit(&self.hits, &locator).cloned();
+        let Some(mutation) = apply_follow_up_to_recent_hit(&mut self.hits, &locator, &follow_up)
+        else {
+            return false;
+        };
+        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, &locator)) {
             self.skill_breakdown_index.replace_hit(&before, after);
             if let Some(position) = position {
                 self.combat_detail_index
@@ -5651,24 +5691,26 @@ impl CombatState {
         if let Some(half) = abyss_half {
             self.abyss
                 .half_mut(half)
-                .apply_follow_up_at(locator, &follow_up);
+                .apply_follow_up_at(&locator, &follow_up);
         }
         true
     }
 
     pub fn apply_damage_correction(&mut self, correction: HitDamageCorrection) -> bool {
         let source = HitSourceIdentity::from(&correction);
-        let Some((record_index, locator, abyss_half)) = self.locate_recent_hit(source) else {
-            return false;
-        };
-        let position = find_recent_hit_position(&self.hits, locator);
-        let before = find_recent_hit(&self.hits, locator).cloned();
-        let Some(mutation) =
-            apply_damage_correction_to_recent_hit(&mut self.hits, locator, &correction)
+        let Some((record_index, locator, abyss_half)) =
+            self.locate_recent_hit(source, correction.source_target_id.as_deref())
         else {
             return false;
         };
-        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, locator)) {
+        let position = find_recent_hit_position(&self.hits, &locator);
+        let before = find_recent_hit(&self.hits, &locator).cloned();
+        let Some(mutation) =
+            apply_damage_correction_to_recent_hit(&mut self.hits, &locator, &correction)
+        else {
+            return false;
+        };
+        if let (Some(before), Some(after)) = (before, find_recent_hit(&self.hits, &locator)) {
             self.skill_breakdown_index.replace_hit(&before, after);
             if let Some(position) = position {
                 self.combat_detail_index
@@ -5693,7 +5735,7 @@ impl CombatState {
         if let Some(half) = abyss_half {
             self.abyss
                 .half_mut(half)
-                .apply_damage_correction_at(locator, &correction);
+                .apply_damage_correction_at(&locator, &correction);
         }
         true
     }
@@ -5791,6 +5833,13 @@ impl CombatState {
             return ModScriptApplyOutcome::Unchanged;
         };
         self.enemy_telemetry.consume_hit_target(target.sequence);
+        if let Some(after) = self.hits.get(position) {
+            for record in &mut self.recent_hit_records {
+                if record.locator.matches(&before) {
+                    record.locator.target_id = after.target_id.clone();
+                }
+            }
+        }
         let mut outcome = outcome_of_projection(result);
         let promoted_hit = result
             .direction_changed
@@ -5842,10 +5891,6 @@ impl CombatState {
             }
             _ => 0.0,
         }
-    }
-
-    pub fn active_elapsed_between(&self, start: f64, end: f64) -> f64 {
-        (end - start - self.time_stop.frozen_between(start, end)).max(0.0)
     }
 
     pub fn dps_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
@@ -5932,7 +5977,8 @@ impl CombatState {
     }
 
     pub fn clear(&mut self) {
-        *self = Self::default();
+        let previous = std::mem::take(self);
+        self.retire_exact_messages_from(&previous);
     }
 
     pub fn observe_packet(&mut self, observation: PacketObservation) {
@@ -5944,6 +5990,7 @@ impl CombatState {
 
     pub fn take_battle_preserving_inventory(&mut self) -> CombatState {
         let mut detached = std::mem::take(self);
+        self.retire_exact_messages_from(&detached);
         self.empty_curtain = std::mem::take(&mut detached.empty_curtain);
         self.empty_curtain_characters = std::mem::take(&mut detached.empty_curtain_characters);
         self.empty_curtain_generation = detached.empty_curtain_generation;
@@ -5971,6 +6018,36 @@ impl CombatState {
     }
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {
+        if let AbyssEvent::RestartHalf { half, .. } = event {
+            self.abyss.apply_event(event);
+            // Remove only this half's failed attempt. Preserve upper-half and
+            // unclassified hits, provenance, inventory and the provider clock.
+            self.global_hit_abyss_halves.resize(self.hits.len(), None);
+            self.retire_exact_half(half);
+            let retained = std::mem::take(&mut self.hits)
+                .into_iter()
+                .zip(std::mem::take(&mut self.global_hit_abyss_halves))
+                .filter(|(_, owner)| *owner != Some(half));
+            (self.hits, self.global_hit_abyss_halves) = retained.unzip();
+            self.recent_hit_records
+                .retain(|row| row.abyss_half != Some(half));
+            self.rebuild_exact_index();
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_all_combat_indexes(
+                &self.hits,
+                &mut self.stats,
+                &mut self.compact_timeline,
+                &mut self.skill_breakdown_index,
+                &mut self.combat_detail_index,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+                &mut self.max_hp_reduction,
+            );
+            self.sync_clock_with_time_stops();
+            return;
+        }
         let first_half_had_hits = !self.abyss.first_half.hits.is_empty();
         let second_half_had_hits = !self.abyss.second_half.hits.is_empty();
         let late_detected_half = match &event {
@@ -6019,7 +6096,7 @@ impl CombatState {
     }
 
     pub fn is_game_paused(&self) -> bool {
-        self.time_stop.active_game_pause.is_some()
+        self.time_stop.event_segmenter.active_game_pause().is_some()
     }
 
     pub fn rebuild_global_from_abyss(&mut self) {
@@ -6055,6 +6132,7 @@ impl CombatState {
             .map(|(hit, half)| (hit, Some(half)))
             .unzip();
         self.hits = global_hits;
+        self.rebuild_exact_index();
         self.global_hit_abyss_halves = global_hit_abyss_halves;
         self.hits_generation = self.hits_generation.wrapping_add(1);
         rebuild_all_combat_indexes(
@@ -6140,25 +6218,6 @@ impl CombatState {
     ) -> IndexedCombatDetailPage<'_> {
         self.combat_detail_index
             .query(&self.hits, character_id, filter, skill, offset, limit)
-    }
-
-    #[cfg(feature = "desktop")]
-    #[allow(dead_code)]
-    pub(crate) fn capture_quality_scalars(&self) -> CaptureQualityScalars {
-        let start = self.started_at.unwrap_or_default();
-        let end = self.ended_at.unwrap_or_default();
-        CaptureQualityScalars {
-            hits_generation: self.hits_generation,
-            packet_count: self.packet_count,
-            packets_with_hits: self.packets_with_hits,
-            hit_count: self.hits.len(),
-            time_stop_event_count: self.time_stop.event_count,
-            time_stop_interval_count: self.time_stop.interval_count_between(start, end),
-            abyss_event_count: self.abyss.event_count,
-            server_damage_corrections: self.damage_correction_count,
-            unattributed_server_damage_events: self.unattributed_server_damage_events,
-            unattributed_server_damage_bits: self.unattributed_server_damage.to_bits(),
-        }
     }
 
     pub fn capture_quality_summary(&self, source: CaptureQualitySource) -> CaptureQualitySummary {
@@ -6495,158 +6554,6 @@ fn summarize_indexed_timeline(
     }
 }
 
-fn summarize_timeline_with_time_stop<'a, I>(
-    hits: I,
-    time_stop: &TimeStopTracker,
-    start: Option<f64>,
-    end: Option<f64>,
-    markers: Vec<TimelineMarker>,
-    options: TimelineAggregationOptions,
-) -> TimelineSeries
-where
-    I: IntoIterator<Item = &'a Hit>,
-{
-    let requested_bucket_seconds =
-        if options.bucket_seconds.is_finite() && options.bucket_seconds > 0.0 {
-            options.bucket_seconds
-        } else {
-            1.0
-        };
-    let _subtract_time_stop = options.subtract_time_stop;
-    let max_buckets = options.max_buckets.max(1);
-    let max_roles_per_bucket = options.max_roles_per_bucket.max(1);
-    let max_characters = options.max_characters.max(1);
-    let (Some(start), Some(end)) = (start, end) else {
-        return TimelineSeries {
-            bucket_seconds: requested_bucket_seconds,
-            markers,
-            ..Default::default()
-        };
-    };
-    // Subtracting two finite timestamps can still overflow to +infinity (for
-    // example -f64::MAX..f64::MAX). Keep every subsequent count/allocation
-    // calculation saturating and use a finite representable chart span.
-    let raw_span = end - start;
-    let span = if raw_span.is_finite() {
-        raw_span.max(0.0)
-    } else {
-        f64::MAX
-    };
-    let requested_bucket_ratio = span / requested_bucket_seconds;
-    let requested_bucket_count =
-        if !requested_bucket_ratio.is_finite() || requested_bucket_ratio >= usize::MAX as f64 {
-            usize::MAX
-        } else {
-            (requested_bucket_ratio.floor() as usize).saturating_add(1)
-        };
-    let (bucket_seconds, bucket_count) = if requested_bucket_count <= max_buckets {
-        (requested_bucket_seconds, requested_bucket_count)
-    } else {
-        // The right edge belongs to the last bucket. Dividing the complete span
-        // by the output budget ensures allocation is bounded before any bucket
-        // or per-role HashMap is created, while retaining every hit in the
-        // aggregate projection.
-        (
-            (span / max_buckets as f64).max(requested_bucket_seconds),
-            max_buckets,
-        )
-    };
-    let mut buckets = (0..bucket_count)
-        .map(|index| TimelineBucket {
-            start_offset: finite_timeline_offset(index, bucket_seconds),
-            end_offset: finite_timeline_offset(index.saturating_add(1), bucket_seconds),
-            ..Default::default()
-        })
-        .collect::<Vec<_>>();
-    let mut role_buckets = vec![HashMap::<u32, (String, f64)>::new(); bucket_count];
-    let mut retained_characters = HashSet::<u32>::with_capacity(max_characters);
-    let mut omitted_role_damage = 0.0;
-    let mut omitted_role_hits = 0_u64;
-
-    for hit in hits {
-        if hit.direction.is_incoming() || !hit.timestamp.is_finite() {
-            continue;
-        }
-        let damage = hit.total_damage();
-        if !damage.is_finite() {
-            continue;
-        }
-        let raw_offset = hit.timestamp - start;
-        let bucket_index = if raw_offset.is_finite() {
-            ((raw_offset.max(0.0) / bucket_seconds).floor() as usize).min(bucket_count - 1)
-        } else {
-            // Halving before subtraction keeps the full finite f64 domain
-            // representable, then maps the relative position into the already
-            // bounded bucket set without allocating an intermediate axis.
-            let scaled_span = end / 2.0 - start / 2.0;
-            let relative = if scaled_span.is_finite() && scaled_span > 0.0 {
-                ((hit.timestamp / 2.0 - start / 2.0) / scaled_span).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            ((relative * bucket_count as f64).floor() as usize).min(bucket_count - 1)
-        };
-        let bucket = &mut buckets[bucket_index];
-        bucket.damage += damage;
-        bucket.hits += 1;
-        let roles = &mut role_buckets[bucket_index];
-        if let Some(role) = roles.get_mut(&hit.char_id) {
-            role.0.clone_from(&hit.char_name);
-            role.1 += damage;
-        } else if roles.len() < max_roles_per_bucket
-            && (retained_characters.contains(&hit.char_id)
-                || retained_characters.len() < max_characters)
-        {
-            retained_characters.insert(hit.char_id);
-            roles.insert(hit.char_id, (hit.char_name.clone(), damage));
-        } else {
-            omitted_role_damage += damage;
-            omitted_role_hits = omitted_role_hits.saturating_add(1);
-        }
-    }
-
-    let mut total_damage = 0.0;
-    for (index, bucket) in buckets.iter_mut().enumerate() {
-        total_damage += bucket.damage;
-        bucket.cumulative_damage = total_damage;
-        // Timeline buckets stay on real wall-clock seconds. Time-stop periods
-        // are drawn as bands; subtracting them inside a fixed 1s bucket can
-        // shrink the divisor to almost zero and produce unusable peak spikes.
-        let duration = bucket_seconds.max(0.001);
-        bucket.dps = bucket.damage / duration;
-        let mut roles = role_buckets[index]
-            .drain()
-            .map(|(char_id, (char_name, damage))| TimelineRoleBucket {
-                char_id,
-                char_name,
-                damage,
-                dps: damage / duration,
-            })
-            .collect::<Vec<_>>();
-        roles.sort_by(|left, right| {
-            right
-                .damage
-                .total_cmp(&left.damage)
-                .then_with(|| left.char_name.cmp(&right.char_name))
-                .then_with(|| left.char_id.cmp(&right.char_id))
-        });
-        bucket.role_damage = roles;
-    }
-
-    TimelineSeries {
-        bucket_seconds,
-        start_timestamp: Some(start),
-        end_timestamp: Some(end),
-        total_damage,
-        omitted_role_damage,
-        omitted_role_hits,
-        buckets,
-        time_stop_intervals: relative_time_stop_intervals(time_stop, start, end),
-        compacted_time_stop_intervals: time_stop.compacted_interval_count(),
-        markers,
-    }
-}
-
 fn finite_timeline_offset(index: usize, bucket_seconds: f64) -> f64 {
     let offset = index as f64 * bucket_seconds;
     if offset.is_finite() { offset } else { f64::MAX }
@@ -6658,11 +6565,12 @@ fn relative_time_stop_intervals(
     end: f64,
 ) -> Vec<TimelineTimeStopInterval> {
     time_stop
-        .intervals_between(start, end)
+        .typed_intervals_between(start, end)
         .into_iter()
         .map(|interval| TimelineTimeStopInterval {
             start_offset: interval.start - start,
             end_offset: interval.end - start,
+            pause_type_mask: interval.pause_type_mask,
         })
         .collect()
 }
@@ -6757,6 +6665,12 @@ impl ModScriptEvent {
 
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
+    /// Confirmed game-side restart, not a UI request. 9=AdvVision, 16=DiyBossClone.
+    ChallengeRestart {
+        timestamp: f64,
+        clone_type: u8,
+    },
+    ExactSettlement(Box<crate::engine::settlement::application::Projection>),
     Hit(Box<Hit>),
     HitFollowUp(HitFollowUp),
     HitDamageCorrection(HitDamageCorrection),
@@ -6768,6 +6682,11 @@ pub enum EngineEvent {
     CombatClockHealth(CombatClockRuntimeHealth),
     EmptyCurtain(Vec<EmptyCurtainItem>),
     EmptyCurtainCharacters(Vec<EmptyCurtainCharacter>),
+    /// One packet-inventory observation: publish ownership and item rows atomically.
+    PacketInventory {
+        items: Vec<EmptyCurtainItem>,
+        characters: Vec<EmptyCurtainCharacter>,
+    },
     ModScript(ModScriptEvent),
     Status(String),
     Warning(String),
@@ -6842,8 +6761,9 @@ impl HitAggregateMutation {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct HitLocator {
+    target_id: Option<String>,
     char_id: u32,
     timestamp_bits: u64,
     byte_offset: usize,
@@ -6853,8 +6773,9 @@ struct HitLocator {
 }
 
 impl HitLocator {
-    fn matches(self, hit: &Hit) -> bool {
-        hit.char_id == self.char_id
+    fn matches(&self, hit: &Hit) -> bool {
+        hit.target_id == self.target_id
+            && hit.char_id == self.char_id
             && hit.timestamp.to_bits() == self.timestamp_bits
             && hit.byte_offset == self.byte_offset
             && hit.bit_shift == self.bit_shift
@@ -6866,6 +6787,7 @@ impl HitLocator {
 impl From<&Hit> for HitLocator {
     fn from(hit: &Hit) -> Self {
         Self {
+            target_id: hit.target_id.clone(),
             char_id: hit.char_id,
             timestamp_bits: hit.timestamp.to_bits(),
             byte_offset: hit.byte_offset,
@@ -6876,9 +6798,12 @@ impl From<&Hit> for HitLocator {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct RecentHitRecord {
     locator: HitLocator,
+    // Mod telemetry may refine the visible target after the decoder emitted
+    // the source hit. Pending mutations still carry that original target.
+    source_target_id: Option<String>,
     sources: [Option<HitSourceIdentity>; RECENT_HIT_SOURCE_ALIASES],
     next_source: usize,
     abyss_half: Option<AbyssHalf>,
@@ -6901,6 +6826,7 @@ impl RecentHitRecord {
         let mut sources = [None; RECENT_HIT_SOURCE_ALIASES];
         sources[0] = Some(source);
         Self {
+            source_target_id: locator.target_id.clone(),
             locator,
             sources,
             next_source: 1,
@@ -6908,7 +6834,7 @@ impl RecentHitRecord {
         }
     }
 
-    fn matches_source(self, source: HitSourceIdentity) -> bool {
+    fn matches_source(&self, source: HitSourceIdentity) -> bool {
         self.sources
             .iter()
             .flatten()
@@ -6944,14 +6870,14 @@ fn remember_recent_hit(
     push_recent_hit_record(records, RecentHitRecord::from_hit(hit, abyss_half));
 }
 
-fn find_recent_hit(hits: &VecDeque<Hit>, locator: HitLocator) -> Option<&Hit> {
+fn find_recent_hit<'a>(hits: &'a VecDeque<Hit>, locator: &HitLocator) -> Option<&'a Hit> {
     hits.iter()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
         .find(|hit| locator.matches(hit))
 }
 
-fn find_recent_hit_position(hits: &VecDeque<Hit>, locator: HitLocator) -> Option<usize> {
+fn find_recent_hit_position(hits: &VecDeque<Hit>, locator: &HitLocator) -> Option<usize> {
     hits.iter()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
@@ -6959,31 +6885,44 @@ fn find_recent_hit_position(hits: &VecDeque<Hit>, locator: HitLocator) -> Option
         .map(|reverse_index| hits.len().saturating_sub(reverse_index + 1))
 }
 
-fn find_recent_hit_mut(hits: &mut VecDeque<Hit>, locator: HitLocator) -> Option<&mut Hit> {
+fn find_recent_hit_mut<'a>(
+    hits: &'a mut VecDeque<Hit>,
+    locator: &HitLocator,
+) -> Option<&'a mut Hit> {
     hits.iter_mut()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
         .find(|hit| locator.matches(hit))
 }
 
-fn recent_hits_contain_locator(hits: &VecDeque<Hit>, locator: HitLocator) -> bool {
+fn recent_hits_contain_locator(hits: &VecDeque<Hit>, locator: &HitLocator) -> bool {
     find_recent_hit(hits, locator).is_some()
 }
 
-fn find_recent_hit_locator(hits: &VecDeque<Hit>, source: HitSourceIdentity) -> Option<HitLocator> {
+fn find_recent_hit_locator(
+    hits: &VecDeque<Hit>,
+    source: HitSourceIdentity,
+    target_id: Option<&str>,
+) -> Option<HitLocator> {
     hits.iter()
         .rev()
         .take(RECENT_HIT_MUTATION_WINDOW)
-        .find(|hit| source.matches_hit(hit))
+        .find(|hit| {
+            target_id.is_none_or(|id| hit.target_id.as_deref() == Some(id))
+                && source.matches_hit(hit)
+        })
         .map(HitLocator::from)
 }
 
 fn apply_follow_up_to_recent_hit(
     hits: &mut VecDeque<Hit>,
-    locator: HitLocator,
+    locator: &HitLocator,
     follow_up: &HitFollowUp,
 ) -> Option<HitAggregateMutation> {
     let hit = find_recent_hit_mut(hits, locator)?;
+    if hit.exact.is_some() {
+        return None;
+    }
     let next_follow_up_damage = hit.follow_up_damage + follow_up.damage;
     let changed = hit.follow_up_damage.to_bits() != next_follow_up_damage.to_bits()
         || hit.follow_up_timestamp.map(f64::to_bits) != Some(follow_up.timestamp.to_bits())
@@ -7009,10 +6948,13 @@ fn apply_follow_up_to_recent_hit(
 
 fn apply_damage_correction_to_recent_hit(
     hits: &mut VecDeque<Hit>,
-    locator: HitLocator,
+    locator: &HitLocator,
     correction: &HitDamageCorrection,
 ) -> Option<HitAggregateMutation> {
     let hit = find_recent_hit_mut(hits, locator)?;
+    if hit.exact.is_some() {
+        return None;
+    }
     let overkill_changed = correction
         .reconciled_overkill_damage
         .is_some_and(|overkill| {
@@ -7067,19 +7009,15 @@ fn apply_damage_correction_to_recent_hit(
     Some(HitAggregateMutation::new(before, hit))
 }
 
-/// Identifies the `Hit` a follow-up or damage correction was derived from.
-///
-/// Requires every field to still match, including `gameplay_effect_index`
-/// when both sides have one: that index is a per-application identifier, not
-/// a per-hit one, so an AoE or multi-tick effect can hand out the same index
-/// to several hits with different targets/HP in the same packet. Matching on
-/// the index alone (without the HP/damage identity) risked picking whichever
-/// same-index hit happened to be found first instead of the right one — the
-/// damage/HP reconciliation mechanisms are now mutually exclusive per boss-HP
-/// update (see `PacketDecoder::reconcile_boss_hp_updates`) specifically so a
-/// hit's fields never get mutated out from under a still-pending match.
+/// Identifies the original hit before a server correction mutates damage/HP.
+/// New events require the exact packet timestamp, byte offset and bit shift;
+/// the owning locator additionally checks target identity. Source aliases keep
+/// the original and reconciled HP signatures usable for successive mutations.
+/// Older serialized events without a wire location retain their original match.
 #[derive(Clone, Copy, Debug)]
 struct HitSourceIdentity {
+    byte_offset: Option<usize>,
+    bit_shift: Option<u8>,
     char_id: u32,
     timestamp: f64,
     gameplay_effect_index: Option<u32>,
@@ -7091,18 +7029,21 @@ struct HitSourceIdentity {
 
 impl HitSourceIdentity {
     fn matches_hit(self, hit: &Hit) -> bool {
-        hit.char_id == self.char_id
-            && (hit.timestamp - self.timestamp).abs() <= 0.001
-            && hit.gameplay_effect_index == self.gameplay_effect_index
-            && (hit.damage - self.damage).abs() <= 0.5
-            && (hit.target_hp_before - self.target_hp_before).abs() <= 0.5
-            && (hit.target_hp_after - self.target_hp_after).abs() <= 0.5
-            && (hit.target_max_hp - self.target_max_hp).abs() <= 0.5
+        Self::from(hit).matches_source(self)
     }
 
     fn matches_source(self, other: Self) -> bool {
-        self.char_id == other.char_id
-            && (self.timestamp - other.timestamp).abs() <= 0.001
+        let location_matches = match (other.byte_offset, other.bit_shift) {
+            (Some(offset), Some(shift)) => {
+                self.byte_offset == Some(offset)
+                    && self.bit_shift == Some(shift)
+                    && self.timestamp.to_bits() == other.timestamp.to_bits()
+            }
+            (None, None) => (self.timestamp - other.timestamp).abs() <= 0.001,
+            _ => false,
+        };
+        location_matches
+            && self.char_id == other.char_id
             && self.gameplay_effect_index == other.gameplay_effect_index
             && (self.damage - other.damage).abs() <= 0.5
             && (self.target_hp_before - other.target_hp_before).abs() <= 0.5
@@ -7114,6 +7055,8 @@ impl HitSourceIdentity {
 impl From<&Hit> for HitSourceIdentity {
     fn from(hit: &Hit) -> Self {
         Self {
+            byte_offset: Some(hit.byte_offset),
+            bit_shift: Some(hit.bit_shift),
             char_id: hit.char_id,
             timestamp: hit.timestamp,
             gameplay_effect_index: hit.gameplay_effect_index,
@@ -7128,6 +7071,8 @@ impl From<&Hit> for HitSourceIdentity {
 impl From<&HitFollowUp> for HitSourceIdentity {
     fn from(follow_up: &HitFollowUp) -> Self {
         Self {
+            byte_offset: follow_up.source_byte_offset,
+            bit_shift: follow_up.source_bit_shift,
             char_id: follow_up.source_char_id,
             timestamp: follow_up.source_timestamp,
             gameplay_effect_index: follow_up.source_gameplay_effect_index,
@@ -7142,6 +7087,8 @@ impl From<&HitFollowUp> for HitSourceIdentity {
 impl From<&HitDamageCorrection> for HitSourceIdentity {
     fn from(correction: &HitDamageCorrection) -> Self {
         Self {
+            byte_offset: correction.source_byte_offset,
+            bit_shift: correction.source_bit_shift,
             char_id: correction.source_char_id,
             timestamp: correction.source_timestamp,
             gameplay_effect_index: correction.source_gameplay_effect_index,
@@ -7364,6 +7311,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
@@ -7466,6 +7415,9 @@ mod tests {
         let mut state = CombatState::default();
         state.push_hit(interval_hit(10.0, 20.0, 55_477.0));
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 10.0,
             source_char_id: 1010,
             source_damage: 55_477.0,
@@ -7797,7 +7749,7 @@ mod tests {
 
         assert_eq!(state.total_damage, 140.0);
         assert_eq!(state.total_damage_taken, 25.0);
-        let summary = summarize_hit_directions(&state.hits);
+        let summary = state.skill_breakdown_index.directions;
         assert_eq!(summary.outgoing_damage, 100.0);
         assert_eq!(summary.outgoing_hits, 1);
         assert_eq!(summary.unknown_damage, 40.0);
@@ -7809,8 +7761,7 @@ mod tests {
 
     #[test]
     fn timeline_handles_empty_hits() {
-        let hits = Vec::<Hit>::new();
-        let timeline = summarize_timeline(hits.iter(), 1.0);
+        let timeline = CombatState::default().timeline(1.0, false);
 
         assert_eq!(timeline.bucket_seconds, 1.0);
         assert!(timeline.buckets.is_empty());
@@ -7826,9 +7777,11 @@ mod tests {
         let mut next_bucket = test_hit(11.0, 1, "outgoing", 200.0);
         next_bucket.char_name = "一号".to_owned();
         let incoming = test_hit(11.2, 3, "incoming", 999.0);
-        let hits = Vec::from([first, same_bucket, next_bucket, incoming]);
-
-        let timeline = summarize_timeline(hits.iter(), 1.0);
+        let mut state = CombatState::default();
+        for hit in [first, same_bucket, next_bucket, incoming] {
+            state.push_hit(hit);
+        }
+        let timeline = state.timeline(1.0, false);
 
         assert_eq!(timeline.buckets.len(), 2);
         assert_eq!(timeline.total_damage, 350.0);
@@ -7848,22 +7801,6 @@ mod tests {
         state.push_hit(test_hit(f64::MAX, 1, "outgoing", 200.0));
 
         let timeline = state.timeline_bounded(f64::MIN_POSITIVE, false, 8, 8, 8);
-        let legacy = summarize_timeline_with_time_stop(
-            state.hits.iter(),
-            &state.time_stop,
-            state.started_at,
-            state.ended_at,
-            Vec::new(),
-            TimelineAggregationOptions {
-                bucket_seconds: f64::MIN_POSITIVE,
-                subtract_time_stop: false,
-                max_buckets: 8,
-                max_roles_per_bucket: 8,
-                max_characters: 8,
-            },
-        );
-
-        assert_eq!(timeline, legacy);
         assert_eq!(timeline.buckets.len(), 8);
         assert!(timeline.bucket_seconds.is_finite());
         assert!(timeline.bucket_seconds > 0.0);
@@ -8124,6 +8061,9 @@ mod tests {
         source.gameplay_effect_index = Some(42);
         state.push_hit(source);
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 12.0,
             source_char_id: 2,
             source_damage: 100.0,
@@ -8141,6 +8081,9 @@ mod tests {
             reconciled_overkill_damage: None,
         }));
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 12.0,
             source_char_id: 2,
             source_damage: 100.0,
@@ -8161,11 +8104,6 @@ mod tests {
             summarize_skill_breakdown(&state.hits, None),
             "push, correction, and follow-up deltas must preserve skill aggregation parity"
         );
-        assert_eq!(
-            state.skill_breakdown_index.directions,
-            summarize_hit_directions(&state.hits),
-            "diagnostic direction aggregates must match the authoritative hits"
-        );
         // Combat clock semantics include a pause transition after the final
         // hit. The indexed projection must retain that trailing empty range.
         apply_test_pause(&mut state, 13.0, 15.0);
@@ -8177,14 +8115,6 @@ mod tests {
             max_roles_per_bucket: 2,
             max_characters: 5,
         };
-        let legacy = summarize_timeline_with_time_stop(
-            state.hits.iter(),
-            &state.time_stop,
-            state.started_at,
-            state.ended_at,
-            Vec::new(),
-            options,
-        );
         let indexed = state.timeline_bounded(
             options.bucket_seconds,
             options.subtract_time_stop,
@@ -8193,7 +8123,6 @@ mod tests {
             options.max_characters,
         );
 
-        assert_eq!(indexed, legacy);
         assert_eq!(indexed.end_timestamp, Some(15.0));
         assert_eq!(indexed.buckets.len(), 7);
     }
@@ -8447,6 +8376,9 @@ mod tests {
         state.push_hit(test_hit(3.0, 8, "incoming", 25.0));
 
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -8473,6 +8405,9 @@ mod tests {
             425.0
         );
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -8757,130 +8692,14 @@ mod tests {
         });
 
         let summary = state.capture_quality_summary(CaptureQualitySource::PcapngReplay);
-        let text = summary.redacted_text();
+        let json = serde_json::to_string(&summary).expect("quality summary should serialize");
 
         assert_eq!(summary.packet_count, 1);
         assert_eq!(summary.packets_with_hits, 1);
         assert_eq!(summary.abyss_event_count, 1);
-        assert!(text.contains("PCAPNG 回放"));
-        assert!(!text.contains("deadbeef"));
-        assert!(!text.contains("192.0.2.1"));
-        assert!(!text.contains("decoded text"));
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn allocation_free_quality_scalars_match_legacy_out_of_order_time_stops() {
-        let mut state = CombatState::default();
-        state.push_hit(test_hit(0.0, 1, "outgoing", 1.0));
-        state.push_hit(test_hit(30.0, 1, "outgoing", 1.0));
-        for event in [
-            TimeStopEvent::GamePauseStarted {
-                timestamp: 10.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp: 20.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseStarted {
-                timestamp: 1.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp: 5.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseStarted {
-                timestamp: 4.0,
-                pause_type_mask: 1,
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp: 12.0,
-                pause_type_mask: 1,
-            },
-        ] {
-            state.apply_time_stop_event(event);
-        }
-
-        let legacy = state.capture_quality_summary(CaptureQualitySource::Live);
-        let scalars = state.capture_quality_scalars();
-
-        assert_eq!(scalars.hits_generation, state.hits_generation);
-        assert_eq!(scalars.hit_count, legacy.hit_count);
-        assert_eq!(scalars.packet_count, legacy.packet_count);
-        assert_eq!(scalars.packets_with_hits, legacy.packets_with_hits);
-        assert_eq!(scalars.time_stop_event_count, legacy.time_stop_event_count);
-        assert_eq!(
-            scalars.time_stop_interval_count,
-            legacy.time_stop_interval_count
-        );
-        assert_eq!(scalars.abyss_event_count, legacy.abyss_event_count);
-        assert_eq!(
-            scalars.server_damage_corrections,
-            legacy.server_damage_corrections
-        );
-        assert_eq!(scalars.time_stop_event_count, 3);
-        assert_eq!(scalars.time_stop_interval_count, 1);
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn allocation_free_interval_count_matches_materialized_union_cases() {
-        let trackers = [
-            TimeStopTracker::default(),
-            TimeStopTracker {
-                intervals: vec![
-                    TimeStopInterval {
-                        start: 1.0,
-                        end: 3.0,
-                    },
-                    TimeStopInterval {
-                        start: 3.0,
-                        end: 4.0,
-                    },
-                    TimeStopInterval {
-                        start: 8.0,
-                        end: 9.0,
-                    },
-                ]
-                .into(),
-                active_game_pause: Some((10.0, 1)),
-                ..TimeStopTracker::default()
-            },
-            TimeStopTracker {
-                intervals: vec![
-                    TimeStopInterval {
-                        start: 10.0,
-                        end: 20.0,
-                    },
-                    TimeStopInterval {
-                        start: 1.0,
-                        end: 5.0,
-                    },
-                    TimeStopInterval {
-                        start: 4.0,
-                        end: 12.0,
-                    },
-                    TimeStopInterval {
-                        start: 30.0,
-                        end: 40.0,
-                    },
-                ]
-                .into(),
-                active_game_pause: Some((39.0, 1)),
-                ..TimeStopTracker::default()
-            },
-        ];
-        for (case, tracker) in trackers.iter().enumerate() {
-            for (start, end) in [(0.0, 50.0), (2.0, 11.0), (11.0, 35.0), (5.0, 5.0)] {
-                assert_eq!(
-                    tracker.interval_count_between(start, end),
-                    tracker.intervals_between(start, end).len(),
-                    "case {case}, window {start}..{end}"
-                );
-            }
-        }
+        assert!(!json.contains("deadbeef"));
+        assert!(!json.contains("192.0.2.1"));
+        assert!(!json.contains("decoded text"));
     }
 
     #[test]
@@ -9019,6 +8838,179 @@ mod tests {
     }
 
     #[test]
+    fn target_telemetry_preserves_pending_hit_mutations() {
+        for telemetry_first in [true, false] {
+            for precise_source in [true, false] {
+                let mut state = CombatState::default();
+                state.apply_abyss_event(AbyssEvent::Stage {
+                    timestamp: 0.0,
+                    cycle: Some(1),
+                    floor: Some(1),
+                    half: AbyssHalf::First,
+                    allow_late_backfill: false,
+                });
+                let mut source = test_hit(1.0, 7, "unknown", 1_000.0);
+                source.byte_offset = 100;
+                source.target_id = Some("enemy:0000000000005678".to_owned());
+                source.target_hp_before = 10_000.0;
+                source.target_hp_after = 9_000.0;
+                source.target_max_hp = 10_000.0;
+                let event = ModScriptEvent::from_bridge(
+                    1,
+                    FILETIME_UNIX_EPOCH_100NS
+                        .saturating_add((1.05 * FILETIME_TICKS_PER_SECOND) as u64),
+                    ENEMY_TELEMETRY_MOD_ID.to_owned(),
+                    "post.enemy.hit_target".to_owned(),
+                    vec![0x1234, 0x5678, 1],
+                );
+                if telemetry_first {
+                    state.apply_mod_script_event(&event);
+                }
+                state.push_hit(source.clone());
+                if !telemetry_first {
+                    state.apply_mod_script_event(&event);
+                }
+                assert_eq!(
+                    state.hits[0].target_id.as_deref(),
+                    Some("enemy-instance:0000000000001234")
+                );
+                assert!(state.apply_follow_up(HitFollowUp {
+                    source_byte_offset: precise_source.then_some(source.byte_offset),
+                    source_bit_shift: precise_source.then_some(source.bit_shift),
+                    source_target_id: precise_source.then(|| source.target_id.clone()).flatten(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    timestamp: 1.1,
+                    damage: 250.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: None,
+                    attack_type: None,
+                    damage_attribute: None,
+                }));
+                assert!(state.apply_damage_correction(HitDamageCorrection {
+                    source_byte_offset: precise_source.then_some(source.byte_offset),
+                    source_bit_shift: precise_source.then_some(source.bit_shift),
+                    source_target_id: precise_source.then(|| source.target_id.clone()).flatten(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    damage: 1_100.0,
+                    target_hp_before: 10_100.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: None,
+                    attack_type: None,
+                    max_hp_reduction: None,
+                    reconciled_overkill_damage: None,
+                }));
+                for hits in [&state.hits, &state.abyss.first_half.hits] {
+                    assert_eq!(hits[0].damage, 1_100.0);
+                    assert_eq!(hits[0].follow_up_damage, 250.0);
+                    assert_eq!(hits[0].direction, HitDirection::Outgoing);
+                }
+                assert_eq!(state.total_damage, 1_350.0);
+                assert_eq!(state.abyss.first_half.total_damage, 1_350.0);
+            }
+        }
+    }
+
+    #[test]
+    fn follow_up_and_correction_keep_equal_same_frame_hits_separate() {
+        // Separate byte/bit locations on one target, then equal coordinates
+        // on separate targets: all used to resolve to the last matching hit.
+        for distinction in ["byte", "bit", "target"] {
+            let mut state = CombatState::default();
+            let mut first = test_hit(1.0, 7, "outgoing", 1_000.0);
+            first.byte_offset = 100;
+            first.bit_shift = 3;
+            first.target_id = Some("target-a".to_owned());
+            first.target_hp_before = 10_000.0;
+            first.target_hp_after = 9_000.0;
+            first.target_max_hp = 10_000.0;
+            first.gameplay_effect_index = Some(42);
+            let mut second = first.clone();
+            match distinction {
+                "byte" => second.byte_offset = 200,
+                "bit" => second.bit_shift = 4,
+                _ => second.target_id = Some("target-b".to_owned()),
+            }
+            state.push_hit(first.clone());
+            state.push_hit(second.clone());
+            if distinction == "target" {
+                // Also cover the bounded recovery path used by restored state.
+                state.recent_hit_records.clear();
+            }
+            for source in [&first, &second] {
+                let follow_up = HitFollowUp {
+                    source_byte_offset: Some(source.byte_offset),
+                    source_bit_shift: Some(source.bit_shift),
+                    source_target_id: source.target_id.clone(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    timestamp: 1.1,
+                    damage: 250.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: Some("覆纹追加攻击".to_owned()),
+                    attack_type: Some("覆纹".to_owned()),
+                    damage_attribute: None,
+                };
+                // A supplied but unknown/partial wire location must not fall
+                // back to the otherwise equal damage and HP signature.
+                let mut missing = follow_up.clone();
+                missing.source_byte_offset = Some(999);
+                assert!(!state.apply_follow_up(missing));
+                let mut partial = follow_up.clone();
+                partial.source_bit_shift = None;
+                assert!(!state.apply_follow_up(partial));
+                assert!(state.apply_follow_up(follow_up));
+                assert!(state.apply_damage_correction(HitDamageCorrection {
+                    source_byte_offset: Some(source.byte_offset),
+                    source_bit_shift: Some(source.bit_shift),
+                    source_target_id: source.target_id.clone(),
+                    source_timestamp: source.timestamp,
+                    source_char_id: source.char_id,
+                    source_damage: source.damage,
+                    source_target_hp_before: source.target_hp_before,
+                    source_target_hp_after: source.target_hp_after,
+                    source_target_max_hp: source.target_max_hp,
+                    source_gameplay_effect_index: source.gameplay_effect_index,
+                    damage: 1_100.0,
+                    target_hp_before: 10_100.0,
+                    target_hp_after: 8_750.0,
+                    target_hp_percent: 87.5,
+                    damage_name: None,
+                    attack_type: None,
+                    max_hp_reduction: None,
+                    reconciled_overkill_damage: None,
+                }));
+            }
+            assert_eq!(state.hits.len(), 2);
+            for hit in &state.hits {
+                assert_eq!(hit.follow_up_damage, 250.0);
+                assert_eq!(hit.damage, 1_100.0);
+            }
+            assert_eq!(state.total_damage, 2_700.0);
+            assert_eq!(state.damage_correction_count, 2);
+        }
+    }
+
+    #[test]
     fn follow_up_damage_merges_into_source_hit_totals() {
         let mut state = CombatState::default();
         let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
@@ -9029,6 +9021,9 @@ mod tests {
         state.push_hit(hit);
 
         state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 1_000.0,
@@ -9067,6 +9062,9 @@ mod tests {
         state.push_hit(hit);
 
         state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 1_000.0,
@@ -9131,6 +9129,9 @@ mod tests {
         reset_combat_total_rebuild_count();
 
         assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 3_000.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -9150,6 +9151,9 @@ mod tests {
         // The follow-up still names the original hit. The bounded record keeps
         // that source alias even though the correction changed damage/HP.
         assert!(state.apply_follow_up(HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 3_000.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -9206,6 +9210,9 @@ mod tests {
         // that hit specifically, not on the second (more recently pushed, so
         // checked first by the reverse search) one sharing the same index.
         state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 1_000.0,
@@ -9465,8 +9472,43 @@ mod tests {
 
         assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
         assert!((state.duration_with_time_stop(true) - 6.5).abs() < 1e-9);
-        assert!((state.active_elapsed_between(10.0, 20.0) - 6.5).abs() < 1e-9);
         assert!((state.dps_with_time_stop(true) - (300.0 / 6.5)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pause_mask_changes_split_typed_intervals_without_double_counting_time() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(9.0, 1021, "outgoing", 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1 << 6,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 11.0,
+            pause_type_mask: (1 << 6) | (1 << 2),
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 12.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(test_hit(15.0, 1021, "outgoing", 200.0));
+
+        let intervals = state.time_stop_intervals_between(9.0, 15.0);
+        assert_eq!(intervals.len(), 3);
+        assert_eq!(intervals[0].pause_type_mask, Some(1 << 6));
+        assert_eq!(intervals[1].pause_type_mask, Some((1 << 6) | (1 << 2)));
+        assert_eq!(intervals[2].pause_type_mask, Some(1 << 2));
+        assert!((intervals[0].start_offset - 1.0).abs() < 1e-9);
+        assert!((intervals[0].end_offset - 2.0).abs() < 1e-9);
+        assert!((intervals[1].start_offset - 2.0).abs() < 1e-9);
+        assert!((intervals[1].end_offset - 3.0).abs() < 1e-9);
+        assert!((intervals[2].start_offset - 3.0).abs() < 1e-9);
+        assert!((intervals[2].end_offset - 5.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 2.0).abs() < 1e-9);
     }
 
     #[test]
@@ -9484,11 +9526,15 @@ mod tests {
         assert!(state.time_stop.intervals.len() <= MAX_RETAINED_TIME_STOP_INTERVALS);
         assert!(state.time_stop.archived.is_some());
         assert!(state.time_stop_events.len() <= MAX_RETAINED_TIME_STOP_EVENTS);
-        let projected = state.time_stop_intervals_between(0.0, end);
-        assert!(projected.len() <= MAX_PROJECTED_TIME_STOP_INTERVALS);
         let timeline = state.timeline_bounded(1.0, true, 32, 8, 8);
         assert!(timeline.time_stop_intervals.len() <= MAX_PROJECTED_TIME_STOP_INTERVALS);
         assert!(timeline.compacted_time_stop_intervals > 0);
+        assert!(
+            timeline
+                .time_stop_intervals
+                .iter()
+                .any(|interval| interval.pause_type_mask.is_none())
+        );
         assert!((state.time_stop.frozen_between(0.0, end) - pause_count as f64).abs() < 1e-9);
 
         // The bounded event projection remains self-contained for JSON/history
@@ -9758,6 +9804,9 @@ mod tests {
         state.push_hit(last_hit);
 
         state.apply_damage_correction(HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 10.0,
             source_char_id: 1010,
             source_damage: 100.0,

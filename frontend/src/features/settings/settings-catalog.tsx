@@ -80,10 +80,6 @@ const DENSITY_OPTIONS = [
   { value: "cozy", labelKey: "Cozy" },
   { value: "comfortable", labelKey: "Comfortable" },
 ] as const;
-const DPS_TIME_OPTIONS = [
-  { value: "time-stop-adjusted", labelKey: "Exclude Time Stop" },
-  { value: "real-time", labelKey: "Real Time (incl. time stop)" },
-] as const;
 const LAYOUT_PROFILES = [
   {
     id: "combat",
@@ -219,6 +215,7 @@ function captureInput(snapshot: SettingsSnapshot): CaptureSettingsInput {
     autoRoundIdleSecondsMin: _minimum,
     autoRoundIdleSecondsMax: _maximum,
     dpsTimeRuntime: _runtime,
+    dpsTimeMode: _timeMode,
     ...settings
   } = snapshot.capture;
   return settings;
@@ -556,10 +553,6 @@ function ParseSettingsCard({
   );
   const save = (patch: Partial<CaptureSettingsInput>) =>
     actions.setCapture({ ...settings, ...patch });
-  const dpsTimeDescription =
-    settings.dpsTimeMode === "real-time"
-      ? "Output time accrues over the capture time span"
-      : "Uses authoritative game pause intervals when the combat-clock provider is available";
 
   return (
     <SettingsCard icon={SlidersHorizontal} titleKey="Parse Settings">
@@ -744,33 +737,6 @@ function ParseSettingsCard({
               />
               <span className="text-xs text-muted-foreground">s</span>
             </label>
-          ) : null}
-        </div>
-      </SettingsRow>
-      <SettingsRow labelKey="DPS Time" descriptionKey={dpsTimeDescription}>
-        <div className="flex min-w-0 flex-col gap-2">
-          <NativeSelect
-            disabled={pending}
-            ariaLabel={t("DPS Time")}
-            value={settings.dpsTimeMode}
-            onChange={(dpsTimeMode) =>
-              void save({
-                dpsTimeMode: dpsTimeMode as CaptureSettingsInput["dpsTimeMode"],
-              })
-            }
-            options={DPS_TIME_OPTIONS.map((option) => ({
-              value: option.value,
-              label: t(option.labelKey),
-            }))}
-          />
-          {settings.dpsTimeMode === "time-stop-adjusted" &&
-          snapshot.capture.dpsTimeRuntime.warningMessageKey ? (
-            <p
-              className="text-xs leading-relaxed text-amber-600 dark:text-amber-300"
-              role="status"
-            >
-              {t(snapshot.capture.dpsTimeRuntime.warningMessageKey)}
-            </p>
           ) : null}
         </div>
       </SettingsRow>
@@ -1073,7 +1039,7 @@ function SettingsCard({
   children: ReactNode;
 }) {
   return (
-    <Card>
+    <Card className="@container/settings-card">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Icon className="size-4" aria-hidden="true" />
@@ -1095,7 +1061,7 @@ function SettingsRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid gap-2 py-2.5 first:pt-0 last:pb-0 sm:grid-cols-[minmax(8.5rem,0.42fr)_minmax(0,1fr)] sm:items-center">
+    <div className="grid gap-3 py-3 first:pt-0 last:pb-0 @min-[28rem]/settings-card:grid-cols-[minmax(8.5rem,0.6fr)_minmax(0,1fr)] @min-[28rem]/settings-card:items-center">
       <div>
         <p className="text-sm font-medium">{t(labelKey)}</p>
         {descriptionKey ? (

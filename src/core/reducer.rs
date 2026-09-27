@@ -48,7 +48,24 @@ pub enum CoreSignal {
 
 pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSignal {
     match event {
+        EngineEvent::ChallengeRestart { .. } => {
+            if state.hits.is_empty() {
+                CoreSignal::Unchanged
+            } else {
+                state.clear_battle_preserving_inventory();
+                CoreSignal::StateChanged
+            }
+        }
+        EngineEvent::ExactSettlement(projection) => match state.apply_exact_projection(*projection)
+        {
+            Ok(true) => CoreSignal::StateChanged,
+            Ok(false) => CoreSignal::Unchanged,
+            Err(code) => CoreSignal::Error(code.into()),
+        },
         EngineEvent::Hit(hit) => {
+            if hit.exact.is_some() {
+                return CoreSignal::Error("exact_hit_requires_projection_event".into());
+            }
             if hit.is_server_damage_reconciliation() {
                 if state.reconcile_server_target_damage(*hit) {
                     CoreSignal::StateChanged
@@ -95,6 +112,10 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             CoreSignal::PacketObserved
         }
         EngineEvent::Abyss(event) => {
+            if matches!(&event, AbyssEvent::Location { floor, .. } if state.abyss.floor == Some(*floor))
+            {
+                return CoreSignal::Unchanged;
+            }
             if matches!(&event, AbyssEvent::RestartDetected { .. })
                 && state.abyss.active_half.is_none()
                 && state.abyss.exited_at.is_some()
@@ -117,6 +138,18 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
         }
         EngineEvent::EmptyCurtain(items) => {
             if state.replace_empty_curtain(items) {
+                CoreSignal::InventoryReplaced
+            } else {
+                CoreSignal::Unchanged
+            }
+        }
+        EngineEvent::PacketInventory { items, characters } => {
+            let items_changed = state.replace_empty_curtain(items);
+            let characters_changed = state.replace_empty_curtain_characters(characters);
+            if characters_changed && !items_changed {
+                state.empty_curtain_generation = state.empty_curtain_generation.wrapping_add(1);
+            }
+            if items_changed || characters_changed {
                 CoreSignal::InventoryReplaced
             } else {
                 CoreSignal::Unchanged
@@ -194,6 +227,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }
@@ -700,6 +735,9 @@ mod tests {
             EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
         );
         let follow_up = HitFollowUp {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -729,6 +767,9 @@ mod tests {
             EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
         );
         let correction = HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 100.0,
@@ -789,6 +830,9 @@ mod tests {
         apply_engine_event(&mut deficit, EngineEvent::Hit(Box::new(targeted_hit(80.0))));
         apply_engine_event(&mut deficit, EngineEvent::Hit(Box::new(marker())));
         let correction = HitDamageCorrection {
+            source_byte_offset: None,
+            source_bit_shift: None,
+            source_target_id: None,
             source_timestamp: 1.0,
             source_char_id: 7,
             source_damage: 80.0,
@@ -830,6 +874,9 @@ mod tests {
         apply_engine_event(
             &mut state,
             EngineEvent::HitFollowUp(HitFollowUp {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 1.0,
                 source_char_id: 7,
                 source_damage: 80.0,
@@ -992,6 +1039,9 @@ mod tests {
         let unmatched = apply_engine_event(
             &mut state,
             EngineEvent::HitFollowUp(HitFollowUp {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 99.0,
                 source_char_id: 7,
                 source_damage: 100.0,
@@ -1013,6 +1063,9 @@ mod tests {
         let identical = apply_engine_event(
             &mut state,
             EngineEvent::HitDamageCorrection(HitDamageCorrection {
+                source_byte_offset: None,
+                source_bit_shift: None,
+                source_target_id: None,
                 source_timestamp: 1.0,
                 source_char_id: 7,
                 source_damage: 100.0,
@@ -1219,6 +1272,56 @@ mod tests {
         );
         assert_eq!(duplicate, CoreSignal::Unchanged);
         assert_eq!(state.empty_curtain_characters_generation, generation);
+    }
+    #[test]
+    fn packet_inventory_updates_one_domain_and_duplicate_is_noop() {
+        let mut state = CombatState::default();
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 1, serial: 2 },
+            character_id: 1004,
+        };
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![character]
+                }
+            ),
+            CoreSignal::InventoryReplaced
+        );
+        let revision = (
+            state.empty_curtain_generation,
+            state.empty_curtain_characters_generation,
+        );
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![character]
+                }
+            ),
+            CoreSignal::Unchanged
+        );
+        assert_eq!(
+            (
+                state.empty_curtain_generation,
+                state.empty_curtain_characters_generation
+            ),
+            revision
+        );
+        assert_eq!(
+            apply_engine_event(
+                &mut state,
+                EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![]
+                }
+            ),
+            CoreSignal::InventoryReplaced
+        );
+        assert!(state.empty_curtain.is_empty() && state.empty_curtain_characters.is_empty());
     }
 
     #[test]

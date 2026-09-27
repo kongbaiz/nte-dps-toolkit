@@ -1,5 +1,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
+
+import {
+  tauriInvokeTransport,
+  type InvokeTransport,
+} from "@/lib/tauri/stream-client";
 
 export interface DesktopWindowHandle {
   startDragging(): Promise<void>;
@@ -11,16 +15,9 @@ export interface DesktopWindowHandle {
 
 type WindowProvider = () => DesktopWindowHandle;
 
-interface DesktopWindowTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-}
-
 export function createDesktopWindowClient(
   currentWindow: WindowProvider = getCurrentWindow,
-  transport: DesktopWindowTransport = { invoke },
+  transport: InvokeTransport = tauriInvokeTransport,
 ) {
   return {
     startDragging: () => currentWindow().startDragging(),

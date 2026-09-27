@@ -12,7 +12,6 @@ import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import { MOTION_DURATION, waitForMotion } from "@/lib/motion";
 
 import { WindowMotionContext } from "./window-motion-context";
-import { isWindowMotionTarget } from "./window-motion-target";
 
 const WINDOW_MOTION_ENTER_EVENT = "desktop-window-motion-enter";
 
@@ -30,7 +29,7 @@ export function WindowMotionBoundary({ children }: { children: ReactNode }) {
     const currentWindowLabel = getCurrentWindow().label;
     return cleanupAsyncRegistration(
       listen<string>(WINDOW_MOTION_ENTER_EVENT, (event) => {
-        if (isWindowMotionTarget(currentWindowLabel, event.payload)) {
+        if (event.payload === currentWindowLabel) {
           playEnter();
         }
       }),

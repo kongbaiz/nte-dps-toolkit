@@ -255,6 +255,7 @@ impl From<CaptureQualitySummary> for DiagnosticsQualitySnapshot {
         Self {
             source: match quality.source {
                 nte_dps_tool::engine::model::CaptureQualitySource::Live => "live",
+                nte_dps_tool::engine::model::CaptureQualitySource::Plugin => "plugin",
                 nte_dps_tool::engine::model::CaptureQualitySource::PcapngReplay => "pcapng_replay",
                 nte_dps_tool::engine::model::CaptureQualitySource::JsonReplay => "json_replay",
                 nte_dps_tool::engine::model::CaptureQualitySource::Unknown => "unknown",

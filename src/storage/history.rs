@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize, de::IgnoredAny};
 use crate::engine::model::{
     AbyssHalf, CaptureQualitySummary, CombatSessionAbyssHalfSummary, CombatSessionCharacterSummary,
     CombatSessionSkillSummary, CombatSessionSummary, CombatState, DamageAttributionSummary, Hit,
-    TeamDps, TeamDpsMember, TimeStopEvent,
+    TeamDps, TeamDpsMember, TimeStopEvent, TimeStopEventSegmenter,
 };
 use crate::storage::io_util::{atomic_write_file, atomic_write_text};
 use crate::storage::paths::software_dir;
@@ -168,18 +168,6 @@ struct HistoryHitChunkWrite<'a> {
     lane: HistoryHitLane,
     index: usize,
     hits: &'a [Hit],
-}
-
-#[derive(Serialize)]
-struct HistoryRecordExport<'a> {
-    version: u32,
-    id: &'a str,
-    saved_at: &'a DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    recorded_at: Option<&'a DateTime<Utc>>,
-    summary: &'a CombatSessionSummary,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<&'a HistoryCombatDetails>,
 }
 
 #[derive(Serialize)]
@@ -404,13 +392,6 @@ impl HistorySaveOutcome {
         }
     }
 
-    pub fn maintenance_warning(&self) -> Option<HistoryMaintenanceWarning> {
-        match self {
-            Self::Committed(_) => None,
-            Self::CommittedWithMaintenanceWarning { warning, .. } => Some(*warning),
-        }
-    }
-
     pub fn into_record(self) -> HistoryRecord {
         match self {
             Self::Committed(record) | Self::CommittedWithMaintenanceWarning { record, .. } => {
@@ -423,6 +404,8 @@ impl HistorySaveOutcome {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HistoryCombatDetails {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exact_quarantined_messages: Vec<crate::engine::settlement::application::MessageIdentity>,
     pub floor: Option<u32>,
     pub active_half: Option<AbyssHalf>,
     pub first_half_at: Option<f64>,
@@ -443,6 +426,7 @@ pub struct HistoryCombatDetails {
 impl HistoryCombatDetails {
     fn metadata_only(&self) -> Self {
         Self {
+            exact_quarantined_messages: self.exact_quarantined_messages.clone(),
             floor: self.floor,
             active_half: self.active_half,
             first_half_at: self.first_half_at,
@@ -491,6 +475,7 @@ impl HistoryCombatDetails {
         let round_started_at = round_started_at?;
         let round_ended_at = round_ended_at?;
         Some(Self {
+            exact_quarantined_messages: state.exact_quarantined_messages(),
             floor: if has_abyss_hits { abyss.floor } else { None },
             active_half: if has_abyss_hits {
                 abyss.active_half
@@ -575,6 +560,7 @@ impl HistoryCombatDetails {
             round_ended_at,
         );
         Some(Self {
+            exact_quarantined_messages: state.exact_quarantined_messages(),
             floor: has_abyss_hits.then_some(state.abyss.floor).flatten(),
             active_half: has_abyss_hits.then_some(state.abyss.active_half).flatten(),
             first_half_at: has_abyss_hits
@@ -625,12 +611,14 @@ impl HistoryCombatDetails {
         if self.global_hits.is_empty() {
             state.rebuild_global_from_abyss();
         }
+        state.restore_exact_quarantine(self.exact_quarantined_messages.clone());
         state
     }
 
     /// Rebuilds a selected History state by moving its unbounded vectors.
     pub fn into_combat_state(self) -> CombatState {
         let Self {
+            exact_quarantined_messages,
             floor,
             active_half,
             first_half_at,
@@ -660,6 +648,7 @@ impl HistoryCombatDetails {
         if state.hits.is_empty() {
             state.rebuild_global_from_abyss();
         }
+        state.restore_exact_quarantine(exact_quarantined_messages);
         state
     }
 
@@ -674,6 +663,33 @@ impl HistoryCombatDetails {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.exact_quarantined_messages.len() > 100_000
+            || self.exact_quarantined_messages.iter().any(|k| {
+                k.generation.is_empty()
+                    || k.generation.len() > 128
+                    || k.connection.is_empty()
+                    || k.connection.len() > 256
+                    || k.message.parse::<i64>().is_err()
+                    || k.timestamp_bits.parse::<u64>().is_err()
+            })
+        {
+            return Err("History exact identity metadata invalid".into());
+        }
+        let quarantined: std::collections::HashSet<_> =
+            self.exact_quarantined_messages.iter().collect();
+        if self
+            .global_hits
+            .iter()
+            .chain(&self.first_half_hits)
+            .chain(&self.second_half_hits)
+            .any(|h| {
+                h.exact
+                    .as_ref()
+                    .is_some_and(|e| quarantined.contains(&e.message))
+            })
+        {
+            return Err("History exact quarantine conflicts with retained hit".into());
+        }
         if !self.global_hits.is_empty()
             && (!self.first_half_hits.is_empty() || !self.second_half_hits.is_empty())
         {
@@ -701,7 +717,8 @@ impl HistoryCombatDetails {
         if self.time_stop_events.iter().any(|event| {
             let timestamp = match event {
                 TimeStopEvent::GamePauseStarted { timestamp, .. }
-                | TimeStopEvent::GamePauseEnded { timestamp, .. } => timestamp,
+                | TimeStopEvent::GamePauseEnded { timestamp, .. }
+                | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => timestamp,
             };
             !timestamp.is_finite()
         }) {
@@ -766,44 +783,7 @@ fn clipped_time_stop_events(
     range_start: f64,
     range_end: f64,
 ) -> Vec<TimeStopEvent> {
-    let mut clipped = Vec::new();
-    let mut active_pause: Option<(f64, u32)> = None;
-    for event in events {
-        match event {
-            TimeStopEvent::GamePauseStarted {
-                timestamp,
-                pause_type_mask,
-            } => match &mut active_pause {
-                Some((start, active_mask)) => {
-                    *start = start.min(*timestamp);
-                    *active_mask |= *pause_type_mask;
-                }
-                None => active_pause = Some((*timestamp, *pause_type_mask)),
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp,
-                pause_type_mask,
-            } => {
-                let Some((start, active_mask)) = active_pause.take() else {
-                    continue;
-                };
-                let start = start.max(range_start);
-                let end = timestamp.min(range_end);
-                if end <= start {
-                    continue;
-                }
-                clipped.push(TimeStopEvent::GamePauseStarted {
-                    timestamp: start,
-                    pause_type_mask: active_mask,
-                });
-                clipped.push(TimeStopEvent::GamePauseEnded {
-                    timestamp: end,
-                    pause_type_mask: *pause_type_mask,
-                });
-            }
-        }
-    }
-    clipped
+    clipped_time_stop_events_iter(events.iter().cloned(), range_start, range_end)
 }
 
 fn clipped_time_stop_events_owned(
@@ -811,42 +791,68 @@ fn clipped_time_stop_events_owned(
     range_start: f64,
     range_end: f64,
 ) -> Vec<TimeStopEvent> {
-    let mut clipped = Vec::new();
-    let mut active_pause: Option<(f64, u32)> = None;
+    clipped_time_stop_events_iter(events, range_start, range_end)
+}
+
+fn clipped_time_stop_events_iter(
+    events: impl IntoIterator<Item = TimeStopEvent>,
+    range_start: f64,
+    range_end: f64,
+) -> Vec<TimeStopEvent> {
+    let mut segments = Vec::new();
+    let mut segmenter = TimeStopEventSegmenter::default();
     for event in events {
-        match event {
-            TimeStopEvent::GamePauseStarted {
-                timestamp,
-                pause_type_mask,
-            } => match &mut active_pause {
-                Some((start, active_mask)) => {
-                    *start = start.min(timestamp);
-                    *active_mask |= pause_type_mask;
-                }
-                None => active_pause = Some((timestamp, pause_type_mask)),
-            },
-            TimeStopEvent::GamePauseEnded {
-                timestamp,
-                pause_type_mask,
-            } => {
-                let Some((start, active_mask)) = active_pause.take() else {
-                    continue;
-                };
-                let start = start.max(range_start);
-                let end = timestamp.min(range_end);
-                if end <= start {
-                    continue;
-                }
+        if let Some(segment) = segmenter.apply_event(&event) {
+            segments.push(segment);
+        }
+    }
+    if let Some((start, active_mask)) = segmenter.active_game_pause()
+        && range_end > start
+    {
+        segments.push((start, range_end, active_mask));
+    }
+
+    let mut clipped = Vec::new();
+    let mut output_active: Option<(f64, u32)> = None;
+    for (start, end, pause_type_mask) in segments {
+        let start = start.max(range_start);
+        let end = end.min(range_end);
+        if end <= start {
+            continue;
+        }
+        match output_active.take() {
+            None => {
                 clipped.push(TimeStopEvent::GamePauseStarted {
                     timestamp: start,
+                    pause_type_mask,
+                });
+            }
+            Some((active_end, active_mask)) if start <= active_end => {
+                if active_mask != pause_type_mask {
+                    clipped.push(TimeStopEvent::GamePauseMaskChanged {
+                        timestamp: start,
+                        pause_type_mask,
+                    });
+                }
+            }
+            Some((active_end, active_mask)) => {
+                clipped.push(TimeStopEvent::GamePauseEnded {
+                    timestamp: active_end,
                     pause_type_mask: active_mask,
                 });
-                clipped.push(TimeStopEvent::GamePauseEnded {
-                    timestamp: end,
+                clipped.push(TimeStopEvent::GamePauseStarted {
+                    timestamp: start,
                     pause_type_mask,
                 });
             }
         }
+        output_active = Some((end, pause_type_mask));
+    }
+    if let Some((end, pause_type_mask)) = output_active {
+        clipped.push(TimeStopEvent::GamePauseEnded {
+            timestamp: end,
+            pause_type_mask,
+        });
     }
     clipped
 }
@@ -1139,10 +1145,6 @@ pub fn history_dir() -> PathBuf {
     software_dir().join("history")
 }
 
-pub fn load_history() -> HistoryLoadResult {
-    load_history_from_dir(&history_dir())
-}
-
 /// Loads bounded History row metadata without opening or materializing detail
 /// chunks. Use this for list/stream projections; hydrate one selected record
 /// with [`load_history_record_by_id_for_interactive_selection`] only when its
@@ -1159,11 +1161,6 @@ pub fn load_history_record_from_path(path: &Path) -> Result<HistoryRecord, Strin
 
 /// Resolves and hydrates exactly one retained record instead of loading every
 /// record's potentially large detail stream.
-pub fn load_history_record_by_id(record_id: &str) -> Result<Option<HistoryRecord>, String> {
-    load_history_record_by_id_with_max_detail_bytes(record_id, MAX_HISTORY_DETAILS_BYTES)
-        .map_err(|error| error.to_string())
-}
-
 /// Preflights the trusted on-disk detail footprint from the lightweight index
 /// before any chunk is opened or any `Hit` is materialized.
 pub fn load_history_record_by_id_with_max_detail_bytes(
@@ -1253,32 +1250,6 @@ fn load_indexed_history_record_with_limits(
         }
     }
     Ok(loaded)
-}
-
-/// Atomically writes a hydrated record as a self-contained JSON export without
-/// first materializing a second record-sized `String`. The record is trusted
-/// runtime state, so this output path deliberately has no import-size ceiling;
-/// importing the resulting file still goes through the independent external
-/// file and hit-count budgets.
-pub fn export_history_record_to_path(
-    record: &HistoryRecord,
-    destination: &Path,
-) -> Result<(), String> {
-    if let Some(details) = &record.details {
-        details.validate()?;
-    }
-    let export = HistoryRecordExport {
-        version: record.version,
-        id: &record.id,
-        saved_at: &record.saved_at,
-        recorded_at: record.recorded_at.as_ref(),
-        summary: &record.summary,
-        details: record.details.as_ref(),
-    };
-    atomic_write_file(destination, |writer| {
-        serde_json::to_writer_pretty(&mut *writer, &export).map_err(|error| error.to_string())?;
-        writer.write_all(b"\n").map_err(|error| error.to_string())
-    })
 }
 
 /// Prepares a hit-free export descriptor from the local History index and main
@@ -1379,14 +1350,6 @@ pub fn export_prepared_history_record_to_path(
         return Err(error);
     }
     result.map_err(|_| HistoryRecordExportError::DestinationWriteFailed)
-}
-
-pub fn export_history_record_by_id_to_path(
-    record_id: &str,
-    destination: &Path,
-) -> Result<(), HistoryRecordExportError> {
-    let prepared = prepare_history_record_export(record_id)?;
-    export_prepared_history_record_to_path(&prepared, destination)
 }
 
 pub fn export_history_record_by_id_from_dir_to_path(
@@ -1959,19 +1922,6 @@ pub fn save_summary_with_details(
     save_summary_with_details_to_dir(&history_dir(), summary, details)
 }
 
-pub fn save_summary_outcome(
-    summary: CombatSessionSummary,
-) -> Result<HistorySaveOutcome, HistorySaveError> {
-    save_summary_to_dir_outcome(&history_dir(), summary)
-}
-
-pub fn save_summary_with_details_outcome(
-    summary: CombatSessionSummary,
-    details: HistoryCombatDetails,
-) -> Result<HistorySaveOutcome, HistorySaveError> {
-    save_summary_with_details_to_dir_outcome(&history_dir(), summary, details)
-}
-
 /// Persists a prepared archive by reference. This is the retry-safe path used
 /// by the desktop History owner: success drops the caller's archive, while a
 /// pre-commit failure leaves the exact same owned hit vectors available for a
@@ -2343,10 +2293,6 @@ fn write_borrowed_record_to_dir_with_maintenance(
     Ok(maintain(directory).err())
 }
 
-pub fn delete_record(record_id: &str) -> Result<bool, String> {
-    delete_record_from_dir(&history_dir(), record_id)
-}
-
 pub fn tombstone_record(
     record_id: &str,
 ) -> Result<Option<HistoryDeleteTombstone>, HistoryDeleteError> {
@@ -2363,10 +2309,6 @@ pub fn discard_tombstoned_record(
     tombstone: &HistoryDeleteTombstone,
 ) -> Result<(), HistoryDeleteError> {
     discard_tombstoned_record_from_dir(tombstone)
-}
-
-pub fn restore_record(record: &HistoryRecord) -> Result<(), String> {
-    restore_record_to_dir(&history_dir(), record)
 }
 
 pub fn restore_record_to_dir(directory: &Path, record: &HistoryRecord) -> Result<(), String> {
@@ -4091,6 +4033,39 @@ mod tests {
     }
 
     #[test]
+    fn detailed_record_preserves_pause_mask_changes_inside_the_damage_window() {
+        let mut state = CombatState::default();
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1 << 6,
+        });
+        state.push_hit(history_hit(11.0, 1, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 12.0,
+            pause_type_mask: (1 << 6) | (1 << 2),
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 13.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(history_hit(15.0, 2, 200.0));
+
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        let restored = details.to_combat_state();
+        let intervals = restored.time_stop_intervals_between(11.0, 15.0);
+
+        assert_eq!(intervals.len(), 3);
+        assert_eq!(intervals[0].pause_type_mask, Some(1 << 6));
+        assert_eq!(intervals[1].pause_type_mask, Some((1 << 6) | (1 << 2)));
+        assert_eq!(intervals[2].pause_type_mask, Some(1 << 2));
+        assert!((restored.duration_with_time_stop(true) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn imported_record_preserves_details_and_uses_fresh_local_identity() {
         let source_directory = temp_history_dir("import_source");
         let destination_directory = temp_history_dir("import_destination");
@@ -4408,7 +4383,6 @@ mod tests {
         .expect("History record commit");
 
         assert!(matches!(&outcome, HistorySaveOutcome::Committed(_)));
-        assert_eq!(outcome.maintenance_warning(), None);
         assert_eq!(outcome.record().summary.total_damage, 21.0);
         assert_eq!(load_history_from_dir(&directory).records.len(), 1);
         let _ = fs::remove_dir_all(directory);
@@ -5663,6 +5637,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }

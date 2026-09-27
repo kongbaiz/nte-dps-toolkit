@@ -263,6 +263,11 @@ Returns the latest complete inventory snapshot without starting capture or
 writing a business inventory file. Before the first complete snapshot it returns
 `INVENTORY_NOT_READY`.
 
+Inventory fragment expiry follows only the supported Bunch packet mode. Other
+packet modes do not seed or advance its sequence clock; independently recognized
+raw character and item records retain their existing handling. Supported packets
+without inventory fragments still advance expiry.
+
 Inventory results and `event.inventory.snapshot` contain `generation`,
 `observed_at_unix_ms`, `complete`, `character_count`, `characters`, `item_count`,
 and `items`. Event notifications also contain the global event `sequence`.
@@ -429,15 +434,30 @@ Core shuts down; `battle.reset` ends its availability and the next battle gets
 a new ID. Passing a no-longer-available or unknown ID returns
 `BATTLE_RECORD_NOT_FOUND` instead of silently switching to the current battle.
 
-The response contract is version 4. Version 4 adds aggregate summary and per-hit
-`max_hp_reduction`; version 3 added authoritative per-hit `overkill_damage`.
+The response contract is version 5. Version 5 adds nullable
+`pause_type_mask` to each `time_stop_intervals` item; version 4 added aggregate
+summary and per-hit `max_hp_reduction`, and version 3 added authoritative
+per-hit `overkill_damage`.
 The response includes the shared `generation`,
 capture operation ID, state/source, battle bounds, clipped time-stop intervals,
 abyss markers, aggregate summary, quality counters, and axis completeness.
+Known masks use `EPausedGameType` bits: types 2, 3, and 4 are `0x1c` and type 6
+(`PG_LinkoEffect`) is `0x40`. A nonzero-to-different-nonzero transition closes
+the old segment and opens the new segment at the same timestamp, so consumers
+can anchor ordinary Q pauses with `pause_type_mask & 0x1c != 0` without treating
+the beginning of a Linko-only segment as a Q start. Adjacent or overlapping
+segments still form one global time union for DPS subtraction. A null mask
+means an old compacted interval no longer has lossless type attribution; it
+must not be treated as zero or assigned to a pause type.
 `generation`, `axis_first_sequence`, and `axis_total_hits` are decimal strings
 so JavaScript clients do not lose 64-bit integer precision. The generation
 advances only when an exposed battle read model changes or the record is
 finalized.
+
+While capture is live, battle read methods process a bounded batch of queued
+engine events before responding; remaining events stay ordered for the core
+loop or a later read. After capture stops, the stop path still joins producers
+and drains every already-produced event before the record becomes finalized.
 
 ### `battle.get_axis`
 
@@ -465,6 +485,16 @@ maximum-HP loss attributed to that hit and remains separate from `total_damage`.
 until a stable team snapshot is available instead of being inferred from current
 UI state.
 
+For authoritative weave follow-up damage, a validated character declaration in
+the same settlement container restricts the preceding-hit candidates to that
+character. Core then uses its existing damage, HP-continuity and unique recent
+hit matching rules and adds the follow-up to the matched row. A character
+declaration alone does not create an independent attributed hit. If no source
+hit can be matched, the existing unattributed-damage representation is retained.
+Equal hits in one frame remain separate when their decoded locations or targets
+differ. Packet and reassembled observations of the same settlement supplement
+the source declaration without counting the damage twice.
+
 Core retains a bounded hit window. Once earlier rows have been trimmed,
 `complete` becomes false and `first_available_cursor` identifies the first
 retained row. An older cursor returns `BATTLE_AXIS_CURSOR_EXPIRED`; a cursor
@@ -489,8 +519,9 @@ beyond `total_hits + 1` returns `BATTLE_AXIS_CURSOR_INVALID`.
 `scope` is `all`, `upper`, or `lower`. `bucket_seconds` is required, finite,
 and from 0.2 through 10 seconds. The response reuses Core's authoritative
 timeline projection and includes characters, buckets, per-character DPS rows,
-markers, time-stop intervals, and simplified segments. It carries contract
-version 4, the shared battle generation, and `complete:false` if the underlying
+markers, time-stop intervals, and simplified segments. Timeline interval items
+use the same nullable `pause_type_mask` semantics as battle records. It carries
+contract version 5, the shared battle generation, and `complete:false` if the underlying
 axis was trimmed.
 
 Core checks the response budget before allocating the timeline and caps it at

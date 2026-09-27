@@ -17,10 +17,10 @@ use crate::{
 
 use super::dto::{BattleQualityDto, BattleSummaryDto};
 
-/// Version 4 adds aggregate and per-hit maximum-HP reduction alongside the
-/// ordinary and overkill damage axes. All battle read DTOs share one version
-/// so a CLI consumer can reject mixed semantics.
-pub const BATTLE_READ_CONTRACT_VERSION: u32 = 4;
+/// Version 6 makes unavailable HP and unverified overkill explicitly nullable.
+/// Exact pause masks retain their global time-union semantics. Battle DTOs share one
+/// version so a CLI consumer can reject mixed semantics.
+pub const BATTLE_READ_CONTRACT_VERSION: u32 = 6;
 pub const BATTLE_TIMELINE_BUCKET_LIMIT: usize = 10_000;
 pub const BATTLE_TIMELINE_ROLE_LIMIT: usize = 100_000;
 
@@ -68,6 +68,7 @@ pub struct BattleRecordDto {
 pub struct BattleTimeStopIntervalDto {
     pub start_offset_seconds: f64,
     pub end_offset_seconds: f64,
+    pub pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -99,6 +100,7 @@ pub fn battle_record(
             .map(|interval| BattleTimeStopIntervalDto {
                 start_offset_seconds: finite_non_negative(interval.start_offset),
                 end_offset_seconds: finite_non_negative(interval.end_offset),
+                pause_type_mask: interval.pause_type_mask,
             })
             .collect(),
         _ => Vec::new(),
@@ -174,8 +176,8 @@ pub struct BattleAxisHitDto {
     pub damage: f64,
     pub follow_up_damage: f64,
     pub total_damage: f64,
-    pub overkill_damage: f64,
-    pub max_hp_reduction: f64,
+    pub overkill_damage: Option<f64>,
+    pub max_hp_reduction: Option<f64>,
     pub follow_up_timestamp_unix: Option<f64>,
     pub target_id: Option<String>,
     pub target_name: Option<String>,
@@ -183,10 +185,10 @@ pub struct BattleAxisHitDto {
     pub target_name_ja: Option<String>,
     pub target_monster_id: Option<String>,
     pub target_context: Vec<String>,
-    pub target_hp_before: f64,
-    pub target_hp_after: f64,
-    pub target_max_hp: f64,
-    pub target_hp_percent: f64,
+    pub target_hp_before: Option<f64>,
+    pub target_hp_after: Option<f64>,
+    pub target_max_hp: Option<f64>,
+    pub target_hp_percent: Option<f64>,
     pub gameplay_effect_index: Option<u32>,
     pub gameplay_effect_name: Option<String>,
     pub ability_name: Option<String>,
@@ -278,8 +280,8 @@ fn axis_hit(
         damage: hit.damage,
         follow_up_damage: hit.follow_up_damage,
         total_damage: hit.total_damage(),
-        overkill_damage: hit.overkill_damage(),
-        max_hp_reduction: hit.max_hp_reduction,
+        overkill_damage: hit.known_overkill(),
+        max_hp_reduction: hit.known_max_hp_reduction(),
         follow_up_timestamp_unix: hit.follow_up_timestamp,
         target_id: hit.target_id.clone(),
         target_name: hit.target_name.clone(),
@@ -287,10 +289,10 @@ fn axis_hit(
         target_name_ja: hit.target_name_ja.clone(),
         target_monster_id: hit.target_monster_id.clone(),
         target_context: hit.target_context.clone(),
-        target_hp_before: hit.target_hp_before,
-        target_hp_after: hit.target_hp_after,
-        target_max_hp: hit.target_max_hp,
-        target_hp_percent: hit.target_hp_percent,
+        target_hp_before: hit.known_hp_before(),
+        target_hp_after: hit.known_hp_after(),
+        target_max_hp: hit.known_max_hp(),
+        target_hp_percent: hit.known_hp_percent(),
         gameplay_effect_index: hit.gameplay_effect_index,
         gameplay_effect_name: hit.gameplay_effect_name.clone(),
         ability_name: hit.ability_name.clone(),
@@ -334,6 +336,7 @@ pub struct BattleTimelineDto {
 pub struct BattleTimelineIntervalDto {
     pub start_offset_seconds: f64,
     pub end_offset_seconds: f64,
+    pub pause_type_mask: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -440,6 +443,7 @@ pub fn battle_timeline(
             .map(|interval| BattleTimelineIntervalDto {
                 start_offset_seconds: interval.start,
                 end_offset_seconds: interval.end,
+                pause_type_mask: interval.pause_type_mask,
             })
             .collect(),
         compacted_time_stop_intervals: projection.compacted_time_stop_intervals,
@@ -565,6 +569,7 @@ pub const fn abyss_half_code(half: AbyssHalf) -> &'static str {
 const fn capture_source_code(source: CaptureQualitySource) -> &'static str {
     match source {
         CaptureQualitySource::Live => "live",
+        CaptureQualitySource::Plugin => "plugin",
         CaptureQualitySource::PcapngReplay => "pcapng_replay",
         CaptureQualitySource::JsonReplay => "json_replay",
         CaptureQualitySource::Unknown => "unknown",
@@ -574,6 +579,7 @@ const fn capture_source_code(source: CaptureQualitySource) -> &'static str {
 const fn character_source_code(source: HitCharacterSource) -> &'static str {
     match source {
         HitCharacterSource::Packet => "packet",
+        HitCharacterSource::Plugin => "plugin",
         HitCharacterSource::Session => "session",
         HitCharacterSource::GameplayEffect => "gameplay_effect",
         HitCharacterSource::ExportJson => "export_json",
@@ -645,8 +651,8 @@ mod tests {
         assert_eq!(first.rows[0].attribution_status, "attributed");
         assert!(first.rows[0].attribution_unknown_reason.is_none());
         assert!(first.rows[0].team_snapshot_id.is_none());
-        assert_eq!(first.rows[0].overkill_damage, 40.0);
-        assert_eq!(first.rows[0].max_hp_reduction, 25.0);
+        assert_eq!(first.rows[0].overkill_damage, Some(40.0));
+        assert_eq!(first.rows[0].max_hp_reduction, Some(25.0));
         assert_eq!(
             serde_json::to_value(&first.rows[0]).unwrap()["overkill_damage"],
             40.0
@@ -669,6 +675,76 @@ mod tests {
             battle_axis(&state, context(5), Some(9), 10),
             Err(BattleReadError::AxisCursorInvalid { last_available: 7 })
         ));
+    }
+
+    #[test]
+    fn battle_record_exposes_exact_pause_masks_without_changing_global_pause_time() {
+        use crate::engine::model::TimeStopEvent;
+
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(9.0, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1 << 6,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 11.0,
+            pause_type_mask: (1 << 6) | (1 << 2),
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseMaskChanged {
+            timestamp: 12.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(test_hit(15.0, 200.0));
+
+        let record = battle_record(&state, context(0), true);
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["contract_version"], 6);
+        assert_eq!(json["summary"]["duration_seconds"], 2.0);
+        assert_eq!(
+            json["time_stop_intervals"],
+            serde_json::json!([
+                {
+                    "start_offset_seconds": 1.0,
+                    "end_offset_seconds": 2.0,
+                    "pause_type_mask": 64
+                },
+                {
+                    "start_offset_seconds": 2.0,
+                    "end_offset_seconds": 3.0,
+                    "pause_type_mask": 68
+                },
+                {
+                    "start_offset_seconds": 3.0,
+                    "end_offset_seconds": 5.0,
+                    "pause_type_mask": 4
+                }
+            ])
+        );
+
+        let timeline = battle_timeline(
+            &state,
+            &HashMap::new(),
+            context(0),
+            TimelineScope::Whole,
+            1.0,
+            true,
+        )
+        .unwrap();
+        assert_eq!(timeline.contract_version, 6);
+        assert_eq!(
+            timeline
+                .time_stop_intervals
+                .iter()
+                .map(|interval| interval.pause_type_mask)
+                .collect::<Vec<_>>(),
+            [Some(1 << 6), Some((1 << 6) | (1 << 2)), Some(1 << 2)]
+        );
+        assert!((timeline.time_stop_duration_seconds - 4.0).abs() < 1e-9);
     }
 
     #[test]
@@ -892,6 +968,8 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: None,
         }
     }

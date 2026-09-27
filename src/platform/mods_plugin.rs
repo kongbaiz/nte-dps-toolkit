@@ -70,6 +70,7 @@ const IPC_MOVE_MODULE_TO_CHARACTER: u16 = 7;
 const IPC_MOVE_CORE_TO_CHARACTER: u16 = 8;
 const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
+#[cfg(test)]
 const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_QUERY_MOD_EVENTS: u16 = 12;
 #[cfg(any(feature = "desktop", test))]
@@ -100,11 +101,13 @@ const MOD_LOG_ID_SIZE: usize = 32;
 const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
+#[cfg(test)]
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
+#[cfg(test)]
+const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const MAX_PLUGIN_STATUS: u32 = 13;
 const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
-static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static IPC_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
 static IPC_CLIENT_QUARANTINED: AtomicBool = AtomicBool::new(false);
@@ -760,12 +763,14 @@ pub(crate) fn call_plugin(request: &ModsPluginRequest) -> Result<u32, String> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum CombatClockQueryError {
     ProviderUnavailable,
     ModDisabled,
     InvalidResponse,
 }
 
+#[cfg(test)]
 impl std::fmt::Display for CombatClockQueryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -774,21 +779,6 @@ impl std::fmt::Display for CombatClockQueryError {
             Self::InvalidResponse => "combat clock provider returned an invalid response",
         })
     }
-}
-
-pub(crate) fn query_combat_clock_transitions()
--> Result<Vec<CombatClockTransitionSnapshot>, CombatClockQueryError> {
-    let request_id = COMBAT_CLOCK_QUERY_SEQUENCE
-        .fetch_add(1, Ordering::Relaxed)
-        .max(1);
-    let mut request = [0_u8; REQUEST_SIZE];
-    request[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
-    request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
-    request[6..8].copy_from_slice(&IPC_QUERY_COMBAT_CLOCK_TRANSITIONS.to_le_bytes());
-    request[8..16].copy_from_slice(&request_id.to_le_bytes());
-    let response =
-        call_plugin_request(&request).map_err(|_| CombatClockQueryError::ProviderUnavailable)?;
-    decode_combat_clock_transitions(&response, request_id)
 }
 
 pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
@@ -1205,7 +1195,16 @@ fn await_overlapped(
     Err(OverlappedWaitError::Undrained)
 }
 
-fn overlapped_write_exact(pipe: HANDLE, bytes: &[u8], deadline: Instant) -> Result<(), String> {
+#[cfg(feature = "desktop")]
+pub(super) fn pipe_io_ready() -> bool {
+    !IPC_CLIENT_QUARANTINED.load(Ordering::Acquire)
+}
+
+pub(super) fn overlapped_write_exact(
+    pipe: HANDLE,
+    bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), String> {
     let mut operation = OverlappedPipeOperation::with_buffer(bytes.to_vec().into_boxed_slice())?;
     // SAFETY: pipe is opened for overlapped writes and the boxed buffer plus
     // OVERLAPPED remain stable until completion or quarantine.
@@ -1241,7 +1240,7 @@ fn overlapped_write_exact(pipe: HANDLE, bytes: &[u8], deadline: Instant) -> Resu
     Ok(())
 }
 
-fn overlapped_read_exact(
+pub(super) fn overlapped_read_exact(
     pipe: HANDLE,
     byte_len: usize,
     deadline: Instant,
@@ -1495,6 +1494,7 @@ fn decode_response_header(
     Ok((status, record_count))
 }
 
+#[cfg(test)]
 fn decode_combat_clock_transitions(
     bytes: &[u8; RESPONSE_SIZE],
     request_id: u64,
@@ -1534,7 +1534,7 @@ fn decode_combat_clock_transitions(
         if reserved != 0
             || reserved_value != 0
             || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
-            || pause_type_mask & !0x1c != 0
+            || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
             || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
         {
             return Err(CombatClockQueryError::InvalidResponse);
@@ -1721,13 +1721,6 @@ fn decode_mod_logs(
 }
 
 #[cfg(feature = "desktop")]
-pub fn inspect_plugin_deployment(
-    current_plugin: Option<&[u8]>,
-) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
-    inspect_plugin_deployment_with_manual(current_plugin, None)
-}
-
-#[cfg(feature = "desktop")]
 pub fn inspect_plugin_deployment_with_manual(
     current_plugin: Option<&[u8]>,
     manual: Option<(ModsPluginGameRegion, &Path)>,
@@ -1739,14 +1732,6 @@ pub fn inspect_plugin_deployment_with_manual(
         Err(error) => return Err(error),
     };
     inspect_game_installations(&installations, current_plugin)
-}
-
-#[cfg(feature = "desktop")]
-pub fn install_mods_plugin(
-    region: ModsPluginGameRegion,
-    plugin: &[u8],
-) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
-    install_mods_plugin_with_manual(region, plugin, None)
 }
 
 #[cfg(feature = "desktop")]
@@ -1764,13 +1749,6 @@ pub fn install_mods_plugin_with_manual(
     migrate_legacy_mod_workspace(std::slice::from_ref(directory), &workspace)?;
     install_plugin_to_directories(std::slice::from_ref(directory), plugin)?;
     inspect_game_installations(&installations, Some(plugin))
-}
-
-#[cfg(feature = "desktop")]
-pub fn remove_mods_plugin(
-    region: ModsPluginGameRegion,
-) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
-    remove_mods_plugin_with_manual(region, None)
 }
 
 #[cfg(feature = "desktop")]
@@ -1877,6 +1855,16 @@ fn register_mod_workspace(workspace: &Path) -> Result<(), ModsPluginDeploymentEr
         )));
     }
     Ok(())
+}
+
+#[cfg(feature = "desktop")]
+/// Automatic proxy deployment never guesses between installations or uses a stale manual path.
+pub fn automatic_toolkit_game_directory() -> Result<PathBuf, ModsPluginDeploymentError> {
+    let directories = game_installation_directories()?;
+    if directories.len() != 1 {
+        return Err(ModsPluginDeploymentError::GameInstallationNotFound);
+    }
+    Ok(directories[0].1.clone())
 }
 
 #[cfg(feature = "desktop")]
@@ -2685,41 +2673,7 @@ mod tests {
 
     const NATIVE_IPC_HEADER: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/include/nte_mods_ipc.h"
-    ));
-    const NATIVE_HOST_API: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/host_api.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_IPC_TRANSPORT: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/ipc_transport.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_OFFSET_RESOLVER: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/offset_resolver.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_SIGNATURE_POLICY: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/signature_policy.hpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_MOD_RUNTIME: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/mod_runtime.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_PLUGIN_RUNTIME: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/plugin_runtime.cpp"
-    ));
-    #[cfg(feature = "desktop")]
-    const NATIVE_PLUGIN_RUNTIME_HEADER: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/native/nte-mods-plugin/src/plugin_runtime.hpp"
+        "/src/platform/fixtures/legacy_mods_ipc_v7.h"
     ));
     fn native_define(name: &str) -> u64 {
         let prefix = format!("#define {name} ");
@@ -2777,7 +2731,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_wire_constants_match_the_native_ipc_header() {
+    fn rust_wire_constants_match_the_frozen_legacy_ipc_header() {
         assert_eq!(native_define("NTE_MODS_IPC_MAGIC"), IPC_MAGIC as u64);
         assert_eq!(
             native_define("NTE_MODS_IPC_DELIVERY_ACK_MAGIC"),
@@ -2888,55 +2842,6 @@ mod tests {
             native_enum("NTE_MODS_STATUS_MOD_DISABLED"),
             MAX_PLUGIN_STATUS as u64
         );
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn native_runtime_presence_and_offset_scanner_are_bounded() {
-        assert!(NATIVE_IPC_TRANSPORT.contains("bool OpenRuntimePresence()"));
-        assert!(NATIVE_IPC_TRANSPORT.contains("LocalIpcSecurityAttributes security;"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("OpenRuntimePresence()"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("CloseRuntimePresence()"));
-        assert!(NATIVE_OFFSET_RESOLVER.contains("RESOLUTION_RETRY_MS = 1000"));
-        assert!(NATIVE_OFFSET_RESOLVER.contains("find_offsets::ResolveCurrentProcess("));
-        assert!(NATIVE_OFFSET_RESOLVER.contains("if (now < retry_at)"));
-        assert!(
-            NATIVE_OFFSET_RESOLVER.contains("InterlockedCompareExchange(&resolution_state, 1, 0)")
-        );
-        assert!(!NATIVE_OFFSET_RESOLVER.contains("ResolveKnownProfile("));
-        assert!(NATIVE_SIGNATURE_POLICY.contains("SelectionResult::Ambiguous"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("ResolveViewportTickIndex"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("VIEWPORT_TICK_SCAN_RADIUS = 8"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("SelectPreferredSemanticViewportTick"));
-    }
-    #[test]
-    fn native_host_exposes_generic_name_hash_reading_without_enemy_services() {
-        assert!(NATIVE_HOST_API.contains("bool ReadNameHash("));
-        assert!(!NATIVE_HOST_API.contains("ReadEnemyIdentitySnapshot"));
-        assert!(!NATIVE_IPC_HEADER.contains("NTE_MODS_IPC_QUERY_ENEMY_IDENTITY"));
-        assert!(!NATIVE_IPC_HEADER.contains("NteEnemyIdentitySnapshot"));
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn process_event_buffer_covers_the_damage_callback_payload() {
-        assert!(
-            NATIVE_PLUGIN_RUNTIME_HEADER
-                .contains("constexpr size_t PROCESS_EVENT_PARAM_CAPACITY = 512;")
-        );
-        assert!(NATIVE_HOST_API.contains("constexpr size_t FUNCTION_PARAM_SIZE_OFFSET = 0xB6;"));
-        assert!(
-            NATIVE_MOD_RUNTIME.contains("ParseCall(line, \"unreal.watch_array_u64\", arguments)")
-        );
-        assert!(NATIVE_MOD_RUNTIME.contains("\"unreal.watch_class_array_u64\""));
-        assert!(NATIVE_MOD_RUNTIME.contains("\"event.captured_u64\""));
-        assert!(
-            NATIVE_PLUGIN_RUNTIME
-                .contains("constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENTS = 32;")
-        );
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("event.captured_u64 = captured_u64;"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("process_event_class_hooks"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("ReplaceProcessEventVTableEntry"));
     }
 
     #[test]
@@ -3151,7 +3056,7 @@ mod tests {
     }
 
     #[test]
-    fn combat_clock_response_uses_the_v7_transition_layout() {
+    fn combat_clock_response_accepts_the_linko_pause_type_in_the_v7_layout() {
         let mut bytes = [0_u8; RESPONSE_SIZE];
         bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
         bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
@@ -3160,7 +3065,7 @@ mod tests {
         bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
         bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
         bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
-        bytes[40..44].copy_from_slice(&(1_u32 << 2).to_le_bytes());
+        bytes[40..44].copy_from_slice(&((1_u32 << 2) | (1_u32 << 6)).to_le_bytes());
         bytes[48..52].copy_from_slice(&COMBAT_CLOCK_PAUSE_VALID.to_le_bytes());
 
         assert_eq!(
@@ -3168,7 +3073,7 @@ mod tests {
             Ok(vec![CombatClockTransitionSnapshot {
                 sequence: 7,
                 timestamp_100ns: 133_000_000_000_000_000,
-                pause_type_mask: 1 << 2,
+                pause_type_mask: (1 << 2) | (1 << 6),
                 reserved_value: 0,
                 state_flags: COMBAT_CLOCK_PAUSE_VALID,
             }])
@@ -3262,16 +3167,6 @@ mod tests {
         bytes[72..76].copy_from_slice(&3_u32.to_le_bytes());
         bytes[86] = 1;
         assert!(decode_mod_logs(&bytes, 29).is_err());
-    }
-
-    #[cfg(feature = "desktop")]
-    #[test]
-    fn native_hot_reload_keeps_the_last_working_program_and_quarantines_faults() {
-        assert!(NATIVE_MOD_RUNTIME.contains("candidate_enabled_mod_set"));
-        assert!(NATIVE_MOD_RUNTIME.contains("previous version kept."));
-        assert!(NATIVE_MOD_RUNTIME.contains("ExecuteProgramGuarded"));
-        assert!(NATIVE_MOD_RUNTIME.contains("quarantined_programs"));
-        assert!(NATIVE_MOD_RUNTIME.contains("CopyModLogs"));
     }
 
     #[test]
@@ -3523,29 +3418,6 @@ mod tests {
                 .any(|line| line == "equipment")
         );
         fs::remove_dir_all(workspace).unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn native_runtime_exposes_generic_mod_extension_abi() {
-        for api in [
-            "memory.write_u64",
-            "unreal.find_function",
-            "unreal.params_clear",
-            "unreal.params_write_u64",
-            "unreal.params_read_u64",
-            "unreal.call",
-            "unreal.watch",
-            "unreal.watch_class_array_u64",
-            "unreal.unwatch",
-            "event.next",
-            "event.read_u64",
-        ] {
-            assert!(NATIVE_MOD_RUNTIME.contains(api), "{api} is missing");
-        }
-        assert!(NATIVE_HOST_API.contains("InvokeReflectedFunction"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("HookedProcessEvent"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("ResetProcessEventWatches"));
     }
 
     #[test]

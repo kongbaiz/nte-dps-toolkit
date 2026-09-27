@@ -1,7 +1,6 @@
 import {
   compareSettingsGeneration,
   isHudModuleId,
-  type HudSettingOptionId,
   type SettingsCommandError,
   type SettingsSnapshot,
 } from "@/lib/tauri/settings-contract";
@@ -56,32 +55,6 @@ export function shouldAcceptSettingsRefresh(
   return (
     accepted === null || compareSettingsGeneration(incoming, accepted) >= 0
   );
-}
-
-export function hudOptionEnabled(
-  hud: HudConfigSnapshot,
-  option: HudSettingOptionId,
-): boolean {
-  switch (option) {
-    case "title":
-      return hud.showTitle;
-    case "team_dps":
-      return hud.showTeamDps;
-    case "duration":
-      return hud.showDuration;
-    case "total_damage":
-      return hud.showTotalDamage;
-    case "damage_taken":
-      return hud.showDamageTaken;
-    case "character_rows":
-      return hud.showCharacterRows;
-    case "abyss_half":
-      return hud.showAbyssHalf;
-    case "passthrough_state":
-      return hud.showPassthroughState;
-    case "mini_timeline":
-      return hud.showMiniTimeline;
-  }
 }
 
 export function hudModuleVisible(

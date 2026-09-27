@@ -28,7 +28,7 @@ export function modMarketSearchText(
 
 export interface ModMarketLocalStatus {
   installed: boolean;
-  enabled: boolean;
+  enabled: boolean | null;
   current: boolean;
   unreadable: { code: string; messageKey: string } | null;
 }
@@ -62,4 +62,30 @@ export function modMarketLocalStatus(
         },
       };
   }
+}
+
+export type ModMarketCategory = "plugins" | "foundation";
+
+export function filterModMarketItems(
+  items: ModMarketItem[],
+  category: ModMarketCategory,
+  query: string,
+  language: SettingsLanguage,
+): ModMarketItem[] {
+  const search = query.trim().toLocaleLowerCase();
+  return items.filter((item) => {
+    const matchesCategory =
+      category === "plugins"
+        ? item.component === "plugin"
+        : item.component === "host" ||
+          item.component === "loader" ||
+          item.component === "driver";
+    return (
+      matchesCategory &&
+      (search.length === 0 ||
+        modMarketSearchText(item, language)
+          .toLocaleLowerCase()
+          .includes(search))
+    );
+  });
 }

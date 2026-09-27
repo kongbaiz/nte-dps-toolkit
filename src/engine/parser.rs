@@ -32,6 +32,8 @@ const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 
 const CLIENT_FIGHT_TARGET_WIRE_BITS: usize = 227;
 const CLIENT_FIGHT_TARGET_WIRE_BYTES: usize = CLIENT_FIGHT_TARGET_WIRE_BITS.div_ceil(8);
 const COMPACT_CLIENT_FIGHT_IDENTITY_BYTES: usize = 28;
+const CLIENT_FIGHT_TARGET_WIRE_PADDING_BITS: usize =
+    CLIENT_FIGHT_TARGET_WIRE_BITS - COMPACT_CLIENT_FIGHT_IDENTITY_BYTES * 8;
 const COMPACT_CLIENT_FIGHT_RECORD_BYTES: usize = 52;
 // Current SDK damage replication places the compact 28-byte
 // `FCharacterForNet` target exactly 160 bytes after the decoded damage value.
@@ -275,6 +277,28 @@ impl EquipmentCatalog {
         if level > item.max_level {
             return None;
         }
+        interpolate_curve(self.main_stat_curve(item, property)?, level as f32)
+    }
+    /// Packet read models never interpolate a missing source table sample.
+    pub fn main_stat_sample(
+        &self,
+        item: &EquipmentItemDefinition,
+        property: &str,
+        level: u32,
+    ) -> Option<f32> {
+        if level > item.max_level {
+            return None;
+        }
+        self.main_stat_curve(item, property)?
+            .iter()
+            .find(|p| p[0] == level as f32)
+            .map(|p| p[1])
+    }
+    fn main_stat_curve(
+        &self,
+        item: &EquipmentItemDefinition,
+        property: &str,
+    ) -> Option<&Vec<[f32; 2]>> {
         let quality = match item.quality.as_str() {
             "blue" => "ITEM_QUALITY_BLUE",
             "purple" => "ITEM_QUALITY_PURPLE",
@@ -287,7 +311,7 @@ impl EquipmentCatalog {
             }
             EquipmentKind::Core => format!("{property}_Core_{quality}"),
         };
-        interpolate_curve(self.curves.get(&curve_key)?, level as f32)
+        self.curves.get(&curve_key)
     }
 
     pub fn valid_module_positions(
@@ -372,6 +396,9 @@ pub struct ParsedBossHpUpdate {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParsedServerDamageSettlement {
+    /// Character declared by the same settlement container, when its source
+    /// actor uses the validated four-digit wire variant. Never inferred by time.
+    pub source_character_id: Option<u32>,
     pub target_handle: [u8; CLIENT_FIGHT_TARGET_WIRE_BYTES],
     pub current_hp: f32,
     pub dead_state: u32,
@@ -969,13 +996,24 @@ impl AbilityCatalog {
 
     pub fn apply_semantics(&mut self, path: &Path) -> Result<()> {
         let semantics = load_gameplay_effect_semantics(path)?;
-        for effect_name in semantics.keys() {
+        let display_effects = if semantics.values().any(|s| s.display_only) {
+            load_gameplay_effect_mapping(Path::new(GAMEPLAY_EFFECT_MAPPING_PATH))?
+                .into_values()
+                .collect::<std::collections::HashSet<_>>()
+        } else {
+            std::collections::HashSet::new()
+        };
+        for (effect_name, semantic) in &semantics {
             ensure!(
-                self.skills.contains_key(effect_name),
+                self.skills.contains_key(effect_name)
+                    || (semantic.display_only && display_effects.contains(effect_name)),
                 "GE 语义表引用了技能表中不存在的 {effect_name}"
             );
         }
         for (effect_name, semantic) in semantics {
+            if semantic.display_only {
+                continue;
+            }
             let skill = self
                 .skills
                 .get_mut(&effect_name)
@@ -1013,6 +1051,10 @@ struct GameplayEffectSemanticDocument {
 
 #[derive(Clone, Debug, Deserialize)]
 struct GameplayEffectSemantic {
+    /// Names for registered GE mechanisms outside DT_SkillDamageData. They
+    /// cannot introduce a GA, owner, coefficient or damage-accounting rule.
+    #[serde(default)]
+    display_only: bool,
     #[serde(default)]
     owner_character_id: Option<u32>,
     #[serde(default)]
@@ -1048,6 +1090,15 @@ fn load_gameplay_effect_semantics(path: &Path) -> Result<HashMap<String, Gamepla
         document.format_version
     );
     for (effect_name, semantic) in &document.effects {
+        ensure!(
+            !semantic.display_only
+                || (semantic.owner_character_id.is_none()
+                    && semantic.ability.is_none()
+                    && semantic.attack_type.is_none()
+                    && !semantic.use_server_damage
+                    && semantic.max_hp_reduction_percent == 0),
+            "Display-only GE semantics must not change damage or ownership"
+        );
         ensure!(
             effect_name.starts_with("GE_") || effect_name.starts_with("Buff_"),
             "GE 语义表包含无效标识 {effect_name}"
@@ -1341,12 +1392,6 @@ fn decode_shifted_bytes(
     let mut output = vec![0; count];
     decode_shifted_into(data, byte_offset, bit_shift, start_bit_offset, &mut output)?;
     Some(output)
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn aligned_bytes_for_test(data: &[u8], bit_shift: u8) -> Option<Vec<u8>> {
-    decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
 }
 
 fn read_field(
@@ -2585,6 +2630,14 @@ fn parse_compact_client_fight_target_identity(
     Some(identity)
 }
 
+fn full_identity_three_bits_before_compact(
+    data: &[u8],
+    compact_bit_offset: usize,
+) -> Option<[u8; CLIENT_FIGHT_TARGET_WIRE_BYTES]> {
+    let full_bit_offset = compact_bit_offset.checked_sub(CLIENT_FIGHT_TARGET_WIRE_PADDING_BITS)?;
+    parse_client_fight_target_wire_identity(data, full_bit_offset)
+}
+
 /// Decodes SDK `ClientSetReplicatedTargetData.ClientFightDataArray` directly
 /// from the external transport payload.
 ///
@@ -2737,10 +2790,10 @@ fn parse_compact_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpd
             }
 
             let identity = &decoded[8..8 + COMPACT_CLIENT_FIGHT_IDENTITY_BYTES];
-            let mut actor_value = [0_u8; 16];
-            actor_value.copy_from_slice(&identity[..16]);
-            if !actor_value.iter().any(|byte| *byte != 0)
-                || identity[20..].iter().any(|byte| *byte != 0)
+            let mut compact_identity = [0_u8; COMPACT_CLIENT_FIGHT_IDENTITY_BYTES];
+            compact_identity.copy_from_slice(identity);
+            if !compact_identity[..16].iter().any(|byte| *byte != 0)
+                || compact_identity[20..].iter().any(|byte| *byte != 0)
             {
                 continue;
             }
@@ -2763,8 +2816,16 @@ fn parse_compact_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpd
                 continue;
             }
 
-            let mut target_handle = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
-            target_handle[..COMPACT_CLIENT_FIGHT_IDENTITY_BYTES].copy_from_slice(identity);
+            let compact_bit_offset = byte_offset * 8 + usize::from(bit_shift) + 64;
+            let target_handle = full_identity_three_bits_before_compact(data, compact_bit_offset)
+                .unwrap_or_else(|| {
+                    let mut target_handle = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+                    target_handle[..COMPACT_CLIENT_FIGHT_IDENTITY_BYTES]
+                        .copy_from_slice(&compact_identity);
+                    target_handle
+                });
+            let mut actor_value = [0_u8; 16];
+            actor_value.copy_from_slice(&target_handle[..16]);
             candidates.push(Candidate {
                 update: ParsedBossHpUpdate {
                     target_handle,
@@ -2817,12 +2878,62 @@ fn parse_compact_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpd
 }
 
 pub fn parse_client_fight_target_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
+    // The compact and bitpacked layouts are alternative SDK encodings. Both
+    // parsers scan every bit position, so running both on every live payload
+    // doubles the hottest target-update path. Compact recognition already
+    // canonicalizes a shifted shadow back to its full wire identity.
     let compact = parse_compact_client_fight_target_updates(data);
     if compact.is_empty() {
         parse_bitpacked_client_fight_target_updates(data)
     } else {
         compact
     }
+}
+
+// The supported NetSourceActor variant is a four-bit tag (1), followed by
+// an ANSI FString of four character digits and NUL, then a zero u32 and the
+// u16 array count. The legacy record anchor overlaps the final digit and NUL;
+// it is not a standalone type tag. Unsupported variants do not invent a source.
+fn parse_settlement_source_character(
+    data: &[u8],
+    record_bit_offset: usize,
+    element_count: usize,
+) -> Option<u32> {
+    let source_bit_offset = record_bit_offset.checked_sub(63)?;
+    let string_bit_offset = record_bit_offset.checked_sub(59)?;
+    let trailer_bit_offset = record_bit_offset.checked_add(13)?;
+    let count_bit_offset = record_bit_offset.checked_add(45)?;
+    let mut tag = [0_u8; 1];
+    let mut string = [0_u8; 9];
+    let mut trailer = [0_u8; 4];
+    let mut count = [0_u8; 2];
+    for (bit_offset, output) in [
+        (source_bit_offset, tag.as_mut_slice()),
+        (string_bit_offset, string.as_mut_slice()),
+        (trailer_bit_offset, trailer.as_mut_slice()),
+        (count_bit_offset, count.as_mut_slice()),
+    ] {
+        let end_bit = output.len().checked_mul(8)?.checked_add(bit_offset)?;
+        if end_bit > data.len().checked_mul(8)? {
+            return None;
+        }
+        decode_shifted_into(data, bit_offset / 8, (bit_offset % 8) as u8, 0, output)?;
+    }
+    if tag[0] & 0x0f != 1
+        || string[..4] != [5, 0, 0, 0]
+        || string[8] != 0
+        || !string[4..8].iter().all(u8::is_ascii_digit)
+        || trailer != [0; 4]
+        || usize::from(u16::from_le_bytes(count)) != element_count
+    {
+        return None;
+    }
+    let character_id = string[4..8]
+        .iter()
+        .fold(0_u32, |value, digit| value * 10 + u32::from(digit - b'0'));
+    (1000..=9999)
+        .contains(&character_id)
+        .then_some(character_id)
 }
 
 /// Decodes authoritative server damage settlements from
@@ -2859,11 +2970,19 @@ pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSet
         }
         let encoded_count = u16::from_le_bytes([prefix[5], prefix[6]]);
         let element_count = usize::from(encoded_count >> 5);
-        if prefix[..5] != BOSS_HP_PREFIX_HEAD[..5]
+        if !matches!(prefix[0], 0x06 | 0x07)
+            || prefix[1..5] != BOSS_HP_PREFIX_HEAD[1..5]
             || encoded_count & 0x1f != 0
             || !(1..=MAX_CLIENT_FIGHT_DATA_ELEMENTS).contains(&element_count)
             || prefix[7] & 0x1f != 0
         {
+            continue;
+        }
+        let source_character_id =
+            parse_settlement_source_character(data, record_bit_offset, element_count);
+        // Digits 8/9 contribute 0x07 to the overlapping anchor. Only accept
+        // that extension when the entire source declaration was validated.
+        if prefix[0] != BOSS_HP_PREFIX_HEAD[0] && source_character_id.is_none() {
             continue;
         }
         let mut candidate = Vec::with_capacity(element_count);
@@ -3053,6 +3172,7 @@ pub fn parse_server_damage_settlements(data: &[u8]) -> Vec<ParsedServerDamageSet
                 let damage_bit_offset =
                     element_bit_offset + CLIENT_FIGHT_DATA_FIRST_WRAPPER_VALUE_BIT_OFFSET;
                 candidate.push(ParsedServerDamageSettlement {
+                    source_character_id,
                     target_handle,
                     current_hp,
                     dead_state,
@@ -3253,21 +3373,6 @@ pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
         }
     }
     effects
-}
-
-pub fn matches_shifted_bytes_at(
-    data: &[u8],
-    bit_shift: u8,
-    byte_offset: usize,
-    expected: &[u8],
-) -> bool {
-    let Some(decoded) = decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
-    else {
-        return false;
-    };
-    decoded
-        .get(byte_offset..byte_offset + expected.len())
-        .is_some_and(|bytes| bytes == expected)
 }
 
 pub fn find_declared_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {
@@ -3514,6 +3619,8 @@ pub fn parse_damage_payload(
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
             reconciled_overkill_damage: None,
+            exact: None,
+            plugin_snapshot: None,
             wire_event: Some(DamageWireEvent {
                 damage: record.damage,
                 target_hp_before: record.target_hp_before,
@@ -4438,7 +4545,7 @@ mod character_tests {
 
     #[test]
     #[cfg(not(feature = "external_resources"))]
-    fn bundled_ability_tips_include_lingke_release_skills() {
+    fn bundled_ability_tips_include_current_release_skills() {
         let names = load_ability_tip_names(
             Path::new("missing-root/res/data/skills/ability_tips.json"),
             Language::SimplifiedChinese,
@@ -4447,11 +4554,19 @@ mod character_tests {
 
         assert_eq!(
             names.get("GA_Radio072_Skill").map(String::as_str),
-            Some("变轨技能：瞬息全频振")
+            Some("瞬息全频振")
         );
         assert_eq!(
             names.get("GA_Radio072_UltraSkill").map(String::as_str),
             Some("超负荷共鸣")
+        );
+        assert_eq!(
+            names.get("GA_BlackBird_Melee").map(String::as_str),
+            Some("掠影")
+        );
+        assert_eq!(
+            names.get("GA_Akane_Skill").map(String::as_str),
+            Some("律动音浪")
         );
     }
 
@@ -4747,6 +4862,23 @@ mod character_tests {
     }
 
     #[test]
+    fn normalizes_three_bit_shifted_compact_shadow_to_full_target_identity() {
+        let mut target = [0_u8; CLIENT_FIGHT_TARGET_WIRE_BYTES];
+        target[..17].copy_from_slice(&[
+            0xb8, 0xe6, 0x11, 0xf2, 0xfc, 0xfe, 0x0c, 0x41, 0x7a, 0xcc, 0x29, 0xf1, 0xd0, 0x86,
+            0x8e, 0x51, 0x07,
+        ]);
+        let mut payload = vec![0_u8; 64];
+        write_client_fight_array(&mut payload, 1, false, &[(target, 5_274_984.0, 0)]);
+
+        let updates = parse_client_fight_target_updates(&payload);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target_handle, target);
+        assert_eq!(updates[0].current_hp, 5_274_984.0);
+    }
+
+    #[test]
     fn parses_client_fight_array_with_same_prefix_distinct_instances() {
         let first = client_fight_target_identity(0);
         let second = client_fight_target_identity(8);
@@ -4770,6 +4902,127 @@ mod character_tests {
         assert_eq!(parse_boss_hp_updates(&payload), updates);
     }
 
+    // Synthetic source header, independently packed without parser constants:
+    // tag 1 (4 bits), FString length 5 + "1036\0", zero u32, count 1.
+    // The final four zero count bits already belong to the array fixture.
+    const SYNTHETIC_SETTLEMENT_SOURCE_1036: [u8; 15] = [
+        0x51, 0, 0, 0, 0x10, 0x03, 0x33, 0x63, 0x03, 0, 0, 0, 0, 0x10, 0,
+    ];
+
+    fn settlement_with_source(record_bit_offset: usize) -> Vec<u8> {
+        let mut payload = vec![0_u8; 128];
+        write_client_fight_additional_damage(
+            &mut payload,
+            record_bit_offset,
+            client_fight_target_identity(0),
+            900.0,
+            100,
+            33,
+            DamageDisplayType::LingZhouReactionFollow,
+        );
+        write_bytes_at_bit(
+            &mut payload,
+            record_bit_offset - 63,
+            &SYNTHETIC_SETTLEMENT_SOURCE_1036,
+        );
+        payload
+    }
+
+    #[test]
+    fn reads_same_container_source_at_every_bit_shift_including_digit_eight_and_nine() {
+        for shift in 0..8 {
+            let offset = 128 + shift;
+            for (digits, expected) in [(*b"1036", 1036), (*b"1038", 1038), (*b"1039", 1039)] {
+                let mut payload = settlement_with_source(offset);
+                write_bytes_at_bit(&mut payload, offset - 27, &digits);
+                let settlements = parse_server_damage_settlements(&payload);
+                assert_eq!(settlements.len(), 1);
+                assert_eq!(settlements[0].source_character_id, Some(expected));
+                assert_eq!(settlements[0].raw_damage, 100);
+                assert_eq!(settlements[0].additional_damage, Some(33));
+            }
+        }
+    }
+
+    #[test]
+    fn shares_source_only_with_elements_of_the_same_container() {
+        let mut payload = vec![0_u8; 320];
+        write_client_fight_damage_array(
+            &mut payload,
+            127,
+            &[
+                (client_fight_target_identity(0), 900.0, 0, 100, 0),
+                (client_fight_target_identity(8), 800.0, 0, 200, 24),
+            ],
+        );
+        let mut header = SYNTHETIC_SETTLEMENT_SOURCE_1036;
+        header[13] = 0x20; // Same independent header with array count 2.
+        write_bytes_at_bit(&mut payload, 64, &header);
+        write_client_fight_damage_array(
+            &mut payload,
+            1400,
+            &[(client_fight_target_identity(16), 700.0, 0, 300, 0)],
+        );
+        let settlements = parse_server_damage_settlements(&payload);
+        assert_eq!(settlements.len(), 3);
+        assert_eq!(settlements[0].source_character_id, Some(1036));
+        assert_eq!(settlements[1].source_character_id, Some(1036));
+        assert_eq!(settlements[2].source_character_id, None);
+        assert_eq!(
+            settlements[1].display_type,
+            DamageDisplayType::LingZhouReactionFollow
+        );
+        assert_ne!(settlements[0].target_handle, settlements[1].target_handle);
+    }
+
+    #[test]
+    fn keeps_legacy_settlement_without_guessing_invalid_or_missing_source() {
+        let offset = 127;
+        for (field_offset, replacement) in [
+            (offset - 63, vec![0x52]),       // Unsupported actor tag.
+            (offset - 59, vec![4, 0, 0, 0]), // Wrong FString length.
+            (offset - 27, b"X036".to_vec()), // Not four decimal digits.
+            (offset - 27, b"0036".to_vec()), // Outside character ID range.
+        ] {
+            let mut payload = settlement_with_source(offset);
+            write_bytes_at_bit(&mut payload, field_offset, &replacement);
+            let settlements = parse_server_damage_settlements(&payload);
+            assert_eq!(settlements.len(), 1);
+            assert_eq!(settlements[0].source_character_id, None);
+            assert_eq!(settlements[0].additional_damage, Some(33));
+        }
+        let payload = settlement_with_source(offset);
+        // Truncate the leading declaration, while retaining all settlement fields.
+        let settlements = parse_server_damage_settlements(&payload[9..]);
+        assert_eq!(settlements.len(), 1);
+        assert_eq!(settlements[0].source_character_id, None);
+        assert_eq!(settlements[0].additional_damage, Some(33));
+    }
+
+    #[test]
+    fn rejects_incomplete_source_fields_and_unproven_extended_anchor() {
+        let offset = 127;
+        let payload = settlement_with_source(offset);
+        assert_eq!(
+            parse_settlement_source_character(&payload[..8], offset, 1),
+            None
+        );
+        assert_eq!(
+            parse_settlement_source_character(&payload, usize::MAX, 1),
+            None
+        );
+        assert_eq!(parse_settlement_source_character(&payload, offset, 2), None);
+        for field_offset in [offset + 5, offset + 13] {
+            let mut invalid = payload.clone();
+            write_bytes_at_bit(&mut invalid, field_offset, &[1]);
+            assert_eq!(parse_settlement_source_character(&invalid, offset, 1), None);
+        }
+        let mut unsupported = payload;
+        write_bytes_at_bit(&mut unsupported, offset - 27, b"1039");
+        write_bytes_at_bit(&mut unsupported, offset - 63, &[0x52]);
+        assert!(parse_server_damage_settlements(&unsupported).is_empty());
+    }
+
     #[test]
     fn parses_server_damage_wrappers_for_each_client_fight_element() {
         let first = client_fight_target_identity(0);
@@ -4785,6 +5038,7 @@ mod character_tests {
 
         assert_eq!(settlements.len(), 2);
         assert_eq!(settlements[0].target_handle, first);
+        assert_eq!(settlements[0].source_character_id, None);
         assert_eq!(settlements[0].current_hp, 7_086.0);
         assert_eq!(settlements[0].dead_state, 1);
         assert_eq!(settlements[0].raw_damage, 11_662);
@@ -5784,7 +6038,9 @@ mod empty_curtain_tests {
         assert_eq!(catalog.curves.len(), 74);
         assert_eq!(catalog.suits.len(), 12);
         assert_eq!(catalog.shapes.len(), 12);
-        assert_eq!(catalog.plans.len(), 21);
+        for character in [1036, 1042, 1057, 1072] {
+            assert!(catalog.plans.contains_key(&character));
+        }
         assert_eq!(catalog.main_stat_value(item, "AtkAdd", 20), Some(63.0));
         assert_eq!(catalog.main_stat_value(item, "HPMaxAdd", 20), Some(840.0));
     }

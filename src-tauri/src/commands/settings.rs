@@ -12,7 +12,6 @@ use std::{
 
 use nte_dps_tool::{
     core::{
-        mod_studio::MOD_BINDING_DPS_TIME_STOP,
         team_data::{MAX_TEAM_DPS_EXPORT_BYTES, parse_team_data},
         update::{
             AvailableComponentUpdate, MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint,
@@ -22,8 +21,8 @@ use nte_dps_tool::{
     platform::update_http,
     storage::{
         config::{
-            AccentColor, DpsTimeMode, GlobalHotkeyAction, HotkeyBinding, HotkeyKey,
-            MainDpsAttribution, MainDpsDisplayConfig, MainDpsMetric, ThemePreset, UiDensity,
+            AccentColor, GlobalHotkeyAction, HotkeyBinding, HotkeyKey, MainDpsAttribution,
+            MainDpsDisplayConfig, MainDpsMetric, ThemePreset, UiDensity,
         },
         i18n::{self, Language},
         io_util::atomic_write_text,
@@ -375,7 +374,6 @@ pub(crate) fn set_settings_capture(
     {
         return Err(CommandError::invalid_settings_input());
     }
-    let dps_time_mode = parse_dps_time_mode(&settings.dps_time_mode)?;
     let passthrough_hotkey = parse_hotkey_binding(settings.passthrough_hotkey)?;
     if passthrough_hotkey.is_reserved()
         || hotkey_conflicts(
@@ -391,15 +389,6 @@ pub(crate) fn set_settings_capture(
             CommandError::hotkey_conflict()
         });
     }
-    if dps_time_mode == DpsTimeMode::TimeStopAdjusted
-        && state
-            .mod_studio()
-            .enabled_binding_provider(MOD_BINDING_DPS_TIME_STOP)
-            .map_err(CommandError::from_mod_studio)?
-            .is_none()
-    {
-        return Err(CommandError::required_mod_binding());
-    }
     state
         .update_capture_settings(
             filter,
@@ -409,7 +398,6 @@ pub(crate) fn set_settings_capture(
             settings.separate_reaction_damage,
             settings.auto_round_after_idle,
             settings.auto_round_idle_seconds,
-            dps_time_mode,
             passthrough_hotkey,
         )
         .map_err(settings_save_error)?;
@@ -1009,13 +997,19 @@ fn check_for_updates() -> Result<Vec<AvailableComponentUpdate>, CheckSettingsUpd
     let installed = installed_component_versions(app)
         .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))?;
     verify_manifest(&manifest, &endpoint, &installed)
+        .map(|updates| {
+            updates
+                .into_iter()
+                .filter(|u| u.component == UpdateComponent::App)
+                .collect()
+        })
         .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))
 }
 
 pub(crate) fn parse_update_component(value: &str) -> Result<UpdateComponent, CommandError> {
     match value {
         "app" => Ok(UpdateComponent::App),
-        "mods-plugin" => Ok(UpdateComponent::ModsPlugin),
+        "mods-plugin" => Err(super::toolkit::unsupported()),
         _ => Err(CommandError::invalid_settings_input()),
     }
 }
@@ -1076,14 +1070,6 @@ fn parse_density(value: &str) -> Result<UiDensity, CommandError> {
         "compact" => Ok(UiDensity::Compact),
         "cozy" => Ok(UiDensity::Cozy),
         "comfortable" => Ok(UiDensity::Comfortable),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
-fn parse_dps_time_mode(value: &str) -> Result<DpsTimeMode, CommandError> {
-    match value {
-        "time-stop-adjusted" => Ok(DpsTimeMode::TimeStopAdjusted),
-        "real-time" => Ok(DpsTimeMode::RealTime),
         _ => Err(CommandError::invalid_settings_input()),
     }
 }
@@ -1339,10 +1325,7 @@ mod tests {
             parse_update_component("app").expect("application update"),
             UpdateComponent::App
         );
-        assert_eq!(
-            parse_update_component("mods-plugin").expect("Mods Plugin update"),
-            UpdateComponent::ModsPlugin
-        );
+        assert!(parse_update_component("mods-plugin").is_err());
         assert!(parse_update_component("../app").is_err());
         assert!(parse_update_component("future").is_err());
     }

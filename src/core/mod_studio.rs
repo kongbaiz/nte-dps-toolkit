@@ -306,28 +306,6 @@ impl ModStudioWorkspaceService {
     }
 }
 
-pub fn load_default_mod_studio_workspace() -> Result<ModStudioWorkspace, ModStudioError> {
-    load_mod_studio_workspace(&default_mod_studio_workspace_directory())
-}
-
-pub fn load_default_mod_studio_document(id: &str) -> Result<ModStudioDocument, ModStudioError> {
-    load_mod_studio_document(&default_mod_studio_workspace_directory(), id)
-}
-
-pub fn save_default_mod_studio_document(
-    id: &str,
-    source: &str,
-) -> Result<ModStudioDocument, ModStudioError> {
-    save_mod_studio_document(&default_mod_studio_workspace_directory(), id, source)
-}
-
-pub fn set_default_mod_studio_document_enabled(
-    id: &str,
-    enabled: bool,
-) -> Result<ModStudioWorkspace, ModStudioError> {
-    set_mod_studio_document_enabled(&default_mod_studio_workspace_directory(), id, enabled)
-}
-
 pub fn load_mod_studio_workspace(
     workspace_directory: &Path,
 ) -> Result<ModStudioWorkspace, ModStudioError> {
@@ -417,14 +395,6 @@ pub fn set_mod_studio_document_enabled(
     load_mod_studio_document(workspace_directory, id)?;
     set_mod_enabled(workspace_directory, id, enabled).map_err(map_enabled_set_error)?;
     load_mod_studio_workspace(workspace_directory)
-}
-
-#[cfg(feature = "desktop")]
-pub fn poll_mod_studio_runtime() -> Result<ModStudioRuntimeSnapshot, ModStudioError> {
-    Ok(ModStudioRuntimeSnapshot {
-        logs: poll_mod_studio_runtime_logs()?,
-        events: poll_mod_studio_runtime_events()?,
-    })
 }
 
 #[cfg(feature = "desktop")]

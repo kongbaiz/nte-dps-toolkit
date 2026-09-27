@@ -2,7 +2,6 @@ import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 
 export const STREAM_PROTOCOL_VERSION = 1;
 export const MAX_EVENTS_PER_STREAM_DELIVERY = 2;
-export const MAX_STREAM_DELIVERY_BYTES = 14 * 1024 * 1024;
 
 const { nonEmptyString, positiveU64DecimalString, positiveInteger, record, string } =
   createContractPrimitives((message) => {

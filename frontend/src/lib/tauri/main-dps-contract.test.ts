@@ -1,4 +1,6 @@
+/// <reference types="node" />
 import { describe, expect, it } from "vitest";
+import { readFileSync, statSync } from "node:fs";
 
 import {
   MAIN_DPS_CONTRACT_VERSION,
@@ -7,6 +9,27 @@ import {
   MAIN_DPS_MAX_TEXT_BYTES,
   parseMainDpsSnapshot,
 } from "./main-dps-contract";
+
+it.skipIf(!process.env.NTE_TEST_MAIN_SNAPSHOT_INPUT)(
+  "accepts the real automatic-capture Tauri display snapshot",
+  () => {
+    const path = process.env.NTE_TEST_MAIN_SNAPSHOT_INPUT!;
+    const metadata = statSync(path);
+    expect(metadata.isFile()).toBe(true);
+    expect(metadata.size).toBeLessThan(1024 * 1024);
+    const snapshot = parseMainDpsSnapshot(
+      JSON.parse(readFileSync(path, "utf8")) as unknown,
+    );
+    expect(
+      snapshot.hasLiveSessionData || snapshot.selectedRoundId !== null,
+    ).toBe(true);
+    expect(snapshot.readout.dataState).toBe("live");
+    expect(snapshot.readout.summary.totalDamage).toBe(
+      Number(process.env.NTE_TEST_EXPECTED_DAMAGE),
+    );
+    expect(snapshot.readout.characters.length).toBeGreaterThan(0);
+  },
+);
 
 const sample = {
   contractVersion: MAIN_DPS_CONTRACT_VERSION,
@@ -108,6 +131,26 @@ const sample = {
 };
 
 describe("main DPS contract", () => {
+  it("allows pending plugin time only when the measured readout is empty", () => {
+    const waiting = {
+      ...sample,
+      dpsTime: {
+        configuredMode: "time-stop-adjusted",
+        effectiveMode: "pending",
+        combatClockHealth: "unknown",
+        degraded: false,
+        warningMessageKey: null,
+      },
+    };
+    expect(parseMainDpsSnapshot(waiting).dpsTime.effectiveMode).toBe("pending");
+    expect(() =>
+      parseMainDpsSnapshot({
+        ...waiting,
+        readout: { ...waiting.readout, dataState: "live" },
+      }),
+    ).toThrow(/Pending plugin time/);
+  });
+
   it("parses the versioned empty projection", () => {
     const parsed = parseMainDpsSnapshot(sample);
     expect(parsed.rounds[0]?.live).toBe(true);

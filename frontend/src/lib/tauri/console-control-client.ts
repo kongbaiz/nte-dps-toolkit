@@ -1,6 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
-
 import { parseTechnicalCommandError } from "@/lib/tauri/technical-contract";
+import {
+  tauriInvokeTransport,
+  type InvokeTransport,
+} from "@/lib/tauri/stream-client";
 
 export type ConsoleControlAction =
   | "toggle-capture"
@@ -12,19 +14,8 @@ export type ConsoleControlAction =
   | "open-team-details"
   | "open-capture-logs";
 
-interface ConsoleControlTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-}
-
-const tauriTransport: ConsoleControlTransport = {
-  invoke: (command, arguments_) => invoke(command, arguments_),
-};
-
 export function createConsoleControlClient(
-  transport: ConsoleControlTransport = tauriTransport,
+  transport: InvokeTransport = tauriInvokeTransport,
 ) {
   return {
     async execute(action: ConsoleControlAction): Promise<void> {

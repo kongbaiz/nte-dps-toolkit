@@ -21,3 +21,8 @@ pub fn software_dir() -> PathBuf {
 pub fn capture_log_dir() -> PathBuf {
     software_dir().join("logs")
 }
+
+/// Marketplace-owned Toolkit package, independent of cwd and legacy manual paths.
+pub fn toolkit_dir() -> PathBuf {
+    software_dir().join("mods")
+}

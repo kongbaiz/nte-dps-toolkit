@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Empty,
   EmptyDescription,
@@ -102,14 +103,13 @@ export function TimelinePage() {
             {t("Timeline follows the current capture")}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-1 rounded-lg bg-muted/55 p-1">
+        <div className="flex flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
           {SCOPES.map((item) => (
             <Button
               key={item.id}
               size="sm"
               aria-pressed={scope === item.id}
-              variant={scope === item.id ? "default" : "ghost"}
-              className={scope === item.id ? "hover:bg-primary" : undefined}
+              variant={scope === item.id ? "outline" : "ghost"}
               disabled={pending}
               onClick={() => setScope(item.id)}
             >
@@ -166,7 +166,7 @@ export function TimelinePage() {
             </Alert>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-y border-border/70 bg-background/25 px-2 py-2.5">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg border bg-card p-3">
             <label className="flex min-w-[16rem] flex-1 items-center gap-3 text-sm">
               <span className="whitespace-nowrap text-muted-foreground">
                 {t("Bucket Interval")}
@@ -200,8 +200,7 @@ export function TimelinePage() {
                     key={item}
                     size="sm"
                     aria-pressed={mode === item}
-                    variant={mode === item ? "default" : "ghost"}
-                    className={mode === item ? "hover:bg-primary" : undefined}
+                    variant={mode === item ? "outline" : "ghost"}
                     disabled={!snapshot || pending}
                     onClick={() => changeMode(item)}
                   >
@@ -229,7 +228,7 @@ export function TimelinePage() {
           {snapshot && !snapshot.hasData && <TimelineEmpty />}
           {snapshot?.hasData && (
             <>
-              <div className="timeline-metrics grid grid-cols-2 border-y border-border/70 bg-background/25 min-[780px]:grid-cols-4">
+              <div className="timeline-metrics grid grid-cols-2 min-[1100px]:grid-cols-4">
                 <Metric
                   icon={MousePointer2}
                   label="Total Damage"
@@ -398,22 +397,25 @@ function Metric({
   prominent?: boolean;
 }) {
   return (
-    <div className="timeline-metric flex min-w-0 items-center gap-3 px-3 py-3">
-      <div className="timeline-metric-icon flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground">
-        <Icon className="size-4" aria-hidden="true" />
-      </div>
-      <div className="min-w-0">
-        <p className="truncate text-xs text-muted-foreground">{t(label)}</p>
-        <p
-          className={cn(
-            "truncate font-mono font-semibold",
-            prominent && "text-primary",
-          )}
-        >
-          {value}
-        </p>
-      </div>
-    </div>
+    <Card className="min-w-0" size="sm">
+      <CardContent>
+        <dl>
+          <dt className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span className="min-w-0">{t(label)}</span>
+            <Icon className="size-4 shrink-0" aria-hidden="true" />
+          </dt>
+          <dd
+            className={cn(
+              "mt-2 truncate text-xl font-semibold tracking-tight tabular-nums",
+              prominent && "text-2xl",
+            )}
+            title={value}
+          >
+            {value}
+          </dd>
+        </dl>
+      </CardContent>
+    </Card>
   );
 }
 

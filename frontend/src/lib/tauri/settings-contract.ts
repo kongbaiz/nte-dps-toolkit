@@ -14,7 +14,7 @@ import {
   type DpsTimeRuntime,
 } from "@/lib/tauri/dps-time-contract";
 
-export const SETTINGS_CONTRACT_VERSION = 9;
+export const SETTINGS_CONTRACT_VERSION = 10;
 export const HUD_SETTING_OPTION_IDS = [
   "title",
   "team_dps",
@@ -278,6 +278,7 @@ export type CaptureSettingsInput = Omit<
   | "autoRoundIdleSecondsMin"
   | "autoRoundIdleSecondsMax"
   | "dpsTimeRuntime"
+  | "dpsTimeMode"
 >;
 export type MainDpsDisplayInput = MainDpsDisplaySettings;
 

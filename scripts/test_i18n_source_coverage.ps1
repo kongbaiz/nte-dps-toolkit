@@ -10,7 +10,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
 
 function Get-I18nLiteralKeys {
-    param([Parameter(Mandatory)][string]$Text)
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
 
     $patterns = @(
         [regex]::new('\b(?:t|tf)\(\s*["'']([^"'']+)["'']', [System.Text.RegularExpressions.RegexOptions]::CultureInvariant),
@@ -78,6 +78,10 @@ $expectedSelfTest = [System.Collections.Generic.HashSet[string]]::new(
 )
 $actualSelfTest = Get-I18nLiteralKeys -Text $selfTest
 Assert-SetEqual -Expected $expectedSelfTest -Actual $actualSelfTest -Message "i18n source recognizer self-test failed"
+# A test-only Rust file has no production text after its cfg(test) block is removed.
+if (@(Get-I18nLiteralKeys -Text "").Count -ne 0) {
+    throw "i18n source recognizer self-test found keys in empty production text"
+}
 $duplicateSelfTestRejected = $false
 try {
     Assert-NoDuplicateLocaleKeys -Json "{`n  `"Same`": `"one`",`n  `"Same`": `"two`"`n}" -Label "fixture"

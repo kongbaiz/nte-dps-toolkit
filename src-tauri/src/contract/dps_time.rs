@@ -13,6 +13,28 @@ pub(crate) struct DpsTimeRuntimeSnapshot {
 }
 
 impl DpsTimeRuntimeSnapshot {
+    /// With no measured hits, an uninitialized plugin clock is pending, not a
+    /// wall-clock fallback. Real capture errors are still exposed by CaptureSnapshot.
+    pub(crate) fn for_readout(
+        configured: DpsTimeMode,
+        health: CombatClockRuntimeHealth,
+        empty: bool,
+    ) -> Self {
+        if empty
+            && configured == DpsTimeMode::TimeStopAdjusted
+            && !health.supports_time_stop_adjustment()
+        {
+            return Self {
+                configured_mode: mode_id(configured),
+                effective_mode: "pending",
+                combat_clock_health: health_id(health),
+                degraded: false,
+                warning_message_key: None,
+            };
+        }
+        Self::new(configured, health)
+    }
+
     pub(crate) fn new(configured: DpsTimeMode, health: CombatClockRuntimeHealth) -> Self {
         let configured_mode = mode_id(configured);
         if configured == DpsTimeMode::RealTime {
@@ -88,6 +110,30 @@ const fn health_id(health: CombatClockRuntimeHealth) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_plugin_readout_waits_for_plugin_time_without_a_wall_clock_fallback() {
+        let waiting = DpsTimeRuntimeSnapshot::for_readout(
+            DpsTimeMode::TimeStopAdjusted,
+            CombatClockRuntimeHealth::Unknown,
+            true,
+        );
+        assert_eq!(waiting.effective_mode, "pending");
+        assert!(!waiting.degraded);
+        assert!(waiting.warning_message_key.is_none());
+        let ready = DpsTimeRuntimeSnapshot::for_readout(
+            DpsTimeMode::TimeStopAdjusted,
+            CombatClockRuntimeHealth::Available,
+            false,
+        );
+        assert_eq!(ready.effective_mode, "time-stop-adjusted");
+        let packet = DpsTimeRuntimeSnapshot::for_readout(
+            DpsTimeMode::RealTime,
+            CombatClockRuntimeHealth::Unknown,
+            true,
+        );
+        assert_eq!(packet.effective_mode, "real-time");
+    }
 
     #[test]
     fn configured_adjustment_never_claims_effective_without_provider_health() {

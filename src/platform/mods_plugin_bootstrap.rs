@@ -1550,23 +1550,22 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the freshly built native Release proxy"]
+    #[ignore = "requires an external legacy proxy via NTE_LEGACY_MOD_PLUGIN_DLL"]
     fn remote_bootstrap_invokes_loaded_export() {
         const CHILD_ENV: &str = "NTE_MODS_PLUGIN_BOOTSTRAP_TEST_CHILD";
         let current_executable = std::env::current_exe().expect("test executable path");
-        let source_plugin = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("native/nte-mods-plugin/x64/Release/dwmapi.dll");
-        assert!(
-            source_plugin.is_file(),
-            "build the native Release proxy first"
+        let source_plugin = PathBuf::from(
+            std::env::var_os("NTE_LEGACY_MOD_PLUGIN_DLL")
+                .expect("set NTE_LEGACY_MOD_PLUGIN_DLL to an external legacy proxy"),
         );
+        assert!(source_plugin.is_file(), "external legacy proxy must exist");
 
         if std::env::var_os(CHILD_ENV).is_some() {
             let plugin = current_executable
                 .parent()
                 .expect("child directory")
                 .join(PLUGIN_FILE_NAME);
-            // SAFETY: this fixture loads the freshly built, verified local proxy
+            // SAFETY: this fixture loads the explicitly supplied legacy proxy
             // and keeps its owner alive for the complete child process lifetime.
             let _plugin = unsafe { libloading::Library::new(plugin) }.expect("load proxy");
             fs::write(

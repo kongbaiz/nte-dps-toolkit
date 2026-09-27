@@ -8,7 +8,6 @@ on:
       - "src/**"
       - "src-tauri/**"
       - "frontend/**"
-      - "native/**"
       - "plugins/**"
       - "res/**"
       - "images/**"
@@ -30,7 +29,6 @@ on:
       - "src/**"
       - "src-tauri/**"
       - "frontend/**"
-      - "native/**"
       - "plugins/**"
       - "res/**"
       - "images/**"
@@ -115,121 +113,8 @@ jobs:
             }
           }
 
-      - name: Build native NTE Mods Plugin
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installation = & $vswhere `
-            -latest `
-            -products '*' `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -property installationPath
-          if (-not $installation) {
-            throw "Visual Studio with the MSVC x64 toolset was not found"
-          }
-
-          $msbuild = Join-Path $installation "MSBuild\Current\Bin\MSBuild.exe"
-          & $msbuild `
-            native/nte-mods-plugin/nte-mods-plugin.sln `
-            /t:Clean,Build `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /m
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          if (-not (Test-Path -LiteralPath plugins/dwmapi.dll -PathType Leaf)) {
-            throw "Native build did not stage plugins/dwmapi.dll"
-          }
-          $pluginText = [Text.Encoding]::ASCII.GetString(
-            [IO.File]::ReadAllBytes("plugins/dwmapi.dll")
-          )
-          foreach ($requiredApi in @(
-            "NTE_DPS_TOOL_MODS_PLUGIN_V1",
-            "game.session",
-            "game.player_controller",
-            "game.player_state",
-            "combat_clock.pause_mask",
-            "combat_clock.state_flags"
-          )) {
-            if (-not $pluginText.Contains($requiredApi)) {
-              throw "NTE Mods Plugin is missing the bundled-script API: $requiredApi"
-            }
-          }
-          foreach ($script in @(
-            "plugins/nte-mods.enabled",
-            "plugins/nte-mods/equipment.nte",
-            "plugins/nte-mods/combat-clock.nte"
-          )) {
-            if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
-              throw "NTE Mods Plugin script is missing: $script"
-            }
-          }
-          foreach ($program in @(
-            "plugins/nte-mods/equipment.nte",
-            "plugins/nte-mods/combat-clock.nte"
-          )) {
-            $source = Get-Content -LiteralPath $program -Raw
-            if (-not $source.StartsWith("#include <nte/mod.hpp>") -or -not $source.Contains("NTE_SCRIPT(5);")) {
-              throw "NTE Mods Plugin program is not NTE C++ v5: $program"
-            }
-          }
-
-          & $msbuild `
-            native/nte-mod-loader/nte-mod-loader.sln `
-            /t:Rebuild `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /m
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          New-Item -ItemType Directory -Force native/nte-mod-loader/bin/Release/plugins | Out-Null
-          Copy-Item plugins/dwmapi.dll native/nte-mod-loader/bin/Release/plugins/dwmapi.dll -Force
-          & native/nte-mod-loader/bin/Release/nte-mod-loader-tests.exe
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          $dumpbin = Get-ChildItem `
-            (Join-Path $installation "VC\Tools\MSVC") `
-            -Filter dumpbin.exe `
-            -Recurse | `
-            Where-Object FullName -Match 'Hostx64\\x64' | `
-            Sort-Object FullName -Descending | `
-            Select-Object -First 1 -ExpandProperty FullName
-          if (-not $dumpbin) {
-            throw "dumpbin.exe was not found"
-          }
-          $loaderDependencies = & $dumpbin `
-            /nologo `
-            /dependents `
-            native/nte-mod-loader/bin/Release/nte-mod-loader.exe
-          if (($loaderDependencies -join "`n") -match 'VCRUNTIME|MSVCP') {
-            throw "nte-mod-loader.exe must statically link the MSVC runtime"
-          }
-
       - name: Check formatting
         run: cargo fmt --check
-
-      - name: Verify PowerShell CI fail-fast policy
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/test_ci_powershell_fail_fast.ps1
-
-      - name: Verify native runtime safety policies
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-
-          & ./native/nte-mods-plugin/tests/ipc_transport_security_source_tests.ps1
-          & ./native/nte-mods-plugin/tests/native_lifecycle_source_tests.ps1
-          & ./native/nte-mods-plugin/tests/proxy_forwarding_runtime_tests.ps1
-          & ./scripts/test_native_signature_policy.ps1
-          & ./scripts/test_native_shadow_vtable_hook.ps1
-          & ./scripts/test_mod_runtime_schema.ps1
 
       - name: Check shared desktop build
         run: cargo check
@@ -317,8 +202,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-x64/
-          Copy-Item native/nte-mod-loader/bin/Release/nte-mod-loader.exe dist/nte-dps-tool-windows-x64/
-          Copy-Item plugins dist/nte-dps-tool-windows-x64/plugins -Recurse
+
 
           cargo build --release --bin nte-core --no-default-features --features cli
           New-Item -ItemType Directory -Force dist/nte-core-windows-x64 | Out-Null
@@ -331,9 +215,8 @@ jobs:
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources | Out-Null
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-external-resources/
-          Copy-Item native/nte-mod-loader/bin/Release/nte-mod-loader.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
-          Copy-Item plugins dist/nte-dps-tool-windows-external-resources/plugins -Recurse
+
 
       - name: Compress release executables with UPX
         shell: pwsh
@@ -398,7 +281,7 @@ jobs:
           - Standard Tauri desktop release with F12, Packets, Resources, and Diagnostics available.
           - Runtime data resources are embedded in the executable; UI images are embedded once by the Tauri frontend bundle.
           - Includes nte-updater.exe for official-channel updates.
-          - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
+          - Packet capture is the default. Optional UE Tools mode consumes an externally supplied compiled Toolkit package; no legacy Mod loader or script editor is shipped.
           - JSON resources are minified and compressed during embedding.
           - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
           "@
@@ -416,7 +299,7 @@ jobs:
           - Standard Tauri desktop release with F12 and all diagnostics available.
           - Runtime resources are not embedded in the executable.
           - Includes nte-updater.exe for official-channel updates.
-          - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
+          - Packet capture is the default. Optional UE Tools mode consumes an externally supplied compiled Toolkit package; no legacy Mod loader or script editor is shipped.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
           - The executable is compressed with UPX --best --lzma and integrity-tested before packaging.
