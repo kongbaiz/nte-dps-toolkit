@@ -116,7 +116,7 @@ interfaces are pending; the existing placeholder functions remain.
 The old native Mod plugin source has been removed. Its scripts and equipment IPC
 are not compatible with Toolkit v1. Mod Loader now belongs to the private UE Tools
 workspace and is not included by the public release workflow.
-See [binary layout](plugins/README.md) and the
+See [plugin modes and deployment](docs/PLUGIN_MODES.md) and the
 [legacy reference audit](docs/LEGACY_MOD_REFERENCES.md).
 
 ---

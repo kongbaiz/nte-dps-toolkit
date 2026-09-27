@@ -1872,27 +1872,13 @@ mod tests {
     }
 
     #[test]
-    fn source_validation_accepts_bundled_programs_with_crlf() {
-        for (id, source) in [
-            (
-                "equipment",
-                include_str!("../../plugins/nte-mods/equipment.nte"),
-            ),
-            (
-                "combat-clock",
-                include_str!("../../plugins/nte-mods/combat-clock.nte"),
-            ),
-            (
-                "character-telemetry",
-                include_str!("../../plugins/examples/character-telemetry.nte"),
-            ),
-            (
-                "reflection-events",
-                include_str!("../../plugins/examples/reflection-events.nte"),
-            ),
+    fn source_validation_accepts_inline_programs_with_crlf() {
+        for source in [
+            "nte_mod(4)\nmod(\"telemetry\")\nrequires(\"viewport.tick\")\n\ndef on_viewport_tick(event):\n    value = 1\n",
+            "#include <nte/mod.hpp>\nNTE_SCRIPT(5);\nNTE_MOD(\"telemetry\");\nNTE_REQUIRES(\"viewport.tick\");\nvoid on_viewport_tick(const nte::viewport_tick_event& event)\n{\n    const auto value = 1;\n}\n",
         ] {
-            let crlf = source.replace("\r\n", "\n").replace('\n', "\r\n");
-            validate_mod_source(id, &crlf).unwrap();
+            let crlf = source.replace('\n', "\r\n");
+            validate_mod_source("telemetry", &crlf).unwrap();
         }
     }
 

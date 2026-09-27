@@ -56,7 +56,7 @@
 | Tauri command/Channel/Contract | [src-tauri/src/state.rs](src-tauri/src/state.rs)、[src-tauri/src/commands/](src-tauri/src/commands/)、[src-tauri/src/channels/](src-tauri/src/channels/)、[src-tauri/src/contract.rs](src-tauri/src/contract.rs)、[frontend/src/lib/tauri/](frontend/src/lib/tauri/) |
 | React UI、组件、i18n | [frontend/README.md](frontend/README.md)、[frontend/package.json](frontend/package.json)、[frontend/src/](frontend/src/)、[res/languages/zh-CN.json](res/languages/zh-CN.json) |
 | Windows/FFI、HUD、窗口生命周期 | [src/platform/](src/platform/)、[src-tauri/src/windows/](src-tauri/src/windows/) |
-| 原生插件/Loader、Mod ABI | [plugins/README.md](plugins/README.md)、[docs/LEGACY_MOD_REFERENCES.md](docs/LEGACY_MOD_REFERENCES.md)；Loader 源码在私有 UETools-NTE 工作区 |
+| 原生插件/Loader、Mod ABI | [docs/LEGACY_MOD_REFERENCES.md](docs/LEGACY_MOD_REFERENCES.md)；Loader 源码在私有 UETools-NTE 工作区 |
 | 架构/运行时安全门禁 | [scripts/verify_architecture.ps1](scripts/verify_architecture.ps1)、[scripts/verify_runtime_safety.ps1](scripts/verify_runtime_safety.ps1) |
 | CI、依赖 feature、发布/更新 | [.github/workflows/build.yml](.github/workflows/build.yml)、[src/core/update.rs](src/core/update.rs)、[src/platform/update_install.rs](src/platform/update_install.rs)、[docs/releases/](docs/releases/) |
 

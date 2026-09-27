@@ -113,7 +113,7 @@ nte-dps-tool.exe
 
 旧原生 Mod 插件源码已移除，旧脚本和装备 IPC 与 Toolkit v1 不兼容。
 Loader 已迁入 UE Tools 私有工作区，当前公开发布流程不包含它。
-二进制目录说明见 [plugins/README.md](plugins/README.md)，
+二进制目录说明见 [插件模式说明](docs/PLUGIN_MODES.md)，
 残留引用检查见 [旧 Mod 引用清单](docs/LEGACY_MOD_REFERENCES.md)。
 
 ---

@@ -28,7 +28,7 @@
 | `src/platform/mod_loader.rs`、`mods_plugin_bootstrap.rs` | 保留旧 Loader 管理、`plugins/dwmapi.dll` 默认路径及旧导出 bootstrap；相关模块仍编译。手工 bootstrap 测试改用 `NTE_LEGACY_MOD_PLUGIN_DLL` 外部 DLL。 |
 | `src/core/mod_studio.rs`、`src/storage/mod_scripts.rs`、`res/mod-runtime-schema.json` | 旧脚本验证、日志和事件查询实现仍保留；当前 Tauri Mod 市场入口已走 Toolkit。 |
 | `src/core/update.rs`、`src/storage/update.rs`、Tauri settings/update DTO、前端 update/settings contract | 仍含旧插件版本、状态文件和更新元数据；本次未改变更新协议。 |
-| `plugins/mods-plugin.version`、`plugins/nte-mods.enabled`、`.nte` 与 Python 示例 | 旧兼容资产，部分由 Rust `include_bytes!` 嵌入；公开发布 workflow 当前不打包旧 DLL/Loader。 |
+| 原 `plugins/` 下的版本文件、默认脚本及示例 | 已删除；Rust 不再内嵌、自动安装或替换这些脚本，测试使用内联最小样例。用户已有脚本仍按原校验与迁移规则处理；不支持的内容报错保留，不自动改写。 |
 | 私有 `src/mod_loader/core/src/config/loader_config.cpp` | 默认 payload 仍为 `plugins/dwmapi.dll`，保留原 CLI 行为。 |
 | 私有 `src/mod_loader/shim/include/shim/legacy_mods_manual_map.hpp` | 保留旧 DLL 镜像签名与显式 attach 标记，原逻辑及单元测试不变；不依赖旧插件源目录。 |
 | `docs/releases/0.4.1.md`、网站旧功能介绍及部分历史说明 | 历史旧功能描述仍存在，不作为当前 Toolkit 能力证明。失效插件文档链接已更新。 |
