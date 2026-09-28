@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
@@ -94,8 +95,8 @@ def build(source: Path, output: Path, base_url: str) -> dict[str, object]:
             old_archive.unlink()
 
     result = {
-        "manifest": str(manifest_path.resolve()),
-        "artifact": str(artifact.resolve()),
+        "manifest": manifest_path.name,
+        "artifact": artifact.name,
         "dataVersion": data_version,
         "sha256": archive_sha256,
         "compressedBytes": len(archive_bytes),
@@ -121,7 +122,12 @@ def main() -> int:
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     args = parser.parse_args()
-    build(args.source, args.output, args.base_url)
+    try:
+        build(args.source, args.output, args.base_url)
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        # Filesystem exceptions and tracebacks expose the operator's source/output paths.
+        print(f"Abyss data build failed ({type(error).__name__}). Check source tables and output permissions.", file=sys.stderr)
+        return 1
     return 0
 
 

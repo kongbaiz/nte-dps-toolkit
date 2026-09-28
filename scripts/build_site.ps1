@@ -39,24 +39,24 @@ foreach ($sourceRoot in @(
         if ($sourceRoot -eq $repoRoot -and $resolvedOutput -ne $repoRoot) {
             continue
         }
-        throw "Site output must not overwrite a source directory: $resolvedOutput"
+        throw "Site output must not overwrite a source directory."
     }
 }
 
 if (Test-Path -LiteralPath $resolvedOutput) {
-    throw "Site output already exists; use a new empty path: $resolvedOutput"
+    throw "Site output already exists; use a new empty path."
 }
 
 $outputParent = Split-Path -Parent $resolvedOutput
 if ([string]::IsNullOrWhiteSpace($outputParent)) {
-    throw "Site output must have a parent directory: $resolvedOutput"
+    throw "Site output must have a parent directory."
 }
 New-Item -ItemType Directory -Path $outputParent -Force | Out-Null
 
 $stageName = ".nte-dps-site-stage-{0}" -f [Guid]::NewGuid().ToString("N")
 $stageDirectory = [IO.Path]::GetFullPath((Join-Path $outputParent $stageName))
 if ((Split-Path -Parent $stageDirectory) -ne [IO.Path]::GetFullPath($outputParent)) {
-    throw "Site staging directory escaped its intended parent: $stageDirectory"
+    throw "Site staging directory escaped its intended parent."
 }
 
 $assetCount = 0
@@ -66,7 +66,7 @@ try {
     foreach ($staticFile in @("index.html", "robots.txt", "sitemap.xml")) {
         $source = Join-Path $repoRoot (Join-Path "site" $staticFile)
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            throw "Site source file is missing: $source"
+            throw "Site source file is missing: $staticFile"
         }
         [IO.File]::Copy($source, (Join-Path $stageDirectory $staticFile), $false)
     }
@@ -90,10 +90,10 @@ try {
     $iconSource = Join-Path $repoRoot "res/icons/app-icon.png"
     $iconDestination = Join-Path $assetRoot "app-icon.png"
     if (-not (Test-Path -LiteralPath $iconSource -PathType Leaf)) {
-        throw "Canonical site icon is missing: $iconSource"
+        throw "Canonical site icon is missing."
     }
     if (-not $destinations.Add([IO.Path]::GetFullPath($iconDestination))) {
-        throw "Canonical site icon collides with another asset: $iconDestination"
+        throw "Canonical site icon collides with another asset."
     }
     New-Item -ItemType Directory -Path (Split-Path -Parent $iconDestination) -Force | Out-Null
     [IO.File]::Copy($iconSource, $iconDestination, $false)
@@ -127,8 +127,8 @@ try {
         (Test-Path -LiteralPath $stageDirectory)) {
         Remove-Item -LiteralPath $stageDirectory -Recurse -Force
     }
-    throw
+    throw "Site build failed. Check source assets and output permissions."
 }
 
 $fileCount = @(Get-ChildItem -LiteralPath $resolvedOutput -File -Recurse).Count
-Write-Output ("SITE-BUILD: OK output={0} files={1} assets={2}" -f $resolvedOutput, $fileCount, $assetCount)
+Write-Output ("SITE-BUILD: OK files={0} assets={1}" -f $fileCount, $assetCount)

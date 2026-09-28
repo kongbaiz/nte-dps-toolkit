@@ -13,7 +13,7 @@ try {
     foreach ($file in @("index.html", "robots.txt", "sitemap.xml", "assets/img/app-icon.png")) {
         $path = Join-Path $outputDirectory $file
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "Built site file is missing: $path"
+            throw "Built site file is missing: $file"
         }
     }
 
