@@ -1,9 +1,11 @@
 import { createContractPrimitives } from "./contract-primitives";
 import { tauriInvokeTransport, type InvokeTransport } from "./stream-client";
 
+export const PLUGIN_PANEL_CONTRACT_VERSION = 5;
+
 export type DataMode = "packet_capture" | "plugin";
 export interface PluginPanel {
-  contractVersion: 4;
+  contractVersion: 5;
   connectionIdentity: string | null;
   collectorActive: boolean;
   capabilities: number[];
@@ -11,6 +13,7 @@ export interface PluginPanel {
   loadingMethod: "proxy" | "loader";
   connection: "notRequested" | "connected" | "unavailable" | "busy" | "error";
   componentsReady: boolean;
+  gameDirectory: string | null;
   plugins: {
     file: string;
     state: "loaded" | "unloaded" | "unload_pending" | "failed";
@@ -33,7 +36,8 @@ const fail = (message: string): never => {
 const p = createContractPrimitives(fail);
 export function parsePluginPanel(value: unknown): PluginPanel {
   const r = p.record(value, "pluginPanel");
-  if (r.contractVersion !== 4) fail("unsupported plugin panel contract");
+  if (r.contractVersion !== PLUGIN_PANEL_CONTRACT_VERSION)
+    fail("unsupported plugin panel contract");
   const mode = p.enumValue(
     r.mode,
     ["packet_capture", "plugin"] as const,
@@ -123,8 +127,17 @@ export function parsePluginPanel(value: unknown): PluginPanel {
     fail("capture mode must not use plugin IPC");
   if (connection === "connected" && (operation === null || identity === null))
     fail("missing connected state");
+  const gameDirectory =
+    r.gameDirectory === null
+      ? null
+      : p.boundedString(r.gameDirectory, "gameDirectory", 32768);
+  if (
+    gameDirectory !== null &&
+    ["\0", "\r", "\n"].some((character) => gameDirectory.includes(character))
+  )
+    fail("invalid game directory");
   return {
-    contractVersion: 4,
+    contractVersion: PLUGIN_PANEL_CONTRACT_VERSION,
     loadingMethod: p.enumValue(
       r.loadingMethod,
       ["proxy", "loader"] as const,
@@ -136,6 +149,7 @@ export function parsePluginPanel(value: unknown): PluginPanel {
     mode,
     connection,
     componentsReady: p.boolean(r.componentsReady, "componentsReady"),
+    gameDirectory,
     plugins,
     combat,
     operation,
@@ -156,6 +170,16 @@ export function createToolkitClient(
     async setLoadingMethod(method: "proxy" | "loader") {
       return parsePluginPanel(
         await transport.invoke("set_host_loading_method", { method }),
+      );
+    },
+    async selectGameDirectory() {
+      return parsePluginPanel(
+        await transport.invoke("select_host_game_directory"),
+      );
+    },
+    async clearGameDirectory() {
+      return parsePluginPanel(
+        await transport.invoke("clear_host_game_directory"),
       );
     },
     async launchHost() {

@@ -522,8 +522,9 @@ pub fn run(
     sender: EngineEventSink,
     stop: Arc<AtomicBool>,
     router: Arc<super::equipment_rpc::Router>,
+    catalog: Arc<crate::engine::parser::AbilityCatalog>,
 ) {
-    stream::run(pid, sender, stop, router);
+    stream::run(pid, sender, stop, router, catalog);
 }
 
 #[cfg(test)]

@@ -681,6 +681,9 @@ fn skill_summaries<'a>(
 }
 
 fn skill_summary_display_name(hit: &Hit, language: Language) -> String {
+    if hit.attack_type.as_deref() == Some("恶意") {
+        return i18n::t_for(language, "Malice Damage");
+    }
     if is_target_hp_residual(hit) {
         return i18n::t_for(language, "Target HP Residual");
     }
@@ -890,6 +893,9 @@ fn hit_type_display_text(hit: &Hit, language: Language) -> String {
         HitDirection::Unknown => return i18n::t_for(language, "Candidate Output"),
         HitDirection::Outgoing => {}
     }
+    if hit.attack_type.as_deref() == Some("恶意") {
+        return i18n::t_for(language, "Malice Damage");
+    }
     if is_target_hp_residual(hit) {
         return i18n::t_for(language, "Target HP Residual");
     }
@@ -953,6 +959,9 @@ fn hit_skill_name(hit: &Hit) -> String {
 }
 
 fn hit_skill_name_ref(hit: &Hit) -> &str {
+    if hit.attack_type.as_deref() == Some("恶意") {
+        return "恶意";
+    }
     hit.damage_component
         .as_deref()
         .or(hit.ability_name.as_deref())
@@ -1262,6 +1271,27 @@ mod tests {
         assert_eq!(snapshot.target, "本阶段已击败目标");
     }
 
+    #[test]
+    fn malice_hit_filter_label_and_digits_are_independent_of_elemental_skill_metadata() {
+        let mut h = skill_hit(
+            193558.0,
+            Some("GA_BlackBird_Evolve_UltraSkill"),
+            None,
+            "恶意",
+        );
+        h.damage_name = Some("恶意".into());
+        h.damage_attribute = Some("魂".into());
+        assert_eq!(hit_skill_name_ref(&h), "恶意");
+        assert_eq!(
+            hit_type_display_text(&h, Language::SimplifiedChinese),
+            "恶意"
+        );
+        assert_eq!(
+            hit_type_display_text(&h, Language::English),
+            "Malice Damage"
+        );
+        assert_eq!(damage_digit_key_for_hit(&h, &HashMap::new()), Some("heiyu"));
+    }
     #[test]
     fn counter_hits_use_localized_names_and_never_expose_technical_ids() {
         let (_, warning) = ability_names::init(Language::SimplifiedChinese);

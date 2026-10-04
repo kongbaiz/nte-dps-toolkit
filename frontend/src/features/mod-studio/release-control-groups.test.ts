@@ -37,11 +37,11 @@ describe("plugin function groups", () => {
     expect(pluginControlGroup("nte_plugincombat.DLL")).toBe(combat);
     expect(pluginControlGroup("Custom.dll")).toBeUndefined();
   });
-  it("preserves plugin-owned features while host controls only inspect and unload", () => {
-    expect(RELEASE_GROUPS.find((g) => g.id === "combat")?.actions).toContain(
+  it("keeps destructive maintenance out of primary plugin features", () => {
+    expect(RELEASE_GROUPS.find((g) => g.id === "combat")?.advanced).toContain(
       "combatReset",
     );
-    expect(RELEASE_GROUPS.find((g) => g.id === "account")?.actions).toContain(
+    expect(RELEASE_GROUPS.find((g) => g.id === "account")?.advanced).toContain(
       "userCancel",
     );
     expect(requiresConfirmation("combatReset")).toBe(true);

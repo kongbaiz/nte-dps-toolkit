@@ -1553,6 +1553,15 @@ fn register_mod_workspace(workspace: &Path) -> Result<(), ModsPluginDeploymentEr
 }
 
 #[cfg(feature = "desktop")]
+/// Revalidate an explicit target on every deployment; never fall back after an invalid selection.
+pub fn toolkit_game_directory(manual: Option<&Path>) -> Result<PathBuf, ModsPluginDeploymentError> {
+    match manual {
+        Some(path) => resolve_manual_game_directory(path),
+        None => automatic_toolkit_game_directory(),
+    }
+}
+
+#[cfg(feature = "desktop")]
 /// Automatic proxy deployment never guesses between installations or uses a stale manual path.
 pub fn automatic_toolkit_game_directory() -> Result<PathBuf, ModsPluginDeploymentError> {
     let directories = game_installation_directories()?;
@@ -1612,7 +1621,9 @@ fn game_installation_directories_with_manual(
 }
 
 #[cfg(feature = "desktop")]
-fn resolve_manual_game_directory(selected: &Path) -> Result<PathBuf, ModsPluginDeploymentError> {
+pub fn resolve_manual_game_directory(
+    selected: &Path,
+) -> Result<PathBuf, ModsPluginDeploymentError> {
     for directory in [
         selected.to_path_buf(),
         selected.join(GAME_BINARY_RELATIVE_PATH),
@@ -3026,6 +3037,21 @@ mod tests {
             Err(ModsPluginDeploymentError::InvalidGameDirectory)
         );
 
+        // Explicit selection bypasses automatic discovery, but is revalidated every time.
+        assert_eq!(
+            toolkit_game_directory(Some(&root)).unwrap(),
+            canonical_binary
+        );
+        fs::remove_file(binary.join(GAME_EXECUTABLE_NAME)).unwrap();
+        assert_eq!(
+            toolkit_game_directory(Some(&root)),
+            Err(ModsPluginDeploymentError::InvalidGameDirectory)
+        );
+        fs::create_dir(binary.join(GAME_EXECUTABLE_NAME)).unwrap();
+        assert_eq!(
+            toolkit_game_directory(Some(&binary)),
+            Err(ModsPluginDeploymentError::InvalidGameDirectory)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

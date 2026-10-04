@@ -90,11 +90,15 @@ fn fetch_mod_market_catalog()
             log::error!("Mod Market catalog download failed: {error}");
             CommandError::mod_market_download_failed()
         })?;
-    parse_mod_market_catalog(&bytes).map_err(|error| {
+    let mut catalog = parse_mod_market_catalog(&bytes).map_err(|error| {
         log::error!(
             "Mod Market catalog validation failed in category {:?}",
             error.code
         );
         CommandError::from_mod_market(error)
-    })
+    })?;
+    catalog
+        .mods
+        .retain(|item| !item.id.eq_ignore_ascii_case("nte_pluginperformance"));
+    Ok(catalog)
 }

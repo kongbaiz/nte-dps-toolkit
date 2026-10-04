@@ -361,7 +361,7 @@ impl Ledger {
                         None
                     },
                 };
-                row.attribution = if (22..=28).contains(&component.display_type) {
+                row.attribution = if matches!(component.display_type, 22..=28 | 31) {
                     Attribution::ExplicitSettlementCategory
                 } else if !(0..=31).contains(&component.display_type) {
                     Attribution::UnknownCategory

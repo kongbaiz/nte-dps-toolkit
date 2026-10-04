@@ -1022,6 +1022,9 @@ pub struct UiConfig {
     pub mod_studio_global_game_directory: Option<String>,
     #[serde(default)]
     pub mod_studio_loading_method: ModStudioLoadingMethod,
+    /// Explicit proxy deployment target. None keeps automatic detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mod_studio_proxy_game_directory: Option<String>,
     #[serde(default)]
     pub mod_studio_risk_acknowledged: bool,
     #[serde(default)]
@@ -1124,6 +1127,7 @@ impl Default for UiConfig {
             mod_studio_china_game_directory: None,
             mod_studio_global_game_directory: None,
             mod_studio_loading_method: ModStudioLoadingMethod::default(),
+            mod_studio_proxy_game_directory: None,
             mod_studio_risk_acknowledged: false,
             data_mode: DataMode::default(),
             always_on_top: true,
@@ -1224,6 +1228,8 @@ impl UiConfig {
             sanitize_mod_studio_game_directory(self.mod_studio_china_game_directory.take());
         self.mod_studio_global_game_directory =
             sanitize_mod_studio_game_directory(self.mod_studio_global_game_directory.take());
+        self.mod_studio_proxy_game_directory =
+            sanitize_mod_studio_game_directory(self.mod_studio_proxy_game_directory.take());
         self.hud = self.hud.sanitized();
         self.hit_detail_columns = self.hit_detail_columns.sanitized();
         self.global_hotkeys = self.global_hotkeys.sanitized();
@@ -1803,6 +1809,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sanitizes_proxy_game_directory() {
+        assert_eq!(
+            serde_json::from_str::<UiConfig>("{}")
+                .unwrap()
+                .mod_studio_proxy_game_directory,
+            None
+        );
+        let config = UiConfig {
+            mod_studio_proxy_game_directory: Some("  GAME/Win64  ".into()),
+            ..UiConfig::default()
+        }
+        .sanitized();
+        assert_eq!(
+            config.mod_studio_proxy_game_directory.as_deref(),
+            Some("GAME/Win64")
+        );
+        for directory in [
+            "".to_owned(),
+            "\0invalid".to_owned(),
+            "invalid\npath".to_owned(),
+            "x".repeat(MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES + 1),
+        ] {
+            assert_eq!(
+                UiConfig {
+                    mod_studio_proxy_game_directory: Some(directory),
+                    ..UiConfig::default()
+                }
+                .sanitized()
+                .mod_studio_proxy_game_directory,
+                None
+            );
+        }
+    }
     #[test]
     fn sanitizes_mod_studio_game_directories() {
         let config = UiConfig {

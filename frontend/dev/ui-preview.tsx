@@ -214,8 +214,9 @@ mockIPC(
       const connected = params.get("plugin") === "connected";
       const packet = previewMode === "packet_capture";
       return {
-        contractVersion: 4,
+        contractVersion: 5,
         loadingMethod: previewLoadingMethod,
+        gameDirectory: null,
         mode: packet ? "packet_capture" : "plugin",
         connection: packet
           ? "notRequested"
@@ -228,12 +229,13 @@ mockIPC(
           ? [
               1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 100, 101, 102, 103, 104, 105,
               106, 107, 108, 109, 110, 113, 114, 115, 116, 117, 118, 119, 120,
-              121, 200, 300, 301, 302, 303, 304, 305,
+              121, 122, 123, 124, 125, 126, 400, 403, 410, 200, 300, 301, 302,
+              303, 304, 305,
             ]
           : [],
         componentsReady: connected,
         plugins: connected
-          ? ["Combat", "User", "Network", "Performance"].map((name) => ({
+          ? ["Combat", "User", "Network", "Training"].map((name) => ({
               file: `NTE_Plugin${name}.dll`,
               state: "loaded",
             }))

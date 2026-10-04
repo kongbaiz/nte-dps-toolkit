@@ -431,7 +431,7 @@ export const marketFixture: ModMarketCatalogSnapshot = {
       ["nte_plugincombat", "plugin", "Combat Plugin", "战斗插件"],
       ["nte_pluginuser", "plugin", "Account Plugin", "账号插件"],
       ["nte_pluginnetwork", "plugin", "Network Plugin", "网络插件"],
-      ["nte_pluginperformance", "plugin", "Performance Plugin", "性能插件"],
+      ["nte_plugintraining", "plugin", "Training Plugin", "训练插件"],
     ] as const
   ).map(([id, component, en, zh]) => ({
     id,

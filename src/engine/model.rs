@@ -304,6 +304,13 @@ impl Hit {
     }
     pub fn known_max_hp_reduction(&self) -> Option<f64> {
         match &self.exact {
+            None if self
+                .target_context
+                .iter()
+                .any(|s| s == "plugin_hp_scaling_unverified") =>
+            {
+                None
+            }
             None => Some(self.max_hp_reduction),
             Some(e) => e
                 .hp_adjustment
@@ -2799,6 +2806,11 @@ where
 }
 
 fn hit_skill_id_ref(hit: &Hit) -> &str {
+    // A server type-31 tick is a separate damage category, even when the native
+    // request retains the same parent GA/GE as an ordinary elemental hit.
+    if hit.attack_type.as_deref() == Some("恶意") {
+        return "恶意";
+    }
     hit.damage_component
         .as_deref()
         .or(hit.ability_name.as_deref())
@@ -3347,19 +3359,24 @@ impl SkillEntryRef {
             };
         }
 
+        let malice = hit.attack_type.as_deref() == Some("恶意");
         let damage_name = hit
             .damage_component
             .as_deref()
             .or(hit.damage_name.as_deref());
         Self {
             name: bounded_skill_text(
-                hit.damage_component
-                    .as_deref()
-                    .or(hit.ability_name.as_deref())
-                    .or(hit.gameplay_effect_name.as_deref())
-                    .or(hit.damage_name.as_deref())
-                    .or(hit.attack_type.as_deref())
-                    .unwrap_or("待映射技能"),
+                if malice {
+                    "恶意"
+                } else {
+                    hit.damage_component
+                        .as_deref()
+                        .or(hit.ability_name.as_deref())
+                        .or(hit.gameplay_effect_name.as_deref())
+                        .or(hit.damage_name.as_deref())
+                        .or(hit.attack_type.as_deref())
+                        .unwrap_or("待映射技能")
+                },
                 "Aggregated Overflow",
             ),
             category: bounded_skill_text(

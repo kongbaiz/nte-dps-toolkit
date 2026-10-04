@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createToolkitClient, parsePluginPanel } from "./toolkit-client";
 
 const capture = {
-  contractVersion: 4,
+  contractVersion: 5,
   loadingMethod: "proxy",
+  gameDirectory: null,
   connectionIdentity: null,
   collectorActive: false,
   capabilities: [],
@@ -114,4 +115,34 @@ it("routes loading preference and explicit host startup separately from data mod
   expect(() =>
     parsePluginPanel({ ...capture, loadingMethod: "unknown" }),
   ).toThrow();
+});
+
+it("requires a bounded directory field and routes selection and clearing without deploying", async () => {
+  const manual = { ...capture, gameDirectory: "GAME/Win64" };
+  expect(parsePluginPanel(manual).gameDirectory).toBe("GAME/Win64");
+  for (const gameDirectory of [
+    undefined,
+    42,
+    "",
+    "GAME\0",
+    "GAME\npath",
+    "x".repeat(32769),
+  ])
+    expect(() => parsePluginPanel({ ...capture, gameDirectory })).toThrow();
+  const invoke = vi
+    .fn()
+    .mockResolvedValueOnce(manual)
+    .mockResolvedValueOnce(capture)
+    .mockRejectedValueOnce({ code: "plugin_game_directory_invalid" });
+  const client = createToolkitClient({ invoke });
+  expect((await client.selectGameDirectory()).gameDirectory).toBe("GAME/Win64");
+  expect((await client.clearGameDirectory()).gameDirectory).toBeNull();
+  await expect(client.selectGameDirectory()).rejects.toEqual({
+    code: "plugin_game_directory_invalid",
+  });
+  expect(invoke.mock.calls).toEqual([
+    ["select_host_game_directory"],
+    ["clear_host_game_directory"],
+    ["select_host_game_directory"],
+  ]);
 });

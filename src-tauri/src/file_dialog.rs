@@ -38,6 +38,7 @@ impl std::error::Error for DialogError {}
 #[derive(Clone, Copy)]
 enum DialogOperation {
     PickFile,
+    PickFolder,
     SaveFile,
 }
 
@@ -103,11 +104,28 @@ async fn run_dialog(
 
         let selection = match request.operation {
             DialogOperation::PickFile => builder.blocking_pick_file(),
+            DialogOperation::PickFolder => builder.blocking_pick_folder(),
             DialogOperation::SaveFile => builder.blocking_save_file(),
         };
         map_selection(selection)
     })
     .await?
+}
+
+#[cfg(windows)]
+pub(crate) async fn choose_game_directory(
+    window: &WebviewWindow,
+) -> Result<DialogOutcome, DialogError> {
+    run_dialog(
+        window,
+        DialogRequest {
+            title: i18n::t("Select game directory"),
+            filters: vec![],
+            default_file_name: None,
+            operation: DialogOperation::PickFolder,
+        },
+    )
+    .await
 }
 
 #[cfg(windows)]

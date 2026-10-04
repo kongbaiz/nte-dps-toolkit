@@ -128,6 +128,7 @@ pub fn mixed_damage_digit_key(
     }
     match attack_type {
         "创生" | "创生花" => Some("Guangling_G"),
+        "恶意" => Some("heiyu"),
         "覆纹" => Some("lingzhou_L"),
         "黯星" => Some("Anhun_A"),
         "浊燃" => Some("Zhouan_A"),
@@ -238,6 +239,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn malice_digits_do_not_fall_back_to_element_or_reaction_digits() {
+        let mut value = hit(HitDirection::Outgoing, true, Some("恶意"));
+        value.damage_attribute = Some("魂".into());
+        assert_eq!(
+            damage_digit_key_for_hit(&value, &HashMap::new()),
+            Some("heiyu")
+        );
+        assert!(!crate::engine::model::is_reaction_damage_type("恶意"));
+        value.follow_up_attack_type = Some("恶意".into());
+        assert_eq!(follow_up_damage_digit_key_for_hit(&value), Some("heiyu"));
+        assert_eq!(reaction_text_key_for_hit(&value), None);
+    }
     #[test]
     fn follow_up_reaction_digits_do_not_require_optional_attribute_metadata() {
         let mut value = hit(HitDirection::Outgoing, true, Some("普攻"));

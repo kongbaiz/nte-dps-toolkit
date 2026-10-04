@@ -259,6 +259,7 @@ pub fn skill_label_translation_key(label: &str) -> Option<&'static str> {
         "延滞" => Some("Remora"),
         "黯星" => Some("Nova"),
         "浊燃" => Some("Scorch"),
+        "恶意" => Some("Malice Damage"),
         "浸染" => Some("Stain"),
         "盈蓄" => Some("Charge"),
         "失谐" => Some("Discord"),

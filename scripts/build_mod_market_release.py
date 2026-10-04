@@ -1,4 +1,4 @@
-"""Stage the seven compiled Release components; signing stays on the release host."""
+"""Stage the six shipping Release components; signing stays on the release host."""
 import argparse
 import datetime
 import hashlib
@@ -13,8 +13,7 @@ COMPONENTS = (
     ("uetools-driver", "driver", "driver/uetools.sys", "Toolkit Driver", "Toolkit 驱动", "Toolkit ドライバー"),
     ("nte_plugincombat", "plugin", "game/plugins/NTE_PluginCombat.dll", "Combat Plugin", "战斗插件", "戦闘プラグイン"),
     ("nte_pluginuser", "plugin", "game/plugins/NTE_PluginUser.dll", "Account Plugin", "账号插件", "アカウントプラグイン"),
-    ("nte_pluginnetwork", "plugin", "game/plugins/NTE_PluginNetwork.dll", "Network Plugin", "网络插件", "ネットワークプラグイン"),
-    ("nte_pluginperformance", "plugin", "game/plugins/NTE_PluginPerformance.dll", "Performance Plugin", "性能插件", "パフォーマンスプラグイン"),
+    ("nte_plugintraining", "plugin", "game/plugins/NTE_PluginTraining.dll", "Training Plugin", "训练插件", "トレーニングプラグイン"),
 )
 SUMMARIES = {
     "nte-host": {
@@ -41,6 +40,11 @@ SUMMARIES = {
         "en": "Reads character and inventory data, with previews and exports of account snapshots.",
         "zh-CN": "读取角色与背包数据，支持预览和导出账号快照。",
         "ja": "キャラクターと所持品のデータを読み取り、アカウントのスナップショットを確認・出力できます。",
+    },
+    "nte_plugintraining": {
+        "en": "Enables the in-game Tab wooden dummy wheel and provides training status and operation queries.",
+        "zh-CN": "提供游戏内 Tab 木桩轮盘开关、训练状态和操作状态查询。",
+        "ja": "ゲーム内の Tab 木人ホイールの切り替えと、トレーニング状態・操作状態の確認に対応します。",
     },
     "nte_pluginnetwork": {
         "en": "Records game network activity and exports diagnostic logs for troubleshooting connections.",

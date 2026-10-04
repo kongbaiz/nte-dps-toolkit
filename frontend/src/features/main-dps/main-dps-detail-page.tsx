@@ -1125,6 +1125,7 @@ const damageDigitPrefix: Record<string, string> = {
   Anhun_A: "Anhun_A",
   Zhouan_A: "Zhouan_A",
   lingzhou_L: "lingzhou_L",
+  heiyu: "heiyu",
 };
 
 function DamageDigits({

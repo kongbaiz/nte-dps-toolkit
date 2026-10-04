@@ -5,7 +5,7 @@ import {
   Activity,
   Users,
   Network,
-  Gauge,
+  Target,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,8 +44,8 @@ export function PluginControls({
         ? Users
         : group?.id === "network"
           ? Network
-          : plugin.file.toLowerCase() === "nte_pluginperformance.dll"
-            ? Gauge
+          : group?.id === "training"
+            ? Target
             : Puzzle;
   const loaded = plugin.state === "loaded";
   const busy =
@@ -73,41 +73,24 @@ export function PluginControls({
               <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
               <Badge variant="outline">{t(PLUGIN_STATE[plugin.state])}</Badge>
             </div>
-            <p className="mt-1.5 break-all font-mono text-xs text-muted-foreground">
-              {plugin.file}
-            </p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw />
-            {t("Check status")}
-          </Button>
-          <Button
-            size="sm"
-            disabled={busy || loaded || !panel.capabilities.includes(4)}
+            variant={loaded ? "outline" : "default"}
+            disabled={busy || !panel.capabilities.includes(loaded ? 5 : 4)}
             onClick={() =>
-              void run(() => toolkitClient.control("enable", plugin.file))
+              void run(() =>
+                toolkitClient.control(
+                  loaded ? "disable" : "enable",
+                  plugin.file,
+                ),
+              )
             }
           >
             <Power />
-            {t("Load plugin")}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || !loaded || !panel.capabilities.includes(5)}
-            onClick={() =>
-              void run(() => toolkitClient.control("disable", plugin.file))
-            }
-          >
-            <Power />
-            {t("Unload plugin")}
+            {t(loaded ? "Unload plugin" : "Load plugin")}
           </Button>
         </div>
         {panel.collectorActive && (
@@ -123,7 +106,7 @@ export function PluginControls({
         )}
       </header>
       <div
-        className={`grid min-w-0 items-start gap-4 ${group?.id === "combat" ? "@[54rem]/detail:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]" : "max-w-3xl"}`}
+        className={`grid min-w-0 items-start gap-4 ${group?.id === "combat" ? "@min-[48rem]/detail:grid-cols-2" : "w-full"}`}
         data-testid="plugin-settings-grid"
       >
         {group?.id === "combat" && (
@@ -149,6 +132,23 @@ export function PluginControls({
           </Card>
         )}
       </div>
+      <details className="rounded-lg border px-4 py-3 text-xs text-muted-foreground">
+        <summary className="cursor-pointer font-medium focus-visible:outline-ring">
+          {t("Plugin details")}
+        </summary>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="break-all font-mono">{plugin.file}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending}
+            onClick={() => void refresh()}
+          >
+            <RefreshCw />
+            {t("Check status")}
+          </Button>
+        </div>
+      </details>
     </div>
   );
 }

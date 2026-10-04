@@ -29,7 +29,7 @@ describe("Release-only plugin controls", () => {
   });
   it("has no retired or developer command and guards destructive actions", () => {
     expect(new Set(RELEASE_ACTIONS.map((a) => a[1])).size).toBe(
-      RELEASE_ACTIONS.length,
+      RELEASE_ACTIONS.length - 1,
     );
     for (const id of [111, 112, 200])
       expect(RELEASE_ACTIONS.some((a) => Number(a[1]) === id)).toBe(false);
@@ -106,4 +106,34 @@ it("exposes the fixed prebattle action with confirmation and no automatic retry"
     value: null,
     confirmed: true,
   });
+});
+
+it("binds both wooden wheel actions to command 403 and requires confirmation without retries", async () => {
+  expect(RELEASE_ACTIONS.filter((a) => a[1] === 403).map((a) => a[0])).toEqual([
+    "trainingWoodenEnable",
+    "trainingWoodenDisable",
+  ]);
+  for (const action of [
+    "trainingWoodenEnable",
+    "trainingWoodenDisable",
+  ] as const) {
+    expect(requiresConfirmation(action)).toBe(true);
+    const invoke = vi.fn().mockRejectedValue({ code: "plugin_timeout" });
+    await expect(
+      createReleasePluginClient({ invoke }).execute(
+        action,
+        "123:456",
+        null,
+        true,
+      ),
+    ).rejects.toEqual({ code: "plugin_timeout" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("release_plugin_action", {
+      action,
+      expectedIdentity: "123:456",
+      value: null,
+      confirmed: true,
+    });
+  }
+  for (const id of [401, 402, 404, 405, 406, 407, 408, 409, 411, 412])
+    expect(RELEASE_ACTIONS.some((a) => Number(a[1]) === id)).toBe(false);
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw, Power, ArrowRight, Check, Store } from "lucide-react";
+import { RefreshCw, Power, ArrowRight, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 import { toolkitClient, type PluginPanel } from "@/lib/tauri/toolkit-client";
@@ -42,7 +42,7 @@ export function HostControls({
       : !panel.componentsReady
         ? "Install the required components from the Mod Market first."
         : connected
-          ? "Select a plugin above to load it or adjust its features."
+          ? "Choose a plugin to start using its features."
           : panel.loadingMethod === "proxy"
             ? "Close the game, load the host to deploy the proxy, then restart the game and check status."
             : "Start the game, then load the host. Approve UAC if prompted.";
@@ -51,64 +51,25 @@ export function HostControls({
       className="flex min-w-0 flex-col gap-4"
       data-testid="host-control-page"
     >
-      <section
-        aria-label={t("Getting started")}
-        className="rounded-xl border bg-muted/25 px-4 py-3"
-      >
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">{t("Getting started")}</h2>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={onOpenMarket}
-          >
+      {!panel.componentsReady && (
+        <section
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/25 p-4"
+          aria-label={t("Getting started")}
+        >
+          <div>
+            <h2 className="text-sm font-semibold">{t("Install components")}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("Get the host, Loader, driver and plugins from the market.")}
+            </p>
+          </div>
+          <Button size="sm" disabled={pending} onClick={onOpenMarket}>
             <Store />
             {t("Open Mod Market")}
             <ArrowRight />
           </Button>
-        </div>
-        <ol className="grid gap-3 text-xs @min-[42rem]/detail:grid-cols-3">
-          {(
-            [
-              [
-                "Install components",
-                "Get the host, Loader, driver and plugins from the market.",
-                panel.componentsReady,
-              ],
-              [
-                "Load host",
-                "Choose a loading method below and connect to the game.",
-                connected,
-              ],
-              [
-                "Use plugins",
-                "Select a plugin above to load it or adjust its features.",
-                false,
-              ],
-            ] as const
-          ).map(([title, description, done], index) => (
-            <li key={title} className="flex items-start gap-2">
-              <span
-                className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] ${done ? "bg-primary text-primary-foreground" : "border bg-background"}`}
-              >
-                {done ? (
-                  <Check className="size-3" aria-label={t("Ready")} />
-                ) : (
-                  index + 1
-                )}
-              </span>
-              <div>
-                <p className="font-medium">{t(title)}</p>
-                <p className="mt-1 leading-relaxed text-muted-foreground">
-                  {t(description)}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
-      <div className="grid items-start gap-4 @min-[46rem]/detail:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+        </section>
+      )}
+      <div className="space-y-4">
         <section
           className="min-w-0 rounded-xl border bg-card"
           aria-label={t("Plugin host")}
@@ -126,7 +87,9 @@ export function HostControls({
             </span>
           </header>
           <div className="space-y-3 p-4">
-            <HostLoadingControls panel={panel} pending={pending} run={run} />
+            {!connected && (
+              <HostLoadingControls panel={panel} pending={pending} run={run} />
+            )}
             <p
               id="host-load-guidance"
               className="border-l-2 border-primary pl-3 text-sm leading-relaxed"
@@ -144,32 +107,34 @@ export function HostControls({
                   <RefreshCw />
                   {t("Check status")}
                 </Button>
-                <Button
-                  size="sm"
-                  aria-describedby="host-load-guidance"
-                  disabled={
-                    pending ||
-                    panel.collectorActive ||
-                    connected ||
-                    panel.mode !== "plugin" ||
-                    !panel.componentsReady
-                  }
-                  onClick={() => {
-                    setNotice(null);
-                    void run(async () => {
-                      const result = await toolkitClient.launchHost();
-                      if (alive.current)
-                        setNotice(
-                          result.outcome === "proxyDeployed"
-                            ? "Proxy deployment is ready. Restart the game, then check host status."
-                            : "Host connection confirmed.",
-                        );
-                    });
-                  }}
-                >
-                  <Power />
-                  {t("Load host")}
-                </Button>
+                {!connected && (
+                  <Button
+                    size="sm"
+                    aria-describedby="host-load-guidance"
+                    disabled={
+                      pending ||
+                      panel.collectorActive ||
+                      connected ||
+                      panel.mode !== "plugin" ||
+                      !panel.componentsReady
+                    }
+                    onClick={() => {
+                      setNotice(null);
+                      void run(async () => {
+                        const result = await toolkitClient.launchHost();
+                        if (alive.current)
+                          setNotice(
+                            result.outcome === "proxyDeployed"
+                              ? "Proxy deployment is ready. Restart the game, then check host status."
+                              : "Host connection confirmed.",
+                          );
+                      });
+                    }}
+                  >
+                    <Power />
+                    {t("Load host")}
+                  </Button>
+                )}
               </div>
             </div>
             {notice && (
@@ -179,12 +144,22 @@ export function HostControls({
             )}
           </div>
         </section>
-        <ReleaseControls
-          panel={panel}
-          pending={pending}
-          run={run}
-          group={RELEASE_GROUPS.find((group) => group.id === "host")!}
-        />
+        <details className="rounded-xl border bg-card">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium focus-visible:outline-ring">
+            {t("Connection settings and maintenance")}
+          </summary>
+          <div className="space-y-4 border-t p-4">
+            {connected && (
+              <HostLoadingControls panel={panel} pending={pending} run={run} />
+            )}
+            <ReleaseControls
+              panel={panel}
+              pending={pending}
+              run={run}
+              group={RELEASE_GROUPS.find((group) => group.id === "host")!}
+            />
+          </div>
+        </details>
       </div>
     </div>
   );

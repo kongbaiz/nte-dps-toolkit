@@ -9,6 +9,7 @@ import {
   Settings2,
   Store,
   TriangleAlert,
+  Target,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -29,13 +30,14 @@ const PLUGIN_NAMES: Record<string, string> = {
   "nte_plugincombat.dll": "Combat plugin",
   "nte_pluginuser.dll": "Account plugin",
   "nte_pluginnetwork.dll": "Network plugin",
-  "nte_pluginperformance.dll": "Performance plugin",
+  "nte_plugintraining.dll": "Training plugin",
 };
 const ICONS = {
   combat: Activity,
   account: Users,
   network: Network,
   host: Server,
+  training: Target,
 };
 export function ModStudioWorkspace() {
   useTranslationRevision();
@@ -116,14 +118,12 @@ export function ModStudioWorkspace() {
     </Alert>
   ) : null;
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <section className="@container/workshop flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
         <div>
           <h1 className="text-lg font-semibold">{t("Mod Workshop")}</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {t(
-              "Install components, connect the host, then manage your plugins.",
-            )}
+            {t("Your plugins and in-game features, in one place.")}
           </p>
         </div>
         <div
@@ -166,24 +166,24 @@ export function ModStudioWorkspace() {
         </div>
       ) : (
         <div
-          className="flex min-h-0 flex-1 flex-col"
+          className="flex min-h-0 flex-1 flex-col @min-[44rem]/workshop:flex-row"
           data-testid="plugin-split-view"
         >
           <nav
             aria-label={t("Plugin control pages")}
-            className="flex shrink-0 items-center gap-2 overflow-x-auto border-b bg-muted/25 px-4 py-2"
+            className="flex max-h-48 shrink-0 flex-wrap content-start gap-1 overflow-y-auto border-b bg-muted/20 p-3 @min-[44rem]/workshop:max-h-none @min-[44rem]/workshop:w-44 @min-[44rem]/workshop:flex-col @min-[44rem]/workshop:flex-nowrap @min-[44rem]/workshop:border-r @min-[44rem]/workshop:border-b-0"
           >
             <Button
               variant={activePage === "host" ? "secondary" : "ghost"}
-              className="shrink-0 justify-start"
+              className="shrink-0 justify-start @min-[44rem]/workshop:w-full"
               aria-current={activePage === "host" ? "page" : undefined}
               disabled={pending}
               onClick={() => selectPage("host")}
             >
               <Server />
-              {t("Host controls")}
+              {t("Connection settings")}
             </Button>
-            <div className="flex shrink-0 items-center gap-1 border-l pl-2">
+            <div className="contents">
               {panel.plugins.map((plugin) => {
                 const group = pluginControlGroup(plugin.file);
                 const Icon = group ? ICONS[group.id] : Cpu;
@@ -196,19 +196,24 @@ export function ModStudioWorkspace() {
                       activePage === plugin.file ? "page" : undefined
                     }
                     onClick={() => selectPage(plugin.file)}
-                    className={`flex min-w-0 shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${activePage === plugin.file ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                    className={`flex min-w-0 max-w-full shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 @min-[44rem]/workshop:w-full text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${activePage === plugin.file ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
                   >
                     <Icon className="size-4 shrink-0" />
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="whitespace-nowrap text-sm font-medium">
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="truncate text-sm font-medium">
                         {t(
                           PLUGIN_NAMES[plugin.file.toLowerCase()] ??
-                            plugin.file,
+                            plugin.file
+                              .replace(/^NTE_Plugin/i, "")
+                              .replace(/\.dll$/i, ""),
                         )}
                       </span>
-                      <span className="whitespace-nowrap rounded bg-background px-1.5 py-0.5 text-[11px]">
-                        {t(PLUGIN_STATE[plugin.state])}
-                      </span>
+                      <span
+                        role="img"
+                        aria-label={t(PLUGIN_STATE[plugin.state])}
+                        title={t(PLUGIN_STATE[plugin.state])}
+                        className={`ml-auto size-1.5 shrink-0 rounded-full ${plugin.state === "loaded" ? "bg-[var(--console-success)]" : plugin.state === "failed" ? "bg-destructive" : "bg-muted-foreground"}`}
+                      />
                     </span>
                   </button>
                 );
@@ -230,7 +235,7 @@ export function ModStudioWorkspace() {
             ref={contentRef}
             data-testid="plugin-workspace-scroll"
           >
-            <div className="w-full space-y-4 p-4">
+            <div className="mx-auto w-full max-w-6xl space-y-4 p-5">
               {errorBanner}
               <div key={`${activePage}:${panel.connectionIdentity}`}>
                 {selectedPlugin ? (

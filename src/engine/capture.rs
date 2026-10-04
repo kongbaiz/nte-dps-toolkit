@@ -18352,3 +18352,66 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod special_damage_recording_tests {
+    use crate::{
+        core::reducer::apply_engine_event,
+        engine::{
+            capture::{CaptureResources, import_pcapng},
+            model::{CombatState, EngineEvent},
+            parser::{CHARACTER_DATA_PATH, load_characters},
+        },
+        storage::{ability_names, i18n::Language},
+    };
+    use std::{
+        path::Path,
+        sync::{Arc, atomic::AtomicBool},
+    };
+
+    #[test]
+    #[ignore = "requires NTE_SPECIAL_DAMAGE_PCAP supplied by the caller"]
+    fn supplied_pcap_preserves_malice_damage() {
+        let path = std::env::var_os("NTE_SPECIAL_DAMAGE_PCAP").expect("recording path");
+        let (catalog, warning) = ability_names::init(Language::SimplifiedChinese);
+        assert!(warning.is_none(), "resource load failed");
+        let resources = CaptureResources {
+            characters: Arc::new(load_characters(Path::new(CHARACTER_DATA_PATH)).unwrap()),
+            ability_catalog: catalog,
+        };
+        let (sender, receiver) = crossbeam_channel::bounded(256);
+        let worker = import_pcapng(
+            path.into(),
+            resources,
+            None,
+            true,
+            true,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        let mut state = CombatState::default();
+        while let Ok(event) = receiver.recv() {
+            assert!(
+                !matches!(&event, EngineEvent::Error(_)),
+                "recording replay failed"
+            );
+            apply_engine_event(&mut state, event);
+        }
+        worker.join().unwrap();
+        let malice: Vec<_> = state
+            .hits
+            .iter()
+            .filter(|h| h.damage_name.as_deref() == Some("恶意"))
+            .collect();
+        println!(
+            "malice_hits={} malice_damage={}",
+            malice.len(),
+            malice.iter().map(|h| h.damage).sum::<f64>()
+        );
+        assert!(
+            !malice.is_empty(),
+            "the supplied recording must retain type-31 damage"
+        );
+    }
+}

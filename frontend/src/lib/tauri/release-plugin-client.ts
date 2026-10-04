@@ -21,6 +21,15 @@ export const RELEASE_ACTIONS = [
   ["hudConfigure", 119, "In-game enhanced HUD"],
   ["prebattleSkillStatus", 120, "Prebattle skill unlock status"],
   ["prebattleSkillUnlock", 121, "Unlock prebattle skills"],
+  ["frameRateStatus", 122, "Frame rate unlock status"],
+  ["frameRateConfigure", 123, "Frame rate unlock"],
+  ["frameRateRefresh", 124, "Refresh frame rate unlock"],
+  ["quickUltimateStatus", 125, "Quick ultimate status"],
+  ["quickUltimateConfigure", 126, "Quick ultimate"],
+  ["trainingStatus", 400, "Training status"],
+  ["trainingWoodenEnable", 403, "Enable wooden dummy wheel"],
+  ["trainingWoodenDisable", 403, "Disable wooden dummy wheel"],
+  ["trainingOperation", 410, "Training operation status"],
   ["userStatus", 300, "Account reader status"],
   ["userRefresh", 301, "Refresh account data"],
   ["userOperation", 302, "Account operation status"],
@@ -87,6 +96,8 @@ export function requiresConfirmation(a: ReleaseAction) {
     "traceClear",
     "userCancel",
     "prebattleSkillUnlock",
+    "trainingWoodenEnable",
+    "trainingWoodenDisable",
   ].includes(a);
 }
 export function createReleasePluginClient(

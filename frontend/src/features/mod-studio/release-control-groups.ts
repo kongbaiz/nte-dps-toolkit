@@ -4,13 +4,19 @@ export const RELEASE_GROUPS = [
     id: "combat",
     pluginFile: "NTE_PluginCombat.dll",
     label: "Combat functions",
-    description:
-      "Review collection, inspect evidence and export native combat reports.",
+    description: "Adjust combat features and preview or export your reports.",
     actions: [
+      "frameRateConfigure",
+      "quickUltimateConfigure",
       "prebattleSkillUnlock",
-      "prebattleSkillStatus",
       "combatReport",
       "combatExport",
+    ],
+    advanced: [
+      "frameRateStatus",
+      "frameRateRefresh",
+      "quickUltimateStatus",
+      "prebattleSkillStatus",
       "combatStatus",
       "combatOperation",
       "evidenceStatus",
@@ -20,7 +26,6 @@ export const RELEASE_GROUPS = [
       "combatReset",
       "traceClear",
     ],
-    advanced: [],
   },
   {
     id: "account",
@@ -28,15 +33,8 @@ export const RELEASE_GROUPS = [
     label: "Account data",
     description:
       "Read characters and inventory, then preview or export the frozen snapshot.",
-    actions: [
-      "userRefresh",
-      "userSnapshot",
-      "userExport",
-      "userStatus",
-      "userOperation",
-      "userCancel",
-    ],
-    advanced: [],
+    actions: ["userRefresh", "userSnapshot", "userExport"],
+    advanced: ["userStatus", "userOperation", "userCancel"],
   },
   {
     id: "network",
@@ -44,8 +42,16 @@ export const RELEASE_GROUPS = [
     label: "Network evidence",
     description:
       "Optional plugin-side diagnostics. This is not the DPS data source.",
-    actions: ["networkStatus", "networkEnable", "networkFlush"],
-    advanced: [],
+    actions: ["networkEnable"],
+    advanced: ["networkStatus", "networkFlush"],
+  },
+  {
+    id: "training",
+    pluginFile: "NTE_PluginTraining.dll",
+    label: "Training controls",
+    description: "Use the Tab key in game to open the wooden dummy wheel.",
+    actions: ["trainingWoodenEnable", "trainingWoodenDisable"],
+    advanced: ["trainingStatus", "trainingOperation"],
   },
   {
     id: "host",

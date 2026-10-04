@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{State, WebviewWindow};
 
+const PLUGIN_PANEL_CONTRACT_VERSION: u32 = 5;
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PluginPanel {
@@ -29,6 +31,7 @@ pub(crate) struct PluginPanel {
     combat: Option<Combat>,
     operation: Option<PluginOperation>,
     components_ready: bool,
+    game_directory: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Plugin {
@@ -141,7 +144,8 @@ fn validate_data_source_window(window: &WebviewWindow) -> Result<(), CommandErro
 fn snapshot(state: &AppState) -> PluginPanel {
     let mode = state.data_mode();
     let mut result = PluginPanel {
-        contract_version: 4,
+        contract_version: PLUGIN_PANEL_CONTRACT_VERSION,
+        game_directory: state.proxy_game_directory(),
         connection_identity: None,
         collector_active: matches!(
             state.capture_phase(),
@@ -359,6 +363,15 @@ pub(crate) enum ReleaseAction {
     HudConfigure,
     PrebattleSkillStatus,
     PrebattleSkillUnlock,
+    FrameRateStatus,
+    FrameRateConfigure,
+    FrameRateRefresh,
+    QuickUltimateStatus,
+    QuickUltimateConfigure,
+    TrainingStatus,
+    TrainingWoodenEnable,
+    TrainingWoodenDisable,
+    TrainingOperation,
     UserStatus,
     UserRefresh,
     UserOperation,
@@ -389,6 +402,14 @@ impl ReleaseAction {
             Self::HudConfigure => 119,
             Self::PrebattleSkillStatus => 120,
             Self::PrebattleSkillUnlock => 121,
+            Self::FrameRateStatus => 122,
+            Self::FrameRateConfigure => 123,
+            Self::FrameRateRefresh => 124,
+            Self::QuickUltimateStatus => 125,
+            Self::QuickUltimateConfigure => 126,
+            Self::TrainingStatus => 400,
+            Self::TrainingWoodenEnable | Self::TrainingWoodenDisable => 403,
+            Self::TrainingOperation => 410,
             Self::UserStatus => 300,
             Self::UserRefresh => 301,
             Self::UserOperation => 302,
@@ -396,7 +417,13 @@ impl ReleaseAction {
             Self::UserExport => 304,
             Self::UserCancel => 305,
         };
-        let argument = if matches!(self, Self::NetworkEnable | Self::TraceEnable) {
+        let argument = if matches!(
+            self,
+            Self::NetworkEnable
+                | Self::TraceEnable
+                | Self::FrameRateConfigure
+                | Self::QuickUltimateConfigure
+        ) {
             value
                 .filter(|v| *v <= 1)
                 .ok_or(ToolkitError::InvalidProtocol)?
@@ -408,7 +435,11 @@ impl ReleaseAction {
             if value.is_some() {
                 return Err(ToolkitError::InvalidProtocol);
             }
-            0
+            match self {
+                Self::TrainingWoodenEnable => 9,
+                Self::TrainingWoodenDisable => 10,
+                _ => 0,
+            }
         };
         Ok((command, argument))
     }
@@ -427,6 +458,8 @@ impl ReleaseAction {
                 | Self::TraceClear
                 | Self::UserCancel
                 | Self::PrebattleSkillUnlock
+                | Self::TrainingWoodenEnable
+                | Self::TrainingWoodenDisable
         )
     }
 }
@@ -538,6 +571,77 @@ pub(crate) async fn set_host_loading_method(
     .map_err(|_| error(ToolkitError::Failed))?
 }
 
+fn directory_error() -> CommandError {
+    CommandError {
+        code: "plugin_game_directory_invalid",
+        message_key: "Select a valid game directory containing HTGame.exe. No files were changed.",
+        message_arguments: vec![],
+        diagnostic_line: None,
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn select_host_game_directory(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<PluginPanel, CommandError> {
+    console::validate_window(&window)?;
+    // No reservation or hot lock is held while the native picker is open.
+    let selected = crate::file_dialog::choose_game_directory(&window)
+        .await
+        .map_err(|_| CommandError {
+            code: "plugin_game_directory_dialog_failed",
+            message_key: "Game directory selection failed.",
+            message_arguments: vec![],
+            diagnostic_line: None,
+        })?;
+    console::validate_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let crate::file_dialog::DialogOutcome::Selected(path) = selected {
+            let directory =
+                nte_dps_tool::platform::mods_plugin::resolve_manual_game_directory(&path)
+                    .map_err(|_| directory_error())?;
+            let text = directory
+                .to_str()
+                .filter(|s| {
+                    s.len() <= nte_dps_tool::storage::config::MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES
+                        && !s.chars().any(|c| matches!(c, '\0' | '\r' | '\n'))
+                })
+                .ok_or_else(directory_error)?;
+            let _permit = state
+                .reserve_plugin_control()
+                .map_err(CommandError::from_core)?;
+            state
+                .set_proxy_game_directory(Some(text.to_owned()))
+                .map_err(|_| CommandError::settings_config_save_failed())?;
+        }
+        Ok(snapshot(&state))
+    })
+    .await
+    .map_err(|_| error(ToolkitError::Failed))?
+}
+
+#[tauri::command]
+pub(crate) async fn clear_host_game_directory(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<PluginPanel, CommandError> {
+    console::validate_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = state
+            .reserve_plugin_control()
+            .map_err(CommandError::from_core)?;
+        state
+            .set_proxy_game_directory(None)
+            .map_err(|_| CommandError::settings_config_save_failed())?;
+        Ok(snapshot(&state))
+    })
+    .await
+    .map_err(|_| error(ToolkitError::Failed))?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HostLaunchResult {
@@ -574,8 +678,9 @@ pub(crate) async fn launch_plugin_host(
             if network::game_process_id().map_err(|_| error(ToolkitError::Failed))?.is_some() {
                 return Err(CommandError { code: "plugin_close_game_required", message_key: "Close the game before deploying the proxy host, then restart it to load the host.", message_arguments: vec![], diagnostic_line: None });
             }
-            let destination = nte_dps_tool::platform::mods_plugin::automatic_toolkit_game_directory()
-                .map_err(|_| CommandError { code: "plugin_game_directory_unavailable", message_key: "A unique game installation could not be confirmed. No files were changed.", message_arguments: vec![], diagnostic_line: None })?;
+            let manual = state.proxy_game_directory();
+            let destination = nte_dps_tool::platform::mods_plugin::toolkit_game_directory(manual.as_deref().map(std::path::Path::new))
+                .map_err(|_| if manual.is_some() { directory_error() } else { CommandError { code: "plugin_game_directory_unavailable", message_key: "A unique game installation could not be confirmed. No files were changed.", message_arguments: vec![], diagnostic_line: None } })?;
             nte_dps_tool::core::mod_market::deploy_proxy(&runtime, &destination).map_err(CommandError::from_mod_market)?;
             return Ok(HostLaunchResult { panel: snapshot(&state), outcome: "proxyDeployed" });
         }
@@ -690,6 +795,48 @@ mod tests {
         assert!(ReleaseAction::HudConfigure.wire(Some(32)).is_err());
         assert!(ReleaseAction::HudConfigure.wire(None).is_err());
         assert!(!ReleaseAction::HudConfigure.requires_idle());
+    }
+    #[test]
+    fn current_release_wire_arguments_match_combat_and_wooden_only_training() {
+        for (action, command) in [
+            (ReleaseAction::FrameRateConfigure, 123),
+            (ReleaseAction::QuickUltimateConfigure, 126),
+        ] {
+            assert_eq!(action.wire(Some(0)).unwrap(), (command, 0));
+            assert_eq!(action.wire(Some(1)).unwrap(), (command, 1));
+            assert!(action.wire(None).is_err());
+            assert!(action.wire(Some(2)).is_err());
+        }
+        for (action, argument) in [
+            (ReleaseAction::TrainingWoodenEnable, 9),
+            (ReleaseAction::TrainingWoodenDisable, 10),
+        ] {
+            assert_eq!(action.wire(None).unwrap(), (403, argument));
+            assert!(action.wire(Some(argument)).is_err());
+            assert!(action.requires_confirmation());
+        }
+        assert_eq!(ReleaseAction::TrainingStatus.wire(None).unwrap(), (400, 0));
+        assert_eq!(
+            ReleaseAction::TrainingOperation.wire(None).unwrap(),
+            (410, 0)
+        );
+        assert_eq!(
+            ReleaseAction::FrameRateRefresh.wire(None).unwrap(),
+            (124, 0)
+        );
+        assert_eq!(
+            ReleaseAction::QuickUltimateStatus.wire(None).unwrap(),
+            (125, 0)
+        );
+        for name in [
+            "trainingEnter",
+            "trainingSpawn",
+            "trainingReset",
+            "trainingClear",
+            "performanceStatus",
+        ] {
+            assert!(serde_json::from_value::<ReleaseAction>(serde_json::json!(name)).is_err());
+        }
     }
     #[test]
     fn release_preview_is_bounded_utf8_and_does_not_claim_full_content() {

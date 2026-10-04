@@ -1964,7 +1964,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nte-dps-tool"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "aes",
  "anyhow",
@@ -1987,7 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "nte-dps-tool-tauri"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "log",
  "nte-dps-tool",

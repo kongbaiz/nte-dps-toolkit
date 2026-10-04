@@ -36,10 +36,45 @@ export function HostLoadingControls({
       <p className="text-xs leading-relaxed text-muted-foreground">
         {t(
           panel.loadingMethod === "proxy"
-            ? "Proxy loading safely deploys to the automatically detected game folder. Restart the game after deployment."
+            ? "Proxy loading deploys to your selected game directory, or automatically detects it when no directory is selected. Restart the game after deployment."
             : "Loader uses the managed package and requests UAC only when needed.",
         )}
       </p>
+      {panel.loadingMethod === "proxy" && (
+        <div className="space-y-2 rounded-lg border p-3">
+          <p className="text-sm font-medium">{t("Game directory")}</p>
+          <p className="break-all text-xs text-muted-foreground">
+            {panel.gameDirectory ?? t("Automatic detection")}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || panel.collectorActive}
+              onClick={() =>
+                void run(() => toolkitClient.selectGameDirectory())
+              }
+            >
+              {t("Select game directory")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                pending || panel.collectorActive || panel.gameDirectory === null
+              }
+              onClick={() => void run(() => toolkitClient.clearGameDirectory())}
+            >
+              {t("Use automatic detection")}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              "Select the installation folder or the Win64 folder containing HTGame.exe. Selecting a directory does not deploy files.",
+            )}
+          </p>
+        </div>
+      )}
       <details className="text-xs text-muted-foreground">
         <summary className="cursor-pointer py-1 focus-visible:outline-ring">
           {t("Loading notes")}

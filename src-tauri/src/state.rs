@@ -4411,6 +4411,17 @@ impl AppState {
         })
     }
 
+    pub(crate) fn proxy_game_directory(&self) -> Option<String> {
+        self.ui_config().mod_studio_proxy_game_directory
+    }
+    pub(crate) fn set_proxy_game_directory(
+        &self,
+        directory: Option<String>,
+    ) -> Result<bool, SettingsServiceError> {
+        self.update_ui_config_with_effects(SettingsMutationEffects::NONE, |config| {
+            config.mod_studio_proxy_game_directory = directory;
+        })
+    }
     pub(crate) fn mod_studio_loading_method(&self) -> ModStudioLoadingMethod {
         self.ui_config().mod_studio_loading_method
     }
@@ -8097,6 +8108,41 @@ mod tests {
             .expect("remove temporary config");
     }
 
+    #[test]
+    fn proxy_game_directory_survives_reload_and_explicit_clear() {
+        let config_path = temporary_config_path("proxy_game_directory");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        assert!(
+            state
+                .set_proxy_game_directory(Some("GAME/Win64".to_owned()))
+                .unwrap()
+        );
+        assert!(
+            !state
+                .set_proxy_game_directory(Some("GAME/Win64".to_owned()))
+                .unwrap()
+        );
+        let saved: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        let restored = AppState::new_with_config_path(
+            saved,
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        assert_eq!(
+            restored.proxy_game_directory().as_deref(),
+            Some("GAME/Win64")
+        );
+        assert!(restored.set_proxy_game_directory(None).unwrap());
+        let cleared: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(cleared.mod_studio_proxy_game_directory, None);
+        fs::remove_dir_all(config_path.parent().unwrap()).unwrap();
+    }
     #[test]
     fn mod_studio_loading_method_survives_state_reload() {
         let config_path = temporary_config_path("mod_studio_loading_method");

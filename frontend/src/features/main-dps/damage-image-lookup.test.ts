@@ -18,6 +18,24 @@ describe("damage image lookup", () => {
     expect(lookup.digit("ling", "2")).toBeUndefined();
   });
 
+  it("loads all ten dedicated malice digits without substituting elemental assets", () => {
+    const images = import.meta.glob<string>(
+      "@res/images/font/tiaozi1/heiyu_*.png",
+      {
+        eager: true,
+        query: "?url&no-inline",
+        import: "default",
+      },
+    );
+    const lookup = createDamageImageLookup(images, {});
+    expect(Object.keys(images)).toHaveLength(10);
+    for (let digit = 0; digit <= 9; digit++) {
+      expect(lookup.digit("heiyu", String(digit))).toContain(
+        `heiyu_${digit}.png`,
+      );
+      expect(lookup.digit("hun", String(digit))).toBeUndefined();
+    }
+  });
   it("returns localized reaction parts in display order", () => {
     const lookup = createDamageImageLookup(
       {},

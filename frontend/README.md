@@ -126,8 +126,14 @@ operation-failed toast, and recovery clears only the background error it owns.
 ## Managed plugin components
 
 The homepage shows an explicit current-mode label and checked selection. Mod
-Workshop has no manual path picker or host logging-level editor. The Mod Market
+Workshop offers a manual game-directory picker for proxy deployment, with an
+explicit reset to automatic detection. It has no host logging-level editor. The Mod Market
 owns `mods/game`, `mods/tools` and `mods/driver` next to the executable; see
-`../plugins/README.md` for catalog schema 6 and conservative proxy deployment.
+catalog schema 6 in `../src/core/mod_market.rs` for conservative proxy deployment.
+The public component set includes Training instead of Performance. Training exposes
+only status, operation status and the in-game Tab wooden dummy wheel (400/403/410).
+Combat also exposes frame-rate unlock and quick ultimate (122–126). Controls check
+the loaded provider and advertised capabilities; removed training-room commands
+are never sent.
 Host and generic plugin management only checks status, loads and unloads; plugin
 feature controls retain their existing confirmations and runtime capability checks.

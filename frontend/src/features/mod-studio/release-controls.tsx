@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Cable, ChevronDown, AlertTriangle } from "lucide-react";
+import { Cable, ChevronDown, Settings2 } from "lucide-react";
 import type { ReleaseControlGroup } from "./release-control-groups";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,6 +36,9 @@ const ACTION_VERBS: Partial<Record<ReleaseAction, string>> = {
   shutdown: "Unload host",
   userCancel: "Cancel",
   networkFlush: "Flush",
+  frameRateRefresh: "Refresh",
+  trainingWoodenEnable: "Enable",
+  trainingWoodenDisable: "Disable",
 };
 
 export function ReleaseControls({
@@ -107,7 +110,44 @@ export function ReleaseControls({
       !connected ||
       !supported ||
       (requiresIdle(action) && panel.collectorActive);
-    if (action === "networkEnable" || action === "traceEnable")
+    if (action === "trainingWoodenDisable") return null;
+    if (action === "trainingWoodenEnable")
+      return (
+        <div
+          key={action}
+          className="flex min-h-12 flex-wrap items-center justify-between gap-3 px-5 py-3"
+        >
+          <span className="text-sm">{t("Wooden dummy wheel")}</span>
+          <div className="flex shrink-0 gap-1">
+            {(["trainingWoodenEnable", "trainingWoodenDisable"] as const).map(
+              (command) => (
+                <Button
+                  key={command}
+                  size="sm"
+                  variant="outline"
+                  disabled={disabled}
+                  aria-label={t(
+                    command === "trainingWoodenEnable"
+                      ? "Enable wooden dummy wheel"
+                      : "Disable wooden dummy wheel",
+                  )}
+                  onClick={() => setConfirmation(command)}
+                >
+                  {t(command === "trainingWoodenEnable" ? "Enable" : "Disable")}
+                </Button>
+              ),
+            )}
+          </div>
+        </div>
+      );
+    if (
+      [
+        "networkEnable",
+        "traceEnable",
+        "frameRateConfigure",
+        "quickUltimateConfigure",
+      ].includes(action)
+    )
       return (
         <div
           key={action}
@@ -121,6 +161,7 @@ export function ReleaseControls({
                 size="sm"
                 variant="outline"
                 disabled={disabled}
+                aria-label={`${t(label)}: ${t(enabled ? "Enable" : "Disable")}`}
                 onClick={() => invoke(action, enabled ? 1 : 0)}
               >
                 {t(enabled ? "Enable" : "Disable")}
@@ -174,24 +215,33 @@ export function ReleaseControls({
               {group.actions.map((action) => actionButton(action))}
             </div>
             {group.advanced.length > 0 && (
-              <details key={group.id} className="group border-t">
+              <details
+                key={group.id}
+                className="group border-t"
+                data-testid="plugin-advanced-controls"
+              >
                 <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-xs font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
-                  <AlertTriangle className="size-3.5" />
-                  {t("Lifecycle operations")}
+                  <Settings2 className="size-3.5" />
+                  {t("Diagnostics and maintenance")}
                   <ChevronDown className="ml-auto size-4 transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="divide-y border-t">
                   {group.advanced.map((action) => actionButton(action, true))}
                 </div>
+                <p className="border-t px-5 py-3 text-[11px] leading-relaxed text-muted-foreground">
+                  {t(
+                    "After submitting an asynchronous operation, check its operation status before continuing.",
+                  )}
+                </p>
               </details>
             )}
-            <p className="border-t bg-muted/20 px-5 py-3 text-[11px] leading-relaxed text-muted-foreground">
-              {t(
-                group.id === "host"
-                  ? "Unloading stops host services. Exit the game to fully remove the host DLL."
-                  : "After submitting an asynchronous operation, check its operation status before continuing.",
-              )}
-            </p>
+            {group.id === "host" && (
+              <p className="border-t bg-muted/20 px-5 py-3 text-[11px] leading-relaxed text-muted-foreground">
+                {t(
+                  "Unloading stops host services. Exit the game to fully remove the host DLL.",
+                )}
+              </p>
+            )}
           </>
         ) : (
           <div className="flex flex-col items-center justify-center bg-muted/20 px-4 py-5 text-center">
@@ -244,9 +294,12 @@ export function ReleaseControls({
             <AlertDialogTitle>{t("Confirm plugin operation")}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(
-                confirmation === "prebattleSkillUnlock"
-                  ? "Remove only the observed prebattle skill blocker from the local equipped team. Cooldown and energy limits remain unchanged. After submitting, check the unlock status; do not repeat while queued or verifying."
-                  : "This operation can reset data, cancel work or stop the plugin host. Packet capture will not be started as a fallback.",
+                confirmation === "trainingWoodenEnable" ||
+                  confirmation === "trainingWoodenDisable"
+                  ? "This changes the in-game Tab wooden dummy wheel. Check Training status after submitting; do not retry while queued. Disabling may remain pending until owned dummies are cleaned up."
+                  : confirmation === "prebattleSkillUnlock"
+                    ? "Remove only the observed prebattle skill blocker from the local equipped team. Cooldown and energy limits remain unchanged. After submitting, check the unlock status; do not repeat while queued or verifying."
+                    : "This operation can reset data, cancel work or stop the plugin host. Packet capture will not be started as a fallback.",
               )}
             </AlertDialogDescription>
             <div className="flex justify-end gap-2">

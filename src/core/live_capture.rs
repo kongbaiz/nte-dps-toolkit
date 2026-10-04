@@ -711,10 +711,11 @@ impl LiveCaptureService {
     #[cfg(feature = "desktop")]
     pub fn request_plugin_start(&self, pid: u32) -> Result<(), CoreError> {
         let router = self.0.equipment_rpc.clone();
+        let catalog = Arc::clone(&self.0.resources.ability_catalog);
         self.start_replay(CaptureQualitySource::Plugin, move |sender, stop| {
             thread::Builder::new()
                 .name("nte-plugin-session".into())
-                .spawn(move || super::toolkit::run(pid, sender, stop, router))
+                .spawn(move || super::toolkit::run(pid, sender, stop, router, catalog))
         })
     }
 

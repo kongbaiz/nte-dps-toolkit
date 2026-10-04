@@ -449,6 +449,7 @@ pub enum DamageDisplayType {
     XiangGuangReactionFollow = 28,
     Fons = 29,
     FonsChii = 30,
+    BlackBird = 31,
 }
 
 impl TryFrom<i32> for DamageDisplayType {
@@ -487,6 +488,7 @@ impl TryFrom<i32> for DamageDisplayType {
             28 => Ok(Self::XiangGuangReactionFollow),
             29 => Ok(Self::Fons),
             30 => Ok(Self::FonsChii),
+            31 => Ok(Self::BlackBird),
             _ => Err(()),
         }
     }
@@ -506,6 +508,7 @@ impl DamageDisplayType {
             Self::AnHunReactionFollow => Some("黯星"),
             Self::HunXiangReactionFollow => Some("浸染"),
             Self::XiangGuangReactionFollow => Some("延滞"),
+            Self::BlackBird => Some("恶意"),
             _ => None,
         }
     }
@@ -5193,7 +5196,7 @@ mod character_tests {
         write_bytes_at_bit(
             &mut unknown_display,
             3 + CLIENT_FIGHT_DATA_FOURTH_WRAPPER_VALUE_BIT_OFFSET,
-            &31_i32.to_le_bytes(),
+            &32_i32.to_le_bytes(),
         );
         assert!(parse_server_damage_settlements(&unknown_display).is_empty());
     }
@@ -5229,6 +5232,13 @@ mod character_tests {
             DamageDisplayType::XiangGuangReactionFollow.attack_type(),
             Some("延滞")
         );
+        assert_eq!(DamageDisplayType::BlackBird.damage_name(), Some("恶意"));
+        assert_eq!(DamageDisplayType::BlackBird.attack_type(), Some("恶意"));
+        assert_eq!(
+            DamageDisplayType::try_from(31),
+            Ok(DamageDisplayType::BlackBird)
+        );
+        assert!(DamageDisplayType::try_from(32).is_err());
         assert_eq!(DamageDisplayType::None.attack_type(), None);
     }
 

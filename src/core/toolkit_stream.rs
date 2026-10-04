@@ -54,6 +54,20 @@ struct StreamHit {
     critical_known: bool,
     critical: Option<bool>,
     critical_source: Option<String>,
+    #[serde(default)]
+    capture_stage: Option<String>,
+    #[serde(default)]
+    health_source: Option<String>,
+    #[serde(default)]
+    message_index: Option<String>,
+    #[serde(default)]
+    server_timestamp_bits: Option<String>,
+    #[serde(default)]
+    target_ordinal: Option<usize>,
+    #[serde(default)]
+    component_ordinal: Option<usize>,
+    #[serde(default)]
+    last_target_component: Option<bool>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +126,206 @@ fn parse(bytes: &[u8]) -> Result<Value, ToolkitError> {
     }
     Ok(v)
 }
+// Only scalar server-HP witnesses, bounded independently of history/snapshot retention.
+// Owned by this process/provider/capture cursor; no worker, I/O or full-state projection.
+const MAX_HP_WITNESSES: usize = 128;
+#[derive(Clone, Copy)]
+struct HpWitness {
+    hp_bits: u32,
+    message: i64,
+    timestamp_bits: u64,
+    target_ordinal: usize,
+    unix_us: u64,
+}
+fn apply_hp_scaling(
+    catalog: &crate::engine::parser::AbilityCatalog,
+    witnesses: &mut HashMap<(i32, i32), HpWitness>,
+    row: &StreamHit,
+    hit: &mut crate::engine::model::Hit,
+) -> Result<(), ToolkitError> {
+    use crate::engine::settlement::{HpAdjustment, HpAdjustmentKind};
+    let effect = row
+        .event
+        .attack_detail_key
+        .strip_suffix("_C")
+        .unwrap_or(&row.event.attack_detail_key);
+    if hit.direction.is_outgoing()
+        && catalog
+            .skill(effect)
+            .is_some_and(|rule| rule.max_hp_reduction_percent > 0)
+    {
+        hit.target_context
+            .push("plugin_hp_scaling_unverified".into());
+    }
+    for s in [&row.capture_stage, &row.health_source]
+        .into_iter()
+        .flatten()
+    {
+        if s.len() > 64 {
+            return Err(ToolkitError::TooLarge);
+        }
+    }
+    if row.target_ordinal.is_some_and(|v| v >= 1024) || row.component_ordinal.is_some_and(|v| v > 1)
+    {
+        return Err(ToolkitError::InvalidProtocol);
+    }
+    let message = row
+        .message_index
+        .as_ref()
+        .map(|s| {
+            if s.len() > 20
+                || s.is_empty()
+                || !s
+                    .strip_prefix('-')
+                    .unwrap_or(s)
+                    .bytes()
+                    .all(|b| b.is_ascii_digit())
+            {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            s.parse::<i64>().map_err(|_| ToolkitError::InvalidProtocol)
+        })
+        .transpose()?;
+    let timestamp = row
+        .server_timestamp_bits
+        .as_ref()
+        .map(|s| {
+            if s.len() > 20 || s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            s.parse::<u64>().map_err(|_| ToolkitError::InvalidProtocol)
+        })
+        .transpose()?;
+    let index = row.event.victim_object_index;
+    let mut identities = [
+        row.snapshot_data
+            .victim_attributes
+            .as_ref()
+            .map(|s| (s.actor_index, s.actor_serial)),
+        row.snapshot_data
+            .victim_effects
+            .as_ref()
+            .map(|s| (s.actor_index, s.actor_serial)),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|s| s.0 == index && s.0 > 0 && s.1 > 0);
+    let Some(key) = identities.next() else {
+        return Ok(());
+    };
+    if !identities.all(|s| s == key) {
+        witnesses.remove(&key);
+        return Ok(());
+    }
+    let (Some(message), Some(timestamp), Some(ordinal), Some(component), Some(last)) = (
+        message,
+        timestamp,
+        row.target_ordinal,
+        row.component_ordinal,
+        row.last_target_component,
+    ) else {
+        witnesses.remove(&key);
+        return Ok(());
+    };
+    if row.capture_stage.as_deref() != Some("server_settlement")
+        || row.health_source.as_deref() != Some("server_settlement_target")
+    {
+        witnesses.remove(&key);
+        return Ok(());
+    }
+    let Some(hp) = row
+        .event
+        .victim_hp
+        .and_then(|v| {
+            let n = v as f32;
+            (f64::from(n) == v).then_some(n)
+        })
+        .filter(|v| v.is_finite() && *v >= 0.0)
+    else {
+        witnesses.remove(&key);
+        return Ok(());
+    };
+    // Multi-component final HP cannot be assigned to one component. Retain only
+    // its completed target-row witness for the next independent settlement.
+    if component == 0 && last {
+        let effect = row
+            .event
+            .attack_detail_key
+            .strip_suffix("_C")
+            .unwrap_or(&row.event.attack_detail_key);
+        if let (Some(previous), Some(rule), Some(maximum)) = (
+            witnesses.get(&key),
+            catalog.skill(effect),
+            row.event.victim_max_hp.and_then(|v| {
+                let n = v as f32;
+                (n.is_finite() && f64::from(n) == v).then_some(n)
+            }),
+        ) {
+            let damage = row.event.damage;
+            if hit.char_known
+                && hit.direction.is_outgoing()
+                && rule.owner_character_id == Some(hit.char_id)
+                && rule.max_hp_reduction_percent > 0
+                && rule.use_server_damage
+                && row.event.association == "native_message_target_ordinal"
+                && message > previous.message
+                && row.event.unix_us >= previous.unix_us
+                && damage.fract() == 0.0
+                && damage > 0.0
+                && damage <= f64::from(i32::MAX)
+            {
+                let next = maximum - damage as f32 * (rule.max_hp_reduction_percent as f32 / 100.0);
+                let proof = HpAdjustment {
+                    kind: HpAdjustmentKind::RuleVerifiedScaling,
+                    preceding_message: previous.message.to_string(),
+                    preceding_timestamp_bits: previous.timestamp_bits.to_string(),
+                    preceding_target_ordinal: previous.target_ordinal,
+                    hp_before_bits: previous.hp_bits,
+                    max_hp_before_bits: maximum.to_bits(),
+                    max_hp_after_bits: next.to_bits(),
+                    direct_damage: damage as i32,
+                    rule_percent: rule.max_hp_reduction_percent,
+                };
+                if proof.valid(hp.to_bits()) {
+                    hit.target_context
+                        .retain(|s| s != "plugin_hp_scaling_unverified");
+                    hit.target_hp_before = f64::from(f32::from_bits(previous.hp_bits));
+                    hit.max_hp_reduction = proof.reduction();
+                    hit.follow_up_damage = proof.additional_loss(hp.to_bits());
+                    hit.follow_up_damage_name = Some("Max HP scaling loss".into());
+                    // Freeze the typed shared proof into durable hit provenance. Do not
+                    // rewrite raw snapshots or promote this derived value to raw native data.
+                    hit.target_context.push(format!(
+                        "plugin_hp_scaling:{}",
+                        serde_json::to_string(&proof).map_err(|_| ToolkitError::InvalidProtocol)?
+                    ));
+                }
+            }
+        }
+    }
+    if last {
+        if !witnesses.contains_key(&key)
+            && witnesses.len() >= MAX_HP_WITNESSES
+            && let Some(old) = witnesses
+                .iter()
+                .min_by_key(|(_, v)| v.unix_us)
+                .map(|(k, _)| *k)
+        {
+            witnesses.remove(&old);
+        }
+        witnesses.insert(
+            key,
+            HpWitness {
+                hp_bits: hp.to_bits(),
+                message,
+                timestamp_bits: timestamp,
+                target_ordinal: ordinal,
+                unix_us: row.event.unix_us,
+            },
+        );
+    }
+    Ok(())
+}
 struct Cursor {
     provider: String,
     capture: String,
@@ -131,9 +345,15 @@ struct Cursor {
     ended: bool,
     abyss_timestamp: u64,
     round_id: u64,
+    catalog: Arc<crate::engine::parser::AbilityCatalog>,
+    hp_witnesses: HashMap<(i32, i32), HpWitness>,
 }
 impl Cursor {
-    fn new(provider: String, capture: String) -> Self {
+    fn new(
+        provider: String,
+        capture: String,
+        catalog: Arc<crate::engine::parser::AbilityCatalog>,
+    ) -> Self {
         Self {
             provider,
             capture,
@@ -153,6 +373,8 @@ impl Cursor {
             ended: false,
             abyss_timestamp: 0,
             round_id: 0,
+            catalog,
+            hp_witnesses: HashMap::new(),
         }
     }
     fn notification(
@@ -236,6 +458,8 @@ impl Cursor {
                 let mut snapshot_bytes = self.snapshot_bytes;
                 let mut snapshot_count = self.snapshot_count;
                 let mut last = self.hit;
+                // Stage only this small scalar ledger. Failed frames leave its predecessors intact.
+                let mut hp_witnesses = self.hp_witnesses.clone();
                 for row in rows {
                     let h: StreamHit =
                         serde_json::from_value(row).map_err(|_| ToolkitError::InvalidProtocol)?;
@@ -320,6 +544,7 @@ impl Cursor {
                         .unwrap_or_default();
                     let mut hit = project_damage(e, &participants)?;
                     let size = h.snapshot_data.validate().map_err(snapshot_error)?;
+                    apply_hp_scaling(&self.catalog, &mut hp_witnesses, &h, &mut hit)?;
                     if h.critical_known && h.critical.is_none()
                         || h.critical_source.as_ref().is_some_and(|s| s.len() > 256)
                     {
@@ -379,6 +604,7 @@ impl Cursor {
                     events.push(EngineEvent::Hit(Box::new(hit)));
                     last = h.hit_id;
                 }
+                self.hp_witnesses = hp_witnesses;
                 self.snapshot_bytes = snapshot_bytes;
                 self.snapshot_count = snapshot_count;
                 self.hit = last;
@@ -419,6 +645,7 @@ impl Cursor {
                     last = id;
                 }
                 self.round_id = last;
+                self.hp_witnesses.clear();
                 if !self.clock_ready {
                     self.pending_events.append(&mut events);
                 }
@@ -529,6 +756,12 @@ impl Cursor {
                 self.ended = true;
             }
             _ => return Err(ToolkitError::Unsupported),
+        }
+        if events
+            .iter()
+            .any(|e| matches!(e, EngineEvent::ChallengeRestart { .. }))
+        {
+            self.hp_witnesses.clear();
         }
         self.seq = seq;
         self.last_frame = bytes;
@@ -663,6 +896,7 @@ pub(super) fn run(
     sender: EngineEventSink,
     stop: Arc<AtomicBool>,
     router: Arc<super::super::equipment_rpc::Router>,
+    catalog: Arc<crate::engine::parser::AbilityCatalog>,
 ) {
     let result = (|| {
         sender
@@ -713,7 +947,7 @@ pub(super) fn run(
             return Err(ToolkitError::Unsupported);
         }
         let capture = text(&start, "captureId")?.to_owned();
-        let mut cursor = Cursor::new(provider, capture.clone());
+        let mut cursor = Cursor::new(provider, capture.clone(), catalog);
         sender
             .send(EngineEvent::Status("plugin native push connected".into()))
             .map_err(|_| ToolkitError::Cancelled)?;
@@ -836,13 +1070,360 @@ mod tests {
         c.notification(b, v)
     }
     fn setup() -> Cursor {
-        let mut c = Cursor::new("p".into(), "c".into());
+        let mut c = Cursor::new("p".into(), "c".into(), Arc::default());
         accept(&mut c,frame(1,"event.combat.context",json!({"contexts":[{"contextId":"1","schemaVersion":1,"team":{"actors":[{"objectKey":"10:7","DefaultCharacterID":"1004"}]}}]}))).unwrap();
         c.clock(json!({"providerId":"p","transitions":[{"sequence":"1","timestamp_100ns":"116444736000000000","pause_type_mask":0,"state_flags":1,"reserved_value":0}]})).unwrap();
         c
     }
     fn hit() -> Value {
         json!({"hitId":"1","unixUs":"1000000","damage":20.0,"attackerObjectIndex":10,"victimObjectIndex":20,"quality":0,"direction":"outgoing","attackerName":"安魂曲","victimName":"target","victimHp":100.0,"victimMaxHp":200.0,"skillName":"紧急唤醒","skillKey":"GA_Lacrimosa_QTE_C","attackDetailKey":"GE_Player_Lacrimosa_QTE1_Damage_C","displayType":0,"association":"native_message_target_ordinal","contextRef":{"contextId":"1"},"attackerAttributes":{"actorIndex":10,"actorSerial":7}})
+    }
+    #[test]
+    fn native_malice_uses_the_authoritative_display_category() {
+        let mut c = setup();
+        let mut h = hit();
+        h["displayType"] = 31.into();
+        h["skillKey"] = "GA_BlackBird_Evolve_UltraSkill_C".into();
+        h["attackDetailKey"] = "GE_Player_BlackBird_Evolve_UltraSkill_Extra_Damage_C".into();
+        let events = accept(&mut c, frame(2, "event.combat.hits", json!({"hits":[h]}))).unwrap();
+        let EngineEvent::Hit(h) = &events[0] else {
+            panic!("hit");
+        };
+        assert_eq!(h.damage_name.as_deref(), Some("恶意"));
+        assert_eq!(h.attack_type.as_deref(), Some("恶意"));
+    }
+    fn test_catalog() -> Arc<crate::engine::parser::AbilityCatalog> {
+        use crate::engine::parser::{
+            AbilityCatalog, GAMEPLAY_EFFECT_SEMANTICS_PATH, SKILL_DAMAGE_DATA_PATH,
+        };
+        let mut c = AbilityCatalog::load(std::path::Path::new(SKILL_DAMAGE_DATA_PATH)).unwrap();
+        c.apply_semantics(std::path::Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH))
+            .unwrap();
+        Arc::new(c)
+    }
+    fn hp_hit(id: u64, damage: f64, hp: f64, maximum: f64, effect: &str) -> Value {
+        let mut h = hit();
+        h["hitId"] = id.to_string().into();
+        h["unixUs"] = (id * 1_000_000).to_string().into();
+        h["damage"] = damage.into();
+        h["victimHp"] = hp.into();
+        h["victimMaxHp"] = maximum.into();
+        h["attackDetailKey"] = effect.into();
+        h["captureStage"] = "server_settlement".into();
+        h["healthSource"] = "server_settlement_target".into();
+        h["messageIndex"] = (3464 + id).to_string().into();
+        h["serverTimestampBits"] = id.to_string().into();
+        h["targetOrdinal"] = 0.into();
+        h["componentOrdinal"] = 0.into();
+        h["lastTargetComponent"] = true.into();
+        h["victimAttributes"] = json!({"actorIndex":20,"actorSerial":8});
+        h
+    }
+    #[test]
+    fn native_hp_scaling_is_verified_from_frozen_server_rows() {
+        let mut c = setup();
+        c.catalog = test_catalog();
+        let rows = [
+            hp_hit(
+                1,
+                1686.0,
+                5998314.0,
+                6000000.0,
+                "GE_Player_Lacrimosa_Melee1_Damage_C",
+            ),
+            hp_hit(
+                2,
+                364.0,
+                5997222.5,
+                6000000.0,
+                "GE_Player_Lacrimosa_Blood_Damage_LV6_C",
+            ),
+        ];
+        let events = accept(&mut c, frame(2, "event.combat.hits", json!({"hits":rows}))).unwrap();
+        let EngineEvent::Hit(h) = &events[1] else {
+            panic!("hit");
+        };
+        assert_eq!(h.max_hp_reduction, 728.0);
+        assert_eq!(h.follow_up_damage, 727.5);
+        assert_eq!(h.target_hp_before, 5998314.0);
+        assert_eq!(h.target_hp_after, 5997222.5);
+        assert!(
+            h.target_context
+                .iter()
+                .any(|s| s.starts_with("plugin_hp_scaling:"))
+        );
+        let mut state = crate::engine::model::CombatState::default();
+        for e in events {
+            crate::core::reducer::apply_engine_event(&mut state, e);
+        }
+        assert_eq!(state.max_hp_reduction, 728.0);
+        assert_eq!(state.total_damage, 1686.0 + 364.0 + 727.5);
+        assert!(
+            state
+                .skill_breakdown(None)
+                .rows
+                .iter()
+                .any(|r| r.name == "Max HP scaling loss" && r.damage == 727.5)
+        );
+        assert!(
+            accept(&mut c, frame(2, "event.combat.hits", json!({"hits":rows})))
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[test]
+    fn native_hp_scaling_fails_closed_for_unproven_or_ambiguous_rows() {
+        let catalog = test_catalog();
+        for (field, value) in [
+            ("victimHp", json!(5997223.0)),
+            ("victimHp", json!(5997222.499999)),
+            ("victimMaxHp", json!(9000000.0)),
+            ("quality", json!(3)),
+            ("association", json!("unlinked")),
+            ("captureStage", json!("attack_hit")),
+            ("healthSource", json!("native_prediction")),
+            ("messageIndex", json!("3465")),
+            ("lastTargetComponent", json!(false)),
+            ("componentOrdinal", json!(1)),
+            ("victimAttributes", json!({"actorIndex":20,"actorSerial":9})),
+            (
+                "attackDetailKey",
+                json!("GE_Player_Lacrimosa_QTE1_Damage_C"),
+            ),
+        ] {
+            let mut c = setup();
+            c.catalog = catalog.clone();
+            let a = hp_hit(
+                1,
+                1686.0,
+                5998314.0,
+                6000000.0,
+                "GE_Player_Lacrimosa_Melee1_Damage_C",
+            );
+            let mut b = hp_hit(
+                2,
+                364.0,
+                5997222.5,
+                6000000.0,
+                "GE_Player_Lacrimosa_Blood_Damage_LV6_C",
+            );
+            b[field] = value;
+            let rows =
+                accept(&mut c, frame(2, "event.combat.hits", json!({"hits":[a,b]}))).unwrap();
+            let EngineEvent::Hit(h) = &rows[1] else {
+                panic!("hit")
+            };
+            assert_eq!(
+                (h.max_hp_reduction, h.follow_up_damage),
+                (0.0, 0.0),
+                "{field}"
+            );
+            assert_eq!(h.damage, 364.0, "ordinary server damage remains intact");
+            if field != "attackDetailKey" {
+                assert_eq!(
+                    h.known_max_hp_reduction(),
+                    None,
+                    "unverified reduction is unknown, not zero"
+                );
+            }
+        }
+        let mut c = setup();
+        c.catalog = catalog;
+        let b = hp_hit(
+            1,
+            364.0,
+            5997222.5,
+            6000000.0,
+            "GE_Player_Lacrimosa_Blood_Damage_LV6_C",
+        );
+        let rows = accept(&mut c, frame(2, "event.combat.hits", json!({"hits":[b]}))).unwrap();
+        let EngineEvent::Hit(h) = &rows[0] else {
+            panic!("hit")
+        };
+        assert_eq!((h.max_hp_reduction, h.follow_up_damage), (0.0, 0.0));
+    }
+    #[test]
+    fn native_hp_scaling_rejects_bad_frames_without_committing_predecessors() {
+        let mut c = setup();
+        c.catalog = test_catalog();
+        let a = hp_hit(
+            1,
+            1686.0,
+            5998314.0,
+            6000000.0,
+            "GE_Player_Lacrimosa_Melee1_Damage_C",
+        );
+        let b = hp_hit(
+            2,
+            364.0,
+            5997222.5,
+            6000000.0,
+            "GE_Player_Lacrimosa_Blood_Damage_LV6_C",
+        );
+        let mut malformed = b.clone();
+        malformed["serverTimestampBits"] = json!("not-bits");
+        assert!(
+            accept(
+                &mut c,
+                frame(
+                    2,
+                    "event.combat.hits",
+                    json!({"hits":[a.clone(),malformed]})
+                )
+            )
+            .is_err()
+        );
+        assert!(c.hp_witnesses.is_empty());
+        let rows = accept(&mut c, frame(2, "event.combat.hits", json!({"hits":[a,b]}))).unwrap();
+        let EngineEvent::Hit(h) = &rows[1] else {
+            panic!("hit")
+        };
+        assert_eq!(h.max_hp_reduction, 728.0);
+        accept(&mut c,frame(3,"event.combat.rounds",json!({"events":[{"restartId":"1","unixUs":"3000000","kind":"restart","cloneType":16}]}))).unwrap();
+        assert!(c.hp_witnesses.is_empty());
+    }
+    #[test]
+    fn native_hp_witness_storage_is_bounded_and_does_not_copy_actor_snapshots() {
+        let catalog = test_catalog();
+        let mut witnesses = HashMap::new();
+        for id in 1..=MAX_HP_WITNESSES + 1 {
+            let mut row = hp_hit(
+                id as u64,
+                20.0,
+                100.0,
+                200.0,
+                "GE_Player_Lacrimosa_QTE1_Damage_C",
+            );
+            row["victimObjectIndex"] = json!(id + 20);
+            row["victimAttributes"] = json!({"actorIndex":id+20,"actorSerial":8});
+            let row: StreamHit = serde_json::from_value(row).unwrap();
+            let mut h = project_damage(&row.event, &HashMap::new()).unwrap();
+            apply_hp_scaling(&catalog, &mut witnesses, &row, &mut h).unwrap();
+            assert!(witnesses.len() <= MAX_HP_WITNESSES);
+        }
+        assert!(!witnesses.contains_key(&(21, 8)));
+    }
+    #[test]
+    fn malice_remains_separate_from_normal_damage_of_the_same_parent_skill() {
+        let mut c = setup();
+        let a = hit();
+        let mut b = hp_hit(
+            2,
+            193558.0,
+            10.0,
+            200.0,
+            "GE_Player_BlackBird_Evolve_Melee3_Extra_Damage_C",
+        );
+        b["skillKey"] = a["skillKey"].clone();
+        b["displayType"] = json!(31);
+        b["damageAttribute"] = json!("psyche");
+        let mut state = crate::engine::model::CombatState::default();
+        for e in accept(&mut c, frame(2, "event.combat.hits", json!({"hits":[a,b]}))).unwrap() {
+            crate::core::reducer::apply_engine_event(&mut state, e);
+        }
+        let rows = state.skill_breakdown(None).rows;
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .any(|r| r.name == "恶意" && r.category == "恶意" && r.damage == 193558.0)
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.name == "GA_Lacrimosa_QTE" && r.damage == 20.0)
+        );
+        assert_eq!(
+            crate::engine::model::reaction_damage_for_hit(state.hits.back().unwrap()),
+            0.0
+        );
+    }
+    #[test]
+    #[ignore = "requires NTE_SPECIAL_DAMAGE_EVIDENCE supplied by the caller"]
+    fn supplied_native_evidence_replays_hp_scaling_without_raw_hp_residuals() {
+        use std::io::BufRead;
+        let path = std::env::var_os("NTE_SPECIAL_DAMAGE_EVIDENCE").expect("evidence path");
+        let file = std::fs::File::open(path).unwrap();
+        let metadata = file.metadata().unwrap();
+        assert!(metadata.is_file() && metadata.len() <= 64 * 1024 * 1024);
+        let mut attrs = HashMap::new();
+        let mut rows = vec![];
+        for line in std::io::BufReader::new(file).lines() {
+            let line = line.unwrap();
+            assert!(line.len() <= 1024 * 1024);
+            let r: Value = serde_json::from_str(&line).unwrap();
+            if r["kind"] == "attribute_snapshot" {
+                attrs.insert(r["snapshot"]["id"].as_u64().unwrap(), r["snapshot"].clone());
+            }
+            if r["kind"] == "native_event" && r["stage"] == "server_settlement" {
+                rows.push(r);
+            }
+        }
+        let mut c = setup();
+        c.catalog = test_catalog();
+        let mut n = 0;
+        let mut reduction = 0.0;
+        let mut loss = 0.0;
+        let mut malice = 0.0;
+        for (i, r) in rows.iter().enumerate() {
+            let mut h = hp_hit(
+                i as u64 + 1,
+                r["damage"].as_f64().unwrap(),
+                r["victim_hp"].as_f64().unwrap(),
+                r["victim_max_hp"].as_f64().unwrap(),
+                r["attack_detail_key"].as_str().unwrap(),
+            );
+            // This recording's verified Lacrimosa context is represented by the
+            // standard typed fixture. Other actors retain no guessed role identity.
+            let observed_owner = r["attacker"]
+                .as_str()
+                .unwrap()
+                .starts_with("Player_004_Lacrimosa_C ");
+            h["attackerObjectIndex"] = if observed_owner { json!(10) } else { json!(11) };
+            h["attackerAttributes"] = if observed_owner {
+                json!({"actorIndex":10,"actorSerial":7})
+            } else {
+                Value::Null
+            };
+            h["victimObjectIndex"] = r["victim_index"].clone();
+            let snapshot = &attrs[&r["victim_attribute_state_id"].as_u64().unwrap()];
+            h["victimAttributes"] =
+                json!({"actorIndex":snapshot["actorIndex"],"actorSerial":snapshot["actorSerial"]});
+            h["unixUs"] = r["unix_us"].clone();
+            h["messageIndex"] = r["message_index"].clone();
+            h["serverTimestampBits"] = r["server_timestamp_bits"].clone();
+            h["targetOrdinal"] = r["target_ordinal"].clone();
+            h["componentOrdinal"] = r["component_ordinal"].clone();
+            h["association"] = r["association"].clone();
+            h["healthSource"] = r["health_source"].clone();
+            h["displayType"] = r["display_type"].clone();
+            h["lastTargetComponent"] = json!(
+                rows.get(i + 1)
+                    .is_none_or(|next| next["message_index"] != r["message_index"]
+                        || next["target_ordinal"] != r["target_ordinal"])
+            );
+            let events = accept(
+                &mut c,
+                frame(i as u64 + 2, "event.combat.hits", json!({"hits":[h]})),
+            )
+            .unwrap();
+            let EngineEvent::Hit(hit) = &events[0] else {
+                panic!("hit")
+            };
+            if hit.max_hp_reduction > 0.0 {
+                n += 1;
+                reduction += hit.max_hp_reduction;
+                loss += hit.follow_up_damage;
+            }
+            if hit.damage_name.as_deref() == Some("恶意") {
+                malice += hit.damage;
+            }
+        }
+        println!(
+            "verified_scaling_rows={n} max_hp_reduction={reduction} additional_hp_loss={loss} malice_damage={malice}"
+        );
+        assert_eq!(n, 25);
+        assert_eq!(reduction, 483200.0);
+        assert_eq!(loss, 451747.0);
+        assert_eq!(malice, 193552.0);
     }
     fn abyss(kind: &str, us: u64, half: Option<u8>, floor: Option<u32>) -> Value {
         json!({"kind":kind,"unixUs":us.to_string(),"half":half,"floor":floor})
@@ -983,7 +1564,7 @@ mod tests {
             .as_slice(),
             [EngineEvent::ChallengeRestart { clone_type: 16, .. }]
         ));
-        let mut waiting = Cursor::new("p".into(), "c".into());
+        let mut waiting = Cursor::new("p".into(), "c".into(), Arc::default());
         assert!(
             accept(
                 &mut waiting,
@@ -1123,7 +1704,7 @@ mod tests {
     #[test]
     fn clock_startup_preserves_abyss_and_hit_order_without_backfill() {
         for stage_first in [true, false] {
-            let mut c = Cursor::new("p".into(), "c".into());
+            let mut c = Cursor::new("p".into(), "c".into(), Arc::default());
             let stage = |seq| {
                 frame(
                     seq,
@@ -1460,7 +2041,7 @@ mod tests {
     fn start_stop_restart_keeps_plugin_six_seconds_distinct_from_wall_ten_seconds() {
         use crate::{core::reducer::apply_engine_event, engine::model::CombatState};
         for baseline in [1, 41, 901] {
-            let mut cursor = Cursor::new("p".into(), "c".into());
+            let mut cursor = Cursor::new("p".into(), "c".into(), Arc::default());
             let mut state = CombatState::default();
             let first = hit();
             let mut second = hit();
@@ -1496,7 +2077,7 @@ mod tests {
     }
     #[test]
     fn invalid_clock_does_not_release_hits_or_advance_any_partial_edges() {
-        let mut cursor = Cursor::new("p".into(), "c".into());
+        let mut cursor = Cursor::new("p".into(), "c".into(), Arc::default());
         accept(
             &mut cursor,
             frame(1, "event.combat.hits", json!({"hits":[hit()]})),
@@ -1528,7 +2109,7 @@ mod tests {
     }
     #[test]
     fn startup_hit_staging_is_bounded_and_clock_order_is_validated() {
-        let mut cursor = Cursor::new("p".into(), "c".into());
+        let mut cursor = Cursor::new("p".into(), "c".into(), Arc::default());
         for batch in 0..64_u64 {
             let rows = (0..64_u64)
                 .map(|i| {
@@ -1566,7 +2147,7 @@ mod tests {
 
     #[test]
     fn restarted_capture_accepts_provider_clock_sequence_not_starting_at_one() {
-        let mut cursor = Cursor::new("p".into(), "c".into());
+        let mut cursor = Cursor::new("p".into(), "c".into(), Arc::default());
         let events = cursor
             .clock(json!({"providerId":"p","transitions":[{
                 "sequence":"41","timestamp_100ns":"116444736010000000",
@@ -1581,7 +2162,7 @@ mod tests {
 
     #[test]
     fn clock_reuses_observed_pause_transitions_without_claiming_missing_boundaries() {
-        let mut c = Cursor::new("p".into(), "c".into());
+        let mut c = Cursor::new("p".into(), "c".into(), Arc::default());
         let clock = |seq: u64, mask: u32, flags: u32| json!({"providerId":"p","transitions":[{"sequence":seq.to_string(),"timestamp_100ns":"116444736010000000","pause_type_mask":mask,"state_flags":flags,"reserved_value":0}]});
         assert!(c.clock(clock(1, 4, 1)).unwrap().iter().any(|e| matches!(
             e,
