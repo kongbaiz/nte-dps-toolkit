@@ -46,16 +46,7 @@ SUMMARIES = {
         "zh-CN": "提供游戏内 Tab 木桩轮盘开关、训练状态和操作状态查询。",
         "ja": "ゲーム内の Tab 木人ホイールの切り替えと、トレーニング状態・操作状態の確認に対応します。",
     },
-    "nte_pluginnetwork": {
-        "en": "Records game network activity and exports diagnostic logs for troubleshooting connections.",
-        "zh-CN": "记录游戏网络收发情况，导出诊断日志，帮助排查连接问题。",
-        "ja": "ゲームのネットワーク送受信を記録し、接続の問題を調べるための診断ログを出力します。",
-    },
-    "nte_pluginperformance": {
-        "en": "An extension for game performance features. Manage loading and disabling it in the control panel.",
-        "zh-CN": "游戏性能相关的扩展组件，可在控制面板中管理加载与停用。",
-        "ja": "ゲームのパフォーマンスに関連する拡張コンポーネントです。読み込みと無効化はコントロールパネルで管理できます。",
-    },
+
 }
 
 

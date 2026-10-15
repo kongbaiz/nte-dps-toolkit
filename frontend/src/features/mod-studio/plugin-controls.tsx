@@ -4,7 +4,6 @@ import {
   Puzzle,
   Activity,
   Users,
-  Network,
   Target,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -42,11 +41,9 @@ export function PluginControls({
       ? Activity
       : group?.id === "account"
         ? Users
-        : group?.id === "network"
-          ? Network
-          : group?.id === "training"
-            ? Target
-            : Puzzle;
+        : group?.id === "training"
+          ? Target
+          : Puzzle;
   const loaded = plugin.state === "loaded";
   const busy =
     pending ||

@@ -1,3 +1,12 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogPortal,
+  AlertDialogBackdrop,
+  AlertDialogPopup,
+  AlertDialogTitle,
+  AlertDialogDescription,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 import { toolkitClient, type PluginPanel } from "@/lib/tauri/toolkit-client";
@@ -11,6 +20,19 @@ export function HostLoadingControls({
   pending: boolean;
   run: (action: () => Promise<unknown>) => Promise<void>;
 }) {
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [removed, setRemoved] = useState(false);
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    setRemoved(false);
+    setConfirmRemoval(false);
+  }, [panel.gameDirectory, panel.loadingMethod]);
   return (
     <section className="space-y-2" aria-label={t("Host loading method")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -68,6 +90,73 @@ export function HostLoadingControls({
               {t("Use automatic detection")}
             </Button>
           </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={
+              pending ||
+              panel.collectorActive ||
+              panel.connection === "connected"
+            }
+            onClick={() => {
+              setRemoved(false);
+              setConfirmRemoval(true);
+            }}
+          >
+            {t("Uninstall proxy")}
+          </Button>
+          {removed && (
+            <p role="status" className="text-xs">
+              {t(
+                "Proxy removed. Managed downloads and unrelated game files were preserved.",
+              )}
+            </p>
+          )}
+          <AlertDialog
+            open={confirmRemoval}
+            onOpenChange={(open) => {
+              if (!pending) setConfirmRemoval(open);
+            }}
+          >
+            <AlertDialogPortal>
+              <AlertDialogBackdrop />
+              <AlertDialogPopup className="left-1/2 top-1/2 flex w-[min(90vw,30rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border bg-background p-6 shadow-lg">
+                <AlertDialogTitle>{t("Uninstall proxy")}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t(
+                    "Close the game first. Remove only verified proxy files from this game directory. Keep downloaded components, settings and unrelated files.",
+                  )}
+                </AlertDialogDescription>
+                <p className="break-all text-xs">
+                  {panel.gameDirectory ?? t("Automatic detection")}
+                </p>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => setConfirmRemoval(false)}
+                  >
+                    {t("Cancel")}
+                  </Button>
+                  <Button
+                    disabled={pending}
+                    onClick={() =>
+                      void run(async () => {
+                        try {
+                          await toolkitClient.uninstallProxy(true);
+                          if (alive.current) setRemoved(true);
+                        } finally {
+                          if (alive.current) setConfirmRemoval(false);
+                        }
+                      })
+                    }
+                  >
+                    {t("Confirm")}
+                  </Button>
+                </div>
+              </AlertDialogPopup>
+            </AlertDialogPortal>
+          </AlertDialog>
           <p className="text-xs text-muted-foreground">
             {t(
               "Select the installation folder or the Win64 folder containing HTGame.exe. Selecting a directory does not deploy files.",

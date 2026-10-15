@@ -714,78 +714,78 @@
     },
     "GE_Player_BlackBird_Branch1_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "归巢",
       "owner_character_id": 1042,
+      "damage_name_zh": "归巢",
       "damage_name_en": "归巢",
       "damage_name_ja": "归巢"
     },
     "GE_Player_BlackBird_AirAttack_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "顽疾",
       "owner_character_id": 1042,
+      "damage_name_zh": "顽疾",
       "damage_name_en": "顽疾",
       "damage_name_ja": "顽疾"
     },
     "GE_Player_BlackBird_Evolve_Branch1_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "予尔等之恩泽",
       "owner_character_id": 1042,
+      "damage_name_zh": "予尔等之恩泽",
       "damage_name_en": "予尔等之恩泽",
       "damage_name_ja": "予尔等之恩泽"
     },
     "GE_Player_BlackBird_Evolve_Branch2_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "赐众生之福音",
       "owner_character_id": 1042,
+      "damage_name_zh": "赐众生之福音",
       "damage_name_en": "赐众生之福音",
       "damage_name_ja": "赐众生之福音"
     },
     "GE_Player_BlackBird_Evolve_AirAttack_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "灼痕",
       "owner_character_id": 1042,
+      "damage_name_zh": "灼痕",
       "damage_name_en": "灼痕",
       "damage_name_ja": "灼痕"
     },
     "GE_Player_BlackBird_Skill_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "葬羽冥",
       "owner_character_id": 1042,
+      "damage_name_zh": "葬羽冥",
       "damage_name_en": "葬羽冥",
       "damage_name_ja": "葬羽冥"
     },
     "GE_Player_BlackBird_Evolve_Skill_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "渡世死焰",
       "owner_character_id": 1042,
+      "damage_name_zh": "渡世死焰",
       "damage_name_en": "渡世死焰",
       "damage_name_ja": "渡世死焰"
     },
     "GE_Player_BlackBird_UltraSkill_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "恳请众魂安息",
       "owner_character_id": 1042,
+      "damage_name_zh": "恳请众魂安息",
       "damage_name_en": "恳请众魂安息",
       "damage_name_ja": "恳请众魂安息"
     },
     "GE_Player_BlackBird_Evolve_UltraSkill_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "万火归一",
       "owner_character_id": 1042,
+      "damage_name_zh": "万火归一",
       "damage_name_en": "万火归一",
       "damage_name_ja": "万火归一"
     },
     "GE_Player_BlackBird_QTE_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "断罪于我",
       "owner_character_id": 1042,
+      "damage_name_zh": "断罪于我",
       "damage_name_en": "断罪于我",
       "damage_name_ja": "断罪于我"
     },
     "GE_Player_BlackBird_Evolve_QTE_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "唯余慈悲",
       "owner_character_id": 1042,
+      "damage_name_zh": "唯余慈悲",
       "damage_name_en": "唯余慈悲",
       "damage_name_ja": "唯余慈悲"
     },

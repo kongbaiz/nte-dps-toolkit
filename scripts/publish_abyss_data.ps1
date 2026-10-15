@@ -53,6 +53,7 @@ function Invoke-DeploymentCommand {
 }
 
 & python scripts/build_abyss_data_package.py --source $SourceDirectory --output $OutputDirectory
+if ($LASTEXITCODE -ne 0) { throw "Abyss package build failed; no remote changes were made." }
 $manifest = Get-Content -LiteralPath "$OutputDirectory/manifest.json" -Raw | ConvertFrom-Json
 $sha256 = [string]$manifest.artifact.sha256
 if ($sha256 -notmatch '^[0-9a-f]{64}$') {
@@ -74,11 +75,17 @@ printf '%s  %s\n' '$sha256' '$artifact' | sha256sum -c -
 test "`$(stat -c %s '$artifact')" = '$($manifest.artifact.size)'
 chmod 0644 manifest.json '$artifact'
 install -d -m 0755 '$RemoteRoot/releases'
-rm -rf '$RemoteRoot/releases/$sha256'
-mv '$remoteStaging' '$RemoteRoot/releases/$sha256'
+if test -d '$RemoteRoot/current'; then
+    cp -n '$RemoteRoot/current'/abyss-data-*.zip '$remoteStaging/'
+fi
+if test -d '$RemoteRoot/releases/$sha256'; then
+    test "`$(sha256sum '$RemoteRoot/releases/$sha256/$artifact' | cut -d ' ' -f 1)" = '$sha256'
+    rm -rf '$remoteStaging'
+else
+    mv '$remoteStaging' '$RemoteRoot/releases/$sha256'
+fi
 ln -sfn 'releases/$sha256' '$RemoteRoot/current.next'
 mv -Tf '$RemoteRoot/current.next' '$RemoteRoot/current'
-find '$RemoteRoot/releases' -mindepth 1 -maxdepth 1 -type d ! -name '$sha256' -exec rm -rf -- {} +
 "@
 Invoke-DeploymentCommand -Command ssh -Operation 'publish' -Arguments ($sshOptions + @($SshHost, $publishCommand))
 

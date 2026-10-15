@@ -4526,6 +4526,74 @@
       "effectIndex": 6198,
       "statisticalSkillKey": null
     },
+    "GE_Player_Elyms_AirAttack_Damage": {
+      "effectIndex": 6578,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Aim_Damage": {
+      "effectIndex": 6579,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_MeleeB1_Damage": {
+      "effectIndex": 6582,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_MeleeB2_Damage": {
+      "effectIndex": 6583,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_MeleeB3_Damage": {
+      "effectIndex": 6584,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Skill1_Damage": {
+      "effectIndex": 6569,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Skill1_1_Damage": {
+      "effectIndex": 6575,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Skill1_2_Damage": {
+      "effectIndex": 6576,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Skill2_Damage": {
+      "effectIndex": 6581,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Skill2_1_Damage": {
+      "effectIndex": 6580,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_UltraSkillA1_Damage": {
+      "effectIndex": 6538,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_UltraSkillA2_Damage": {
+      "effectIndex": null,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_UltraSkillB1_Damage": {
+      "effectIndex": 6539,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_UltraSkillB2_Damage": {
+      "effectIndex": null,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_XieTongSkillA1_Damage": {
+      "effectIndex": 6558,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_XieTongSkillB1_Damage": {
+      "effectIndex": 6557,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_PerfectEvadeAttack_Damage": {
+      "effectIndex": 6577,
+      "statisticalSkillKey": null
+    },
     "GE_Player_Elyms_QTE_Damage": {
       "effectIndex": 6197,
       "statisticalSkillKey": null
@@ -4638,16 +4706,28 @@
       "effectIndex": 6229,
       "statisticalSkillKey": null
     },
-    "GE_Player_Exe_AirAttack_Damage": {
-      "effectIndex": 6237,
-      "statisticalSkillKey": null
-    },
     "GE_Player_Exe_Branch_Damage": {
       "effectIndex": 6466,
       "statisticalSkillKey": null
     },
-    "GE_Player_Exe_CloneAtk_Damage": {
-      "effectIndex": 6236,
+    "GE_Player_Exe_AirAttack_Damage": {
+      "effectIndex": 6237,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Exe_Skill_Damage": {
+      "effectIndex": 6410,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Exe_Skill1_Damage": {
+      "effectIndex": 6551,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Exe_UltraSkill1_Damage": {
+      "effectIndex": 6550,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Exe_UltraSkill2_Damage": {
+      "effectIndex": 6549,
       "statisticalSkillKey": null
     },
     "GE_Player_Exe_PerfectEvadeAttack_Damage": {
@@ -4658,8 +4738,12 @@
       "effectIndex": 6387,
       "statisticalSkillKey": null
     },
-    "GE_Player_Exe_Skill_Damage": {
-      "effectIndex": 6410,
+    "GE_Player_Exe_QTE1_Damage": {
+      "effectIndex": 6552,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Exe_CloneAtk_Damage": {
+      "effectIndex": 6236,
       "statisticalSkillKey": null
     },
     "Buff_DefendAthena_XZC_Item_9_1": {
@@ -4670,16 +4754,52 @@
       "effectIndex": 6415,
       "statisticalSkillKey": null
     },
+    "Buff_DefendAthena_XZC_Blue_3_1": {
+      "effectIndex": 6316,
+      "statisticalSkillKey": null
+    },
     "GE_Player_BlackBird_Evolve_UltraSkill_Damage_checkLV1": {
       "effectIndex": 6536,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Branch1_Damage": {
+      "effectIndex": 6588,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Branch2_Damage": {
+      "effectIndex": 6589,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Elyms_Branch3_Damage": {
+      "effectIndex": 6590,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Eri044_Melee1_Damage": {
+      "effectIndex": 6591,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Eri044_Melee2_Damage": {
+      "effectIndex": 6592,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Eri044_Melee3_Damage": {
+      "effectIndex": 6593,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Eri044_Melee4_Damage": {
+      "effectIndex": 6594,
+      "statisticalSkillKey": null
+    },
+    "GE_Player_Eri044_Melee5_Damage": {
+      "effectIndex": 6595,
       "statisticalSkillKey": null
     }
   },
   "sourceSHA256": {
-    "DataTable/Character/DT_Character.json": "f6a5006b183c96fd00c3f354d3e0f4d575b44ceb26d5ec860281a877bcb131e9",
-    "DataTable/Character/DT_CharacterAbilityConfig.json": "565c994a872b954e5a077a378439d3132963746494e5b259b4dc33970deda038",
-    "DataTable/Skill/DT_GameplayAbilityTipsData.json": "fa21250500a3049de613c60c112369ff60c25e6e26c7cfba80f2347f4ac7cc19",
-    "DataTable/Skill/DT_SkillDamageData.json": "3af44465bff1f9e6ef83b7012a5084a02741a292d511492a516a384449365973",
-    "DataTable/Skill/DT_GameplayEffectMappingData.json": "cf9515ad8d0007e2306d1ac4b2fd90899997a93eadb90c46caec3573b7fe8a81"
+    "DataTable/Character/DT_Character.json": "5b4e2236cd37dfd1abcb3cd77af328449a565691a8e370ceb1ee1bca6ef8f108",
+    "DataTable/Character/DT_CharacterAbilityConfig.json": "3445861f30d49b042bdd19027c1cb086487a1a0d14bfa2e7060080c9dc679298",
+    "DataTable/Skill/DT_GameplayAbilityTipsData.json": "c6cab4bcf2c025a11b00a0da80ebd9c8d3c98fe4fd2c01be6c6acef065052baa",
+    "DataTable/Skill/DT_SkillDamageData.json": "fb2857d26f7d92d023850cf6c390393322d21624ff961f8ac3e0a2c687cc2a74",
+    "DataTable/Skill/DT_GameplayEffectMappingData.json": "fc062dc04fcd23678a16ba0527cd7f43d5fe23cdeb2f056e9306c7f8461bfded"
   }
 }

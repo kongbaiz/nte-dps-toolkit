@@ -246,8 +246,13 @@ impl Decoder {
             if !b.initial {
                 let modulus = if b.reliable { 1024 } else { 16384 };
                 let delta = (b.sequence + modulus - pending.sequence) % modulus;
-                if pending.reliable != b.reliable || (delta != 1 && (b.reliable || delta != 0)) {
+                if pending.reliable != b.reliable {
                     return Err(Error::InvalidValue);
+                }
+                if delta != 1 && (b.reliable || delta != 0) {
+                    // A skipped middle fragment is incomplete, not a conflicting
+                    // message identity. Keep dedup history and allow later messages.
+                    return Err(Error::Truncated);
                 }
             }
             if !b.exports {
@@ -729,7 +734,7 @@ pub(super) mod tests {
         d.datagram(&fragment(10, true, false, 3, 8), true).unwrap();
         assert!(matches!(
             d.datagram(&fragment(12, false, true, 0, 2), true),
-            Err(Error::InvalidValue)
+            Err(Error::Truncated)
         ));
     }
 

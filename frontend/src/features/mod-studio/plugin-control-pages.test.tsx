@@ -149,7 +149,6 @@ describe("Mod Workshop owner pages", () => {
   for (const file of [
     "NTE_PluginCombat.dll",
     "NTE_PluginUser.dll",
-    "NTE_PluginNetwork.dll",
     "NTE_PluginTraining.dll",
   ]) {
     it(`renders only actions owned by ${file}`, () => {
@@ -169,6 +168,12 @@ describe("Mod Workshop owner pages", () => {
       else expect(html).not.toContain("In-game enhanced HUD");
     });
   }
+  it("keeps internal diagnostic plugins manageable without retired feature controls", () => {
+    const html = renderPlugin("NTE_PluginNetwork.dll");
+    expect(html).toContain("Unload plugin");
+    expect(html).toContain("no feature controls exposed");
+    expect(html).not.toContain("Plugin network recording");
+  });
   it("gives unknown plugins their own lifecycle page without guessing capabilities", () => {
     const html = renderPlugin("NTE_PluginCustom.dll");
     expect(html).toContain("NTE_PluginCustom.dll");
@@ -267,7 +272,7 @@ it("shows the selected target and never enables unsupported or unloaded Training
 
 describe("user-focused plugin controls", () => {
   beforeEach(() => setFrontendLanguage("en"));
-  it.each(["Combat", "User", "Training", "Network"])(
+  it.each(["Combat", "User", "Training"])(
     "keeps %s diagnostic actions available but collapsed",
     (name) => {
       const file = `NTE_Plugin${name}.dll`;
@@ -302,4 +307,32 @@ describe("user-focused plugin controls", () => {
     expect(html).toContain("Load plugin");
     expect(html).not.toContain("Unload plugin");
   });
+});
+
+it("offers proxy removal only for proxy mode and blocks it during a live connection", () => {
+  setFrontendLanguage("en");
+  const connected = renderToStaticMarkup(<HostLoadingControls {...common} />);
+  const button = connected
+    .match(/<button\b[^>]*>[\s\S]*?<\/button>/g)!
+    .find((b) => b.includes("Uninstall proxy"))!;
+  expect(button).toContain('disabled=""');
+  const stopped = renderToStaticMarkup(
+    <HostLoadingControls
+      {...common}
+      panel={{ ...panel, connection: "unavailable" }}
+    />,
+  );
+  expect(
+    stopped
+      .match(/<button\b[^>]*>[\s\S]*?<\/button>/g)!
+      .find((b) => b.includes("Uninstall proxy")),
+  ).not.toContain('disabled=""');
+  expect(
+    renderToStaticMarkup(
+      <HostLoadingControls
+        {...common}
+        panel={{ ...panel, loadingMethod: "loader" }}
+      />,
+    ),
+  ).not.toContain("Uninstall proxy");
 });

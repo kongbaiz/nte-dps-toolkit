@@ -2449,7 +2449,7 @@
       },
       "GE_Player_Akane_UpgradeSkill_Damage": {
         "Desc": {
-          "CultureInvariantString": "明音技能长按"
+          "CultureInvariantString": "明音强化技能"
         }
       },
       "GE_Player_Akane_Skill2_Damage": {

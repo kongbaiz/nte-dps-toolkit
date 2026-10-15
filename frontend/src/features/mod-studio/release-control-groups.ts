@@ -37,15 +37,6 @@ export const RELEASE_GROUPS = [
     advanced: ["userStatus", "userOperation", "userCancel"],
   },
   {
-    id: "network",
-    pluginFile: "NTE_PluginNetwork.dll",
-    label: "Network evidence",
-    description:
-      "Optional plugin-side diagnostics. This is not the DPS data source.",
-    actions: ["networkEnable"],
-    advanced: ["networkStatus", "networkFlush"],
-  },
-  {
     id: "training",
     pluginFile: "NTE_PluginTraining.dll",
     label: "Training controls",

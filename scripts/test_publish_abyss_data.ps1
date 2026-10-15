@@ -76,6 +76,9 @@ try {
     Assert-True ($privacyFixture.RemoteCalls[0].arguments -notcontains '-i') 'Default SSH configuration was not used.'
     $publish = $privacyFixture.RemoteCalls[2].arguments[-1]
     Assert-True ($publish.Contains("'/srv/fixture-release/current'")) 'Configured deployment directory was not used.'
+    Assert-True (-not $publish.Contains("find '/srv/fixture-release/releases'")) 'Publication must preserve previous releases.'
+    Assert-True (-not $publish.Contains("rm -rf '/srv/fixture-release/releases/")) 'Publication must not delete a release.'
+    Assert-True ($publish.Contains("cp -n '/srv/fixture-release/current'/abyss-data-*.zip")) 'Cached manifests must retain reachable archives.'
     Assert-True ($result.Contains('Published abyss-data-')) 'Publication result is missing.'
 
     $privacyFixture.RemoteCalls.Clear()

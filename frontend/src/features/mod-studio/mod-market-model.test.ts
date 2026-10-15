@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
 
 import {
+  hasModMarketUpdate,
   localizedModMarketText,
   filterModMarketItems,
   modMarketLocalStatus,
@@ -101,4 +102,30 @@ describe("market component separation", () => {
     ]);
     expect(filterModMarketItems([plugin], "foundation", "", "en")).toEqual([]);
   });
+});
+
+it("shows update notifications only for a verified installed content mismatch", () => {
+  expect(hasModMarketUpdate(ITEM)).toBe(false);
+  expect(
+    hasModMarketUpdate({
+      ...ITEM,
+      localState: {
+        status: "unreadable",
+        code: "mod_workspace_read_failed",
+        messageKey: "Failed to read the Mod workspace.",
+      },
+    }),
+  ).toBe(false);
+  expect(
+    hasModMarketUpdate({
+      ...ITEM,
+      localState: { status: "installed", enabled: false, current: false },
+    }),
+  ).toBe(true);
+  expect(
+    hasModMarketUpdate({
+      ...ITEM,
+      localState: { status: "installed", enabled: true, current: true },
+    }),
+  ).toBe(false);
 });

@@ -41,15 +41,35 @@
       "character_abilities": [
         {
           "CharacterID": "1008",
-          "ReactionAbilityID": "GA_Skia_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Skia_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1025",
-          "ReactionAbilityID": "GA_hathor_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_hathor_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1071",
-          "ReactionAbilityID": "GA_Chaos_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Chaos_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
+        },
+        {
+          "CharacterID": "1057",
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Akane_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         }
       ]
     },
@@ -111,23 +131,43 @@
       "character_abilities": [
         {
           "CharacterID": "1010",
-          "ReactionAbilityID": "GA_Nanally_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Nanally_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1019",
-          "ReactionAbilityID": "GA_Mint_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Mint_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1052",
-          "ReactionAbilityID": "GA_Jin_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Jin_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1055",
-          "ReactionAbilityID": "GA_Kuhara_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Kuhara_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1075",
-          "ReactionAbilityID": "GA_Oneiroi_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Oneiroi_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         }
       ]
     },
@@ -146,7 +186,11 @@
       "character_abilities": [
         {
           "CharacterID": "1072",
-          "ReactionAbilityID": "GA_Radio072_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Radio072_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         }
       ]
     },
@@ -187,15 +231,38 @@
       "character_abilities": [
         {
           "CharacterID": "1039",
-          "ReactionAbilityID": "GA_Fadia_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Fadia_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1020",
-          "ReactionAbilityID": "GA_Haniel_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Haniel_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1070",
-          "ReactionAbilityID": "GA_Mitsuki_Passive1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Mitsuki_Passive1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
+        },
+        {
+          "CharacterID": "1042",
+          "bUseLocalDesc": true,
+          "ReactionAbilityID": "GA_BlackBird_Passive_1",
+          "LocalDesc": {
+            "TableId": "/Game/Text/PlayerSkillDes/BlackBird_SkillDes.BlackBird_SkillDes",
+            "Key": "GA_BlackBird_Passive_1_1",
+            "SourceString": "<TextHLT>「黯星」强化</>：「黯星」状态结束时，根据「黯星」期间目标实际受到的累计伤害，黑羽额外对其造成相当于累计伤害<NumGreen>20%</>的心灵伤害（累计伤害不包含触发该次黯星状态的援护技和该次黯星状态自身造成的伤害），最高不超过黑羽基础攻击力的<NumGreen>1000</>倍，且不受其他伤害增减益效果影响。随后，由黑羽为目标施加1次「黯星」。\r\n通过本效果施加的「黯星」无法再次触发施加「黯星」效果。",
+            "LocalizedString": "<TextHLT>「黯星」强化</>：「黯星」状态结束时，根据「黯星」期间目标实际受到的累计伤害，黑羽额外对其造成相当于累计伤害<NumGreen>20%</>的心灵伤害（累计伤害不包含触发该次黯星状态的援护技和该次黯星状态自身造成的伤害），最高不超过黑羽基础攻击力的<NumGreen>1000</>倍，且不受其他伤害增减益效果影响。随后，由黑羽为目标施加1次「黯星」。\r\n通过本效果施加的「黯星」无法再次触发施加「黯星」效果。"
+          }
         }
       ]
     },
@@ -257,19 +324,35 @@
       "character_abilities": [
         {
           "CharacterID": "1023",
-          "ReactionAbilityID": "GA_Cang_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Cang_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1003",
-          "ReactionAbilityID": "GA_Sagiri_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Sagiri_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1033",
-          "ReactionAbilityID": "GA_Adler_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Adler_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1036",
-          "ReactionAbilityID": "GA_Zankou_Passive1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Zankou_Passive1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         }
       ]
     },
@@ -285,7 +368,19 @@
       ],
       "default_damage_effect": "None",
       "damage_effects": [],
-      "character_abilities": []
+      "character_abilities": [
+        {
+          "CharacterID": "1042",
+          "bUseLocalDesc": true,
+          "ReactionAbilityID": "GA_BlackBird_Passive_1",
+          "LocalDesc": {
+            "TableId": "/Game/Text/PlayerSkillDes/BlackBird_SkillDes.BlackBird_SkillDes",
+            "Key": "GA_BlackBird_Passive_1_2",
+            "SourceString": "<TextHLT>「浸染」强化</>：「浸染」的基础增伤效果提升至<NumGreen>30%</>，持续时间延长至<NumGreen>20</>秒。",
+            "LocalizedString": "<TextHLT>「浸染」强化</>：「浸染」的基础增伤效果提升至<NumGreen>30%</>，持续时间延长至<NumGreen>20</>秒。"
+          }
+        }
+      ]
     },
     "7": {
       "reaction_type": null,
@@ -303,19 +398,35 @@
       "character_abilities": [
         {
           "CharacterID": "1051",
-          "ReactionAbilityID": "GA_Female_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Female_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1073",
-          "ReactionAbilityID": "GA_Chiichan073_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Chiichan073_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1021",
-          "ReactionAbilityID": "GA_Edgar_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Edgar_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1076",
-          "ReactionAbilityID": "GA_Shinku_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Shinku_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         }
       ]
     },
@@ -335,11 +446,19 @@
       "character_abilities": [
         {
           "CharacterID": "1004",
-          "ReactionAbilityID": "GA_Lacrimosa_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Lacrimosa_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         },
         {
           "CharacterID": "1054",
-          "ReactionAbilityID": "GA_Daffodill_Passive_1"
+          "bUseLocalDesc": false,
+          "ReactionAbilityID": "GA_Daffodill_Passive_1",
+          "LocalDesc": {
+            "CultureInvariantString": null
+          }
         }
       ]
     }
@@ -848,7 +967,7 @@
             "ObjectName": "BlueprintGeneratedClass'Buff_Reaction_4_new_1070_C'",
             "ObjectPath": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction4/New/Buff_Reaction_4_new_1070.1"
           },
-          "ReactionAbilityID": "GA_Mitsuki070_Passive_1",
+          "ReactionAbilityID": "GA_Mitsuki_Passive1",
           "ConditionArray": [
             {
               "GEConditionArray": [
@@ -901,8 +1020,8 @@
       "ReactionDataArray": [
         {
           "TargetGEClass": {
-            "ObjectName": "BlueprintGeneratedClass'Buff_Reaction_5_new_1036_C'",
-            "ObjectPath": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction5/New/Buff_Reaction_5_new_1036.1"
+            "ObjectName": "BlueprintGeneratedClass'Buff_Reaction_5_new_1036_Add_C'",
+            "ObjectPath": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction5/New/Buff_Reaction_5_new_1036_Add.0"
           },
           "ReactionAbilityID": "GA_Zankou_Passive1",
           "ConditionArray": [
@@ -1014,6 +1133,94 @@
       ],
       "Desc": {
         "CultureInvariantString": "覆纹额外追击伤害提升至30%，受覆纹状态影响的目标，所受追击伤害提高10%"
+      }
+    },
+    "1042": {
+      "Name": {
+        "CultureInvariantString": "黑羽"
+      },
+      "ReactionDataArray": [
+        {
+          "DamageUpRatio": 0.1,
+          "ReactionAbilityID": "GA_BlackBird_Passive_1",
+          "ConditionArray": [
+            {
+              "GEConditionArray": [
+                {
+                  "ObjectName": "BlueprintGeneratedClass'Buff_BlackBird042_Passive1_C'",
+                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/PassiveEffect/Buff_BlackBird042_Passive1.1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "CumulativeDamageRatio": 0.2,
+          "BaseAtkCapRatio": 1000.0,
+          "PsycheDamageGEClass": {
+            "ObjectName": "BlueprintGeneratedClass'GE_Reaction_4_new_1042_Damage_C'",
+            "ObjectPath": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction4/New/GE_Reaction_4_new_1042_Damage.1"
+          },
+          "ReapplyDarkStarGEClass": {
+            "ObjectName": "BlueprintGeneratedClass'Buff_Reaction_4_new_C'",
+            "ObjectPath": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction4/New/Buff_Reaction_4_new.1"
+          },
+          "ReactionAbilityID": "GA_BlackBird_Passive_1",
+          "ConditionArray": [
+            {
+              "GEConditionArray": [
+                {
+                  "ObjectName": "BlueprintGeneratedClass'Buff_BlackBird042_Passive1_C'",
+                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/PassiveEffect/Buff_BlackBird042_Passive1.1"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "Desc": {
+        "CultureInvariantString": "魂相的基础增伤效果提升至x%，持续时间延长至x秒。黯星状态结束时，根据黯星期间目标实际受到的累计伤害，额外对其造成相当于累计伤害X%的心灵伤害，最高不超过黑羽基础攻击力的Y%。随后，由黑羽为目标施加1次「黯星」。通过本效果施加的「黯星」无法再次触发施加「黯星」效果。"
+      }
+    },
+    "1057": {
+      "Name": {
+        "CultureInvariantString": "明音"
+      },
+      "ReactionDataArray": [
+        {
+          "AutoApplyPeriod": 3.0,
+          "SlomoGEClass": {
+            "ObjectName": "BlueprintGeneratedClass'Buff_Reaction_3_new_C'",
+            "ObjectPath": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction3/New/Buff_Reaction_3_new.1"
+          },
+          "ReapplyDamageGEClass": {
+            "ObjectName": "BlueprintGeneratedClass'GE_Reaction_3_new_1057_Damage_C'",
+            "ObjectPath": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction3/New/GE_Reaction_3_new_1057_Damage.1"
+          },
+          "BaseDamageRatio": 1.0,
+          "DamageIncPerSecond": 0.2,
+          "DamageRatioCap": 1.6,
+          "DamageCooldownPerTarget": 1.0,
+          "SlomoDurationExtend": 7.0,
+          "AutoApplyPresentationGEClass": {
+            "ObjectName": "BlueprintGeneratedClass'Buff_Akane_Skill_Passive1_display_C'",
+            "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_Passive1_display.0"
+          },
+          "ReactionAbilityID": "GA_Akane_Passive_1",
+          "ConditionArray": [
+            {
+              "GEConditionArray": [
+                {
+                  "ObjectName": "BlueprintGeneratedClass'Buff_Akane057_Passive1_C'",
+                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/PassiveEffect/Buff_Akane057_Passive1.0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "Desc": {
+        "CultureInvariantString": "全队首次触发「延滞」后，明音获得强化，效果脱战移除。强化期间，音标和声场每隔x秒对大范围目标施加一次延滞。全队每次对延滞目标重新施加延滞时，明音根据目标剩余的延滞时间对其造成x%*攻击力的相属性异能伤害，每剩余1秒整体伤害提升x%，上限x%。每个目标单独计算剩余时间，同一目标每x秒至多触发一次该伤害。"
       }
     }
   }

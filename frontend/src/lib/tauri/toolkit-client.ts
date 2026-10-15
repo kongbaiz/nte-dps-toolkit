@@ -182,6 +182,11 @@ export function createToolkitClient(
         await transport.invoke("clear_host_game_directory"),
       );
     },
+    async uninstallProxy(confirmed: boolean) {
+      return parsePluginPanel(
+        await transport.invoke("uninstall_proxy_host", { confirmed }),
+      );
+    },
     async launchHost() {
       const result = p.record(
         await transport.invoke("launch_plugin_host"),

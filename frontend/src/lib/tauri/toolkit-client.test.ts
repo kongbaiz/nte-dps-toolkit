@@ -146,3 +146,19 @@ it("requires a bounded directory field and routes selection and clearing without
     ["select_host_game_directory"],
   ]);
 });
+
+it("uninstalls only through the explicit confirmed command without retrying", async () => {
+  const invoke = vi
+    .fn()
+    .mockResolvedValueOnce(capture)
+    .mockRejectedValueOnce({ code: "mod_proxy_deployment_conflict" });
+  const client = createToolkitClient({ invoke });
+  await client.uninstallProxy(true);
+  expect(invoke).toHaveBeenLastCalledWith("uninstall_proxy_host", {
+    confirmed: true,
+  });
+  await expect(client.uninstallProxy(true)).rejects.toEqual({
+    code: "mod_proxy_deployment_conflict",
+  });
+  expect(invoke).toHaveBeenCalledTimes(2);
+});

@@ -22888,13 +22888,6 @@
         },
         "UniqueIndex": 3271
       },
-      "Buff_Kuhara_BasePas": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_055_Kuhara/Buff/Buff_Kuhara_BasePas.Buff_Kuhara_BasePas_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 3272
-      },
       "Buff_Kuhara055_Passive2": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_055_Kuhara/PassiveEffect/Buff_Kuhara055_Passive2.Buff_Kuhara055_Passive2_C",
@@ -22936,13 +22929,6 @@
           "SubPathString": ""
         },
         "UniqueIndex": 3278
-      },
-      "Buff_Kuhara_AimSpeedDown": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_055_Kuhara/Buff/Buff_Kuhara_AimSpeedDown.Buff_Kuhara_AimSpeedDown_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 3279
       },
       "GE_Player_Kuhara_AimAttack_Damage": {
         "GameplayEffectClass": {
@@ -45819,6 +45805,657 @@
           "SubPathString": ""
         },
         "UniqueIndex": 6544
+      },
+      "Buff_DefendAthena_XZC_Item_3_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item3/Buff_DefendAthena_XZC_Item_3_2.Buff_DefendAthena_XZC_Item_3_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6545
+      },
+      "Buff_DefendAthena_XZC_Item_3_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/XZC/DefendAthena/Item3/Buff_DefendAthena_XZC_Item_3_1.Buff_DefendAthena_XZC_Item_3_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6546
+      },
+      "buff_mon_71_ghostAtk_tag": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_71/buff_mon_71_ghostAtk_tag.buff_mon_71_ghostAtk_tag_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6547
+      },
+      "buff_mon_71_CombatStun": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_71/buff_mon_71_CombatStun.buff_mon_71_CombatStun_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6548
+      },
+      "GE_Player_Exe_UltraSkill2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_UltraSkill2_Damage.GE_Player_Exe_UltraSkill2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6549
+      },
+      "GE_Player_Exe_UltraSkill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_UltraSkill1_Damage.GE_Player_Exe_UltraSkill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6550
+      },
+      "GE_Player_Exe_Skill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_Skill1_Damage.GE_Player_Exe_Skill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6551
+      },
+      "GE_Player_Exe_QTE1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_QTE1_Damage.GE_Player_Exe_QTE1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6552
+      },
+      "GE_Player_Exe_CloneBoom_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Damage/GE_Player_Exe_CloneBoom_Damage.GE_Player_Exe_CloneBoom_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6553
+      },
+      "GE_Player_Exe_Melee2_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_Melee2_1_HitBack.GE_Player_Exe_Melee2_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6554
+      },
+      "Buff_Elyms_GiveXieTongSkillB": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_GiveXieTongSkillB.Buff_Elyms_GiveXieTongSkillB_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6555
+      },
+      "Buff_Elyms_GiveUltraSkillB": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_GiveUltraSkillB.Buff_Elyms_GiveUltraSkillB_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6556
+      },
+      "GE_Player_Elyms_XieTongSkillB1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_XieTongSkillB1_Damage.GE_Player_Elyms_XieTongSkillB1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6557
+      },
+      "GE_Player_Elyms_XieTongSkillA1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_XieTongSkillA1_Damage.GE_Player_Elyms_XieTongSkillA1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6558
+      },
+      "Buff_ZHF_SkillLimit": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/ZHF/Buff_ZHF_SkillLimit.Buff_ZHF_SkillLimit_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 3272
+      },
+      "Buff_PlayerChange_GunWeapon": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/GunPlay/Buff_PlayerChange_GunWeapon.Buff_PlayerChange_GunWeapon_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 3279
+      },
+      "Buff_PlayerChange_GunWeapon_Female": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/GunPlay/Buff_PlayerChange_GunWeapon_Female.Buff_PlayerChange_GunWeapon_Female_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6559
+      },
+      "GE_Gunplay_M4A1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/GunPlay/Damage/GE_Gunplay_M4A1_Damage.GE_Gunplay_M4A1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6560
+      },
+      "Buff_Level_CY_CantChangeSkill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/CY/Buff_Level_CY_CantChangeSkill.Buff_Level_CY_CantChangeSkill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6561
+      },
+      "Buff_Akane_Level1_SuperArmor": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level1/Buff_Akane_Level1_SuperArmor.Buff_Akane_Level1_SuperArmor_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6562
+      },
+      "Buff_Chaos_LevelEX_DmgResistDown_CheckAdd": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_071_Chaos/Upgrade/LevelExtra/Buff_Chaos_LevelEX_DmgResistDown_CheckAdd.Buff_Chaos_LevelEX_DmgResistDown_CheckAdd_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6563
+      },
+      "GE_Player_Nitsa_Melee5_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee5_HitBack.GE_Player_Nitsa_Melee5_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6564
+      },
+      "GE_Player_Nitsa_Melee3_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee3_HitBack.GE_Player_Nitsa_Melee3_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6565
+      },
+      "GE_Player_Nitsa_Melee2_2_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee2_2_HitBack.GE_Player_Nitsa_Melee2_2_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6566
+      },
+      "GE_Player_Nitsa_Melee2_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee2_1_HitBack.GE_Player_Nitsa_Melee2_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6567
+      },
+      "GE_Player_Nitsa_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee1_HitBack.GE_Player_Nitsa_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6568
+      },
+      "GE_Player_Elyms_Skill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill1_Damage.GE_Player_Elyms_Skill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6569
+      },
+      "Buff_Akane057_Level2_DamageResistALLBase_SoundField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Upgrade/Level2/Buff_Akane057_Level2_DamageResistALLBase_SoundField.Buff_Akane057_Level2_DamageResistALLBase_SoundField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6570
+      },
+      "GE_Player_Akane_Skill_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Skill_HitBack.GE_Player_Akane_Skill_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6571
+      },
+      "GE_Player_Akane_Melee4_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee4_HitBack.GE_Player_Akane_Melee4_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6572
+      },
+      "GE_Player_Akane_QTE_HitOut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_QTE_HitOut.GE_Player_Akane_QTE_HitOut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6573
+      },
+      "GE_Player_Akane_UltraSkill_HitOut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_UltraSkill_HitOut.GE_Player_Akane_UltraSkill_HitOut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6574
+      },
+      "GE_Player_Elyms_Skill1_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill1_1_Damage.GE_Player_Elyms_Skill1_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6575
+      },
+      "GE_Player_Elyms_Skill1_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill1_2_Damage.GE_Player_Elyms_Skill1_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6576
+      },
+      "GE_Player_Elyms_PerfectEvadeAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_PerfectEvadeAttack_Damage.GE_Player_Elyms_PerfectEvadeAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6577
+      },
+      "GE_Player_Elyms_AirAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_AirAttack_Damage.GE_Player_Elyms_AirAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6578
+      },
+      "GE_Player_Elyms_Aim_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Aim_Damage.GE_Player_Elyms_Aim_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6579
+      },
+      "GE_Player_Elyms_Skill2_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill2_1_Damage.GE_Player_Elyms_Skill2_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6580
+      },
+      "GE_Player_Elyms_Skill2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill2_Damage.GE_Player_Elyms_Skill2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6581
+      },
+      "GE_Player_Elyms_MeleeB1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_MeleeB1_Damage.GE_Player_Elyms_MeleeB1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6582
+      },
+      "GE_Player_Elyms_MeleeB2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_MeleeB2_Damage.GE_Player_Elyms_MeleeB2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6583
+      },
+      "GE_Player_Elyms_MeleeB3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_MeleeB3_Damage.GE_Player_Elyms_MeleeB3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6584
+      },
+      "Buff_Akane_UpgradeSkill_Short_HitDisplay": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_UpgradeSkill_Short_HitDisplay.Buff_Akane_UpgradeSkill_Short_HitDisplay_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6585
+      },
+      "Buff_Abyss_Phase_013": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P13/Buff_Abyss_Phase_013.Buff_Abyss_Phase_013_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6586
+      },
+      "Buff_Abyss_Phase_013_effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P13/Buff_Abyss_Phase_013_effect.Buff_Abyss_Phase_013_effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6587
+      },
+      "GE_Player_Elyms_Branch1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Branch1_Damage.GE_Player_Elyms_Branch1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6588
+      },
+      "GE_Player_Elyms_Branch2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Branch2_Damage.GE_Player_Elyms_Branch2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6589
+      },
+      "GE_Player_Elyms_Branch3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Branch3_Damage.GE_Player_Elyms_Branch3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6590
+      },
+      "GE_Player_Eri044_Melee1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Melee1_Damage.GE_Player_Eri044_Melee1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6591
+      },
+      "GE_Player_Eri044_Melee2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Melee2_Damage.GE_Player_Eri044_Melee2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6592
+      },
+      "GE_Player_Eri044_Melee3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Melee3_Damage.GE_Player_Eri044_Melee3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6593
+      },
+      "GE_Player_Eri044_Melee4_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Melee4_Damage.GE_Player_Eri044_Melee4_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6594
+      },
+      "GE_Player_Eri044_Melee5_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Melee5_Damage.GE_Player_Eri044_Melee5_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6595
+      },
+      "GE_Player_Eri044_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_Melee1_HitBack.GE_Player_Eri044_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6596
+      },
+      "GE_Player_Eri044_Melee2_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_Melee2_HitBack.GE_Player_Eri044_Melee2_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6597
+      },
+      "GE_Player_Eri044_Melee3_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_Melee3_HitBack.GE_Player_Eri044_Melee3_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6598
+      },
+      "GE_Player_Eri044_Melee4_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_Melee4_HitBack.GE_Player_Eri044_Melee4_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6599
+      },
+      "GE_Player_Eri044_Melee5_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_Melee5_HitBack.GE_Player_Eri044_Melee5_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6600
+      },
+      "GE_Eri_DamageBase": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/DamageShare/GE_Eri_DamageBase.GE_Eri_DamageBase_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6601
+      },
+      "buff_mon_70_PumpkinheadStun": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_70/buff_mon_70_PumpkinheadStun.buff_mon_70_PumpkinheadStun_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6602
+      },
+      "buff_mon_70_Invisible_Infinite": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_70/buff_mon_70_Invisible_Infinite.buff_mon_70_Invisible_Infinite_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6603
+      },
+      "buff_mon_71_ImmuneDamage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_71/buff_mon_71_ImmuneDamage.buff_mon_71_ImmuneDamage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6604
+      },
+      "GE_Player_Elyms_Skill3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill3_Damage.GE_Player_Elyms_Skill3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6605
+      },
+      "GE_Player_Elyms_Skill3_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill3_1_Damage.GE_Player_Elyms_Skill3_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6606
+      },
+      "GE_Player_Elyms_Skill3Extra_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_Skill3Extra_Damage.GE_Player_Elyms_Skill3Extra_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6607
+      },
+      "GE_Player_Eri044_Melee2_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Melee2_1_Damage.GE_Player_Eri044_Melee2_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6608
+      },
+      "GE_Player_Eri044_QTE2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_QTE2_Damage.GE_Player_Eri044_QTE2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6609
+      },
+      "GE_Player_Eri044_QTE1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_QTE1_Damage.GE_Player_Eri044_QTE1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6610
+      },
+      "GE_Player_Eri044_UltraSkill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_UltraSkill1_Damage.GE_Player_Eri044_UltraSkill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6611
+      },
+      "GE_Player_Eri044_UltraSkill2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_UltraSkill2_Damage.GE_Player_Eri044_UltraSkill2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6612
+      },
+      "GE_Player_Eri044_Skill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Skill1_Damage.GE_Player_Eri044_Skill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6613
+      },
+      "GE_Player_Eri044_Skill2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Skill2_Damage.GE_Player_Eri044_Skill2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6614
+      },
+      "GE_Player_Akane_Melee4_HitBack_OutField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee4_HitBack_OutField.GE_Player_Akane_Melee4_HitBack_OutField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6615
+      },
+      "GE_Player_Akane_Melee4_HitBack_InField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee4_HitBack_InField.GE_Player_Akane_Melee4_HitBack_InField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6616
+      },
+      "GE_Player_Akane_Melee2_HitBack_OutField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee2_HitBack_OutField.GE_Player_Akane_Melee2_HitBack_OutField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6617
+      },
+      "GE_Player_Akane_Melee2_HitBack_InField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee2_HitBack_InField.GE_Player_Akane_Melee2_HitBack_InField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6618
+      },
+      "GE_Player_Akane_Backround_OutField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Backround_OutField.GE_Player_Akane_Backround_OutField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6619
+      },
+      "GE_Player_Akane_Backround_InField": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Backround_InField.GE_Player_Akane_Backround_InField_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6620
+      },
+      "GE_boss_40_act05_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_boss_40_act05_Dmg_BP.GE_boss_40_act05_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6621
+      },
+      "GE_mon_boss40_act05_back": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageHit/GE_mon_boss40_act05_back.GE_mon_boss40_act05_back_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6622
+      },
+      "buff_mon_71_StageImmuneDamage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_71/buff_mon_71_StageImmuneDamage.buff_mon_71_StageImmuneDamage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6623
+      },
+      "Buff_UltraSBuff_Akane057_AddEnergy": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/PassiveEffect/Buff_UltraSBuff_Akane057_AddEnergy.Buff_UltraSBuff_Akane057_AddEnergy_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6624
+      },
+      "Buff_Akane057_Passive3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/PassiveEffect/Buff_Akane057_Passive3.Buff_Akane057_Passive3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6625
+      },
+      "Buff_Akane057_BattleState": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/PassiveEffect/Buff_Akane057_BattleState.Buff_Akane057_BattleState_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6626
+      },
+      "GE_Player_Nitsa_QTE_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_QTE_Damage.GE_Player_Nitsa_QTE_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6627
+      },
+      "GE_Player_Nitsa_QTE_HitOut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_QTE_HitOut.GE_Player_Nitsa_QTE_HitOut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6628
+      },
+      "Buff_Elyms_SkillCoefModify": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_SkillCoefModify.Buff_Elyms_SkillCoefModify_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6629
+      },
+      "Buff_Elyms_PowerE2Dur": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_PowerE2Dur.Buff_Elyms_PowerE2Dur_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6630
+      },
+      "Buff_Elyms_PowerE2DamUpCnt": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_PowerE2DamUpCnt.Buff_Elyms_PowerE2DamUpCnt_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6631
+      },
+      "Buff_Elyms_PowerE2DamUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_PowerE2DamUp.Buff_Elyms_PowerE2DamUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6632
+      },
+      "Buff_Elyms_PowerE1Dur": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_PowerE1Dur.Buff_Elyms_PowerE1Dur_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6633
+      },
+      "GE_Player_Elyms_Melee5_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_Melee5_HitBack.GE_Player_Elyms_Melee5_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6634
+      },
+      "Buff_Elyms_LevelExtra3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/LevelExtra/Buff_Elyms_LevelExtra3.Buff_Elyms_LevelExtra3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6635
       }
     }
   }

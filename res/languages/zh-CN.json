@@ -2442,5 +2442,19 @@
   "Wooden dummy wheel": "木桩轮盘",
   "Use the Tab key in game to open the wooden dummy wheel.": "启用后，在游戏内按 Tab 打开木桩轮盘。",
   "Adjust combat features and preview or export your reports.": "调整战斗辅助功能，预览或导出战报。",
-  "Malice Damage": "恶意"
+  "Malice Damage": "恶意",
+  "Updates available": "有可用更新",
+  "Optional combat, account and training features. Runtime components are managed separately.": "可选的战斗、账号与训练功能；运行组件单独管理。",
+  "Uninstall proxy": "卸载代理",
+  "Proxy removed. Managed downloads and unrelated game files were preserved.": "代理已移除，已下载的托管组件及无关游戏文件已保留。",
+  "Close the game first. Remove only verified proxy files from this game directory. Keep downloaded components, settings and unrelated files.": "请先关闭游戏。仅移除此游戏目录中已核验的代理文件，保留已下载组件、设置及无关文件。",
+  "Close the game before removing the proxy host.": "卸载代理宿主前请先关闭游戏。",
+  "Confirm the plugin operation before continuing.": "请先确认插件操作再继续。",
+  "Proxy file operation failed. Close the game, check file permissions and retry; removal may be incomplete.": "代理文件操作失败。请关闭游戏并检查文件权限后重试；卸载可能尚未完成。",
+  "Could not start or wait for Loader (OS error {}). Check the managed Loader file and access permissions.": "无法启动或等待 Loader（系统错误 {}）。请检查托管加载器文件和访问权限。",
+  "Loader failed: stage={}, reason={}, exit={}, Win32={}, driver cleanup={}. Check this stage before retrying; host startup may have been attempted.": "Loader 失败：阶段={}，原因={}，退出码={}，Win32={}，驱动清理={}。请按阶段定位后再重试；宿主启动可能已尝试。",
+  "The proxy deployment record is not a regular file. No files were removed.": "代理部署记录不是普通文件，未移除任何文件。",
+  "The proxy deployment record exceeds the size limit. No files were removed.": "代理部署记录超出大小限制，未移除任何文件。",
+  "The proxy deployment record version is unsupported. Update Toolkit before removing the proxy.": "不支持此代理部署记录版本，请更新 Toolkit 后再卸载代理。",
+  "The proxy deployment record is invalid. No files were removed.": "代理部署记录无效，未移除任何文件。"
 }

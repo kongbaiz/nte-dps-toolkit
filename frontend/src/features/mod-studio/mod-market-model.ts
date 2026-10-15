@@ -89,3 +89,8 @@ export function filterModMarketItems(
     );
   });
 }
+
+// Use the backend's verified content comparison, never compare version labels.
+export function hasModMarketUpdate(item: ModMarketItem): boolean {
+  return item.localState.status === "installed" && !item.localState.current;
+}

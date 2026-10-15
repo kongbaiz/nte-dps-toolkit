@@ -767,6 +767,20 @@ mod tests {
             },
         );
         a.ready = true;
+        // Issue #62: losing a middle fragment used to be InvalidValue, permanently
+        // disabling the qualified flow instead of discarding only the incomplete message.
+        let first = super::super::transport::tests::fragment(9, true, false, 3, 8);
+        a.datagram(
+            server.0,
+            server.1,
+            local.0,
+            local.1,
+            Some(local.0),
+            &first,
+            Some(2.5),
+            &characters(),
+            true,
+        );
         let tail = super::super::transport::tests::fragment(11, false, true, 0, 2);
         assert!(
             a.datagram(

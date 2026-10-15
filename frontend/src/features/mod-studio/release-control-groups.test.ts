@@ -14,7 +14,15 @@ describe("plugin function groups", () => {
     expect([...grouped].sort()).toEqual(
       RELEASE_ACTIONS.map((a) => a[0])
         .filter(
-          (a) => !["combatStopExport", "hudStatus", "hudConfigure"].includes(a),
+          (a) =>
+            ![
+              "combatStopExport",
+              "hudStatus",
+              "hudConfigure",
+              "networkStatus",
+              "networkEnable",
+              "networkFlush",
+            ].includes(a),
         )
         .sort(),
     );
@@ -36,6 +44,8 @@ describe("plugin function groups", () => {
     ]);
     expect(pluginControlGroup("nte_plugincombat.DLL")).toBe(combat);
     expect(pluginControlGroup("Custom.dll")).toBeUndefined();
+    expect(pluginControlGroup("NTE_PluginNetwork.dll")).toBeUndefined();
+    expect(pluginControlGroup("NTE_PluginPerformance.dll")).toBeUndefined();
   });
   it("keeps destructive maintenance out of primary plugin features", () => {
     expect(RELEASE_GROUPS.find((g) => g.id === "combat")?.advanced).toContain(

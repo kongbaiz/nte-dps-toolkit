@@ -2442,5 +2442,19 @@
   "Plugin details": "プラグイン情報",
   "Use the Tab key in game to open the wooden dummy wheel.": "有効にすると、ゲーム内で Tab キーを押して木人ホイールを開けます。",
   "Wooden dummy wheel": "木人ホイール",
-  "Your plugins and in-game features, in one place.": "プラグインの管理とゲーム内機能の調整をまとめて行えます。"
+  "Your plugins and in-game features, in one place.": "プラグインの管理とゲーム内機能の調整をまとめて行えます。",
+  "Updates available": "更新があります",
+  "Optional combat, account and training features. Runtime components are managed separately.": "戦闘・アカウント・トレーニング機能を追加できます。実行用コンポーネントは別に管理します。",
+  "Uninstall proxy": "プロキシをアンインストール",
+  "Proxy removed. Managed downloads and unrelated game files were preserved.": "プロキシを削除しました。ダウンロード済みコンポーネントと無関係なゲームファイルは保持されています。",
+  "Close the game first. Remove only verified proxy files from this game directory. Keep downloaded components, settings and unrelated files.": "先にゲームを終了してください。このゲームフォルダーから検証済みのプロキシファイルのみを削除し、ダウンロード済みコンポーネント・設定・無関係なファイルは保持します。",
+  "Close the game before removing the proxy host.": "プロキシホストを削除する前にゲームを終了してください。",
+  "Confirm the plugin operation before continuing.": "続行する前にプラグイン操作を確認してください。",
+  "Proxy file operation failed. Close the game, check file permissions and retry; removal may be incomplete.": "プロキシファイルの操作に失敗しました。ゲームを終了し、ファイルの権限を確認して再試行してください。削除が完了していない可能性があります。",
+  "Could not start or wait for Loader (OS error {}). Check the managed Loader file and access permissions.": "Loader の起動または終了待機に失敗しました（OS エラー {}）。管理対象の Loader ファイルとアクセス権を確認してください。",
+  "Loader failed: stage={}, reason={}, exit={}, Win32={}, driver cleanup={}. Check this stage before retrying; host startup may have been attempted.": "Loader が失敗しました：段階={}、原因={}、終了コード={}、Win32={}、ドライバーの終了処理={}。再試行前に該当段階を確認してください。ホストの起動が試行済みの可能性があります。",
+  "The proxy deployment record is not a regular file. No files were removed.": "プロキシの配置記録が通常のファイルではありません。ファイルは削除されていません。",
+  "The proxy deployment record exceeds the size limit. No files were removed.": "プロキシの配置記録がサイズ制限を超えています。ファイルは削除されていません。",
+  "The proxy deployment record version is unsupported. Update Toolkit before removing the proxy.": "このプロキシ配置記録のバージョンには対応していません。Toolkit を更新してからプロキシを削除してください。",
+  "The proxy deployment record is invalid. No files were removed.": "プロキシの配置記録が無効です。ファイルは削除されていません。"
 }

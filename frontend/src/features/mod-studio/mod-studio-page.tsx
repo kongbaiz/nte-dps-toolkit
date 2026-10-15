@@ -3,7 +3,6 @@ import {
   Activity,
   Check,
   Cpu,
-  Network,
   Server,
   Users,
   Settings2,
@@ -14,11 +13,17 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { t, useTranslationRevision } from "@/lib/i18n";
+import { t, tf, useTranslationRevision } from "@/lib/i18n";
+import {
+  parseModStudioCommandError,
+  type ModStudioCommandError,
+} from "@/lib/tauri/mod-studio-contract";
 import { toolkitClient, type PluginPanel } from "@/lib/tauri/toolkit-client";
 import { HostControls } from "./host-controls";
 import { PluginControls } from "./plugin-controls";
 import { pluginControlGroup } from "./release-control-groups";
+import { useModMarket } from "./use-mod-market";
+import { hasModMarketUpdate } from "./mod-market-model";
 import { ModMarketPanel } from "./mod-market-panel";
 const PLUGIN_STATE = {
   loaded: "Loaded",
@@ -29,13 +34,11 @@ const PLUGIN_STATE = {
 const PLUGIN_NAMES: Record<string, string> = {
   "nte_plugincombat.dll": "Combat plugin",
   "nte_pluginuser.dll": "Account plugin",
-  "nte_pluginnetwork.dll": "Network plugin",
   "nte_plugintraining.dll": "Training plugin",
 };
 const ICONS = {
   combat: Activity,
   account: Users,
-  network: Network,
   host: Server,
   training: Target,
 };
@@ -45,7 +48,7 @@ export function ModStudioWorkspace() {
   const [tab, setTab] = useState<"control" | "market">("control");
   const [selectedPage, setSelectedPage] = useState("host");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ModStudioCommandError | null>(null);
   const alive = useRef(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const serial = useRef(0);
@@ -58,7 +61,12 @@ export function ModStudioWorkspace() {
     } catch {
       if (alive.current && request === serial.current) {
         setPanel(null);
-        setError("Failed to read the plugin control panel.");
+        setError({
+          code: "plugin_panel_read_failed",
+          messageKey: "Failed to read the plugin control panel.",
+          messageArguments: [],
+          diagnosticLine: null,
+        });
       }
     }
   }, []);
@@ -77,6 +85,10 @@ export function ModStudioWorkspace() {
       clearTimeout(timer);
     };
   }, [refresh]);
+  const market = useModMarket(refresh);
+  const updatesAvailable =
+    market.state.status === "ready" &&
+    market.state.catalog.mods.some(hasModMarketUpdate);
   const run = async (action: () => Promise<unknown>) => {
     if (busy.current) return;
     busy.current = true;
@@ -87,15 +99,7 @@ export function ModStudioWorkspace() {
       await action();
       if (alive.current) await refresh();
     } catch (e) {
-      if (alive.current)
-        setError(
-          typeof e === "object" &&
-            e !== null &&
-            "messageKey" in e &&
-            typeof e.messageKey === "string"
-            ? e.messageKey
-            : "The plugin operation failed. Query its status before retrying.",
-        );
+      if (alive.current) setError(parseModStudioCommandError(e));
     } finally {
       busy.current = false;
       if (alive.current) setPending(false);
@@ -114,7 +118,10 @@ export function ModStudioWorkspace() {
     <Alert variant="destructive" className="shrink-0">
       <TriangleAlert />
       <AlertTitle>{t("Operation failed")}</AlertTitle>
-      <AlertDescription>{t(error)}</AlertDescription>
+      <AlertDescription>
+        {tf(error.messageKey, error.messageArguments)}{" "}
+        <span className="font-mono text-xs">({error.code})</span>
+      </AlertDescription>
     </Alert>
   ) : null;
   return (
@@ -149,6 +156,14 @@ export function ModStudioWorkspace() {
           >
             {tab === "market" ? <Check aria-hidden="true" /> : <Store />}
             {t("Mod Market")}
+            {updatesAvailable && (
+              <span
+                role="img"
+                aria-label={t("Updates available")}
+                title={t("Updates available")}
+                className="size-2 rounded-full bg-destructive"
+              />
+            )}
           </Button>
         </div>
       </header>
@@ -156,7 +171,7 @@ export function ModStudioWorkspace() {
         <div className="min-h-0 flex-1 overflow-y-auto" ref={contentRef}>
           <div className="mx-auto w-full max-w-7xl space-y-5 p-5">
             {errorBanner}
-            <ModMarketPanel onInstalled={refresh} />
+            <ModMarketPanel market={market} />
           </div>
         </div>
       ) : panel === null ? (

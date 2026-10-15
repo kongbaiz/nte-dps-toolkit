@@ -30,8 +30,8 @@ versions or unreviewed channel/class layouts.
   retain their original capture timestamps.
 - Maximum eight connection/prefix lanes; each probe retains at most 128 messages
   and 4,096 rows. The losing layout is released after qualification. The current
-  `skill_attribution_catalog.json` is embedded with all 952 GE entries (including
-  unresolved entries) and 100 skill roots from the existing resource refresh; it contains
+  `skill_attribution_catalog.json` is embedded with all 982 GE entries (including
+  unresolved entries) and 100 skill roots from the CN 1.4.13 resource refresh; it contains
   no machine paths, endpoints or capture payloads. Catalog cloning occurs once
   per qualified flow, not per packet. CLI includes it through the core manifest.
   Its asset-build qualification metadata is preserved; resource availability is

@@ -138,6 +138,26 @@ impl CommandError {
                 "mod_proxy_deployment_conflict",
                 "Existing game files differ from the managed components. No existing files were replaced.",
             ),
+            ModMarketErrorCode::ProxyReceiptNotAFile => (
+                "mod_proxy_receipt_not_a_file",
+                "The proxy deployment record is not a regular file. No files were removed.",
+            ),
+            ModMarketErrorCode::ProxyReceiptTooLarge => (
+                "mod_proxy_receipt_too_large",
+                "The proxy deployment record exceeds the size limit. No files were removed.",
+            ),
+            ModMarketErrorCode::ProxyReceiptUnsupportedVersion => (
+                "mod_proxy_receipt_unsupported_version",
+                "The proxy deployment record version is unsupported. Update Toolkit before removing the proxy.",
+            ),
+            ModMarketErrorCode::ProxyReceiptInvalid => (
+                "mod_proxy_receipt_invalid",
+                "The proxy deployment record is invalid. No files were removed.",
+            ),
+            ModMarketErrorCode::ProxyIo => (
+                "mod_proxy_io_failed",
+                "Proxy file operation failed. Close the game, check file permissions and retry; removal may be incomplete.",
+            ),
             ModMarketErrorCode::ItemNotFound => (
                 "mod_market_item_not_found",
                 "The selected Mod is no longer available in the market.",

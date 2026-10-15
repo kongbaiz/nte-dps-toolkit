@@ -12,7 +12,7 @@ use nte_dps_tool::{
     storage::config::ModStudioLoadingMethod,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{io::Read, path::PathBuf};
 use tauri::{State, WebviewWindow};
 
 const PLUGIN_PANEL_CONTRACT_VERSION: u32 = 5;
@@ -642,6 +642,61 @@ pub(crate) async fn clear_host_game_directory(
     .map_err(|_| error(ToolkitError::Failed))?
 }
 
+#[tauri::command]
+pub(crate) async fn uninstall_proxy_host(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+    confirmed: bool,
+) -> Result<PluginPanel, CommandError> {
+    console::validate_window(&window)?;
+    if !confirmed {
+        return Err(CommandError {
+            code: "plugin_confirmation_required",
+            message_key: "Confirm the plugin operation before continuing.",
+            message_arguments: vec![],
+            diagnostic_line: None,
+        });
+    }
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = state
+            .reserve_plugin_control()
+            .map_err(CommandError::from_core)?;
+        if matches!(
+            state.capture_phase(),
+            nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
+        ) {
+            return Err(error(ToolkitError::Busy));
+        }
+        if network::game_process_id()
+            .map_err(|_| error(ToolkitError::Failed))?
+            .is_some()
+        {
+            return Err(CommandError {
+                code: "plugin_close_game_required",
+                message_key: "Close the game before removing the proxy host.",
+                message_arguments: vec![],
+                diagnostic_line: None,
+            });
+        }
+        let manual = state.proxy_game_directory();
+        let destination = nte_dps_tool::platform::mods_plugin::toolkit_game_directory(
+            manual.as_deref().map(std::path::Path::new),
+        )
+        .map_err(|_| directory_error())?;
+        nte_dps_tool::core::mod_market::uninstall_proxy(
+            &nte_dps_tool::storage::paths::toolkit_dir().join("game"),
+            &destination,
+        )
+        .map_err(CommandError::from_mod_market)?;
+        Ok(snapshot(&state))
+    })
+    .await
+    .map_err(|_| error(ToolkitError::Failed))?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HostLaunchResult {
@@ -698,16 +753,21 @@ pub(crate) async fn launch_plugin_host(
             .arg("--json")
             .current_dir(&root)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000); // CREATE_NO_WINDOW; UAC remains native.
         }
-        let status = command.status().map_err(|_| loader_failed())?;
+        let mut child = command.spawn().map_err(|e| loader_spawn_failed(&e))?;
+        // Drain beyond the receipt budget so driver cleanup cannot block on stdout.
+        // Never forward raw output or local paths.
+        let receipt = child.stdout.take().map(read_loader_receipt);
+        let status = child.wait().map_err(|e| loader_spawn_failed(&e))?;
         if !status.success() {
-            return Err(loader_failed());
+            let receipt = receipt.and_then(Result::ok).unwrap_or_default();
+            return Err(loader_receipt_error(&receipt, status.code()));
         }
         // Exit 0 is not treated as a live connection: independently verify IPC.
         client()?;
@@ -717,11 +777,124 @@ pub(crate) async fn launch_plugin_host(
     .map_err(|_| error(ToolkitError::Failed))?
 }
 
-fn loader_failed() -> CommandError {
+const MAX_LOADER_RECEIPT_BYTES: usize = 64 * 1024;
+
+fn read_loader_receipt(mut output: impl std::io::Read) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    output
+        .by_ref()
+        .take(MAX_LOADER_RECEIPT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    std::io::copy(&mut output, &mut std::io::sink())?;
+    Ok(bytes)
+}
+
+fn loader_spawn_failed(error: &std::io::Error) -> CommandError {
     CommandError {
-        code: "plugin_loader_failed",
-        message_key: "Loader did not confirm host startup. Check the Toolkit package, driver and UAC result before retrying.",
-        message_arguments: vec![],
+        code: "plugin_loader_launch_failed",
+        message_key: "Could not start or wait for Loader (OS error {}). Check the managed Loader file and access permissions.",
+        message_arguments: vec![
+            error
+                .raw_os_error()
+                .map_or("unknown".into(), |n| n.to_string()),
+        ],
+        diagnostic_line: None,
+    }
+}
+
+fn loader_receipt_error(bytes: &[u8], exit: Option<i32>) -> CommandError {
+    let receipt = (bytes.len() <= MAX_LOADER_RECEIPT_BYTES)
+        .then(|| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .flatten();
+    let receipt = receipt.filter(|r| r["schemaVersion"] == 1 && r["ok"] == false);
+    let mut phase = "unknown";
+    let mut reason = "unclassified";
+    let mut win32 = "unknown".to_owned();
+    let mut cleanup = "unknown".to_owned();
+    if let Some(r) = receipt {
+        phase = match r["phase"].as_str() {
+            Some("arguments") => "arguments",
+            Some("elevation") => "elevation",
+            Some("driver_inspect") => "driver_inspect",
+            Some("target") => "target",
+            Some("host_check") => "host_check",
+            Some("driver_start") => "driver_start",
+            Some("load") => "load",
+            Some("connect") => "connect",
+            Some("driver_stop") => "driver_stop",
+            _ => "unknown",
+        };
+        // Exact allowlist of path-free errors from the current native Loader.
+        // Unknown text remains private; a future Loader cannot inject paths here.
+        reason = match r["error"].as_str() {
+            Some("expected exactly one HTGame.exe; start the game or select --pid explicitly") => {
+                "target_not_unique"
+            }
+            Some("target is not HTGame.exe") => "target_wrong_image",
+            Some("target must be native Windows x64") => "target_wrong_architecture",
+            Some(
+                "target process has exited"
+                | "target process exited"
+                | "target exited before Toolkit IPC ready",
+            ) => "target_exited",
+            Some(
+                "host must resolve to d3d12.dll, not a plugin"
+                | "plugin image is not a host; only the host may load plugins",
+            ) => "host_wrong_image",
+            Some("driver lacks the required memory protocol marker") => "driver_protocol_mismatch",
+            Some(
+                "UETools has an orphan service/channel; normal SCM unload is unavailable; no forced unload",
+            ) => "driver_orphan_channel",
+            Some(
+                "previous driver lifecycle was abandoned; cleanup only, do not reinject automatically",
+            ) => "driver_abandoned_lifecycle",
+            Some("D3D12 device creation failed; cannot install the reflective trigger") => {
+                "d3d12_device_failed"
+            }
+            Some("D3D12 command queue creation failed") => "d3d12_queue_failed",
+            Some("DXGI factory creation failed") => "dxgi_factory_failed",
+            Some("DXGI swapchain creation failed; cannot install the reflective trigger") => {
+                "dxgi_swapchain_failed"
+            }
+            Some("host library load returned null (DllMain or path failure)") => {
+                "host_library_load_failed"
+            }
+            Some("Toolkit heartbeat stale") => "ipc_heartbeat_stale",
+            Some("Toolkit response identity mismatch") => "ipc_identity_mismatch",
+            Some("Toolkit Describe returned failure") => "ipc_describe_failed",
+            _ => "unclassified",
+        };
+        let number = |v: &serde_json::Value| {
+            v.as_u64()
+                .filter(|n| *n <= u32::MAX as u64)
+                .map(|n| n.to_string())
+        };
+        win32 = number(&r["win32"]).unwrap_or_else(|| "unknown".into());
+        cleanup = if r["driver"]["stopped"] == true {
+            "stopped".into()
+        } else {
+            number(&r["driver"]["cleanupWin32"]).unwrap_or_else(|| "unconfirmed".into())
+        };
+    }
+    let code = match phase {
+        "elevation" => "plugin_loader_elevation_failed",
+        "driver_inspect" | "driver_start" | "driver_stop" => "plugin_loader_driver_failed",
+        "target" => "plugin_loader_target_failed",
+        "host_check" => "plugin_loader_host_invalid",
+        "load" => "plugin_loader_load_failed",
+        "connect" => "plugin_loader_handshake_failed",
+        _ => "plugin_loader_result_invalid",
+    };
+    CommandError {
+        code,
+        message_key: "Loader failed: stage={}, reason={}, exit={}, Win32={}, driver cleanup={}. Check this stage before retrying; host startup may have been attempted.",
+        message_arguments: vec![
+            phase.into(),
+            reason.into(),
+            exit.map_or("unknown".into(), |n| n.to_string()),
+            win32,
+            cleanup,
+        ],
         diagnostic_line: None,
     }
 }
@@ -729,6 +902,33 @@ fn loader_failed() -> CommandError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn loader_errors_keep_stage_and_os_codes_without_paths_or_raw_output() {
+        let receipt = br#"{"schemaVersion":1,"ok":false,"phase":"driver_start","win32":577,"error":"private path","driver":{"stopped":true}}"#;
+        let error = loader_receipt_error(receipt, Some(1));
+        assert_eq!(error.code, "plugin_loader_driver_failed");
+        assert_eq!(
+            error.message_arguments,
+            ["driver_start", "unclassified", "1", "577", "stopped"]
+        );
+        assert!(!format!("{:?}", error.message_arguments).contains("private"));
+        let target = loader_receipt_error(br#"{"schemaVersion":1,"ok":false,"phase":"target","error":"expected exactly one HTGame.exe; start the game or select --pid explicitly"}"#, Some(1));
+        assert_eq!(target.message_arguments[1], "target_not_unique");
+        assert_eq!(
+            loader_receipt_error(b"not json", Some(7)).code,
+            "plugin_loader_result_invalid"
+        );
+        assert_eq!(
+            loader_receipt_error(&vec![b' '; MAX_LOADER_RECEIPT_BYTES + 1], None).code,
+            "plugin_loader_result_invalid"
+        );
+        let mut input = std::io::Cursor::new(vec![b'x'; MAX_LOADER_RECEIPT_BYTES * 2]);
+        assert_eq!(
+            read_loader_receipt(&mut input).unwrap().len(),
+            MAX_LOADER_RECEIPT_BYTES + 1
+        );
+        assert_eq!(input.position(), (MAX_LOADER_RECEIPT_BYTES * 2) as u64);
+    }
     #[test]
     fn loading_methods_share_the_managed_runtime_layout() {
         let root = std::env::temp_dir().join(format!("nte-managed-layout-{}", std::process::id()));

@@ -30,19 +30,20 @@ import {
 import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
 
 import {
+  hasModMarketUpdate,
   localizedModMarketText,
   modMarketLocalStatus,
   filterModMarketItems,
   type ModMarketCategory,
 } from "./mod-market-model";
-import { useModMarket, type ModMarketInstallState } from "./use-mod-market";
+import type { useModMarket, ModMarketInstallState } from "./use-mod-market";
 
 export function ModMarketPanel({
-  onInstalled,
+  market,
 }: {
-  onInstalled: () => void | Promise<void>;
+  market: ReturnType<typeof useModMarket>;
 }) {
-  const { state, installStates, refresh, install } = useModMarket(onInstalled);
+  const { state, installStates, refresh, install } = market;
   useTranslationRevision();
   const language = currentFrontendLanguage();
   const [query, setQuery] = useState("");
@@ -86,6 +87,20 @@ export function ModMarketPanel({
             {t(
               value === "plugins" ? "Feature plugins" : "Foundation components",
             )}
+            {state.status === "ready" &&
+              state.catalog.mods.some(
+                (item) =>
+                  hasModMarketUpdate(item) &&
+                  (value === "plugins"
+                    ? item.component === "plugin"
+                    : item.component !== "plugin"),
+              ) && (
+                <span
+                  role="img"
+                  aria-label={t("Updates available")}
+                  className="size-2 rounded-full bg-destructive"
+                />
+              )}
           </Button>
         ))}
       </div>
@@ -122,7 +137,7 @@ export function ModMarketPanel({
           {t(
             foundation
               ? "Host, Loader and driver are shared runtime components, not feature plugins."
-              : "Optional combat, account, network and performance features. Runtime components are managed separately.",
+              : "Optional combat, account and training features. Runtime components are managed separately.",
           )}
         </p>
         <Alert className="mb-4 border-[var(--console-success)]/40 bg-[var(--console-success)]/5">
@@ -217,6 +232,14 @@ function MarketItem({
         <div className="min-w-0">
           <h3 className="truncate font-heading text-base font-semibold">
             {localized.name}
+            {hasModMarketUpdate(item) && (
+              <span
+                role="img"
+                aria-label={t("Update available")}
+                title={t("Update available")}
+                className="ml-2 inline-block size-2 rounded-full bg-destructive"
+              />
+            )}
           </h3>
           <p className="mt-0.5 font-mono text-xs text-muted-foreground">
             {item.id} · v{item.version}

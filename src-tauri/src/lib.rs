@@ -167,6 +167,7 @@ pub fn run() {
             commands::toolkit::set_host_loading_method,
             commands::toolkit::select_host_game_directory,
             commands::toolkit::clear_host_game_directory,
+            commands::toolkit::uninstall_proxy_host,
             commands::toolkit::launch_plugin_host,
             commands::abyss_values::clear_abyss_prediction_team,
             commands::abyss_values::get_abyss_values_snapshot,
