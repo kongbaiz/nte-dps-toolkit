@@ -331,6 +331,7 @@
       "show_parent_ability": false,
       "owner_character_id": 1004,
       "use_server_damage": true,
+      "max_hp_reduction_percent": 200,
       "damage_name_zh": "噩梦",
       "damage_name_en": "噩梦",
       "damage_name_ja": "噩梦"
