@@ -1,5 +1,6 @@
 import { hitSnapshotFixture, hitDetailsFixture } from "./hit-snapshot-fixture";
 import { userCharacterArtworkFixture } from "./user-character-fixture";
+import frontendPackage from "../package.json";
 // Development-only entry; excluded from production Vite inputs.
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { TIMELINE_UI_PREVIEW } from "@/features/timeline/timeline-ui-preview";
@@ -27,6 +28,8 @@ let previewMode =
 let previewLoadingMethod =
   params.get("loading") === "loader" ? "loader" : "proxy";
 const settings = parseSettingsSnapshot(settingsFixture());
+settings.adapterVersion = frontendPackage.version;
+settings.updates.currentVersion = frontendPackage.version;
 settings.interface.darkMode = params.get("theme") !== "light";
 settings.interface.reduceMotion = params.get("motion") === "reduced";
 if (params.get("accent") === "blue") settings.interface.accent = "blue";
@@ -87,7 +90,7 @@ const previewSkills = parseSkillsSnapshot({
     })),
   ),
 });
-let generation = 1;
+let generation = BigInt(settings.generation);
 mockWindows("console");
 mockIPC(
   (command, args) => {
@@ -188,7 +191,7 @@ mockIPC(
       return {
         subscriptionId: payload.subscriptionId,
         streamKind: "mainDpsDetail",
-        streamProtocolVersion: 1,
+        streamProtocolVersion: 2,
         streamIntervalMs: 100,
         streamGeneration: "1",
       };
@@ -266,11 +269,15 @@ mockIPC(
           command === "subscribe_empty_curtain"
             ? "emptyCurtain"
             : command.replace("subscribe_", ""),
-        streamProtocolVersion: 1,
+        streamProtocolVersion: 2,
         streamIntervalMs: 100,
         streamGeneration: "1",
       };
-    if (command.startsWith("unsubscribe_")) return null;
+    if (
+      command.startsWith("unsubscribe_") ||
+      command === "acknowledge_stream_delivery"
+    )
+      return null;
     if (command === "get_settings_snapshot")
       return parseSettingsSnapshot(settings);
     if (command === "set_settings_interface") {
@@ -314,7 +321,7 @@ mockIPC(
         )
           throw new Error("QA settings channel is missing");
         channel.onmessage({
-          streamProtocolVersion: 1,
+          streamProtocolVersion: 2,
           events: [
             { event: "snapshot", payload: parseSettingsSnapshot(settings) },
           ],
@@ -323,7 +330,7 @@ mockIPC(
       return {
         subscriptionId: payload.subscriptionId,
         streamKind: command === "subscribe_settings" ? "settings" : "timeline",
-        streamProtocolVersion: 1,
+        streamProtocolVersion: 2,
         streamIntervalMs: 100,
         streamGeneration: String(generation),
       };
@@ -357,19 +364,36 @@ const { DataSourceControl } =
   await import("@/features/main-dps/data-source-control");
 const dataSourcePreview = params.get("view") === "data-source";
 const hitPreview = params.get("view") === "hit-details";
+const foundationPreview = params.get("view") === "ui-kit";
+const { UiFoundationPreview } = await import("./ui-foundation-preview");
+if (foundationPreview) {
+  const { applySettingsPresentation } =
+    await import("@/lib/settings-presentation");
+  applySettingsPresentation(settings.interface);
+}
 const { renderWindow } = await import("@/entries/window-bootstrap");
 renderWindow(
   <div className="flex h-dvh flex-col">
     <div className="flex shrink-0 items-center justify-between gap-3 border-b bg-muted px-3 py-1 text-xs text-muted-foreground">
       <span>UI 预览 · 示例数据 · 原生操作不可用</span>
       <div className="flex gap-3">
-        <a href="?theme=light">浅色</a>
-        <a href="?theme=dark">深色</a>
+        <a
+          href={foundationPreview ? "?theme=light&view=ui-kit" : "?theme=light"}
+        >
+          浅色
+        </a>
+        <a href={foundationPreview ? "?theme=dark&view=ui-kit" : "?theme=dark"}>
+          深色
+        </a>
+        <a href="?theme=light&view=ui-kit">UI 规范</a>
+        {foundationPreview ? <a href="?theme=light">控制台</a> : null}
         <a href="?theme=light&language=en">English</a>
       </div>
     </div>
     <div className="min-h-0 flex-1">
-      {dataSourcePreview ? (
+      {foundationPreview ? (
+        <UiFoundationPreview />
+      ) : dataSourcePreview ? (
         <DataSourceControl />
       ) : hitPreview ? (
         <MainDpsDetailPage />

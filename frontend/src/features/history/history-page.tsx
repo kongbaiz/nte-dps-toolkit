@@ -1,3 +1,4 @@
+import { PageHeader, PageTitle } from "@/components/nte/page-layout";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownRight,
@@ -187,10 +188,8 @@ export function HistoryPage() {
       <ContextMenuTrigger
         render={
           <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-            <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2 min-[640px]:px-4">
-              <h1 className="mr-auto text-lg font-semibold tracking-tight">
-                {t("History")}
-              </h1>
+            <PageHeader className="flex flex-wrap items-center gap-2">
+              <PageTitle className="mr-auto">{t("History")}</PageTitle>
               <Button
                 disabled={busy}
                 size="sm"
@@ -242,7 +241,7 @@ export function HistoryPage() {
                   {t(history.statusMessageKey)}
                 </span>
               )}
-            </header>
+            </PageHeader>
 
             {records.length > 0 && (
               <p className="border-b px-4 py-1.5 text-[11px] text-muted-foreground">

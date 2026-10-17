@@ -9,7 +9,7 @@ import {
 } from "./settings-contract";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -298,7 +298,7 @@ describe("settings client", () => {
               subscriptionId: "settings-test",
               streamKind: "settings",
               streamIntervalMs: 200,
-              streamProtocolVersion: 1,
+              streamProtocolVersion: 2,
               streamGeneration: "1",
             };
           }
@@ -326,6 +326,7 @@ describe("settings client", () => {
     expect(snapshots[0]?.updates.status).toBe("up-to-date");
     expect(calls.map((call) => call.command)).toEqual([
       "subscribe_settings",
+      "acknowledge_stream_delivery",
       "unsubscribe_settings",
     ]);
   });

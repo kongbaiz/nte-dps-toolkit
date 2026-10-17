@@ -291,13 +291,21 @@ struct StreamIdentity {
     subscription_key: String,
 }
 
+#[derive(Default)]
+struct StreamDeliveryProgress {
+    sent: AtomicU64,
+    acknowledged: AtomicU64,
+}
+
 struct StreamEntry {
     generation: u64,
     stop: Arc<AtomicBool>,
+    delivery: Arc<StreamDeliveryProgress>,
 }
 
 struct PendingStreamEntry {
     stop: Arc<AtomicBool>,
+    delivery: Arc<StreamDeliveryProgress>,
 }
 
 #[derive(Default)]
@@ -326,9 +334,31 @@ pub(crate) struct StreamRegistration {
     generation: u64,
     stop: Arc<AtomicBool>,
     active: Arc<AtomicBool>,
+    delivery: Arc<StreamDeliveryProgress>,
 }
 
 impl StreamRegistration {
+    pub(crate) fn delivery_ready(&self) -> bool {
+        !self.stop.load(Ordering::Acquire)
+            && self.delivery.sent.load(Ordering::Acquire)
+                == self.delivery.acknowledged.load(Ordering::Acquire)
+    }
+
+    // One in-flight delivery, counted from 1 on each ordered Tauri Channel.
+    pub(crate) fn begin_delivery(&self) -> bool {
+        if self.stop.load(Ordering::Acquire) {
+            return false;
+        }
+        let acknowledged = self.delivery.acknowledged.load(Ordering::Acquire);
+        let Some(next) = acknowledged.checked_add(1) else {
+            return false;
+        };
+        self.delivery
+            .sent
+            .compare_exchange(acknowledged, next, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
@@ -372,6 +402,7 @@ impl StreamRegistry {
             subscription_key: subscription_key.to_owned(),
         };
         let stop = Arc::new(AtomicBool::new(false));
+        let delivery = Arc::new(StreamDeliveryProgress::default());
         let mut entries = self.lock_entries()?;
         let pending_count = entries
             .values()
@@ -389,6 +420,7 @@ impl StreamRegistry {
             generation,
             PendingStreamEntry {
                 stop: Arc::clone(&stop),
+                delivery: Arc::clone(&delivery),
             },
         );
         drop(entries);
@@ -398,6 +430,7 @@ impl StreamRegistry {
             generation,
             stop,
             active: Arc::new(AtomicBool::new(false)),
+            delivery,
         })
     }
 
@@ -428,11 +461,13 @@ impl StreamRegistry {
                         StreamEntry {
                             generation,
                             stop: pending.stop,
+                            delivery: pending.delivery,
                         }
                     }));
                     if let Some(previous) = slot.current.replace(StreamEntry {
                         generation: registration.generation,
                         stop: Arc::clone(&registration.stop),
+                        delivery: Arc::clone(&registration.delivery),
                     }) {
                         cancelled.push(previous);
                     }
@@ -449,6 +484,41 @@ impl StreamRegistry {
             registration.cancel();
         }
         Ok(activated)
+    }
+
+    fn acknowledge(
+        &self,
+        owner_window: &str,
+        subscription_key: &str,
+        generation: u64,
+        sequence: u64,
+    ) -> Result<bool, StreamRegistryError> {
+        if !valid_stream_identity(owner_window, subscription_key)
+            || generation == 0
+            || sequence == 0
+        {
+            return Err(StreamRegistryError::InvalidIdentity);
+        }
+        let entries = self.lock_entries()?;
+        let current = entries
+            .get(&StreamIdentity {
+                owner_window: owner_window.to_owned(),
+                subscription_key: subscription_key.to_owned(),
+            })
+            .and_then(|slot| slot.current.as_ref());
+        let Some(current) = current
+            .filter(|entry| entry.generation == generation && !entry.stop.load(Ordering::Acquire))
+        else {
+            return Ok(false);
+        };
+        if current.delivery.sent.load(Ordering::Acquire) != sequence {
+            return Ok(false);
+        }
+        Ok(current
+            .delivery
+            .acknowledged
+            .compare_exchange(sequence - 1, sequence, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok())
     }
 
     fn finish(&self, registration: &StreamRegistration) -> Result<bool, StreamRegistryError> {
@@ -564,6 +634,7 @@ fn cancel_stream_slot(slot: StreamSlot) {
         cancel_stream_entry(StreamEntry {
             generation,
             stop: pending.stop,
+            delivery: pending.delivery,
         });
     }
 }
@@ -4470,6 +4541,18 @@ impl AppState {
         self.0.streams.activate(registration)
     }
 
+    pub(crate) fn acknowledge_stream(
+        &self,
+        owner_window: &str,
+        subscription_key: &str,
+        generation: u64,
+        sequence: u64,
+    ) -> Result<bool, StreamRegistryError> {
+        self.0
+            .streams
+            .acknowledge(owner_window, subscription_key, generation, sequence)
+    }
+
     pub(crate) fn finish_stream(
         &self,
         registration: &StreamRegistration,
@@ -4508,6 +4591,82 @@ mod tests {
 
     use super::*;
     use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
+
+    #[test]
+    fn stream_delivery_waits_for_exact_owner_generation_and_sequence_ack() {
+        let registry = StreamRegistry::default();
+        let stream = registry.reserve("console", "timeline:flow").unwrap();
+        assert!(registry.activate(&stream).unwrap());
+        assert!(stream.begin_delivery());
+        for _ in 0..1000 {
+            assert!(!stream.delivery_ready());
+            assert!(!stream.begin_delivery());
+        }
+        for (owner, generation, sequence) in [
+            ("main-dps", stream.generation(), 1),
+            ("console", stream.generation() + 1, 1),
+            ("console", stream.generation(), 2),
+        ] {
+            assert!(
+                !registry
+                    .acknowledge(owner, "timeline:flow", generation, sequence)
+                    .unwrap()
+            );
+            assert!(!stream.delivery_ready());
+        }
+        assert!(
+            registry
+                .acknowledge("console", "timeline:flow", stream.generation(), 1)
+                .unwrap()
+        );
+        assert!(stream.delivery_ready());
+        assert!(stream.begin_delivery());
+        assert!(
+            !registry
+                .acknowledge("console", "timeline:flow", stream.generation(), 1)
+                .unwrap()
+        );
+        assert!(!stream.delivery_ready());
+        assert!(
+            registry
+                .acknowledge("console", "timeline:flow", stream.generation(), 2)
+                .unwrap()
+        );
+        assert!(stream.delivery_ready());
+    }
+
+    #[test]
+    fn stream_delivery_old_ack_cannot_release_replacement_and_stop_remains_idempotent() {
+        let registry = StreamRegistry::default();
+        let old = registry.reserve("console", "timeline:flow").unwrap();
+        registry.activate(&old).unwrap();
+        assert!(old.begin_delivery());
+        let next = registry.reserve("console", "timeline:flow").unwrap();
+        registry.activate(&next).unwrap();
+        assert!(!old.delivery_ready());
+        assert!(!old.begin_delivery());
+        assert!(next.begin_delivery());
+        assert!(
+            !registry
+                .acknowledge("console", "timeline:flow", old.generation(), 1)
+                .unwrap()
+        );
+        assert!(!next.delivery_ready());
+        assert!(
+            registry
+                .acknowledge("console", "timeline:flow", next.generation(), 1)
+                .unwrap()
+        );
+        assert!(registry.stop_for_window("console").unwrap() > 0);
+        assert_eq!(registry.stop_for_window("console").unwrap(), 0);
+        assert!(!next.begin_delivery());
+        assert!(
+            !registry
+                .acknowledge("console", "timeline:flow", next.generation(), 1)
+                .unwrap()
+        );
+        assert_eq!(registry.len().unwrap(), 0);
+    }
 
     #[test]
     #[ignore = "requires NTE_TEST_AUTO_CAPTURE and NTE_TEST_EXPECTED_DAMAGE real-capture inputs"]

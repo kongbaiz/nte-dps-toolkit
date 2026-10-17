@@ -290,7 +290,10 @@ fn load_archive_dataset(
         let entry = archive
             .by_index(index)
             .map_err(|error| AbyssRemoteError::Archive(error.to_string()))?;
-        let name = entry.name().to_owned();
+        let name = entry
+            .name()
+            .map_err(|error| AbyssRemoteError::Archive(error.to_string()))?
+            .into_owned();
         if !REQUIRED_ENTRIES.contains(&name.as_str()) || entries.contains_key(&name) {
             return Err(AbyssRemoteError::Archive(format!(
                 "unsupported or duplicate entry {name}"
@@ -487,6 +490,24 @@ mod tests {
         let error = load_archive_dataset(&path, &manifest).expect_err("reject archive");
         fs::remove_file(path).expect("remove fixture archive");
         assert!(matches!(error, AbyssRemoteError::Archive(_)));
+    }
+
+    #[test]
+    fn rejects_malformed_archive_and_can_load_a_valid_archive_afterward() {
+        let (archive, expanded) = zip_tables(&valid_tables());
+        let manifest = manifest_for(&archive, expanded);
+        let path = std::env::temp_dir().join(format!(
+            "nte-abyss-remote-malformed-{}.zip",
+            std::process::id()
+        ));
+        fs::write(&path, b"not a ZIP archive").expect("write malformed archive");
+        let error = load_archive_dataset(&path, &manifest).expect_err("reject malformed archive");
+        assert!(matches!(error, AbyssRemoteError::Archive(_)));
+
+        fs::write(&path, archive).expect("write valid archive");
+        let dataset = load_archive_dataset(&path, &manifest).expect("load valid archive afterward");
+        fs::remove_file(path).expect("remove fixture archive");
+        assert_eq!(dataset.floor(1, 1).unwrap().monster_count(), 1);
     }
 
     #[test]

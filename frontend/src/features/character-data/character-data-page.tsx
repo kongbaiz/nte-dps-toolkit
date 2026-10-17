@@ -1,3 +1,8 @@
+import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+} from "@/components/nte/page-layout";
 import { useState } from "react";
 import {
   RefreshCw,
@@ -40,17 +45,17 @@ export function CharacterDataPage() {
     });
   return (
     <section className="flex size-full min-h-0 min-w-0 flex-col bg-background">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-4 py-2">
+      <PageHeader className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-semibold">{t("Character Data")}</h1>
+            <PageTitle>{t("Character Data")}</PageTitle>
             <Badge variant="outline">{t("Read-only snapshot")}</Badge>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <PageDescription>
             {t(
               "Character progression and equipment observed by the User plugin.",
             )}
-          </p>
+          </PageDescription>
         </div>
         <div className="flex gap-2">
           <Button
@@ -83,7 +88,7 @@ export function CharacterDataPage() {
             {t("Refresh from game")}
           </Button>
         </div>
-      </header>
+      </PageHeader>
       {model.error ? (
         <Alert variant="destructive" className="m-4 w-auto">
           <AlertTitle>{t("Character data could not be loaded.")}</AlertTitle>

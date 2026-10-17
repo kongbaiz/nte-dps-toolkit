@@ -1,6 +1,6 @@
 [package]
 name = "nte-dps-tool"
-version = "0.4.6"
+version = "0.4.7"
 edition = "2024"
 rust-version = "1.98"
 description = "Local Windows DPS diagnostics tool for NTE."
@@ -72,7 +72,7 @@ windows-sys = { version = "0.60", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
-zip = { version = "7.2", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
+zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [profile.release]
 panic = "abort"

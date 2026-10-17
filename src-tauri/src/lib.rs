@@ -159,6 +159,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            channels::stream_runtime::acknowledge_stream_delivery,
             commands::toolkit::get_plugin_panel,
             commands::user_characters::get_user_characters,
             commands::toolkit::set_data_mode,

@@ -1,4 +1,9 @@
 import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+} from "@/components/nte/page-layout";
+import {
   Activity,
   ChevronRight,
   Radio,
@@ -89,15 +94,15 @@ export function PacketsPage() {
       {streamError ? (
         <PacketsStreamError error={streamError} onDismiss={clearStreamError} />
       ) : null}
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-3 min-[640px]:px-5">
+      <PageHeader className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-base font-semibold">{t("Packets")}</h1>
+            <PageTitle>{t("Packets")}</PageTitle>
             {snapshot ? <CaptureBadge phase={snapshot.capturePhase} /> : null}
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <PageDescription>
             {t("Inspect decoded packets from the current capture in real time")}
-          </p>
+          </PageDescription>
         </div>
         {snapshot ? (
           <span className="text-xs text-muted-foreground tabular-nums">
@@ -107,7 +112,7 @@ export function PacketsPage() {
             ])}
           </span>
         ) : null}
-      </header>
+      </PageHeader>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-muted/15 px-3 py-2.5 min-[640px]:px-5">
         <label className="relative min-w-[220px] flex-1 max-w-xl">

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSkillsClient } from "@/lib/tauri/skills-client";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -37,7 +37,7 @@ describe("Skills client", () => {
           subscriptionId: "skills-test",
           streamKind: "skills",
           streamIntervalMs: 100,
-          streamProtocolVersion: 1,
+          streamProtocolVersion: 2,
           streamGeneration: "1",
         };
       }
@@ -56,9 +56,7 @@ describe("Skills client", () => {
     const received = vi.fn();
     const unsubscribe = client.subscribe("all", received, vi.fn());
     onMessage?.(
-      encodeDelivery([
-        { event: "snapshot", payload: SKILLS_SNAPSHOT_FIXTURE },
-      ]),
+      encodeDelivery([{ event: "snapshot", payload: SKILLS_SNAPSHOT_FIXTURE }]),
     );
     await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();

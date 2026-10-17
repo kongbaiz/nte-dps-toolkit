@@ -273,7 +273,7 @@ export function ConsolePage() {
         }
         title={t("NTE Console")}
       />
-      <main className="console-workspace relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-foreground select-none">
+      <main className="console-workspace relative flex min-h-0 min-w-0 flex-1 overflow-hidden text-foreground select-none">
         <ConsoleSidebar
           activePage={activePage}
           collapsed={sidebarCollapsed}

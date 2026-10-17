@@ -4,7 +4,7 @@ import { createEmptyCurtainClient } from "@/lib/tauri/empty-curtain-client";
 import { EMPTY_CURTAIN_FIXTURE } from "@/lib/tauri/empty-curtain-contract.test";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -17,7 +17,7 @@ describe("Console equipment client", () => {
           subscriptionId: "empty-curtain-test",
           streamKind: "emptyCurtain",
           streamIntervalMs: 100,
-          streamProtocolVersion: 1,
+          streamProtocolVersion: 2,
           streamGeneration: "1",
         };
       }
@@ -36,9 +36,7 @@ describe("Console equipment client", () => {
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
     onMessage?.(
-      encodeDelivery([
-        { event: "snapshot", payload: EMPTY_CURTAIN_FIXTURE },
-      ]),
+      encodeDelivery([{ event: "snapshot", payload: EMPTY_CURTAIN_FIXTURE }]),
     );
     await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDiagnosticsClient } from "@/lib/tauri/diagnostics-client";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -85,7 +85,7 @@ describe("Diagnostics client", () => {
           subscriptionId: "diagnostics-test",
           streamKind: "diagnostics",
           streamIntervalMs: 500,
-          streamProtocolVersion: 1,
+          streamProtocolVersion: 2,
           streamGeneration: "1",
         };
       }
@@ -103,9 +103,7 @@ describe("Diagnostics client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
-    onMessage?.(
-      encodeDelivery([{ event: "snapshot", payload: SNAPSHOT }]),
-    );
+    onMessage?.(encodeDelivery([{ event: "snapshot", payload: SNAPSHOT }]));
     await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 

@@ -62,6 +62,8 @@ export function subscribeStream<Event>(
   let closePromise: Promise<void> | undefined;
   let rawReceipt: Promise<unknown> | undefined;
   let receiptReady = false;
+  let streamGeneration: string | undefined;
+  let deliverySequence = 0n;
   let pendingDelivery: unknown | undefined;
   let reportedFailure = false;
 
@@ -97,6 +99,17 @@ export function subscribeStream<Event>(
         onEvent(parseEvent(rawEvent));
         if (closed) return;
       }
+      deliverySequence += 1n;
+      void transport
+        .invoke("acknowledge_stream_delivery", {
+          subscriptionId,
+          streamKind,
+          streamGeneration,
+          deliverySequence: deliverySequence.toString(),
+        })
+        .catch((error: unknown) => {
+          if (!closed) failClosed(error);
+        });
     } catch (error) {
       failClosed(error);
     }
@@ -106,7 +119,11 @@ export function subscribeStream<Event>(
     if (closed) return;
     if (!receiptReady) {
       if (pendingDelivery !== undefined) {
-        failClosed(new StreamContractError("stream started before subscription completed"));
+        failClosed(
+          new StreamContractError(
+            "stream started before subscription completed",
+          ),
+        );
         return;
       }
       pendingDelivery = value;
@@ -121,28 +138,26 @@ export function subscribeStream<Event>(
     subscriptionId,
     onEvent: onEventChannel,
   });
-  void rawReceipt.then(
-    (value) => {
-      try {
-        const receipt = parseStreamSubscriptionReceipt(value);
-        if (
-          receipt.subscriptionId !== subscriptionId ||
-          receipt.streamKind !== streamKind
-        ) {
-          throw new StreamContractError("stream subscription identity mismatch");
-        }
-        receiptReady = true;
-        if (pendingDelivery !== undefined) {
-          const delivery = pendingDelivery;
-          pendingDelivery = undefined;
-          deliver(delivery);
-        }
-      } catch (error) {
-        failClosed(error);
+  void rawReceipt.then((value) => {
+    try {
+      const receipt = parseStreamSubscriptionReceipt(value);
+      if (
+        receipt.subscriptionId !== subscriptionId ||
+        receipt.streamKind !== streamKind
+      ) {
+        throw new StreamContractError("stream subscription identity mismatch");
       }
-    },
-    failClosed,
-  );
+      streamGeneration = receipt.streamGeneration;
+      receiptReady = true;
+      if (pendingDelivery !== undefined) {
+        const delivery = pendingDelivery;
+        pendingDelivery = undefined;
+        deliver(delivery);
+      }
+    } catch (error) {
+      failClosed(error);
+    }
+  }, failClosed);
 
   return close;
 }

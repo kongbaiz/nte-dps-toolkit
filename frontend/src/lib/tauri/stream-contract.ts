@@ -1,12 +1,17 @@
 import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 
-export const STREAM_PROTOCOL_VERSION = 1;
+export const STREAM_PROTOCOL_VERSION = 2;
 export const MAX_EVENTS_PER_STREAM_DELIVERY = 2;
 
-const { nonEmptyString, positiveU64DecimalString, positiveInteger, record, string } =
-  createContractPrimitives((message) => {
-    throw new StreamContractError(message);
-  });
+const {
+  nonEmptyString,
+  positiveU64DecimalString,
+  positiveInteger,
+  record,
+  string,
+} = createContractPrimitives((message) => {
+  throw new StreamContractError(message);
+});
 
 export const STREAM_KINDS = [
   "technical",

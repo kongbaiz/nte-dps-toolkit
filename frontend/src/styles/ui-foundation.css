@@ -1,0 +1,141 @@
+/* Low-specificity component rules: explicit Tailwind className overrides win. */
+@layer components {
+  .ui-page-header {
+    flex-shrink: 0;
+    padding: var(--ui-card-padding) var(--ui-page-padding);
+    border-bottom: 1px solid var(--border);
+    background: var(--card);
+  }
+
+  .ui-page-title {
+    font-size: var(--ui-font-title);
+    line-height: 1.4;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+
+  .ui-page-description {
+    margin-top: 4px;
+    color: var(--muted-foreground);
+    font-size: var(--ui-font-caption);
+    line-height: 1.6;
+  }
+
+  .ui-page-scroll {
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    padding: var(--ui-page-padding);
+    scrollbar-gutter: stable;
+  }
+
+  .ui-preferences-grid {
+    display: grid;
+    width: 100%;
+    max-width: var(--ui-content-width);
+    margin-inline: auto;
+    align-items: start;
+    gap: var(--ui-section-gap);
+    grid-template-columns: repeat(
+      auto-fit,
+      minmax(min(100%, var(--ui-column-min)), 1fr)
+    );
+  }
+
+  .ui-section-stack {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--ui-section-gap);
+  }
+
+  .ui-control {
+    width: 100%;
+    min-width: 0;
+    height: var(--ui-control-height);
+    border: 1px solid var(--input);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    padding-inline: 10px;
+    color: var(--foreground);
+    font-size: var(--ui-font-body);
+    outline: none;
+    transition:
+      border-color var(--motion-duration-fast),
+      box-shadow var(--motion-duration-fast);
+  }
+
+  .ui-control:focus-visible {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 30%, transparent);
+  }
+
+  .ui-control:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .ui-control[aria-invalid="true"] {
+    border-color: var(--destructive);
+  }
+
+  .ui-form-row {
+    container: ui-field / inline-size;
+    padding-block: var(--ui-field-padding);
+  }
+  .ui-form-row:first-child {
+    padding-top: 0;
+  }
+  .ui-form-row:last-child {
+    padding-bottom: 0;
+  }
+  .ui-form-row-layout {
+    display: grid;
+    gap: 12px;
+    align-items: center;
+  }
+  .ui-form-label {
+    font-size: var(--ui-font-body);
+    font-weight: 500;
+  }
+  .ui-form-description {
+    margin-top: 4px;
+    color: var(--muted-foreground);
+    font-size: var(--ui-font-caption);
+    line-height: 1.6;
+  }
+  .ui-form-control {
+    min-width: 0;
+  }
+  .ui-switch-row {
+    display: flex;
+    min-height: var(--ui-control-height);
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-block: var(--ui-field-padding);
+    font-size: var(--ui-font-body);
+  }
+  .ui-switch-row:first-child {
+    padding-top: 0;
+  }
+  .ui-switch-row:last-child {
+    padding-bottom: 0;
+  }
+
+  @container ui-field (min-width: 24rem) {
+    .ui-form-row-layout {
+      grid-template-columns: minmax(8.5rem, 0.65fr) minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .ui-page-header {
+      padding: var(--ui-card-padding);
+    }
+    .ui-page-scroll {
+      padding: var(--ui-card-padding);
+    }
+  }
+}

@@ -26,9 +26,21 @@ Resolved from `Cargo.toml` and `Cargo.lock` with `cargo metadata --format-versio
 | `sha2` | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | `windows-sys` | 0.60.2 direct; additional transitive versions may appear | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | `winresource` | 0.1.31 | MIT | https://github.com/BenjaminRi/winresource |
-| `zip` | 7.2.0 | MIT | https://github.com/zip-rs/zip2 |
+| `zip` | 9.0.4 | MIT | https://github.com/zip-rs/zip2 |
 
 The current resolved Rust graph is permissively licensed. The lockfile includes transitive packages under MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, BSL-1.0, ISC, Zlib, Unlicense, Unicode-3.0, OFL-1.1, Ubuntu Font License, and LLVM-exception variants. Re-run the metadata command above after dependency changes and check any new or changed license expression before release.
+
+## Tauri Desktop Dependency Updates
+
+The independent `src-tauri/Cargo.lock` also includes these updated transitive libraries:
+
+| Package | Version in lockfile | License | Upstream |
+|---|---:|---|---|
+| `tauri-utils` | 2.10.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `urlpattern` | 0.6.0 | MIT | https://github.com/denoland/rust-urlpattern |
+| `plist` | 1.10.1 | MIT | https://github.com/ebarnard/rust-plist |
+| `quick-xml` | 0.42.0 | MIT | https://github.com/tafia/quick-xml |
+| `time` | 0.3.55 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
 
 ## Python Tool Dependencies
 

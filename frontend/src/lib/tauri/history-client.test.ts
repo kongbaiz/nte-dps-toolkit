@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createHistoryClient } from "./history-client";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -95,7 +95,7 @@ describe("History client", () => {
               subscriptionId: "history-test",
               streamKind: "history",
               streamIntervalMs: 250,
-              streamProtocolVersion: 1,
+              streamProtocolVersion: 2,
               streamGeneration: "1",
             };
           }
@@ -121,6 +121,7 @@ describe("History client", () => {
     expect(snapshots).toHaveLength(1);
     expect(calls).toEqual([
       "subscribe_history",
+      "acknowledge_stream_delivery",
       "unsubscribe_history",
     ]);
   });

@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-pub(crate) const STREAM_PROTOCOL_VERSION: u32 = 1;
+pub(crate) const STREAM_PROTOCOL_VERSION: u32 = 2;
 pub(crate) const MAX_EVENTS_PER_STREAM_DELIVERY: usize = 2;
 pub(crate) const MAX_STREAM_DELIVERY_BYTES: usize = 14 * 1024 * 1024;
 
@@ -35,7 +35,6 @@ impl StreamKind {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "technical" => Some(Self::Technical),

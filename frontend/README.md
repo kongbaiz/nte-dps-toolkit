@@ -22,6 +22,40 @@ pnpm tauri:dev
 Run these commands from this directory. See `../AGENTS.md` for the current
 architecture boundaries and manual Windows validation checklist.
 
+## UI 样式入口与约定
+
+全局样式按 **token → 共享组件 → 页面排列** 分层。不要再从页面祖先选择器
+覆盖 `h1`、`[data-slot="card"]` 等组件内部样式，也不要用 `!important`
+解决普通布局冲突；透明原生窗口和系统减少动效的现有规则是独立的平台边界。
+
+| 想修改什么                       | 唯一入口                                                      |
+| -------------------------------- | ------------------------------------------------------------- |
+| 颜色、主题、圆角、密度           | `src/styles/theme.css`，沿用 shadcn 语义颜色变量              |
+| 页面留白、最大宽度、双栏最小宽度 | `--ui-page-padding`、`--ui-content-width`、`--ui-column-min`  |
+| 卡片与表单间距                   | `--ui-card-padding`、`--ui-section-gap`、`--ui-field-padding` |
+| 控件高度、标题/正文/说明字号     | `--ui-control-height*`、`--ui-font-*`                         |
+| 页头、滚动容器、偏好设置网格     | `components/nte/page-layout.tsx` + `styles/ui-foundation.css` |
+| 输入框、下拉框、按钮、卡片       | `components/ui/`，不要在页面复制整串外观 class                |
+| 标签、说明与表单排列             | `components/nte/form-row.tsx`；容器不足 24rem 时自动堆叠      |
+| 控制台外壳和页面专属布局         | `styles/console.css`；仅放布局，不覆盖共享组件内部尺寸        |
+
+控制台的密度改变间距和控件高度，不再改变根字号，所以切换密度不会顺带
+改变 rem 断点和文字尺寸。HUD 的透明背景、原生尺寸与窗口行为保持独立。
+
+新增控制台页面使用 `PageHeader` / `PageTitle` / `PageDescription`，长页面使用
+`PageScrollArea`；设置类页面使用 `PreferencesGrid`，多卡片列使用
+`ui-section-stack`。表单使用 `Input`、`NativeSelect`、`FormRow`；保留明确的
+`aria-label` 或 `label htmlFor`。范围滑块、图表、配装画布等业务控件不强制套入普通输入框。
+
+所有共享外观规则位于 `@layer components`，因此明确传入的 Tailwind
+`className` 可以覆盖默认值；常用差异优先用现有组件的 `size` / `variant`，
+个别布局例外才使用局部 class，避免建立第二套主题变量。
+
+开发时打开 `ui-preview.html?theme=light&view=ui-kit` 查看真实组件的状态、密度及
+局部覆盖示例。修改 token 后通过 Vite 热更新直接预览，不需要重新构建 Rust。
+提交前检查设置页与该预览的浅/深色、三种密度、宽/窄窗口、键盘焦点和禁用状态；
+再运行下面的前端检查。不要把示例页面加入生产入口。
+
 ## Browser UI preview
 
 Run `pnpm dev --host 127.0.0.1 --port 5178 --strictPort` and open

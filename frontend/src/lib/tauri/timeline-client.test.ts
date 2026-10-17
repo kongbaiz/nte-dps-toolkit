@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTimelineClient } from "@/lib/tauri/timeline-client";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -41,7 +41,7 @@ describe("Timeline client", () => {
           subscriptionId: "timeline-test",
           streamKind: "timeline",
           streamIntervalMs: 100,
-          streamProtocolVersion: 1,
+          streamProtocolVersion: 2,
           streamGeneration: "1",
         };
       }

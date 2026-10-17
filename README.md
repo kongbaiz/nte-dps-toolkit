@@ -1,316 +1,201 @@
 <div align="center">
 
-<img src="res/icons/app-icon.png" alt="NTE DPS Toolkit" width="120" />
+<img src="res/icons/app-icon.png" alt="NTE DPS Toolkit" width="112" />
 
 # NTE DPS Toolkit
 
-**《异环》/ Neverness to Everness 本地实时 DPS 与战斗分析工具**
+**《异环》战斗统计、复盘与配装工具**
 
-**中文** | [English](README_EN.md)
+**简体中文** · [English](README_EN.md)
 
-[![Latest Release](https://img.shields.io/github/v/release/kongbaiz/nte-dps-toolkit?display_name=tag&sort=semver)](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest)
-[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6.svg?logo=windows)](#快速开始)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
-[![Commercial license available](https://img.shields.io/badge/commercial%20license-available-orange.svg)](LICENSING.md)
-[![GitHub stars](https://img.shields.io/github/stars/kongbaiz/nte-dps-toolkit?style=social)](https://github.com/kongbaiz/nte-dps-toolkit)
+[![Release](https://img.shields.io/github/v/release/kongbaiz/nte-dps-toolkit?display_name=tag&sort=semver)](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows)](#快速开始)
+[![License](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue)](LICENSE)
 
-[**下载 Windows 版**](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest) · [**官网 / 项目主页**](https://dps.o-na-ni.com/) · [**视频演示**](https://www.bilibili.com/video/BV1YRNP6SEG5/)
+[下载 Windows 版](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest) · [项目网站](https://dps.o-na-ni.com/) · [视频演示](https://www.bilibili.com/video/BV1YRNP6SEG5/) · [反馈问题](https://github.com/kongbaiz/nte-dps-toolkit/issues)
 
 </div>
 
+NTE DPS Toolkit 是面向 **Neverness to Everness（异环）** 的 Windows 桌面工具。战斗时查看队伍与角色输出，结束后通过技能明细、时间轴和历史对比复盘；也可以借助深渊分析、角色数据与空幕页面整理配装。
+
+**默认使用抓包模式，原生插件按需启用。** 配置和战斗记录保存在本机，不需要注册工具账号。应用更新、Mod 市场和在线资源获取需要联网。
+
+> 本项目由社区独立维护，与游戏开发商、发行商及相关权利方无从属、授权或背书关系。
+
 <p align="center">
-  <img src="images/CN/main_menu_CN.png" alt="NTE DPS Toolkit 主界面" width="900" />
+  <img src="images/CN/main_menu_CN.png" alt="队伍 DPS 与角色伤害统计示例" width="900" />
+  <br />
+  <sub>界面示例，实际布局与功能以所用版本为准。</sub>
 </p>
 
-NTE DPS Toolkit 用于记录和解释一场战斗中**伤害从哪里来、输出循环损失在哪里、不同队伍为什么表现不同**。它可实时统计角色与技能伤害，保存战斗历史，对比两次记录，并辅助估算深渊清线时间。
+## 功能一览
 
-- **本机运行**：战斗数据默认保存在本地，不需要账号，也不会默认上传。
-- **轻量常驻**：现行桌面端已由 egui 重构为 Tauri + React；开发者测试环境下，空闲内存约 **50 MB**，约为旧版的六分之一。实际占用会随系统、WebView 版本和启用功能变化。
-- **面向实战**：不仅显示总 DPS，还提供角色、技能、命中明细、时间轴、历史对比和深渊预测。
-- **开源可审计**：抓包、解析、桌面端和本地 Sidecar 均可在仓库中检查。
+| 你想做什么         | 工具提供什么                                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| **边打边看输出**   | 队伍与角色 DPS、总伤害、伤害占比、命中数、受击与战斗时长；独立 HUD 支持置顶、透明度、鼠标穿透和布局调整。        |
+| **找出伤害来源**   | 队伍与角色战斗明细、技能分类、逐次命中、技能占比和战斗时间轴。                                                   |
+| **比较两次实战**   | 保存本地战斗摘要，回看历史记录，对比队伍、角色、技能与耗时。                                                     |
+| **规划深渊挑战**   | 分别查看上下半场，查询怪物数据，用历史 DPS 估算清线时间或反推目标 DPS。                                          |
+| **查看角色与配装** | 通过 User 插件读取角色、技能、觉醒和装备快照；空幕支持筛选、配装方案导入导出，以及可用时的锁定、弃置和穿戴操作。 |
+| **管理可选插件**   | 在 Mod 市场下载和更新组件，在控制面板管理加载方式、连接状态及插件功能。                                          |
+| **排查统计问题**   | 内置诊断、封包查看、JSON / PCAPNG 导入回放及导出。                                                               |
 
-> 本项目为独立社区工具，与 NTE 游戏发行方、开发方、平台方或相关权利方无从属、授权、背书或合作关系。
-
----
-
-## 它可以帮你做什么
-
-| 场景 | 能得到的结果 |
-|---|---|
-| **战斗复盘** | 总伤害、有效 DPS、战斗时间、DPS 曲线和逐次命中明细 |
-| **角色与技能分析** | 角色伤害占比、技能分类、GameplayEffect 映射和可筛选明细 |
-| **输出循环对比** | 保存两场脱敏摘要，比较队伍、角色、技能和时间差异 |
-| **深渊规划** | 独立记录上/下行线，估算清怪时间，并反推目标时间所需 DPS |
-| **问题诊断** | 导入或导出 JSON / PCAPNG，复现解析问题并检查数据质量 |
-
----
+支持简体中文、English 与日本語。插件功能是否可用，取决于当前游戏版本、已加载组件和界面显示的能力状态。
 
 ## 快速开始
 
-### 1. 安装 Npcap
+### 1. 下载并解压
 
-安装 [Npcap](https://npcap.com/)，建议勾选 **WinPcap API-compatible Mode**。
+在 [最新发布页](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest) 下载 **`nte-dps-tool-windows-x64.zip`**，完整解压到可写目录，再运行 `nte-dps-tool.exe`。不要直接从压缩包内启动，也不要只取出单个 EXE。
 
-### 2. 下载普通玩家版本
+运行环境：Windows 10 / 11 x64，以及 Microsoft Edge WebView2 Runtime。若提示缺少 WebView2，请先安装该运行时。
 
-前往 [Releases](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest)，下载：
+| 发布包                                        | 用途                                                             |
+| --------------------------------------------- | ---------------------------------------------------------------- |
+| **`nte-dps-tool-windows-x64.zip`**            | 普通用户首选。桌面程序、更新助手和内嵌资源。                     |
+| `nte-dps-tool-windows-external-resources.zip` | 高级用户使用。资源放在独立的 `res/` 目录，其余用途与桌面版相同。 |
+| `nte-core-windows-x64.zip`                    | 供第三方程序调用的无界面解析核心，不是桌面版。                   |
 
-```text
-nte-dps-tool-windows-x64.zip
-```
+### 2. 开始第一场统计
 
-解压到一个可写目录，然后运行：
+推荐先使用默认的**抓包模式**：
 
-```text
-nte-dps-tool.exe
-```
+1. 安装 [Npcap](https://npcap.com/)，建议启用 **WinPcap API-compatible Mode**。
+2. 启动工具和游戏，确认首页数据来源为抓包模式。
+3. 点击开始采集，进入战斗，查看主窗口或打开 HUD。
+4. 战斗后进入控制台，查看技能、时间轴与历史记录。
 
-> **普通玩家不要下载 `nte-core-windows-x64.zip`。** `nte-core.exe` 没有图形界面，只用于第三方程序通过 stdio 集成解析核心，双击后退出属于预期行为。
+遇到网卡枚举或抓包权限问题时，尝试以管理员身份运行工具，再到**控制台 → 诊断**检查 Npcap、网络连接与采集状态。
 
-### 3. 开始记录
+鼠标穿透默认使用 `Home` 切换；其他绑定可在**控制台 → 快捷键**中查看或调整。
 
-1. 以管理员身份运行工具；实时抓包通常需要管理员权限。
-2. 启动 NTE 客户端（`HTGame.exe`）。
-3. 在主界面点击开始捕获；程序会自动尝试选择活动网卡和本机 IP。
-4. 在总览、角色、深渊和 Console 页面查看实时数据与历史记录。
+## 选择数据来源
 
-抓不到数据时，按 `F12` 打开 Console 并运行 **Diagnostics** 自动诊断向导。
+### 抓包模式：先用它开始统计
 
----
+通过 Npcap 被动读取本机相关网络流量，不注入游戏、不修改游戏数据，也不向游戏发送数据。无需安装 UE Tools 插件，即可使用主要的伤害统计、历史复盘、深渊统计和回放功能。
 
-## 下载包怎么选
+抓包统计使用现实时间。游戏更新、网络环境与可解析的数据范围可能影响统计结果；没有数据时应先查看诊断信息。
 
-| 文件 | 适合谁 | 内容 |
-|---|---|---|
-| `nte-dps-tool-windows-x64.zip` | **绝大多数玩家，推荐下载** | 标准 Tauri 桌面程序、内嵌资源、完整诊断工具和可选插件文件 |
-| `nte-dps-tool-windows-external-resources.zip` | 需要修改外置资源的高级用户 | 完整桌面程序，`res/` 资源外置 |
-| `nte-core-windows-x64.zip` | 第三方工具开发者 | 无 GUI 的 JSON-RPC 2.0 / NDJSON Sidecar |
+### 插件模式：按需扩展
 
----
+在首页切换到插件模式并阅读风险提示，然后进入**控制台 → Mod 工坊**：
 
-## 运行模式与安全边界
+1. 在 **Mod 市场**下载所需组件；有可用更新时，入口、分类与组件卡片会显示更新提示。
+2. 在控制面板选择宿主加载方式：**代理**或 **Loader**。代理支持手动选择游戏目录，部署后需要重启游戏；Loader 按界面提示完成权限确认。
+3. 确认宿主已连接、所需插件已加载，再开始采集或使用相应页面。**下载完成不等于加载完成。**
 
-### 纯抓包模式
+| 组件         | 主要用途                                                     |
+| ------------ | ------------------------------------------------------------ |
+| **Combat**   | 战斗采集与报告，以及界面提供的帧率解锁、快速大招等可选控制。 |
+| **User**     | 角色与背包数据、角色配置快照，以及空幕中的装备操作。         |
+| **Training** | 游戏内 `Tab` 木桩轮盘相关控制。                              |
 
-默认工作流通过 Npcap **被动读取本机相关 UDP 流量**：
+插件组件从 Mod 市场单独下载，不内置于桌面发布包。公开仓库包含桌面客户端及集成代码，不包含 UE Tools、Loader 与原生插件源码。
 
-- 不向游戏发送数据；
-- 不修改游戏数据；
-- 不需要资源导出 key、usmap、FModel、CUE4Parse 或 Python；
-- 原始抓包、日志和历史记录均保存在程序目录下。
+插件模式不使用 Npcap。连接失败时不会自动切回抓包；切换数据来源后需要重新开始采集。插件计时会扣除可用的权威暂停区间，时钟不可用时显示降级状态并使用现实时间；历史记录保留保存时的计时口径。
 
-纯抓包模式可完成实时 DPS、角色/技能统计、历史对比、深渊统计、JSON/PCAPNG 回放等主要工作流。
+代理模式提供卸载入口，需要先关闭游戏。卸载会核验部署文件归属，保留工具设置、已下载组件和无关文件；无法核验的文件不会直接删除。更多说明见[插件模式与部署](docs/PLUGIN_MODES.md)。
 
-### 可选 UE Tools 模式
+> 原生插件会加载到游戏进程，部分功能会与游戏交互，其技术与风险边界不同于被动抓包。请遵守游戏规则，自行判断是否使用；本项目不承诺任何模式绝对安全或不会受到游戏处罚。
 
-插件模式通过独立提供的已编译 UE Tools Toolkit 包采集数据，使用 Toolkit v1 契约。
-公开构建只消费二进制包，不包含 UE Tools 或 Mod Loader 源码。
-默认仍为抓包模式；插件模式的安装与状态在 Console 中管理。
+## 界面与使用提示
 
-计时口径由数据模式决定，不再提供战斗时钟设置：抓包固定使用现实时间，
-插件默认扣除权威暂停区间；插件时钟缺失或无效时显示降级状态并使用现实时间。
-历史记录保留归档时的计时口径。空幕相关 Toolkit 接口尚未实现，现有待调整函数保留。
+<details>
+<summary>查看战斗明细、时间轴、HUD 与深渊截图</summary>
 
-旧原生 Mod 插件源码已移除，旧脚本和装备 IPC 与 Toolkit v1 不兼容。
-Loader 已迁入 UE Tools 私有工作区，当前公开发布流程不包含它。
-二进制目录说明见 [插件模式说明](docs/PLUGIN_MODES.md)，
-残留引用检查见 [旧 Mod 引用清单](docs/LEGACY_MOD_REFERENCES.md)。
+| 队伍战斗明细                                         | 角色战斗明细                                              |
+| ---------------------------------------------------- | --------------------------------------------------------- |
+| ![队伍战斗明细](images/CN/team_battle_detail_CN.png) | ![角色战斗明细](images/CN/character_battle_detail_CN.png) |
 
----
+| 时间轴                                   | HUD                          |
+| ---------------------------------------- | ---------------------------- |
+| ![战斗时间轴](images/CN/timeline_CN.png) | ![HUD](images/CN/HUD_CN.png) |
 
-## 核心功能
+![深渊统计](images/CN/abyss_CN.png)
 
-### 实时统计与 HUD
+</details>
 
-- 总伤害、DPS、命中数、受击统计和战斗时长；
-- 角色排行、伤害占比、技能分类和可筛选命中明细；
-- 可定制 HUD、透明度、主题、置顶、鼠标穿透和小型 DPS 曲线；
-- `Home` 切换鼠标穿透，`F12` 打开 Console 并跳到 Packets 页面。
+- **比较 DPS 时先对齐口径。** 数据来源、计时方式、队伍与战斗场景不同，数字不宜直接横比。
+- **深渊预测不是通关计时。** 估算基于怪物 HP 与历史 DPS，不包含无敌、转阶段、走位和机制耗时。
+- **角色快照不是实时战斗面板。** 插件读取的是刷新时的角色配置；缺失、过期或未确认的数据以页面提示为准。
+- **装备操作会影响游戏内配置。** 使用锁定、弃置、穿戴等功能前，请确认当前角色与目标装备。
 
-### 时间与伤害口径
+## 本地数据与隐私
 
-- 支持“现实时间”和“扣除时停”两种 DPS 时间口径；
-- 精确的权威暂停状态需要启用可选原生插件；
-- 保留 `target_hp_before`、`target_hp_after`、`target_max_hp`、`target_hp_percent`；
-- 支持 GameplayEffect、`ability_name`、`damage_name`、`attack_type` 和技能分类映射；
-- 对深渊场地 Buff 等特殊伤害进行独立归类，避免混入角色技能。
-
-### 历史、回放与诊断
-
-- 保存脱敏战斗摘要，查看详情并对比两条记录；
-- 战斗时间轴、技能占比、解析质量和本地历史页；
-- 实时保存完整 Ethernet 帧到 `logs/nte_raw_*.pcapng`；
-- 导出解析 JSON，另存 PCAPNG，或导入 JSON / PCAPNG 进行可复现回放；
-- 自动诊断网卡、Npcap、活动连接、抓包状态、原始包写入和伤害解析。
-
-### 深渊分析
-
-- 独立记录上行线和下行线；
-- 保留重开、进入线路、通关和离开事件；
-- 使用历史队伍 DPS 估算清怪时间；
-- 按目标时间反推所需 DPS，并按波次展示静态 HP 占比。
-
-> 深渊预测基于静态怪物 HP 与历史 DPS，不包含无敌、转阶段、走位和机制时间，仅作为规划参考。
-
----
-
-## 界面预览
-
-| 队伍命中明细 | 角色命中明细 |
-|---|---|
-| <img src="images/CN/team_battle_detail_CN.png" alt="队伍命中明细" width="520"> | <img src="images/CN/character_battle_detail_CN.png" alt="角色命中明细" width="520"> |
-
-| 战斗时间轴 | 可定制 HUD |
-|---|---|
-| <img src="images/CN/timeline_CN.png" alt="战斗时间轴" width="520"> | <img src="images/CN/HUD_CN.png" alt="可定制 HUD" width="520"> |
-
-| 深渊统计 |
-|---|
-| <img src="images/CN/abyss_CN.png" alt="深渊统计" width="760"> |
-
----
-
-## 数据与配置
-
-应用配置、日志和历史记录默认保存在程序所在目录：
+桌面程序把设置与数据保存在可执行文件旁，移动工具时请保留需要的目录：
 
 ```text
-<程序目录>/
-├─ config.json        界面与运行设置
-├─ history/           脱敏战斗历史
-└─ logs/              PCAPNG 与运行日志
+程序目录/
+├─ nte-dps-tool.exe
+├─ nte-updater.exe
+├─ config.json        设置
+├─ history/           战斗历史
+├─ logs/              抓包与运行日志
+└─ mods/              Mod 市场下载的组件
 ```
 
-旧版 `%LOCALAPPDATA%\NTE DPS Tool\config.json` 会在首次启动时迁移到程序目录，原文件不会被删除。
+目录按使用情况生成。历史摘要用于保存脱敏统计，原始 PCAPNG 与诊断日志不是同一种数据；公开分享前请检查是否包含账号、网络地址或本机路径等敏感信息。**不要直接把整个 `logs/` 或程序目录上传到 Issue。**
 
-历史页“保存本次摘要”只保存脱敏统计，不包含原始包、payload、decoded text、IP、端口、本机路径或资源授权信息。原始 PCAPNG 仅在本机生成，公开提交 Issue 前请先确认其中不含敏感数据。
+## 常见问题
 
----
+**有界面，但没有伤害数据？** 先确认所选数据来源。抓包模式检查 Npcap、游戏是否已进入战斗及诊断结果；插件模式检查宿主连接、Combat 加载状态及组件更新提示。安装成功不能替代连接确认。
 
-## 第三方集成：`nte-core.exe`
+**窗口无法点击？** 可能开启了鼠标穿透，按默认快捷键 `Home` 关闭；修改过绑定时以快捷键设置为准。
 
-`nte-core.exe` 是无界面的本地 Sidecar，使用 **JSON-RPC 2.0 over NDJSON**：
+**下载了 `nte-core.exe`，为什么没有窗口？** 它是无界面 Sidecar。普通用户应下载桌面包并运行 `nte-dps-tool.exe`。
 
-- stdin 接收请求；
-- stdout 返回响应和事件；
-- stderr 输出日志；
-- 不监听或开放网络端口；
-- CLI 包不包含桌面 UI 图片、字体、图标或窗口依赖。
+**角色数据或装备页面提示不可用？** 实时角色快照需要插件模式与 User 插件。先确认插件已加载，再按页面提示刷新；回放数据不等于当前游戏配置。
 
-文档与示例：
-
-- [中文协议文档](docs/CLI_PROTOCOL_ZH.md)
-- [English protocol](docs/CLI_PROTOCOL.md)
-- [Python 标准库调用示例](docs/examples/nte_core_client.py)
-
-构建 CLI：
-
-```powershell
-cargo build --release --bin nte-core --no-default-features --features cli
-```
-
----
+**如何反馈问题？** 在 [Issues](https://github.com/kongbaiz/nte-dps-toolkit/issues) 中说明工具版本、游戏区服/版本、数据来源、复现步骤和错误提示。优先附截图或脱敏摘要，原始抓包请先检查内容。
 
 ## 从源码构建
 
-### 环境
+普通用户无需安装开发环境。开发者需要：
 
-- Windows 10 / 11
-- Rust 1.98+
-- Node.js 24
-- pnpm 10
-- Npcap
+- Windows x64、Visual Studio 2022 Build Tools 的 C++ 桌面开发组件及 Windows SDK；
+- Rust，通过 rustup 使用仓库 `rust-toolchain.toml` 指定的 **1.98.0**；
+- Node.js **24**、pnpm **10**；
+- WebView2 Runtime；运行抓包功能时另需 Npcap。
 
-### 启动桌面端
+### 开发运行
 
 ```powershell
 git clone https://github.com/kongbaiz/nte-dps-toolkit.git
 cd nte-dps-toolkit
-corepack enable
 pnpm --dir frontend install --frozen-lockfile
-cargo test
 pnpm --dir frontend tauri:dev
 ```
 
-### 验证
+### 构建桌面版
 
 ```powershell
-cargo fmt --check
-cargo check
-cargo test
-cargo fmt --check --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo check --bin nte-core --no-default-features --features cli
-cargo test --no-default-features --features cli
-pnpm --dir frontend lint
-pnpm --dir frontend typecheck
-pnpm --dir frontend test
-pwsh -NoProfile -File scripts/verify_architecture.ps1
+pnpm --dir frontend tauri:build --no-bundle --ci
+cargo build --release --bin nte-updater --features desktop
 ```
 
-最后一条命令验证 Tauri 是唯一桌面 UI，并保持 CLI 依赖树与桌面窗口依赖隔离。
+桌面程序输出到 `src-tauri/target/release/nte-dps-tool.exe`，更新助手输出到 `target/release/nte-updater.exe`。需要外置资源时，给 Tauri 构建命令追加 `--features external_resources`，并在程序旁保留 `res/`。
 
-依赖真实抓包的诊断测试默认忽略。设置 `NTE_TEST_CAPTURE=<pcapng-path>` 后运行：
+桌面技术栈为 **Tauri 2 + React + TypeScript**，共享解析和业务逻辑由 Rust 提供。开发入口见[前端说明](frontend/README.md)，贡献约定与按影响选择的验证命令见 [AGENTS.md](AGENTS.md)。
+
+### 第三方集成
+
+`nte-core` 使用 **JSON-RPC 2.0 over NDJSON**：stdin 接收请求，stdout 输出响应与事件，stderr 输出诊断信息，不监听 TCP/HTTP 端口。
 
 ```powershell
-cargo test -- --ignored
+cargo build --release --bin nte-core --no-default-features --features cli
+.\target\release\nte-core.exe version --json
+.\target\release\nte-core.exe serve --stdio
 ```
 
----
+集成文档：[中文协议](docs/CLI_PROTOCOL_ZH.md) · [English protocol](docs/CLI_PROTOCOL.md) · [Python 示例](docs/examples/nte_core_client.py)。
 
-## 常见问题
+### 发布构建
 
-### 抓不到任何流量或没有伤害数据
+GitHub Actions 的 **Build** 工作流仅支持手动运行，不会因 push 或 Pull Request 自动触发。在仓库 **Actions → Build → Run workflow** 中选择分支；在 `master` 上执行会按工作流发布 Release，其他分支只生成构建产物。发布维护者需按[工作流配置](.github/workflows/build.yml)准备更新渠道变量及对应版本的[发布说明](docs/releases/)。
 
-确认已安装 Npcap 并启用 *WinPcap API-compatible Mode*，以管理员身份运行工具，并已启动 `HTGame.exe`。随后按 `F12` 打开 Console，运行 **Diagnostics** 自动诊断向导。
+## 贡献与许可
 
-### 为什么 `nte-core.exe` 双击后立即退出
+欢迎提交问题、文档改进和代码贡献。请保持改动聚焦，并按 [AGENTS.md](AGENTS.md) 完成相关验证；不要提交本机配置、日志、抓包、密钥或完整解包资源。
 
-它是提供给第三方程序的命令行 Sidecar，没有独立图形界面。普通玩家应运行 `nte-dps-tool.exe`。
-
-### 是否必须启用原生插件
-
-不是。纯抓包模式可完成主要统计、历史、深渊和回放工作流。精确时停状态及部分研究功能才需要可选插件。
-
-### 这是外挂吗
-
-纯抓包模式只被动读取本机网络流量，不注入、不修改、也不向游戏发送数据。可选原生插件会安装 DLL 并使用受限事件和内存能力，属于不同的技术与风险边界；是否使用由用户自行决定。
-
-### 深渊预测为什么与实际时间不同
-
-预测未计入无敌、转阶段、走位和机制耗时，只用于估算与队伍比较。
-
----
-
-## 已知边界
-
-具体敌方目标识别与场景识别仍在研究中。`plugins/nte-mods/enemy-telemetry.nte` 仅在配置目录和抓包 HP 连续性同时吻合时，将敌人本地化名称与头像投影到战斗明细；不能可靠匹配时应以原始统计与解析质量提示为准。
-
----
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request。提交前请注意：
-
-- 运行格式检查、编译检查和测试；
-- 不要提交 `logs/`、`target/`、`data/`、本机抓包、完整载荷、授权资源路径、资源导出密钥、usmap 或完整解包数据；
-- 资源导出与后处理工具链不随公开仓库发布，只同步必要且可分发的资源；
-- `NTE_封包解析算法.md` 只记录降敏后的公开设计边界。
-
----
-
-## License
-
-本项目采用[双重授权](LICENSING.md)：
-
-- **开源授权 — [GNU AGPL v3.0](LICENSE)**：允许使用、修改和再分发，包括商业用途；分发修改版或通过网络提供修改版服务时，必须按 AGPL 提供完整对应源码。
-- **商业授权**：将项目并入闭源产品或以 AGPL 不允许的方式使用时，需要单独取得商业授权。
-
-第三方库、运行组件和资源文件保留各自许可与权利声明，见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) 和 [NOTICE.md](NOTICE.md)。
-
----
-
-<div align="center">
-<sub>NTE DPS Toolkit · 本地 DPS Analyzer 与战斗诊断工具 · 由社区维护，与 NTE 官方无关</sub>
-</div>
+本项目采用 **AGPL-3.0-or-later / 商业双重授权**，详见 [LICENSE](LICENSE) 与[授权说明](LICENSING.md)。第三方组件及游戏资源的许可与权利声明见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) 和 [NOTICE.md](NOTICE.md)。

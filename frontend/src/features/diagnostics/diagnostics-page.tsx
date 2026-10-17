@@ -1,4 +1,9 @@
 import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+} from "@/components/nte/page-layout";
+import {
   Activity,
   Check,
   CircleCheck,
@@ -122,17 +127,17 @@ export function DiagnosticsPage() {
       {notice ? (
         <DiagnosticsNotice error={notice} onDismiss={clearNotice} />
       ) : null}
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-3 min-[640px]:px-5">
+      <PageHeader className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-base font-semibold">{t("Diagnostics")}</h1>
+            <PageTitle>{t("Diagnostics")}</PageTitle>
             {snapshot ? <CaptureBadge snapshot={snapshot} /> : null}
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <PageDescription>
             {t(
               "Inspect capture environment, runtime checks and parse quality without exposing private payloads",
             )}
-          </p>
+          </PageDescription>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -166,7 +171,7 @@ export function DiagnosticsPage() {
             {t(pendingAction === "run" ? "Detecting" : "Run Diagnostics")}
           </Button>
         </div>
-      </header>
+      </PageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {contentKind === "loading" ? <DiagnosticsLoading /> : null}

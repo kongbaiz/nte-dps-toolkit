@@ -1,4 +1,9 @@
 import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+} from "@/components/nte/page-layout";
+import {
   Activity,
   Clock3,
   MousePointer2,
@@ -90,18 +95,18 @@ export function TimelinePage() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-background px-3 py-3 min-[640px]:px-5">
+      <PageHeader className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-base font-semibold">{t("Timeline")}</h1>
+            <PageTitle>{t("Timeline")}</PageTitle>
             <Badge variant="outline" className="gap-1.5">
               <span className="size-1.5 rounded-full bg-emerald-500" />
               {t("Live")}
             </Badge>
           </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <PageDescription>
             {t("Timeline follows the current capture")}
-          </p>
+          </PageDescription>
         </div>
         <div className="flex flex-wrap items-center gap-1 rounded-lg bg-muted p-1">
           {SCOPES.map((item) => (
@@ -117,7 +122,7 @@ export function TimelinePage() {
             </Button>
           ))}
         </div>
-      </header>
+      </PageHeader>
 
       <div className="timeline-scrollport min-h-0 flex-1 overflow-y-auto p-3 min-[900px]:p-4">
         <div className="timeline-content flex min-h-full w-full flex-col gap-3.5">

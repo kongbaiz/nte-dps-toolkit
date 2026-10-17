@@ -1,0 +1,117 @@
+@layer components {
+  /* Console surfaces: keep these scoped away from transparent desktop overlays. */
+  .console-workspace {
+    background: var(--sidebar);
+  }
+
+  .dark:not([data-theme-preset="high-contrast"]) .console-workspace {
+    --background: oklch(0.17 0 0);
+    --card: oklch(0.205 0 0);
+    --sidebar: oklch(0.145 0 0);
+    --muted: oklch(0.245 0 0);
+  }
+
+  .console-sidebar {
+    border-inline-end: 0;
+    padding-block: 0.75rem;
+  }
+
+  .console-page-stage {
+    margin: 0.625rem 0.75rem 0.75rem 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--background);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .timeline-metrics {
+    gap: 0.75rem;
+    border: 0;
+    background: transparent;
+  }
+
+  .skills-metrics > div {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--card);
+  }
+
+  .skills-workspace > aside {
+    background: color-mix(in oklab, var(--muted) 35%, var(--card));
+  }
+
+  .console-page-stage[data-page="history"] [role="listbox"] {
+    background: var(--card);
+    border-radius: var(--radius-xl);
+  }
+
+  .console-page-stage[data-page="history"]
+    [data-history-record][aria-selected="true"] {
+    box-shadow: inset 3px 0 0 var(--primary);
+  }
+
+  .character-data-workspace {
+    gap: var(--ui-section-gap);
+    margin: var(--ui-page-padding);
+  }
+
+  .character-data-workspace > aside,
+  .character-data-workspace > main {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--card);
+  }
+
+  .character-data-workspace > aside {
+    background: color-mix(in oklab, var(--muted) 25%, var(--card));
+  }
+
+  .console-page-stage[data-page="encrypted-ini"] textarea {
+    line-height: 1.8;
+    padding: 1.25rem;
+    background: var(--card);
+    tab-size: 4;
+  }
+
+  .packet-list {
+    padding-block: 0.5rem;
+  }
+
+  .packet-list > details:nth-child(even) {
+    background: color-mix(in oklab, var(--muted) 22%, transparent);
+  }
+
+  .diagnostics-sections {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ui-section-gap);
+    padding: var(--ui-page-padding);
+  }
+
+  .diagnostics-sections > section {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--card);
+  }
+
+  @media (max-width: 760px) {
+    .console-page-stage {
+      margin: 0.375rem 0.375rem 0.375rem 0;
+    }
+
+    .packet-summary {
+      flex-wrap: wrap;
+    }
+
+    .packet-summary > span[title] {
+      order: 1;
+      flex-basis: 100%;
+      min-width: 0;
+      padding-inline-start: 1.5rem;
+    }
+  }
+}

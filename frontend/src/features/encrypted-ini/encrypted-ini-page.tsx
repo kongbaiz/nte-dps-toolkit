@@ -1,3 +1,8 @@
+import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+} from "@/components/nte/page-layout";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -149,19 +154,19 @@ export function EncryptedIniPage() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <header className="flex min-h-18 shrink-0 items-center justify-between gap-4 border-b px-6 py-3 max-[760px]:items-start max-[760px]:px-4">
+      <PageHeader className="flex shrink-0 items-center justify-between gap-4 max-[760px]:items-start">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold">{t("Encrypted INI")}</h1>
+            <PageTitle>{t("Encrypted INI")}</PageTitle>
             <Badge variant={opened ? "default" : "outline"}>
               {opened ? t("Open") : t("No file open")}
             </Badge>
           </div>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <PageDescription>
             {t(
               "Decrypt, inspect and re-encrypt local INI configuration files.",
             )}
-          </p>
+          </PageDescription>
         </div>
         <div className="flex shrink-0 items-center gap-2 max-[760px]:flex-wrap max-[760px]:justify-end">
           <Button disabled={model.busy} variant="outline" onClick={model.open}>
@@ -176,7 +181,7 @@ export function EncryptedIniPage() {
             {t("Save as Encrypted INI")}
           </Button>
         </div>
-      </header>
+      </PageHeader>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-6 py-4 max-[760px]:px-4">
         <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b pb-3 max-[900px]:grid-cols-1">

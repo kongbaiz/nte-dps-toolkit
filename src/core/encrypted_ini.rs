@@ -120,6 +120,9 @@ pub fn save_encrypted_ini_document(
         document.final_newline,
     )
     .map_err(|_| EncryptedIniError::InvalidCiphertext)?;
+    if encrypted.len() as u64 > ENCRYPTED_INI_MAX_BYTES {
+        return Err(EncryptedIniError::TooLarge);
+    }
     let (saved_key, saved_plaintext, records, line_ending, final_newline) =
         parse_encrypted_ini_text(&encrypted).map_err(|_| EncryptedIniError::InvalidCiphertext)?;
     let saved = EncryptedIniDocument {
@@ -397,6 +400,40 @@ mod tests {
             std::fs::read_to_string(path).expect("read fixture"),
             encrypted
         );
+    }
+
+    #[test]
+    fn oversized_saved_ciphertext_preserves_file_and_document() {
+        let path = test_path("save-ciphertext-budget");
+        let original = encrypt_encrypted_ini_text("Value=1", EncryptedIniKey::Global).unwrap();
+        std::fs::write(&path, &original).unwrap();
+        let mut document = load_encrypted_ini_document(&path).unwrap();
+        let plaintext = "Value=1\n".repeat(350_000);
+        assert!(plaintext.len() < ENCRYPTED_INI_MAX_BYTES as usize);
+        assert_eq!(
+            save_encrypted_ini_document(&path, &mut document, plaintext, EncryptedIniKey::Global),
+            Err(EncryptedIniError::TooLarge)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(document.plaintext(), "Value=1");
+        assert_eq!(
+            load_encrypted_ini_document(&path).unwrap().plaintext(),
+            "Value=1"
+        );
+        assert_eq!(
+            save_encrypted_ini_document(
+                &path,
+                &mut document,
+                "Value=2".into(),
+                EncryptedIniKey::Global
+            ),
+            Ok(EncryptedIniSaveOutcome::Saved)
+        );
+        assert_eq!(
+            load_encrypted_ini_document(&path).unwrap().plaintext(),
+            "Value=2"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

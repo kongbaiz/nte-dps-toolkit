@@ -1,3 +1,11 @@
+import { Input } from "@/components/ui/form-controls";
+import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+  PageScrollArea,
+  PreferencesGrid,
+} from "@/components/nte/page-layout";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -67,17 +75,19 @@ export function SettingsPage() {
 
   return (
     <section className="console-preferences flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="console-section-heading">
-        <h1>{t("Settings")}</h1>
-        <p>{t("Interface, capture and HUD preferences")}</p>
-      </header>
+      <PageHeader>
+        <PageTitle>{t("Settings")}</PageTitle>
+        <PageDescription>
+          {t("Interface, capture and HUD preferences")}
+        </PageDescription>
+      </PageHeader>
       {settings.mutationError ? (
         <MutationError
           error={settings.mutationError}
           onDismiss={settings.clearMutationError}
         />
       ) : null}
-      <div className="console-preferences-scroll min-h-0 flex-1 overflow-y-auto">
+      <PageScrollArea>
         {settings.state.status === "loading" ? (
           <SettingsLoading />
         ) : settings.state.status === "error" ? (
@@ -86,13 +96,13 @@ export function SettingsPage() {
             onRetry={settings.refresh}
           />
         ) : (
-          <div className="settings-columns grid items-start gap-4">
+          <PreferencesGrid>
             <PrimarySettingsColumn
               snapshot={settings.state.snapshot}
               pendingAction={settings.pendingAction}
               actions={catalogActions}
             />
-            <div className="flex min-w-0 flex-col gap-3">
+            <div className="ui-section-stack">
               <SettingsReady
                 snapshot={settings.state.snapshot}
                 pendingAction={settings.pendingAction}
@@ -108,9 +118,9 @@ export function SettingsPage() {
                 actions={catalogActions}
               />
             </div>
-          </div>
+          </PreferencesGrid>
         )}
-      </div>
+      </PageScrollArea>
     </section>
   );
 }
@@ -267,9 +277,9 @@ function HudWindowSection({
               {t("HUD Width")}
             </label>
             <div className="flex items-center gap-2">
-              <input
+              <Input
                 id="settings-hud-width"
-                className="h-8 w-24 rounded-md border bg-card px-2 text-right text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                className="w-24 text-right"
                 type="number"
                 inputMode="numeric"
                 min={snapshot.hudWidthMin}

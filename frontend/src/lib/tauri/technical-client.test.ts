@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTechnicalClient } from "./technical-client";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -149,7 +149,7 @@ describe("technical client subscription", () => {
           subscriptionId: "test-subscription",
           streamKind: "technical",
           streamIntervalMs: 100,
-          streamProtocolVersion: 1,
+          streamProtocolVersion: 2,
           streamGeneration: "1",
         });
       }

@@ -236,6 +236,9 @@ async fn run_history_stream(
         if runtime_stop.load(Ordering::Acquire) || stop.load(Ordering::Acquire) {
             break;
         }
+        if !stream.registration.delivery_ready() {
+            continue;
+        }
         let observed_key = history_projection_key(&state);
         if last_projection_key == Some(observed_key) {
             continue;
@@ -262,6 +265,7 @@ async fn run_history_stream(
         if serde_json::to_vec(&body)
             .map(|encoded| encoded.len() > MAX_STREAM_DELIVERY_BYTES)
             .unwrap_or(true)
+            || !stream.registration.begin_delivery()
             || stream.on_event.send(body).is_err()
         {
             break;

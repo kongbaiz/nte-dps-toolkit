@@ -5,13 +5,16 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::ipc::Channel;
+use tauri::{State, WebviewWindow, ipc::Channel};
 use tokio::time::{MissedTickBehavior, interval};
 
 use crate::{
     contract::{
         CommandError,
-        stream::{MAX_EVENTS_PER_STREAM_DELIVERY, MAX_STREAM_DELIVERY_BYTES, StreamDeliveryBody},
+        stream::{
+            MAX_EVENTS_PER_STREAM_DELIVERY, MAX_STREAM_DELIVERY_BYTES, StreamDeliveryBody,
+            StreamKind,
+        },
     },
     state::{AppState, StreamRegistration, StreamRegistryError},
 };
@@ -33,6 +36,44 @@ pub(crate) fn validate_subscription_id(value: &str) -> Result<(), CommandError> 
 
 pub(crate) fn stream_registry_error(_: StreamRegistryError) -> CommandError {
     CommandError::stream_runtime_unavailable()
+}
+
+// The receipt binds generation; the ordered Channel binds delivery sequence.
+#[tauri::command]
+pub(crate) fn acknowledge_stream_delivery(
+    subscription_id: String,
+    stream_kind: String,
+    stream_generation: String,
+    delivery_sequence: String,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<(), CommandError> {
+    validate_subscription_id(&subscription_id)?;
+    let kind = StreamKind::parse(&stream_kind).ok_or_else(CommandError::invalid_subscription_id)?;
+    let generation = parse_delivery_counter(&stream_generation)?;
+    let sequence = parse_delivery_counter(&delivery_sequence)?;
+    state
+        .acknowledge_stream(
+            window.label(),
+            &kind.stream_key(&subscription_id),
+            generation,
+            sequence,
+        )
+        .map(|_| ())
+        .map_err(stream_registry_error)
+}
+
+fn parse_delivery_counter(value: &str) -> Result<u64, CommandError> {
+    if value.is_empty()
+        || value.len() > 20
+        || value.starts_with('0')
+        || !value.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(CommandError::invalid_subscription_id());
+    }
+    value
+        .parse()
+        .map_err(|_| CommandError::invalid_subscription_id())
 }
 
 /// Result of one revision-aware projection pass.
@@ -89,7 +130,10 @@ where
 
         while !stop.load(Ordering::Acquire) {
             ticker.tick().await;
-            if stop.load(Ordering::Acquire) || !active.load(Ordering::Acquire) {
+            if stop.load(Ordering::Acquire)
+                || !active.load(Ordering::Acquire)
+                || !task_registration.delivery_ready()
+            {
                 continue;
             }
 
@@ -127,7 +171,7 @@ where
                 );
                 break;
             }
-            if delivery.channel.send(body).is_err() {
+            if !task_registration.begin_delivery() || delivery.channel.send(body).is_err() {
                 break;
             }
         }
@@ -174,7 +218,7 @@ where
         let stop = registration.stop_token();
         let active = registration.activation_token();
         while !stop.load(Ordering::Acquire) {
-            if active.load(Ordering::Acquire) {
+            if active.load(Ordering::Acquire) && registration.delivery_ready() {
                 let output = catch_unwind(AssertUnwindSafe(|| poll(&state, &stop)));
                 match output {
                     Ok(PollingStreamOutput::NoChange) => {}
@@ -182,6 +226,7 @@ where
                         let body = StreamDeliveryBody::new(vec![event]);
                         if stop.load(Ordering::Acquire)
                             || !delivery_fits(&body)
+                            || !registration.begin_delivery()
                             || delivery.channel.send(body).is_err()
                         {
                             break;
@@ -216,6 +261,56 @@ pub(crate) fn serialize_stream_events<T: Serialize>(events: Vec<T>) -> std::io::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_delivery_cancels_and_removes_both_polling_worker_kinds() {
+        struct Dropped(std::sync::mpsc::Sender<()>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        for blocking in [false, true] {
+            let state = AppState::default();
+            let registration = state.reserve_stream("console", "timeline:failure").unwrap();
+            let stop = registration.stop_token();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let dropped = Dropped(sender);
+            let channel = Channel::new(move |_| {
+                let _ = &dropped;
+                Err(std::io::Error::other("fixture disconnect").into())
+            });
+            let delivery = StreamDeliveryEndpoint::new(channel);
+            if blocking {
+                spawn_blocking_polling_stream(delivery, state.clone(), registration, 1, |_, _| {
+                    PollingStreamOutput::Event("snapshot")
+                })
+                .unwrap();
+            } else {
+                spawn_polling_stream("fixture", delivery, state.clone(), registration, 1, |_| {
+                    PollingStreamOutput::Event("snapshot")
+                })
+                .unwrap();
+            }
+            receiver
+                .recv_timeout(Duration::from_secs(10))
+                .expect("worker released channel");
+            assert!(stop.load(Ordering::Acquire));
+            assert_eq!(state.stream_registry_len().unwrap(), 0);
+        }
+    }
+
+    #[test]
+    fn delivery_counters_reject_noncanonical_and_overflowing_input() {
+        for value in ["", "0", "01", "-1", "+1", "1.0", "18446744073709551616"] {
+            assert!(parse_delivery_counter(value).is_err(), "{value}");
+        }
+        assert_eq!(parse_delivery_counter("1").unwrap(), 1);
+        assert_eq!(
+            parse_delivery_counter("18446744073709551615").unwrap(),
+            u64::MAX
+        );
+    }
 
     #[test]
     fn subscription_id_policy_is_bounded_and_url_safe() {

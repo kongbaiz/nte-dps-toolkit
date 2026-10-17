@@ -615,19 +615,12 @@ pub fn cleanup_completed_app_update(marker: PathBuf) {
     }
 }
 
-fn cleanup_completed_update_root(update_root: &Path) {
-    if !update_root.is_dir() || has_pending_update_transaction(update_root) {
-        return;
-    }
-    let _ = fs::remove_dir_all(update_root);
-}
-
 fn cleanup_completed_update_files(install_dir: &Path) {
     if let Err(error) = migrate_legacy_plugin_metadata(install_dir) {
         eprintln!("Failed to migrate Mod loader update state: {error}");
-        return;
     }
-    cleanup_completed_update_root(&install_dir.join(UPDATE_ROOT_DIRECTORY));
+    // Do not delete startup leftovers: another process may be preparing an
+    // update before its transaction JSON exists. Completion cleans its own ID.
 }
 
 fn migrate_legacy_plugin_metadata(install_dir: &Path) -> Result<(), String> {
@@ -672,18 +665,6 @@ fn migrate_legacy_plugin_metadata(install_dir: &Path) -> Result<(), String> {
         fs::remove_file(legacy_baseline_path).map_err(|error| error.to_string())?;
     }
     Ok(())
-}
-
-fn has_pending_update_transaction(update_root: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(update_root.join("transactions")) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        entry
-            .path()
-            .extension()
-            .is_some_and(|extension| extension == "json")
-    })
 }
 
 fn cleanup_completed_transaction(update_root: &Path, transaction_id: &str, marker: &Path) {
@@ -749,9 +730,12 @@ fn extract_release_archive(
         let mut entry = archive
             .by_index(index)
             .map_err(|error| PrepareUpdateError::Archive(error.to_string()))?;
+        let name = entry
+            .name()
+            .map_err(|error| PrepareUpdateError::Archive(error.to_string()))?;
         let relative = entry
             .enclosed_name()
-            .ok_or_else(|| PrepareUpdateError::UnsafeArchivePath(entry.name().to_owned()))?
+            .ok_or_else(|| PrepareUpdateError::UnsafeArchivePath(name.into_owned()))?
             .to_path_buf();
         if !safe_managed_release_path(&relative) {
             return Err(PrepareUpdateError::UnsupportedArchivePath(
@@ -869,6 +853,7 @@ mod tests {
             ("nte-dps-tool.exe", b"app".as_slice()),
             ("nte-mod-loader.exe", b"loader".as_slice()),
             ("nte-updater.exe", b"updater".as_slice()),
+            ("licenses/说明.txt", b"notice".as_slice()),
         ] {
             archive
                 .start_file(path, zip::write::SimpleFileOptions::default())
@@ -891,7 +876,58 @@ mod tests {
             fs::read(staging.join("nte-mod-loader.exe")).unwrap(),
             b"loader"
         );
+        assert_eq!(
+            fs::read(staging.join("licenses/说明.txt")).unwrap(),
+            b"notice"
+        );
         fs::remove_dir_all(root).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn release_archive_rejects_unsafe_paths_and_symlinks_without_writing_files() {
+        let root = update_test_directory("unsafe-release-entries");
+        let package = root.join("release.zip");
+        let staging = root.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+
+        for (name, symlink) in [("../outside.exe", false), ("linked.exe", true)] {
+            let mut archive = zip::ZipWriter::new(File::create(&package).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            if symlink {
+                archive
+                    .add_symlink(name, "../outside.exe", options)
+                    .unwrap();
+            } else {
+                archive.start_file(name, options).unwrap();
+                archive.write_all(b"untrusted").unwrap();
+            }
+            archive.finish().unwrap();
+
+            let error = extract_release_archive(&package, &staging).unwrap_err();
+            assert!(matches!(error, PrepareUpdateError::UnsafeArchivePath(_)));
+            assert_eq!(fs::read_dir(&staging).unwrap().count(), 0);
+            assert!(!root.join("outside.exe").exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_cleanup_preserves_an_open_download_and_uncommitted_staging() {
+        let root = update_test_directory("active-download-cleanup");
+        let update_root = root.join(UPDATE_ROOT_DIRECTORY);
+        let path = update_root.join("downloads/active.zip.part");
+        let staging = update_root.join("staging/active/nte-dps-tool.exe");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::create_dir_all(staging.parent().unwrap()).unwrap();
+        fs::write(&staging, b"candidate").unwrap();
+        let mut writer = File::create(&path).unwrap();
+        writer.write_all(b"first").unwrap();
+        cleanup_completed_update_files(&root);
+        writer.write_all(b"second").unwrap();
+        drop(writer);
+        assert_eq!(fs::read(&path).unwrap(), b"firstsecond");
+        assert_eq!(fs::read(&staging).unwrap(), b"candidate");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -908,7 +944,8 @@ mod tests {
         .unwrap();
         fs::write(update_root.join("health/app-0.3.6-hash.ok"), b"healthy\n").unwrap();
 
-        cleanup_completed_update_root(&update_root);
+        let marker = update_root.join("health/app-0.3.6-hash.ok");
+        cleanup_completed_transaction(&update_root, "app-0.3.6-hash", &marker);
 
         assert!(!update_root.exists());
         fs::remove_dir_all(root).unwrap();
@@ -924,7 +961,7 @@ mod tests {
         fs::create_dir_all(transaction.parent().unwrap()).unwrap();
         fs::write(&transaction, b"{}").unwrap();
 
-        cleanup_completed_update_root(&update_root);
+        cleanup_completed_update_files(&root);
 
         assert!(staging.is_dir());
         assert!(transaction.is_file());
@@ -932,7 +969,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_update_cleanup_migrates_plugin_state_out_of_update_root() {
+    fn startup_migrates_plugin_state_without_deleting_the_legacy_root() {
         let root = update_test_directory("state-migration");
         let plugin_path = root.join(MODS_PLUGIN_PATH);
         fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
@@ -955,7 +992,7 @@ mod tests {
 
         cleanup_completed_update_files(&root);
 
-        assert!(!root.join(UPDATE_ROOT_DIRECTORY).exists());
+        assert!(legacy_state.is_file());
         assert!(component_state_path(&root).is_file());
         assert_eq!(
             read_recorded_plugin_version(&root, &plugin_path).unwrap(),

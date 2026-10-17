@@ -1,0 +1,193 @@
+/* Design tokens: colors, theme presets, density and shared sizing. */
+@layer base {
+  :root {
+    /* Shared UI sizing. Change these before adding page-local overrides. */
+    --ui-page-padding: 24px;
+    --ui-section-gap: 16px;
+    --ui-content-width: 1280px;
+    --ui-column-min: 384px;
+    --ui-card-padding: 16px;
+    --ui-card-padding-sm: 12px;
+    --ui-field-padding: 12px;
+    --ui-control-height: 32px;
+    --ui-control-height-xs: 24px;
+    --ui-control-height-sm: 28px;
+    --ui-control-height-lg: 36px;
+    --ui-font-title: 20px;
+    --ui-font-body: 14px;
+    --ui-font-caption: 12px;
+    color-scheme: dark;
+    --motion-duration-fast: 120ms;
+    --motion-duration-base: 180ms;
+    --motion-duration-slow: 260ms;
+    --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+    --background: oklch(0.09 0 0);
+    --foreground: oklch(0.97 0 0);
+    --card: oklch(0.145 0 0);
+    --card-foreground: oklch(0.97 0 0);
+    --popover: oklch(0.17 0 0);
+    --popover-foreground: oklch(0.97 0 0);
+    --primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.145 0 0);
+    --secondary: oklch(0.19 0 0);
+    --secondary-foreground: oklch(0.97 0 0);
+    --muted: oklch(0.2 0 0);
+    --muted-foreground: oklch(0.69 0 0);
+    --accent: oklch(0.235 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.68 0.18 25);
+    --border: oklch(0.985 0 0 / 13%);
+    --input: oklch(0.985 0 0 / 18%);
+    --ring: oklch(0.7 0 0);
+    --chart-1: oklch(0.82 0.11 207);
+    --chart-2: oklch(0.72 0.15 285);
+    --chart-3: oklch(0.76 0.13 165);
+    --chart-4: oklch(0.78 0.14 80);
+    --chart-5: oklch(0.68 0.18 25);
+    --radius: 0.7rem;
+    --sidebar: oklch(0.12 0 0);
+    --sidebar-foreground: oklch(0.97 0 0);
+    --sidebar-primary: oklch(0.985 0 0);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+    --sidebar-accent: oklch(0.2 0 0);
+    --sidebar-accent-foreground: oklch(0.97 0 0);
+    --sidebar-border: oklch(0.985 0 0 / 13%);
+    --sidebar-ring: oklch(0.7 0 0);
+    --hud-role-1: oklch(0.82 0.14 205);
+    --hud-role-2: oklch(0.78 0.15 285);
+    --hud-role-3: oklch(0.8 0.14 155);
+    --hud-role-4: oklch(0.82 0.14 75);
+  }
+
+  .dark {
+    color-scheme: dark;
+    --background: oklch(0.09 0 0);
+    --foreground: oklch(0.97 0 0);
+    --card: oklch(0.145 0 0);
+    --card-foreground: oklch(0.97 0 0);
+    --popover: oklch(0.17 0 0);
+    --popover-foreground: oklch(0.97 0 0);
+    --primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.145 0 0);
+    --secondary: oklch(0.19 0 0);
+    --secondary-foreground: oklch(0.97 0 0);
+    --muted: oklch(0.2 0 0);
+    --muted-foreground: oklch(0.69 0 0);
+    --accent: oklch(0.235 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.68 0.18 25);
+    --border: oklch(0.985 0 0 / 13%);
+    --input: oklch(0.985 0 0 / 18%);
+    --ring: oklch(0.7 0 0);
+  }
+
+  .console-light {
+    color-scheme: light;
+    --background: oklch(0.975 0.002 250);
+    --foreground: oklch(0.2 0.01 250);
+    --card: oklch(0.99 0.001 250);
+    --card-foreground: oklch(0.2 0.01 250);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.2 0.01 250);
+    --primary: oklch(0.24 0.01 250);
+    --primary-foreground: oklch(0.98 0 0);
+    --secondary: oklch(0.95 0.004 250);
+    --secondary-foreground: oklch(0.24 0.01 250);
+    --muted: oklch(0.94 0.004 250);
+    --muted-foreground: oklch(0.5 0.01 250);
+    --accent: oklch(0.95 0.004 250);
+    --accent-foreground: oklch(0.24 0.01 250);
+    --destructive: oklch(0.58 0.2 27);
+    --border: oklch(0.88 0.006 250);
+    --input: oklch(0.87 0.006 250);
+    --ring: oklch(0.5 0.11 240);
+    --sidebar: oklch(0.985 0.002 250);
+    --sidebar-foreground: oklch(0.24 0.01 250);
+    --sidebar-primary: oklch(0.22 0.01 250);
+    --sidebar-primary-foreground: oklch(0.98 0 0);
+    --sidebar-accent: oklch(0.94 0.004 250);
+    --sidebar-accent-foreground: oklch(0.22 0.01 250);
+    --sidebar-border: oklch(0.88 0.006 250);
+    --sidebar-ring: oklch(0.5 0.11 240);
+    --console-explorer: oklch(0.965 0.003 250);
+    --console-editor: oklch(0.995 0 0);
+    --console-status: oklch(0.58 0.16 240);
+    --console-success: oklch(0.55 0.14 155);
+    --console-warning: oklch(0.66 0.14 68);
+  }
+
+  [data-accent="blue"],
+  [data-accent="blue"] .console-light {
+    --primary: oklch(0.58 0.18 250);
+    --ring: oklch(0.58 0.18 250);
+    --sidebar-primary: oklch(0.58 0.18 250);
+  }
+
+  [data-accent="violet"],
+  [data-accent="violet"] .console-light {
+    --primary: oklch(0.58 0.2 292);
+    --ring: oklch(0.58 0.2 292);
+    --sidebar-primary: oklch(0.58 0.2 292);
+  }
+
+  [data-accent="orange"],
+  [data-accent="orange"] .console-light {
+    --primary: oklch(0.65 0.18 55);
+    --ring: oklch(0.65 0.18 55);
+    --sidebar-primary: oklch(0.65 0.18 55);
+  }
+
+  [data-accent="green"],
+  [data-accent="green"] .console-light {
+    --primary: oklch(0.57 0.15 155);
+    --ring: oklch(0.57 0.15 155);
+    --sidebar-primary: oklch(0.57 0.15 155);
+  }
+
+  [data-theme-preset="tactical"],
+  [data-theme-preset="tactical"] .console-light {
+    --radius: 0.35rem;
+    --border: oklch(0.7 0.08 155 / 42%);
+    --input: oklch(0.7 0.08 155 / 52%);
+  }
+
+  [data-theme-preset="high-contrast"],
+  [data-theme-preset="high-contrast"] .console-light {
+    --radius: 0.2rem;
+    --border: currentColor;
+    --input: currentColor;
+  }
+
+  [data-density="compact"] {
+    --ui-page-padding: 16px;
+    --ui-section-gap: 12px;
+    --ui-card-padding: 12px;
+    --ui-field-padding: 8px;
+    --ui-control-height: 28px;
+    --ui-control-height-sm: 26px;
+    --ui-control-height-lg: 32px;
+  }
+
+  [data-density="comfortable"] {
+    --ui-page-padding: 28px;
+    --ui-section-gap: 20px;
+    --ui-card-padding: 20px;
+    --ui-field-padding: 16px;
+    --ui-control-height: 36px;
+    --ui-control-height-sm: 32px;
+    --ui-control-height-lg: 40px;
+  }
+
+  /* Console density changes spacing, not font scale or responsive breakpoints.
+   Transparent HUD/native window sizing keeps its existing behavior. */
+  html[data-window-route="console"] {
+    font-size: 16px;
+  }
+  html:not([data-window-route="console"])[data-density="compact"] {
+    font-size: 14px;
+  }
+  html:not([data-window-route="console"])[data-density="comfortable"] {
+    font-size: 17px;
+  }
+}

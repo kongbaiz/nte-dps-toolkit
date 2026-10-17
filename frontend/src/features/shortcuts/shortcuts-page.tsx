@@ -1,3 +1,10 @@
+import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+  PageScrollArea,
+  PreferencesGrid,
+} from "@/components/nte/page-layout";
 import { Keyboard, MousePointer2, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -44,11 +51,13 @@ export function ShortcutsPage() {
 
   return (
     <section className="console-preferences flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="console-section-heading">
-        <h1>{t("Shortcuts")}</h1>
-        <p>{t("Keyboard controls and window interactions")}</p>
-      </header>
-      <div className="console-preferences-scroll @container/shortcuts min-h-0 flex-1 overflow-y-auto">
+      <PageHeader>
+        <PageTitle>{t("Shortcuts")}</PageTitle>
+        <PageDescription>
+          {t("Keyboard controls and window interactions")}
+        </PageDescription>
+      </PageHeader>
+      <PageScrollArea>
         {settings.mutationError ? (
           <Alert className="mb-3" variant="destructive">
             <TriangleAlert aria-hidden="true" />
@@ -94,7 +103,7 @@ export function ShortcutsPage() {
             </AlertAction>
           </Alert>
         ) : (
-          <div className="grid w-full max-w-[90rem] items-start gap-5 @min-[68rem]/shortcuts:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
+          <PreferencesGrid>
             <GlobalHotkeysCard
               snapshot={settings.state.snapshot}
               pending={settings.pendingAction !== null}
@@ -106,9 +115,9 @@ export function ShortcutsPage() {
               pending={settings.pendingAction !== null}
               onSetCapture={settings.setCapture}
             />
-          </div>
+          </PreferencesGrid>
         )}
-      </div>
+      </PageScrollArea>
     </section>
   );
 }

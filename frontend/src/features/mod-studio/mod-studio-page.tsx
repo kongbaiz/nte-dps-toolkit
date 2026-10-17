@@ -1,3 +1,8 @@
+import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+} from "@/components/nte/page-layout";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -126,12 +131,12 @@ export function ModStudioWorkspace() {
   ) : null;
   return (
     <section className="@container/workshop flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
+      <PageHeader className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">{t("Mod Workshop")}</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <PageTitle>{t("Mod Workshop")}</PageTitle>
+          <PageDescription>
             {t("Your plugins and in-game features, in one place.")}
-          </p>
+          </PageDescription>
         </div>
         <div
           className="flex items-center gap-1 rounded-lg bg-muted/70 p-1"
@@ -166,7 +171,7 @@ export function ModStudioWorkspace() {
             )}
           </Button>
         </div>
-      </header>
+      </PageHeader>
       {tab === "market" ? (
         <div className="min-h-0 flex-1 overflow-y-auto" ref={contentRef}>
           <div className="mx-auto w-full max-w-7xl space-y-5 p-5">

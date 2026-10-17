@@ -1,3 +1,8 @@
+import { FormRow } from "@/components/nte/form-row";
+import {
+  Input,
+  NativeSelect as SelectControl,
+} from "@/components/ui/form-controls";
 import {
   useEffect,
   useRef,
@@ -54,9 +59,6 @@ import {
 import { cn } from "@/lib/utils";
 
 import { settingsSectionPending } from "./settings-view-model";
-
-const CONTROL_CLASS_NAME =
-  "h-8 w-full min-w-0 rounded-md border bg-background px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const LANGUAGE_OPTIONS = [
   { value: "zh-CN", label: "简体中文" },
@@ -147,7 +149,7 @@ export function PrimarySettingsColumn({
   actions: SettingsCatalogActions;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-3">
+    <div className="ui-section-stack">
       <InterfaceSettingsCard
         snapshot={snapshot}
         pending={settingsSectionPending(pendingAction, "interface")}
@@ -322,8 +324,8 @@ function InterfaceSettingsCard({
               <span className="text-xs text-muted-foreground">
                 {t("Horizontal offset from the screen center")}
               </span>
-              <input
-                className={cn(CONTROL_CLASS_NAME, "w-20 text-right")}
+              <Input
+                className="w-20 text-right"
                 disabled={pending}
                 type="number"
                 value={islandOffset}
@@ -560,8 +562,7 @@ function ParseSettingsCard({
         labelKey="BPF Filter"
         descriptionKey="Capture filter expression; takes effect on the next capture"
       >
-        <input
-          className={CONTROL_CLASS_NAME}
+        <Input
           disabled={pending}
           aria-label={t("BPF Filter")}
           value={filter}
@@ -718,8 +719,8 @@ function ParseSettingsCard({
           />
           {settings.autoRoundAfterIdle ? (
             <label className="flex items-center gap-2">
-              <input
-                className={cn(CONTROL_CLASS_NAME, "w-20 text-right")}
+              <Input
+                className="w-20 text-right"
                 disabled={pending}
                 type="number"
                 min={snapshot.capture.autoRoundIdleSecondsMin}
@@ -1061,17 +1062,12 @@ function SettingsRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid gap-3 py-3 first:pt-0 last:pb-0 @min-[28rem]/settings-card:grid-cols-[minmax(8.5rem,0.6fr)_minmax(0,1fr)] @min-[28rem]/settings-card:items-center">
-      <div>
-        <p className="text-sm font-medium">{t(labelKey)}</p>
-        {descriptionKey ? (
-          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            {t(descriptionKey)}
-          </p>
-        ) : null}
-      </div>
-      <div className="min-w-0">{children}</div>
-    </div>
+    <FormRow
+      label={t(labelKey)}
+      description={descriptionKey ? t(descriptionKey) : undefined}
+    >
+      {children}
+    </FormRow>
   );
 }
 
@@ -1087,7 +1083,7 @@ function SettingsSwitchRow({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-9 items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+    <label className="ui-switch-row">
       <span className="text-sm">{t(labelKey)}</span>
       <Switch
         checked={checked}
@@ -1139,8 +1135,8 @@ function NativeSelect({
   onChange: (value: string) => void;
 }) {
   return (
-    <select
-      className={cn(CONTROL_CLASS_NAME, className)}
+    <SelectControl
+      className={className}
       aria-label={ariaLabel}
       value={value}
       disabled={disabled}
@@ -1151,7 +1147,7 @@ function NativeSelect({
           {option.label}
         </option>
       ))}
-    </select>
+    </SelectControl>
   );
 }
 

@@ -1,48 +1,6 @@
 name: Build
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - "src/**"
-      - "src-tauri/**"
-      - "frontend/**"
-      - "plugins/**"
-      - "res/**"
-      - "images/**"
-      - "site/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "build.rs"
-      - "docs/**"
-      - "README.md"
-      - "README_EN.md"
-      - "THIRD_PARTY_LICENSES.md"
-      - "scripts/**"
-      - ".github/workflows/build.yml"
-  pull_request:
-    branches:
-      - master
-    paths:
-      - "src/**"
-      - "src-tauri/**"
-      - "frontend/**"
-      - "plugins/**"
-      - "res/**"
-      - "images/**"
-      - "site/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "build.rs"
-      - "docs/**"
-      - "README.md"
-      - "README_EN.md"
-      - "THIRD_PARTY_LICENSES.md"
-      - "scripts/**"
-      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -190,6 +148,10 @@ jobs:
 
           cargo install cargo-audit --locked
           cargo audit --deny warnings
+          # Audit the independent Tauri lockfile too. GTK3's glib/proc-macro-error
+          # advisories remain visible here; those dependencies are not built on Windows.
+          # Vulnerabilities still fail this step; no advisory IDs are ignored.
+          cargo audit --file src-tauri/Cargo.lock
 
       - name: Build release variants
         shell: pwsh
@@ -216,7 +178,6 @@ jobs:
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
-
 
       - name: Compress release executables with UPX
         shell: pwsh

@@ -1,4 +1,9 @@
 import {
+  PageHeader,
+  PageTitle,
+  PageDescription,
+} from "@/components/nte/page-layout";
+import {
   Backpack,
   Check,
   Download,
@@ -106,10 +111,12 @@ export function EmptyCurtainPage() {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <header className="console-section-heading flex items-center justify-between gap-3">
+      <PageHeader className="flex items-center justify-between gap-3">
         <div>
-          <h1>{t("Console Loadout")}</h1>
-          <p>{t("Equipment inventory and character loadouts")}</p>
+          <PageTitle>{t("Console Loadout")}</PageTitle>
+          <PageDescription>
+            {t("Equipment inventory and character loadouts")}
+          </PageDescription>
         </div>
         <Button
           variant="outline"
@@ -128,7 +135,7 @@ export function EmptyCurtainPage() {
             model.refreshing ? "Refreshing equipment..." : "Refresh from game",
           )}
         </Button>
-      </header>
+      </PageHeader>
       {!snapshot.canOperate ? (
         <p
           role="status"

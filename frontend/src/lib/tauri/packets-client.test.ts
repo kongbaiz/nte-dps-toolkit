@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPacketsClient } from "./packets-client";
 
 const encodeDelivery = (events: unknown[]) => ({
-  streamProtocolVersion: 1,
+  streamProtocolVersion: 2,
   events,
 });
 
@@ -50,7 +50,7 @@ describe("Packets client", () => {
           subscriptionId: "packets-test",
           streamKind: "packets",
           streamIntervalMs: 100,
-          streamProtocolVersion: 1,
+          streamProtocolVersion: 2,
           streamGeneration: "1",
         };
       }
