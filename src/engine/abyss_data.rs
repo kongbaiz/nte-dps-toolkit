@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=12;
 const MAX_REMOTE_JSON_NODES: usize = 500_000;
 const MAX_REMOTE_JSON_DEPTH: usize = 48;
 const MAX_REMOTE_STRING_BYTES: usize = 4 * 1024;
@@ -262,7 +261,7 @@ fn build_dataset(
 ) -> AbyssMonsterDataset {
     let mut grouped = HashMap::<u32, Vec<AbyssFloor>>::new();
     for ((season, floor), mut monsters) in floors {
-        if !is_supported_abyss_season(season) {
+        if season == 0 {
             continue;
         }
         monsters.sort_by(|left, right| {
@@ -310,10 +309,6 @@ fn build_dataset(
     seasons.sort_by_key(|season| season.season);
 
     AbyssMonsterDataset { seasons }
-}
-
-fn is_supported_abyss_season(season: u32) -> bool {
-    SUPPORTED_ABYSS_SEASONS.contains(&season)
 }
 
 fn load_remote_rows(bytes: &[u8], label: &str) -> Result<HashMap<String, Value>> {
@@ -396,10 +391,7 @@ fn validate_remote_dataset(dataset: &AbyssMonsterDataset) -> Result<()> {
     anyhow::ensure!(!dataset.seasons.is_empty(), "远程深渊数据没有受支持赛季");
     let mut monster_count = 0_usize;
     for season in &dataset.seasons {
-        anyhow::ensure!(
-            is_supported_abyss_season(season.season),
-            "远程深渊数据包含不受支持赛季"
-        );
+        anyhow::ensure!(season.season > 0, "远程深渊数据包含不受支持赛季");
         anyhow::ensure!(!season.floors.is_empty(), "远程深渊赛季没有关卡");
         for floor in &season.floors {
             anyhow::ensure!(!floor.monsters.is_empty(), "远程深渊关卡没有怪物");
@@ -668,20 +660,68 @@ fn number(row: &Value, key: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_dataset_from_summary, build_static_index, is_supported_abyss_season,
-        lookup_static_monster, parse_abyss_attribute_monster_id, parse_abyss_group,
-        parse_abyss_route_half, parse_abyss_season_names,
+        build_dataset_from_summary, build_static_index, lookup_static_monster,
+        parse_abyss_attribute_monster_id, parse_abyss_group, parse_abyss_route_half,
+        parse_abyss_season_names,
     };
     use serde_json::json;
     use std::collections::HashMap;
 
     #[test]
-    fn supports_abyss_seasons_through_twelve() {
-        for season in 1..=12 {
-            assert!(is_supported_abyss_season(season));
+    fn remote_tables_discover_seasons_without_a_release_upper_bound() {
+        let seasons = [1, 13, 14, 99, u32::MAX];
+        let mut rows = seasons
+            .map(|season| {
+                json!({
+                    "abyss": format!("Abyss_{season}"),
+                    "level_id": 12,
+                    "route": "EAbyssFightStage::SecondHalf",
+                    "wave": 1,
+                    "monster_pool_id": format!("Abyss_{season}_12_1_1"),
+                    "monsters": [{
+                        "attribute_id": "Abyss_13_12_mon_1_BP",
+                        "name": "测试怪物",
+                        "count": 2,
+                        "level": 90
+                    }]
+                })
+            })
+            .to_vec();
+        for invalid in [
+            "Abyss_0",
+            "Abyss_Common",
+            "Abyss_-1",
+            "Abyss_4294967296",
+            "invalid",
+        ] {
+            let mut row = rows[0].clone();
+            row["abyss"] = json!(invalid);
+            rows.push(row);
         }
-        assert!(!is_supported_abyss_season(0));
-        assert!(!is_supported_abyss_season(13));
+        let dataset = super::AbyssMonsterDataset::from_remote_tables(
+            br#"[{"Rows":{}}]"#,
+            br#"[{"Rows":{"Abyss_13_12_mon_1_BP":{"HPMaxBase":1000.0}}}]"#,
+            &serde_json::to_vec(&json!({"rows": rows})).unwrap(),
+            &serde_json::to_vec(&json!({"13": "飞芒环线"})).unwrap(),
+        )
+        .expect("valid future seasons should load through the remote table boundary");
+        assert_eq!(
+            dataset
+                .seasons
+                .iter()
+                .map(|season| season.season)
+                .collect::<Vec<_>>(),
+            seasons
+        );
+        assert_eq!(
+            dataset.season(13).unwrap().name.as_deref(),
+            Some("飞芒环线")
+        );
+        for season in seasons {
+            let floor = dataset.floor(season, 12).unwrap();
+            assert_eq!(floor.monster_count(), 2);
+            assert_eq!(floor.monsters[0].stats.hp_max_base, 1000.0);
+        }
     }
 
     #[test]

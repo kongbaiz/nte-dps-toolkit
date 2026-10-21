@@ -75,6 +75,7 @@ try {
     Assert-True (-not $result.Contains('sensitive-native-output')) 'Native output was exposed.'
     Assert-True ($privacyFixture.RemoteCalls[0].arguments -notcontains '-i') 'Default SSH configuration was not used.'
     $publish = $privacyFixture.RemoteCalls[2].arguments[-1]
+    Assert-True (-not $publish.Contains("`r")) 'Remote shell script must use LF line endings.'
     Assert-True ($publish.Contains("'/srv/fixture-release/current'")) 'Configured deployment directory was not used.'
     Assert-True (-not $publish.Contains("find '/srv/fixture-release/releases'")) 'Publication must preserve previous releases.'
     Assert-True (-not $publish.Contains("rm -rf '/srv/fixture-release/releases/")) 'Publication must not delete a release.'
