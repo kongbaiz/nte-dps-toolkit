@@ -1391,7 +1391,21 @@ impl LiveCaptureInner {
         );
         let affects_frontend_projection = match signal {
             CoreSignal::Unchanged => false,
-            CoreSignal::StateChanged => true,
+            CoreSignal::StateChanged => {
+                // Fresh damage evidence means the connection-level warning no
+                // longer describes the live state. Issue #62 showed it
+                // otherwise never cleared and the HUD kept demanding a capture
+                // restart. A skipped-message gap stays visible on purpose.
+                let mut status = checked_lock(&self.status)?;
+                if matches!(
+                    status.issue,
+                    Some(LiveCaptureIssue::DamageWaiting)
+                        | Some(LiveCaptureIssue::DamageUnavailable)
+                ) {
+                    status.issue = None;
+                }
+                true
+            }
             CoreSignal::CombatClockHealthChanged => true,
             CoreSignal::InventoryReplaced
             | CoreSignal::InventoryCharactersReplaced
