@@ -15,6 +15,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, OnceLock};
+
+const MAX_FLOWS: usize = 8;
 #[derive(Deserialize)]
 struct Field {
     name: String,
@@ -484,8 +486,27 @@ impl InventoryDecoder {
             return Ok(None);
         }
         if !self.flows.contains_key(&key) {
-            if self.flows.len() >= 8 {
-                return Err(Error::BudgetExceeded);
+            if self.flows.len() >= MAX_FLOWS {
+                // Probes that never produced an inventory are disposable.
+                // Without eviction, unrelated connections scattering across
+                // prefixes filled the table and every following packet failed
+                // with BudgetExceeded, emitting one warning per packet.
+                let active = self.active.clone();
+                let victim = self
+                    .flows
+                    .iter()
+                    .find(|(candidate, flow)| {
+                        active.as_ref() != Some(*candidate) && flow.inventory.is_none()
+                    })
+                    .map(|(candidate, _)| candidate.clone());
+                match victim {
+                    Some(victim) => {
+                        self.flows.remove(&victim);
+                    }
+                    // Every slot holds accounted state; skip quietly rather
+                    // than reporting a per-packet capacity failure.
+                    None => return Ok(None),
+                }
             }
             self.flows.insert(
                 key.clone(),
@@ -640,6 +661,50 @@ mod tests {
         assert!(matches!(observed.apply(&n), Err(Error::BudgetExceeded)));
         assert_eq!(observed.items.len(), 1);
     }
+    #[test]
+    fn full_probe_table_evicts_an_inventory_less_flow_instead_of_failing_packets() {
+        let mut d = InventoryDecoder::new(Arc::new(EquipmentCatalog::default()));
+        for i in 0..MAX_FLOWS {
+            d.flows.insert(
+                (format!("server{i}"), "client".to_owned(), 28),
+                Flow {
+                    decoder: Decoder::inventory(28).unwrap(),
+                    observed: Observed::default(),
+                    inventory: None,
+                    failed: false,
+                },
+            );
+        }
+        let key = ("server-new".to_owned(), "client".to_owned(), 28);
+        assert!(
+            d.datagram(key.0.clone(), key.1.clone(), &[28, 0], 1.0)
+                .is_ok()
+        );
+        assert_eq!(d.flows.len(), MAX_FLOWS);
+        assert!(d.flows.contains_key(&key));
+    }
+
+    #[test]
+    fn full_accounted_table_skips_new_probes_without_a_capacity_error() {
+        let mut d = InventoryDecoder::new(Arc::new(EquipmentCatalog::default()));
+        for i in 0..MAX_FLOWS {
+            d.flows.insert(
+                (format!("server{i}"), "client".to_owned(), 28),
+                Flow {
+                    decoder: Decoder::inventory(28).unwrap(),
+                    observed: Observed::default(),
+                    inventory: Some(2),
+                    failed: false,
+                },
+            );
+        }
+        assert!(
+            d.datagram("server-new".to_owned(), "client".to_owned(), &[28, 0], 1.0)
+                .is_ok()
+        );
+        assert_eq!(d.flows.len(), MAX_FLOWS);
+    }
+
     #[test]
     fn handshake_retires_observed_state_and_finish_is_idempotent() {
         let mut d = InventoryDecoder::new(Arc::new(EquipmentCatalog::default()));
