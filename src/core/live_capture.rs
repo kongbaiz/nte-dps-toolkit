@@ -1312,6 +1312,13 @@ impl LiveCaptureInner {
         if self.integrity_failed.load(Ordering::Acquire) {
             return Err(());
         }
+        // Only a projection that actually carries damage rows proves the
+        // exact parser is working again. Abyss, time-stop and challenge
+        // resets also return StateChanged, so they must not clear it.
+        let damage_evidence = matches!(
+            &event,
+            EngineEvent::ExactSettlement(projection) if !projection.hits.is_empty()
+        );
         let (signal, detached_abyss_round) = {
             let _gate = checked_lock(&self.event_gate)?;
             let mut state = checked_lock(&self.state)?;
@@ -1392,17 +1399,21 @@ impl LiveCaptureInner {
         let affects_frontend_projection = match signal {
             CoreSignal::Unchanged => false,
             CoreSignal::StateChanged => {
-                // Fresh damage evidence means the connection-level warning no
-                // longer describes the live state. Issue #62 showed it
-                // otherwise never cleared and the HUD kept demanding a capture
-                // restart. A skipped-message gap stays visible on purpose.
-                let mut status = checked_lock(&self.status)?;
-                if matches!(
-                    status.issue,
-                    Some(LiveCaptureIssue::DamageWaiting)
-                        | Some(LiveCaptureIssue::DamageUnavailable)
-                ) {
-                    status.issue = None;
+                // Clear the connection-level warning only when a real damage
+                // projection arrived; unrelated state events (abyss, time
+                // stop, challenge reset) also report StateChanged. Issue #62
+                // showed the warning otherwise never cleared and the HUD kept
+                // demanding a capture restart. A skipped-message gap stays
+                // visible on purpose.
+                if damage_evidence {
+                    let mut status = checked_lock(&self.status)?;
+                    if matches!(
+                        status.issue,
+                        Some(LiveCaptureIssue::DamageWaiting)
+                            | Some(LiveCaptureIssue::DamageUnavailable)
+                    ) {
+                        status.issue = None;
+                    }
                 }
                 true
             }
@@ -3222,6 +3233,83 @@ mod tests {
 
         process(&service, hit(34.0));
         assert_eq!(service.outgoing_hit_revision(), initial + 1);
+    }
+
+    fn exact_projection() -> crate::engine::settlement::application::Projection {
+        use crate::engine::settlement::application::{Evidence, MessageIdentity, Projection};
+        use crate::engine::settlement::{ActorRef, Attribution};
+        let EngineEvent::Hit(mut hit) = hit(100.0) else {
+            unreachable!("test helper returns a hit")
+        };
+        let identity = MessageIdentity {
+            generation: "fixture".into(),
+            connection: "flow".into(),
+            channel: 3,
+            message: "1".into(),
+            timestamp_bits: "123".into(),
+        };
+        let reference = ActorRef {
+            flags: 0,
+            name: None,
+            fields: vec![(0, 1)],
+        };
+        hit.exact = Some(Evidence {
+            message: identity.clone(),
+            target_ordinal: 0,
+            component_ordinal: 0,
+            source: reference.clone(),
+            request_source: None,
+            target: reference,
+            display_type: 0,
+            attribution: Attribution::RequestMissing,
+            current_hp_bits: 0,
+            hp_before_request_bits: None,
+            max_hp_at_request_bits: None,
+            hp_adjustment: None,
+        });
+        Projection {
+            identity,
+            hits: vec![*hit],
+            quarantined: false,
+        }
+    }
+
+    #[test]
+    fn unrelated_state_events_do_not_clear_the_damage_unavailable_issue() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        process(
+            &service,
+            EngineEvent::Warning(crate::engine::settlement::automatic::UNAVAILABLE.into()),
+        );
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageUnavailable)
+        );
+
+        // A plain hit and a challenge restart both report StateChanged, but
+        // neither proves that exact damage parsing recovered.
+        process(&service, hit(5.0));
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageUnavailable)
+        );
+        process(
+            &service,
+            EngineEvent::ChallengeRestart {
+                timestamp: 6.0,
+                clone_type: 9,
+            },
+        );
+        assert_eq!(
+            service.status().issue,
+            Some(LiveCaptureIssue::DamageUnavailable)
+        );
+
+        process(
+            &service,
+            EngineEvent::ExactSettlement(Box::new(exact_projection())),
+        );
+        assert!(service.status().issue.is_none());
     }
 
     #[test]
