@@ -3,7 +3,7 @@
 //! must first join a bidirectional request and settlement by the complete wire
 //! key and actor references. No scan for plausible amounts or timestamp proximity.
 use super::{
-    Change, Ledger, MessageKey, SkillCatalog,
+    Change, Error, Ledger, MessageKey, SkillCatalog,
     application::{Projection, project},
     runtime::{catalog_from_document, new_generation},
     transport::{Decoder, Profile, Rpc},
@@ -61,7 +61,7 @@ impl Lane {
         rpc: Rpc,
         time: f64,
         characters: &HashMap<u32, CharacterInfo>,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), Error> {
         let is_settlement = matches!(&rpc, Rpc::Settlement(_));
         let (key, change) = match rpc {
             Rpc::Request(r) => (r.key, self.ledger.request(r)),
@@ -72,10 +72,10 @@ impl Lane {
                 return Ok(());
             }
         };
-        let change = change.map_err(|_| UNAVAILABLE)?;
+        let change = change?;
         self.qualified |= matching_exchange(&self.ledger, key, characters);
         if !self.qualified && self.ledger.entries.len() > MAX_PROBE_MESSAGES {
-            return Err(UNAVAILABLE);
+            return Err(Error::BudgetExceeded);
         }
         let mut changes = Vec::new();
         if let Some(change) = change {
@@ -91,7 +91,7 @@ impl Lane {
             if self.waiting.len() >= MAX_PROBE_MESSAGES
                 || self.waiting_rows.saturating_add(change.rows.len()) > MAX_PROBE_ROWS
             {
-                return Err(UNAVAILABLE);
+                return Err(Error::BudgetExceeded);
             }
             self.waiting_rows += change.rows.len();
             self.waiting.push((change, time, is_settlement));
@@ -236,6 +236,10 @@ impl Automatic {
                 if flow.selected {
                     for lane in &mut flow.lanes {
                         lane.decoder.discard_incomplete();
+                        // The discarded fragment may have carried damage or
+                        // healing, so the HP witness chain must not span the
+                        // gap and derive later reduction from stale values.
+                        lane.ledger.invalidate_hp_continuity();
                     }
                     degraded = true;
                     true
@@ -308,13 +312,21 @@ impl Automatic {
                         if flow.selected && matches!(&rpc, Rpc::UnsupportedSettlementExtras) {
                             self.warning = Some(UNSUPPORTED_SETTLEMENT);
                         }
-                        if lane.accept(rpc, time, characters).is_err() {
-                            // One unusable message must not retire an accounted
-                            // connection for the rest of the capture (issue #62).
-                            // Keep the ledger so later identities stay deduped.
+                        if let Err(error) = lane.accept(rpc, time, characters) {
                             lane.decoder.discard_incomplete();
                             lane.ledger.invalidate_hp_continuity();
-                            if flow.selected {
+                            if flow.selected && error == Error::BudgetExceeded {
+                                // Dedup capacity is a hard limit: no later
+                                // message can be accepted, so silently
+                                // skipping would look like a single gap while
+                                // recording has actually stopped.
+                                flow.failed = true;
+                                self.warning = Some(UNAVAILABLE);
+                            } else if flow.selected {
+                                // One unusable message must not retire an
+                                // accounted connection for the rest of the
+                                // capture (issue #62). Keep the ledger so later
+                                // identities stay deduped.
                                 self.warning = Some(GAP);
                             } else {
                                 lane.reset_probe();
@@ -731,6 +743,28 @@ mod tests {
         assert_eq!(a.flows[&k].identity, "accounted");
         assert!(a.flows[&k].lanes[0].ledger.entries.contains_key(&key()));
         assert!(!a.flows[&k].lanes[0].decoder.has_incomplete_fragments());
+        assert!(
+            a.flows[&k].lanes[0].ledger.hp_cursors.is_empty(),
+            "a discarded fragment must break the HP witness chain"
+        );
+    }
+
+    #[test]
+    fn ledger_capacity_exhaustion_is_a_hard_failure_not_a_skipped_message() {
+        let mut l = lane();
+        l.ledger.capacity = 1;
+        l.accept(Rpc::Request(request()), 1.0, &characters())
+            .unwrap();
+        let mut next = settlement();
+        next.key.message = 2;
+        // The ledger cannot accept another dedup identity. Continuing would
+        // silently drop every later message, so this must stay distinguishable
+        // from a single skipped message.
+        assert!(matches!(
+            l.accept(Rpc::Settlement(next), 2.0, &characters()),
+            Err(Error::BudgetExceeded)
+        ));
+        assert!(l.ledger.entries.contains_key(&key()));
     }
 
     #[test]
