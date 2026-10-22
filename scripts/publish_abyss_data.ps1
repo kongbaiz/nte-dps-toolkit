@@ -87,6 +87,8 @@ fi
 ln -sfn 'releases/$sha256' '$RemoteRoot/current.next'
 mv -Tf '$RemoteRoot/current.next' '$RemoteRoot/current'
 "@
+# The repository may be checked out with CRLF on Windows; POSIX shells require LF.
+$publishCommand = $publishCommand.Replace("`r`n", "`n")
 Invoke-DeploymentCommand -Command ssh -Operation 'publish' -Arguments ($sshOptions + @($SshHost, $publishCommand))
 
 Write-Output "Published $artifact ($($manifest.artifact.size) compressed bytes)"
