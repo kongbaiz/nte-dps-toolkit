@@ -61,7 +61,7 @@ impl Lane {
         rpc: Rpc,
         time: f64,
         characters: &HashMap<u32, CharacterInfo>,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), Error> {
         let is_settlement = matches!(&rpc, Rpc::Settlement(_));
         let (key, change) = match rpc {
             Rpc::Request(r) => (r.key, self.ledger.request(r)),
@@ -72,10 +72,10 @@ impl Lane {
                 return Ok(());
             }
         };
-        let change = change.map_err(|_| UNAVAILABLE)?;
+        let change = change?;
         self.qualified |= matching_exchange(&self.ledger, key, characters);
         if !self.qualified && self.ledger.entries.len() > MAX_PROBE_MESSAGES {
-            return Err(UNAVAILABLE);
+            return Err(Error::BudgetExceeded);
         }
         let mut changes = Vec::new();
         if let Some(change) = change {
@@ -91,7 +91,7 @@ impl Lane {
             if self.waiting.len() >= MAX_PROBE_MESSAGES
                 || self.waiting_rows.saturating_add(change.rows.len()) > MAX_PROBE_ROWS
             {
-                return Err(UNAVAILABLE);
+                return Err(Error::BudgetExceeded);
             }
             self.waiting_rows += change.rows.len();
             self.waiting.push((change, time, is_settlement));
@@ -223,30 +223,58 @@ impl Automatic {
             prefix: first & 31,
         };
         if first & 32 != 0 {
-            // Do not confuse a delayed handshake with a reconnect and forget
-            // already-accounted dedup identities. The ambiguous tuple needs a
-            // capture restart; unqualified probes have published nothing.
+            // A delayed handshake on an accounted tuple is framing, not damage
+            // evidence. Keep the flow: discarding its dedup identities would
+            // double-count messages that arrive again, while permanently
+            // failing it stopped every later damage record on the connection
+            // (issue #62). Only fragment progress is discarded.
+            let mut degraded = false;
             self.flows.retain(|k, flow| {
                 if k.local != local || k.server != server {
                     return true;
                 }
                 if flow.selected {
-                    flow.failed = true;
-                    self.warning = Some(UNAVAILABLE);
+                    for lane in &mut flow.lanes {
+                        lane.decoder.discard_incomplete();
+                        // The discarded fragment may have carried damage or
+                        // healing, so the HP witness chain must not span the
+                        // gap and derive later reduction from stale values.
+                        lane.ledger.invalidate_hp_continuity();
+                    }
+                    degraded = true;
                     true
                 } else {
                     false
                 }
             });
+            if degraded {
+                self.warning = Some(GAP);
+            }
             self.ready = self.flows.values().any(|f| f.selected && !f.failed);
             return Vec::new();
         }
         let mut fresh = false;
         if !self.flows.contains_key(&key) {
-            if self.flows.len() == MAX_FLOWS {
-                // Never evict an accounted flow and thereby forget dedup keys.
-                self.warning = Some(UNAVAILABLE);
-                return Vec::new();
+            if self.flows.len() >= MAX_FLOWS {
+                // Unqualified probes have published nothing, so evicting one
+                // cannot double-count. Without this, unrelated connections that
+                // scatter across prefixes can fill the registry and starve the
+                // real game connection until the capture is restarted (#62).
+                let evict = self
+                    .flows
+                    .iter()
+                    .find(|(_, flow)| !flow.selected)
+                    .map(|(probe, _)| *probe);
+                match evict {
+                    Some(probe) => {
+                        self.flows.remove(&probe);
+                    }
+                    None => {
+                        // Never evict an accounted flow and thereby forget dedup keys.
+                        self.warning = Some(UNAVAILABLE);
+                        return Vec::new();
+                    }
+                }
             }
             let lanes = [(219, 142), (213, 139)]
                 .into_iter()
@@ -284,10 +312,22 @@ impl Automatic {
                         if flow.selected && matches!(&rpc, Rpc::UnsupportedSettlementExtras) {
                             self.warning = Some(UNSUPPORTED_SETTLEMENT);
                         }
-                        if lane.accept(rpc, time, characters).is_err() {
-                            if flow.selected {
+                        if let Err(error) = lane.accept(rpc, time, characters) {
+                            lane.decoder.discard_incomplete();
+                            lane.ledger.invalidate_hp_continuity();
+                            if flow.selected && error == Error::BudgetExceeded {
+                                // Dedup capacity is a hard limit: no later
+                                // message can be accepted, so silently
+                                // skipping would look like a single gap while
+                                // recording has actually stopped.
                                 flow.failed = true;
                                 self.warning = Some(UNAVAILABLE);
+                            } else if flow.selected {
+                                // One unusable message must not retire an
+                                // accounted connection for the rest of the
+                                // capture (issue #62). Keep the ledger so later
+                                // identities stay deduped.
+                                self.warning = Some(GAP);
                             } else {
                                 lane.reset_probe();
                             }
@@ -295,14 +335,14 @@ impl Automatic {
                         }
                     }
                 }
-                Err(Error::Truncated) if flow.selected => {
+                Err(_) if flow.selected => {
+                    // A skipped middle fragment or an undecodable datagram is
+                    // one incomplete message, not a dead connection. Discard
+                    // only fragment progress and keep the ledger so dedup
+                    // identities survive for later messages (issue #62).
                     lane.decoder.discard_incomplete();
                     lane.ledger.invalidate_hp_continuity();
                     self.warning = Some(GAP);
-                }
-                Err(_) if flow.selected => {
-                    flow.failed = true;
-                    self.warning = Some(UNAVAILABLE);
                 }
                 Err(_) => lane.reset_probe(),
             }
@@ -661,7 +701,7 @@ mod tests {
         assert!(!a.ready);
     }
     #[test]
-    fn delayed_handshake_cannot_discard_accounted_dedup_state() {
+    fn delayed_handshake_keeps_the_accounted_flow_available() {
         let mut a = Automatic::bundled().unwrap();
         let local = (Ipv4Addr::new(192, 168, 1, 2), 123);
         let server = (Ipv4Addr::new(192, 0, 2, 1), 456);
@@ -696,10 +736,139 @@ mod tests {
             &characters(),
             true,
         );
-        assert_eq!(a.warning, Some(UNAVAILABLE));
-        assert!(a.flows[&k].failed);
+        // Issue #62: this used to mark the flow failed for the rest of the
+        // capture, so every later damage record on the connection was dropped.
+        assert_eq!(a.warning, Some(GAP));
+        assert!(!a.flows[&k].failed);
         assert_eq!(a.flows[&k].identity, "accounted");
         assert!(a.flows[&k].lanes[0].ledger.entries.contains_key(&key()));
+        assert!(!a.flows[&k].lanes[0].decoder.has_incomplete_fragments());
+        assert!(
+            a.flows[&k].lanes[0].ledger.hp_cursors.is_empty(),
+            "a discarded fragment must break the HP witness chain"
+        );
+    }
+
+    #[test]
+    fn ledger_capacity_exhaustion_is_a_hard_failure_not_a_skipped_message() {
+        let mut l = lane();
+        l.ledger.capacity = 1;
+        l.accept(Rpc::Request(request()), 1.0, &characters())
+            .unwrap();
+        let mut next = settlement();
+        next.key.message = 2;
+        // The ledger cannot accept another dedup identity. Continuing would
+        // silently drop every later message, so this must stay distinguishable
+        // from a single skipped message.
+        assert!(matches!(
+            l.accept(Rpc::Settlement(next), 2.0, &characters()),
+            Err(Error::BudgetExceeded)
+        ));
+        assert!(l.ledger.entries.contains_key(&key()));
+    }
+
+    #[test]
+    fn unparseable_datagram_does_not_disable_an_accounted_flow() {
+        let mut a = Automatic::bundled().unwrap();
+        let local = (Ipv4Addr::new(192, 168, 1, 2), 123);
+        let server = (Ipv4Addr::new(192, 0, 2, 1), 456);
+        let k = FlowKey {
+            local,
+            server,
+            prefix: 28,
+        };
+        let mut l = Lane::new(28, 219, 142).unwrap();
+        l.accept(Rpc::Request(request()), 1.0, &characters())
+            .unwrap();
+        l.accept(Rpc::Settlement(settlement()), 2.0, &characters())
+            .unwrap();
+        l.waiting.clear();
+        l.waiting_rows = 0;
+        a.flows.insert(
+            k,
+            Flow {
+                identity: "qualified".into(),
+                lanes: vec![l],
+                selected: true,
+                failed: false,
+            },
+        );
+        a.ready = true;
+        // The zero termination byte is invalid framing: one skipped message,
+        // not a reason to retire the connection (issue #62).
+        assert!(
+            a.datagram(
+                server.0,
+                server.1,
+                local.0,
+                local.1,
+                Some(local.0),
+                &[28, 0],
+                Some(2.5),
+                &characters(),
+                true
+            )
+            .is_empty()
+        );
+        assert_eq!(a.warning, Some(GAP));
+        assert!(!a.flows[&k].failed);
+        assert!(a.flows[&k].lanes[0].ledger.entries.contains_key(&key()));
+        // Later complete traffic on the same flow is still decoded.
+        let next = super::super::transport::tests::fragment(21, true, false, 3, 8);
+        a.datagram(
+            server.0,
+            server.1,
+            local.0,
+            local.1,
+            Some(local.0),
+            &next,
+            Some(3.0),
+            &characters(),
+            true,
+        );
+        assert!(a.warning.is_none());
+        assert!(!a.flows[&k].failed);
+    }
+
+    #[test]
+    fn unqualified_probe_yields_its_slot_to_a_new_connection() {
+        let mut a = Automatic::bundled().unwrap();
+        let local = Ipv4Addr::new(192, 168, 1, 2);
+        let server = Ipv4Addr::new(192, 0, 2, 1);
+        for port in 0..MAX_FLOWS {
+            a.flows.insert(
+                FlowKey {
+                    local: (local, port as u16),
+                    server: (server, 456),
+                    prefix: 20,
+                },
+                Flow {
+                    identity: port.to_string(),
+                    lanes: vec![],
+                    selected: false,
+                    failed: false,
+                },
+            );
+        }
+        let packet = super::super::transport::tests::fragment(3, true, false, 3, 8);
+        a.datagram(
+            local,
+            99,
+            server,
+            456,
+            Some(local),
+            &packet,
+            Some(1.0),
+            &characters(),
+            true,
+        );
+        assert_eq!(a.flows.len(), MAX_FLOWS);
+        assert!(a.flows.contains_key(&FlowKey {
+            local: (local, 99),
+            server: (server, 456),
+            prefix: 28,
+        }));
+        assert!(a.warning.is_none());
     }
 
     #[test]
