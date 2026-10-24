@@ -222,7 +222,7 @@ function AbyssValuesReady({
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3">
         <div className="min-w-0">
           <p className="text-sm font-medium">
-            {tf("{} seasons · {} floors · {} abyss enemies", [
+            {tf("{} seasons / {} floors / {} abyss enemies", [
               String(snapshot.seasonCount),
               String(snapshot.floorCount),
               String(snapshot.monsterCount),
@@ -235,7 +235,7 @@ function AbyssValuesReady({
             )}
             title={snapshot.dataVersion}
           >
-            {snapshot.dataUpdatedAt.slice(0, 10)} ·{" "}
+            {snapshot.dataUpdatedAt.slice(0, 10)} /{" "}
             {t(
               snapshot.dataStale
                 ? "Using cached abyss data"
@@ -358,7 +358,7 @@ function AbyssNavigation({
                           {floor.name || tf("Floor {}", [String(floor.floor)])}
                         </span>
                         <span className="shrink-0 opacity-70">
-                          {tf("{} monsters · {} waves", [
+                          {tf("{} monsters / {} waves", [
                             String(floor.monsterCount),
                             String(floor.waveCount),
                           ])}
@@ -416,7 +416,7 @@ function AbyssFloorContent({
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2.5">
       <div className="flex min-h-9 flex-wrap items-center justify-between gap-2">
         <h2 className="font-heading text-base font-medium">
-          {floor.seasonName || tf("Season {}", [String(floor.season)])} ·{" "}
+          {floor.seasonName || tf("Season {}", [String(floor.season)])} /{" "}
           {floor.name || tf("Floor {}", [String(floor.floor)])}
         </h2>
         <div className="flex items-center gap-2">
@@ -582,7 +582,7 @@ function AbyssLineSection({
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs">
         <h3 className="text-sm font-medium">{title}</h3>
         <span className="text-muted-foreground">
-          {tf("{} enemies · {} kinds", [
+          {tf("{} enemies / {} kinds", [
             String(
               monsters.reduce((count, monster) => count + monster.count, 0),
             ),
@@ -603,7 +603,7 @@ function AbyssLineSection({
                   {estimate === null
                     ? t("Est. —")
                     : tf("Est. {}", [formatSeconds(estimate)])}
-                  {` · ${formatStatValue(team.dps)} DPS`}
+                  {` / ${formatStatValue(team.dps)} DPS`}
                 </span>
                 <Button
                   aria-label={t("Clear")}
@@ -691,7 +691,7 @@ function AbyssLineSection({
                 flexGrow: wave.hp / Math.max(hp, 1),
                 opacity: Math.min(0.55 + index * 0.1, 0.95),
               }}
-              title={`${wave.wave === null ? t("Unwaved") : tf("Wave {}", [String(wave.wave)])} · ${wave.monsterCount} · HP ${formatStatValue(wave.hp)}`}
+              title={`${wave.wave === null ? t("Unwaved") : tf("Wave {}", [String(wave.wave)])} / ${wave.monsterCount} / HP ${formatStatValue(wave.hp)}`}
             />
           ))}
         </div>
@@ -740,7 +740,7 @@ function AbyssTeamAvatars({ team }: { team: AbyssTeam }) {
         const initial = (member.name || String(member.id)).slice(0, 1);
         return (
           <span
-            className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border bg-muted text-[10px] font-medium"
+            className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border bg-muted text-xs font-medium"
             key={member.id}
             title={member.name || String(member.id)}
           >
@@ -786,7 +786,7 @@ function MonsterChip({
         <span className="block truncate text-xs font-medium">
           {monster.name}
         </span>
-        <span className="block truncate font-mono text-[9px] text-muted-foreground">
+        <span className="block truncate font-mono text-xs text-muted-foreground">
           {monster.wave === null ? "-" : `W${monster.wave}`} ×{monster.count} HP{" "}
           {formatStatValue(monsterTotalHp(monster))}
         </span>
@@ -811,7 +811,7 @@ function AbyssMonsterDetail({ monster }: { monster: AbyssMonster }) {
                 ? t("Descending Line")
                 : t("Full floor config")}
             {monster.wave !== null
-              ? ` · ${tf("Wave {}", [String(monster.wave)])}`
+              ? ` / ${tf("Wave {}", [String(monster.wave)])}`
               : ""}
           </p>
         </div>

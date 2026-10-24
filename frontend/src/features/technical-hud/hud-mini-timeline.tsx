@@ -148,7 +148,7 @@ export function HudMiniTimeline({
         aria-hidden="true"
       />
 
-      <div className="pointer-events-none absolute inset-x-1 top-0 flex items-center justify-between text-[9px] text-white/55">
+      <div className="pointer-events-none absolute inset-x-1 top-0 flex items-center justify-between text-xs text-white/55">
         <span className="hud-text-halo">{t("DPS")}</span>
         <span className="hud-text-halo">
           {tf("Peak DPS: {0}", [formatHudNumber(timeline.peakDps)])}
@@ -180,7 +180,7 @@ export function HudMiniTimeline({
           />
           <div
             role="tooltip"
-            className="pointer-events-none absolute bottom-1 z-10 -translate-x-1/2 rounded-sm bg-black/85 px-1.5 py-1 text-[9px] leading-3 text-white shadow-sm ring-1 ring-white/15"
+            className="pointer-events-none absolute bottom-1 z-10 -translate-x-1/2 rounded-sm bg-black/85 px-1.5 py-1 text-xs leading-3 text-white shadow-sm ring-1 ring-white/15"
             style={{ left: tooltipLeft }}
           >
             <p className="whitespace-nowrap text-white/70">
@@ -191,7 +191,7 @@ export function HudMiniTimeline({
             </p>
             <p className="whitespace-nowrap">
               {tf("DPS: {0}", [formatHudNumber(hoveredBucket.dps)])}
-              {" · "}
+              {" / "}
               {tf("Damage: {0}", [formatHudNumber(hoveredBucket.damage)])}
             </p>
           </div>

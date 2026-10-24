@@ -260,7 +260,7 @@ function EnvironmentSection({ snapshot }: { snapshot: DiagnosticsSnapshot }) {
         ? `${connection.remoteIp}:${connection.remotePort.toLocaleString()}`
         : t("Not detected"),
       detail: connection
-        ? tf("PID {0} · local {1}", [
+        ? tf("PID {0} / local {1}", [
             connection.pid.toString(),
             connection.localIp,
           ])
@@ -274,7 +274,7 @@ function EnvironmentSection({ snapshot }: { snapshot: DiagnosticsSnapshot }) {
     {
       label: "Raw capture",
       value: raw
-        ? tf("{0} packets · {1}", [
+        ? tf("{0} packets / {1}", [
             formatDecimalString(raw.packetCount),
             formatByteCount(raw.capturedBytes),
           ])
@@ -304,7 +304,7 @@ function EnvironmentSection({ snapshot }: { snapshot: DiagnosticsSnapshot }) {
               {row.value}
             </dd>
             <dd
-              className="mt-0.5 truncate text-[11px] text-muted-foreground"
+              className="mt-0.5 truncate text-xs text-muted-foreground"
               title={row.detail}
             >
               {row.detail}
@@ -454,7 +454,7 @@ function DiagnosticCheckRow({ check }: { check: DiagnosticsCheckSnapshot }) {
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <h3 className="truncate text-sm font-medium">{t(check.titleKey)}</h3>
-          <Badge variant="outline" className="shrink-0 text-[10px]">
+          <Badge variant="outline" className="shrink-0 text-xs">
             {t(STATUS_LABELS[check.status])}
           </Badge>
         </div>
@@ -548,7 +548,7 @@ function QualitySection({ quality }: { quality: DiagnosticsQualitySnapshot }) {
         ))}
       </dl>
       {quality.unattributedServerDamageEvents !== "0" ? (
-        <p className="px-4 pt-3 text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+        <p className="px-4 pt-3 text-xs leading-relaxed text-warning">
           {t(
             "Server HP loss without one matching hit remains explicitly unassigned and is not added to team or character totals.",
           )}

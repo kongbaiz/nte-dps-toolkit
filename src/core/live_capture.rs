@@ -27,7 +27,9 @@ use super::diagnostics::DiagnosticQualityCache;
 use super::{
     CoreError, CoreErrorCode,
     capture::{CaptureController, CaptureControllerOptions},
-    history::{HistoryArchivePolicy, PendingHistoryArchive, abyss_event_starts_new_round},
+    history::{
+        HistoryArchivePolicy, PendingHistoryArchive, abyss_event_starts_new_round, auto_round_due,
+    },
     reducer::{CoreSignal, apply_engine_event},
 };
 use crate::{
@@ -643,11 +645,46 @@ impl LiveCaptureService {
         &self,
         policy: HistoryArchivePolicy,
     ) -> Result<Option<CutRound>, CoreError> {
+        self.cut_round_checked(policy, None)
+    }
+
+    /// Rechecks automatic-round eligibility under the same gate as the cut.
+    pub fn cut_idle_round(
+        &self,
+        policy: HistoryArchivePolicy,
+        idle_seconds: u32,
+    ) -> Result<Option<CutRound>, CoreError> {
+        self.cut_round_checked(policy, Some(idle_seconds))
+    }
+
+    fn cut_round_checked(
+        &self,
+        policy: HistoryArchivePolicy,
+        idle_seconds: Option<u32>,
+    ) -> Result<Option<CutRound>, CoreError> {
         self.checked(|inner| {
             let _gate = checked_lock(&inner.event_gate)?;
             let mut state = checked_lock(&inner.state)?;
             let source = *checked_lock(&inner.quality_source)?;
             let mut idle_timer = checked_lock(&inner.last_outgoing_hit_at)?;
+            if let Some(idle_seconds) = idle_seconds {
+                let status = checked_lock(&inner.status)?;
+                if !auto_round_due(
+                    status.phase == LiveCapturePhase::Running
+                        && !matches!(
+                            source,
+                            CaptureQualitySource::JsonReplay | CaptureQualitySource::PcapngReplay
+                        ),
+                    false,
+                    state.abyss.is_active(),
+                    state.is_game_paused(),
+                    !state.hits.is_empty(),
+                    idle_timer.map(|last| last.elapsed()),
+                    idle_seconds,
+                ) {
+                    return Ok(None);
+                }
+            }
             if state.hits.is_empty() && state.stats.is_empty() && !state.abyss.is_active() {
                 return Ok(None);
             }
@@ -2463,6 +2500,164 @@ mod tests {
             character_revision
         );
         assert_eq!(service.revision(), initial_revision);
+    }
+
+    #[test]
+    fn idle_round_rechecks_new_damage_before_cutting() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        process(&service, hit(321.0));
+        service.0.status.lock().unwrap().phase = LiveCapturePhase::Running;
+        *service.0.last_outgoing_hit_at.lock().unwrap() =
+            Some(Instant::now() - Duration::from_secs(60));
+        assert!(auto_round_due(
+            true,
+            false,
+            false,
+            false,
+            true,
+            service.idle_elapsed().unwrap(),
+            30,
+        ));
+
+        // A hit arrives after the maintenance probe, before the cut transaction.
+        process(&service, hit(99.0));
+        let revision = service.revision();
+        let packet_revision = service
+            .with_packet_state(|revision, _, _| revision)
+            .unwrap();
+        assert!(
+            service
+                .cut_idle_round(HistoryArchivePolicy::default(), 30)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(project(&service, |state| state.total_damage), 420.0);
+        assert_eq!(service.revision(), revision);
+        assert_eq!(
+            service
+                .with_packet_state(|revision, _, _| revision)
+                .unwrap(),
+            packet_revision
+        );
+    }
+
+    #[test]
+    fn idle_round_rechecks_lifecycle_abyss_and_pause_without_revision_changes() {
+        use crate::engine::model::{AbyssHalf, TimeStopEvent};
+        for (phase, source, abyss, paused) in [
+            (
+                LiveCapturePhase::Starting,
+                CaptureQualitySource::Live,
+                false,
+                false,
+            ),
+            (
+                LiveCapturePhase::Stopping,
+                CaptureQualitySource::Live,
+                false,
+                false,
+            ),
+            (
+                LiveCapturePhase::Stopped,
+                CaptureQualitySource::Live,
+                false,
+                false,
+            ),
+            (
+                LiveCapturePhase::Running,
+                CaptureQualitySource::JsonReplay,
+                false,
+                false,
+            ),
+            (
+                LiveCapturePhase::Running,
+                CaptureQualitySource::PcapngReplay,
+                false,
+                false,
+            ),
+            (
+                LiveCapturePhase::Running,
+                CaptureQualitySource::Live,
+                true,
+                false,
+            ),
+            (
+                LiveCapturePhase::Running,
+                CaptureQualitySource::Plugin,
+                false,
+                true,
+            ),
+        ] {
+            let service = LiveCaptureService::new(LiveCaptureResources::default());
+            process(&service, hit(321.0));
+            service.0.status.lock().unwrap().phase = phase;
+            *service.0.quality_source.lock().unwrap() = source;
+            *service.0.last_outgoing_hit_at.lock().unwrap() =
+                Some(Instant::now() - Duration::from_secs(60));
+            if abyss {
+                process(
+                    &service,
+                    EngineEvent::Abyss(AbyssEvent::Stage {
+                        timestamp: 2.0,
+                        cycle: None,
+                        floor: Some(11),
+                        half: AbyssHalf::First,
+                        allow_late_backfill: false,
+                    }),
+                );
+            }
+            if paused {
+                process(
+                    &service,
+                    EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted {
+                        timestamp: 2.0,
+                        pause_type_mask: 1,
+                    }),
+                );
+            }
+            let revision = service.revision();
+            let damage = project(&service, |state| state.total_damage);
+            assert!(
+                service
+                    .cut_idle_round(HistoryArchivePolicy::default(), 30)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(service.revision(), revision);
+            assert_eq!(project(&service, |state| state.total_damage), damage);
+        }
+    }
+
+    #[test]
+    fn idle_round_cuts_once_and_preserves_inventory_and_source() {
+        for source in [CaptureQualitySource::Live, CaptureQualitySource::Plugin] {
+            let service = LiveCaptureService::new(LiveCaptureResources::default());
+            let inventory = install_test_inventory(&service);
+            process(&service, hit(321.0));
+            service.0.status.lock().unwrap().phase = LiveCapturePhase::Running;
+            *service.0.quality_source.lock().unwrap() = source;
+            *service.0.last_outgoing_hit_at.lock().unwrap() =
+                Some(Instant::now() - Duration::from_secs(60));
+            let revision = service.revision();
+            let cut = service
+                .cut_idle_round(HistoryArchivePolicy::default(), 30)
+                .unwrap()
+                .unwrap();
+            assert_eq!(cut.state.total_damage, 321.0);
+            assert_eq!(cut.source, source);
+            assert_eq!(service.revision(), revision + 1);
+            assert_test_inventory(&service, inventory);
+            assert!(service.idle_elapsed().unwrap().is_none());
+            assert!(
+                service
+                    .cut_idle_round(HistoryArchivePolicy::default(), 30)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(service.revision(), revision + 1);
+            process(&service, hit(99.0));
+            assert_eq!(project(&service, |state| state.total_damage), 99.0);
+        }
     }
 
     #[test]

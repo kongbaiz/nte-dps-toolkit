@@ -39,6 +39,12 @@ architecture boundaries and manual Windows validation checklist.
 | 标签、说明与表单排列             | `components/nte/form-row.tsx`；容器不足 24rem 时自动堆叠      |
 | 控制台外壳和页面专属布局         | `styles/console.css`；仅放布局，不覆盖共享组件内部尺寸        |
 
+配色使用固定 Radix Colors 3.0.0 sRGB 值，直接映射到现有 shadcn 语义令牌，
+不新增运行时依赖。正文/说明/标题统一为 14/12/20px，关键统计允许 24px；
+默认边框为 0.5px，高对比度模式为 1px。游戏提供的角色/属性颜色保留领域含义。
+设置页按“界面、HUD、采集与数据”分组，切换时保留已挂载的表单草稿；
+加载、失败及操作错误仍由原来的 `useSettings` 路径处理。
+
 控制台的密度改变间距和控件高度，不再改变根字号，所以切换密度不会顺带
 改变 rem 断点和文字尺寸。HUD 的透明背景、原生尺寸与窗口行为保持独立。
 

@@ -2456,5 +2456,19 @@
   "The proxy deployment record is not a regular file. No files were removed.": "プロキシの配置記録が通常のファイルではありません。ファイルは削除されていません。",
   "The proxy deployment record exceeds the size limit. No files were removed.": "プロキシの配置記録がサイズ制限を超えています。ファイルは削除されていません。",
   "The proxy deployment record version is unsupported. Update Toolkit before removing the proxy.": "このプロキシ配置記録のバージョンには対応していません。Toolkit を更新してからプロキシを削除してください。",
-  "The proxy deployment record is invalid. No files were removed.": "プロキシの配置記録が無効です。ファイルは削除されていません。"
+  "The proxy deployment record is invalid. No files were removed.": "プロキシの配置記録が無効です。ファイルは削除されていません。",
+  "{} hits / {}": "{} 回・{}",
+  "Damage {} / Share {}% / Taken {}": "ダメージ {}・割合 {}%・被ダメージ {}",
+  "Raw captures: {} / {}": "生キャプチャ：{} 個・{}",
+  "{} monsters / {} waves": "{} 体・{} ウェーブ",
+  "{} enemies / {} kinds": "敵 {} 体・{} 種類",
+  "{} seasons / {} floors / {} abyss enemies": "計 {} 期・{} 階・アビス敵 {} 体",
+  "Confirmed output {} ({} hits) / candidate output {} ({} hits, {}% of total output)": "確定出力 {}（{} 回）・候補出力 {}（{} 回、総出力の {}%）",
+  "Marker {} / {}s": "マーカー {} / {}秒",
+  "Selection / {}s - {}s": "選択範囲 / {}秒 - {}秒",
+  "Session reset / use Undo within 5 seconds": "セッションをリセットしました / 5 秒以内に元に戻すを使用してください",
+  "PID {0} / local {1}": "PID {0} / ローカル {1}",
+  "{0} packets / {1}": "{0} パケット / {1}",
+  "Paused / {} pending events / {} debug packets": "一時停止中・保留イベント {} 件・デバッグパケット {} 件",
+  "Capture and data": "キャプチャとデータ"
 }

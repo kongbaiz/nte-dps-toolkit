@@ -2,9 +2,10 @@
 @layer components {
   .ui-page-header {
     flex-shrink: 0;
+    min-width: 0;
     padding: var(--ui-card-padding) var(--ui-page-padding);
-    border-bottom: 1px solid var(--border);
-    background: var(--card);
+    border-bottom: var(--ui-border-width) solid var(--border);
+    background: var(--background);
   }
 
   .ui-page-title {
@@ -54,9 +55,9 @@
     width: 100%;
     min-width: 0;
     height: var(--ui-control-height);
-    border: 1px solid var(--input);
+    border: var(--ui-border-width) solid var(--input);
     border-radius: var(--radius-md);
-    background: var(--background);
+    background: var(--card);
     padding-inline: 10px;
     color: var(--foreground);
     font-size: var(--ui-font-body);
@@ -64,6 +65,10 @@
     transition:
       border-color var(--motion-duration-fast),
       box-shadow var(--motion-duration-fast);
+  }
+
+  .ui-control:hover:not(:disabled):not(:focus-visible) {
+    border-color: var(--ring);
   }
 
   .ui-control:focus-visible {
@@ -127,6 +132,10 @@
   @container ui-field (min-width: 24rem) {
     .ui-form-row-layout {
       grid-template-columns: minmax(8.5rem, 0.65fr) minmax(0, 1fr);
+      align-items: start;
+    }
+    .ui-form-row-layout > :first-child {
+      padding-top: max(0px, calc((var(--ui-control-height) - 1.5em) / 2));
     }
   }
 
@@ -136,6 +145,72 @@
     }
     .ui-page-scroll {
       padding: var(--ui-card-padding);
+    }
+  }
+}
+
+@layer components {
+  .settings-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 24px;
+  }
+  .settings-navigation {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    min-width: 0;
+    max-width: 100%;
+    gap: 4px;
+    padding: 4px;
+    border-radius: calc(var(--radius-md) + 4px);
+    background: var(--muted);
+  }
+  .settings-tab {
+    min-width: 0;
+    min-height: var(--ui-control-height);
+    padding: 6px 8px;
+    border: var(--ui-border-width) solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    font-size: var(--ui-font-body);
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: normal;
+    outline: none;
+    transition:
+      color var(--motion-duration-fast),
+      background-color var(--motion-duration-fast);
+  }
+  .settings-tab:hover {
+    color: var(--foreground);
+  }
+  .settings-tab[data-active] {
+    border-color: var(--input);
+    background: var(--card);
+    color: var(--foreground);
+  }
+  .settings-tab:focus-visible,
+  .settings-section:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .settings-section {
+    min-width: 0;
+    border-radius: var(--radius-xl);
+    outline: none;
+  }
+  @media (pointer: coarse) {
+    :root,
+    [data-density] {
+      --ui-control-height: 44px;
+      --ui-control-height-xs: 44px;
+      --ui-control-height-sm: 44px;
+      --ui-control-height-lg: 44px;
+    }
+    .console-nav-row {
+      min-height: 44px;
     }
   }
 }

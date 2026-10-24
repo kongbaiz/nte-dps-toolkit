@@ -98,7 +98,7 @@ export function PluginControls({
         {panel.operation?.state && (
           <p className="w-full text-xs text-muted-foreground">
             {t("Plugin operation")}: {panel.operation.state}
-            {panel.operation.error && ` · ${t(panel.operation.error)}`}
+            {panel.operation.error && ` / ${t(panel.operation.error)}`}
           </p>
         )}
       </header>

@@ -9,6 +9,16 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --text-xs: var(--ui-font-caption);
+  --text-sm: var(--ui-font-body);
+  --text-base: var(--ui-font-body);
+  --text-lg: var(--ui-font-title);
+  --text-xl: var(--ui-font-title);
+  --text-2xl: 24px;
+  --text-3xl: 24px;
+  --color-success: var(--console-success);
+  --color-warning: var(--console-warning);
+  --color-info: var(--console-status);
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", "Microsoft YaHei UI", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
@@ -49,6 +59,22 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@utility border {
+  border-width: var(--ui-border-width);
+}
+@utility border-t {
+  border-top-width: var(--ui-border-width);
+}
+@utility border-b {
+  border-bottom-width: var(--ui-border-width);
+}
+@utility border-l {
+  border-left-width: var(--ui-border-width);
+}
+@utility border-r {
+  border-right-width: var(--ui-border-width);
 }
 
 .reduce-motion,
@@ -397,21 +423,6 @@ html[data-window-route="notification-island"] .motion-skeleton {
     transform var(--motion-duration-base) var(--motion-ease-emphasized);
 }
 
-.console-nav-row::before {
-  position: absolute;
-  inset-block: 0.45rem;
-  inset-inline-start: 0.125rem;
-  width: 0.125rem;
-  border-radius: 999px;
-  background: currentColor;
-  content: "";
-  opacity: 0;
-  transform: scaleY(0.35);
-  transition:
-    opacity var(--motion-duration-fast) var(--motion-ease-standard),
-    transform var(--motion-duration-slow) var(--motion-ease-emphasized);
-}
-
 .console-nav-row[aria-current="page"] {
   transform: translateX(0);
 }
@@ -422,11 +433,6 @@ html[data-window-route="notification-island"] .motion-skeleton {
 
 .console-nav-row[aria-current="page"]:active:not(:disabled) {
   transform: scale(0.98);
-}
-
-.console-nav-row[aria-current="page"]::before {
-  opacity: 0.9;
-  transform: scaleY(1);
 }
 
 @keyframes ui-page-enter {
@@ -708,14 +714,14 @@ html[data-window-route="notification-island"] .motion-skeleton {
 
 .timeline-panel {
   position: relative;
-  border: 1px solid var(--border);
+  border: var(--ui-border-width) solid var(--border);
   background: var(--card);
   box-shadow: var(--shadow-sm);
 }
 
 .timeline-chart-shell {
   flex-basis: 20rem;
-  border: 1px solid var(--border);
+  border: var(--ui-border-width) solid var(--border);
   background: var(--card);
   box-shadow: var(--shadow-sm);
 }
@@ -831,6 +837,7 @@ html[data-window-route="notification-island"] .motion-skeleton {
 
   body {
     @apply text-foreground;
+    font-size: var(--ui-font-body);
     margin: 0;
     overflow: hidden;
     user-select: none;
@@ -882,7 +889,7 @@ html[data-window-route="notification-island"] .motion-skeleton {
     flex: none;
     align-items: center;
     justify-content: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: var(--ui-border-width) solid var(--border);
     background: var(--background);
     user-select: none;
   }
@@ -985,12 +992,12 @@ html[data-window-route="notification-island"] .motion-skeleton {
     }
 
     .main-dps-metric > div:first-child {
-      font-size: 1rem;
+      font-size: var(--ui-font-body);
       line-height: 1.25rem;
     }
 
     .main-dps-metric > div:last-child {
-      font-size: 0.625rem;
+      font-size: var(--ui-font-caption);
       line-height: 1rem;
     }
 

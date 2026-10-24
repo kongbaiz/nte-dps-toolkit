@@ -408,7 +408,7 @@ export function MainDpsPage() {
         {!presentation.islandNotifications && resetUndoToken !== null && (
           <ActionNotice
             status="success"
-            message={t("Session reset · use Undo within 5 seconds")}
+            message={t("Session reset / use Undo within 5 seconds")}
             actionLabel={t("Undo")}
             onAction={() => {
               const token = resetUndoToken;
@@ -613,7 +613,7 @@ export function MainDpsPage() {
               </Button>
               {snapshot.processingPaused && (
                 <span className="self-center text-xs text-muted-foreground">
-                  {tf("Paused · {} pending events · {} debug packets", [
+                  {tf("Paused / {} pending events / {} debug packets", [
                     snapshot.pausedPendingEvents,
                     snapshot.pausedDebugPackets,
                   ])}
@@ -1172,7 +1172,7 @@ function CharacterRow({
         className="absolute inset-y-0 left-0 w-[3px] rounded-l-lg bg-[var(--main-dps-character-accent)]"
         aria-hidden="true"
       />
-      <span className="main-dps-character-attribute grid size-5 place-items-center text-[0.625rem] font-medium text-[var(--main-dps-character-accent)]">
+      <span className="main-dps-character-attribute grid size-5 place-items-center text-xs font-medium text-[var(--main-dps-character-accent)]">
         {attribute === null ? (
           `#${index + 1}`
         ) : (
@@ -1189,7 +1189,7 @@ function CharacterRow({
       <span className="min-w-0">
         <strong className="block truncate text-sm">{row.name}</strong>
         <span className="main-dps-character-secondary block truncate text-xs text-muted-foreground">
-          {tf("{} hits · {}", [row.hits, formatDuration(row.durationSeconds)])}
+          {tf("{} hits / {}", [row.hits, formatDuration(row.durationSeconds)])}
         </span>
       </span>
       <span className="min-w-0 text-right">
@@ -1197,7 +1197,7 @@ function CharacterRow({
           <AnimatedNumber value={row.dps} format={formatMainMetric} /> DPS
         </strong>
         <span className="main-dps-character-secondary block truncate whitespace-nowrap text-xs text-muted-foreground">
-          {tf("Damage {} · Share {}% · Taken {}", [
+          {tf("Damage {} / Share {}% / Taken {}", [
             formatMainMetric(row.damage),
             row.damageSharePercent.toFixed(1),
             formatMainMetric(row.damageTaken),
@@ -1311,7 +1311,7 @@ function DamageAttributionStrip({
           label={t("Life reduction")}
           value={
             attribution.includeMaxHpReductionInTotalDamage
-              ? `${formatMainMetric(attribution.maxHpReduction)} · ${percentage(attribution.maxHpReduction)}`
+              ? `${formatMainMetric(attribution.maxHpReduction)} / ${percentage(attribution.maxHpReduction)}`
               : formatMainMetric(attribution.maxHpReduction)
           }
           active={attribution.maxHpReduction > 0}

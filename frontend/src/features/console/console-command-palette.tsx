@@ -145,7 +145,7 @@ export function ConsoleCommandPalette({
                         </span>
                         <span
                           className={cn(
-                            "block truncate text-[11px]",
+                            "block truncate text-xs",
                             rowClasses.secondary,
                           )}
                         >
@@ -153,10 +153,7 @@ export function ConsoleCommandPalette({
                         </span>
                       </span>
                       <span
-                        className={cn(
-                          "shrink-0 text-[11px]",
-                          rowClasses.secondary,
-                        )}
+                        className={cn("shrink-0 text-xs", rowClasses.secondary)}
                       >
                         {disabled ? t("Disabled") : ""}
                       </span>

@@ -2,7 +2,7 @@
   container-type: inline-size;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 208px;
-  gap: 10px;
+  gap: var(--ui-section-gap);
   max-width: 1400px;
   margin-inline: auto;
   color: var(--foreground);
@@ -11,8 +11,8 @@
   display: grid;
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--radius-xl);
   background: var(--card);
 }
 .build-portrait {
@@ -42,7 +42,7 @@
   padding: 0.2rem 0.5rem;
   background: var(--secondary);
   color: var(--secondary-foreground);
-  font-size: 0.8rem;
+  font-size: var(--ui-font-body);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -61,7 +61,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.65rem;
+  font-size: var(--ui-font-caption);
   margin-top: 0.25rem;
 }
 .build-skill-level {
@@ -70,7 +70,7 @@
   height: 1.65rem;
   justify-content: center;
   align-items: center;
-  border: 1px solid var(--border);
+  border: var(--ui-border-width) solid var(--border);
   border-radius: 50%;
   background: var(--card);
   font-variant-numeric: tabular-nums;
@@ -92,14 +92,14 @@
   gap: 0.6rem;
 }
 .build-character-info h2 {
-  font-size: 1.4rem;
+  font-size: var(--ui-font-title);
   line-height: 1.3;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 .build-attributes h3 {
   margin-bottom: 0.5rem;
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
   font-weight: 500;
   color: var(--muted-foreground);
 }
@@ -109,7 +109,7 @@
   gap: 0 8px;
 }
 .build-runtime-stats dt {
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
@@ -126,7 +126,7 @@
 }
 .build-primary-stat dd {
   margin-top: 0.25rem;
-  font-size: 1.05rem;
+  font-size: var(--ui-font-body);
   font-weight: 650;
   line-height: 1.3;
 }
@@ -137,11 +137,12 @@
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.2rem 0;
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  border-bottom: var(--ui-border-width) solid
+    color-mix(in oklab, var(--border) 60%, transparent);
 }
 .build-secondary-stat dd {
   text-align: right;
-  font-size: 0.8rem;
+  font-size: var(--ui-font-body);
   font-weight: 600;
 }
 .build-stat-rows > div {
@@ -151,10 +152,11 @@
   gap: 0.6rem;
   padding: 2px 10px;
   line-height: 1.35;
-  font-size: 0.75rem;
+  font-size: var(--ui-font-caption);
 }
 .build-stat-rows > div + div {
-  border-top: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
+  border-top: var(--ui-border-width) solid
+    color-mix(in oklab, var(--border) 45%, transparent);
 }
 .build-stat-rows dt {
   color: var(--muted-foreground);
@@ -180,7 +182,7 @@
 .build-attribute-note,
 .build-unit-note {
   padding: 0.5rem 0;
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
   line-height: 1.35;
   color: var(--muted-foreground);
 }
@@ -188,7 +190,7 @@
   display: grid;
   grid-template-columns: 1fr;
   align-items: stretch;
-  gap: 10px;
+  gap: var(--ui-section-gap);
   margin: 0;
   align-content: start;
 }
@@ -197,20 +199,20 @@
 }
 .build-section-title {
   margin: 0 0 0.4rem;
-  font-size: 0.85rem;
+  font-size: var(--ui-font-body);
   font-weight: 600;
 }
 .build-equipment-card {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--radius-xl);
   background: var(--card);
 }
 .build-equipment-card > .build-source {
   margin-top: auto;
-  border-top: 1px solid var(--border);
+  border-top: var(--ui-border-width) solid var(--border);
 }
 .build-equipment-card > header {
   display: flex;
@@ -218,7 +220,7 @@
   align-items: center;
   gap: 0.5rem;
   padding: 6px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: var(--ui-border-width) solid var(--border);
 }
 .build-equipment-image {
   position: relative;
@@ -237,20 +239,20 @@
   left: 0;
   right: 0;
   text-align: center;
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
   font-variant-numeric: tabular-nums;
 }
 .build-equipment-heading {
   min-width: 0;
 }
 .build-equipment-heading h4 {
-  font-size: 0.8rem;
+  font-size: var(--ui-font-body);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 .build-equipment-heading p {
   margin-top: 0.15rem;
-  font-size: 0.65rem;
+  font-size: var(--ui-font-caption);
   color: var(--muted-foreground);
 }
 .build-arc-card .build-equipment-image {
@@ -262,17 +264,17 @@
   height: 42px;
 }
 .build-arc-card .build-equipment-heading h4 {
-  font-size: 0.85rem;
+  font-size: var(--ui-font-body);
   color: var(--foreground);
 }
 .build-awakenings {
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--radius-xl);
   padding: 0.75rem;
   background: var(--card);
 }
 .build-awakenings h3 {
-  font-size: 0.8rem;
+  font-size: var(--ui-font-body);
   font-weight: 600;
   margin-bottom: 0.6rem;
 }
@@ -287,7 +289,7 @@
   gap: 0.4rem;
   border-radius: 0.5rem;
   padding: 0.25rem 0;
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
   overflow-wrap: anywhere;
 }
 .build-awakening-chip b {
@@ -308,21 +310,21 @@
   gap: 1rem;
 }
 .build-section-header h3 {
-  font-size: 1rem;
+  font-size: var(--ui-font-body);
   font-weight: 600;
 }
 .build-section-header span {
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
   color: var(--muted-foreground);
 }
 .build-equipment-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--ui-section-gap);
   align-items: stretch;
 }
 .build-source {
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
   color: var(--muted-foreground);
 }
 .build-source summary {
@@ -342,15 +344,15 @@
   overflow-wrap: anywhere;
 }
 .build-source .build-stat-rows > div {
-  font-size: 0.7rem;
+  font-size: var(--ui-font-caption);
 }
 .build-source p {
   padding: 0.2rem 0.45rem;
 }
 .build-extra {
   margin-top: 0;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border: var(--ui-border-width) solid var(--border);
+  border-radius: var(--radius-xl);
   overflow: hidden;
 }
 .build-extra h3 {
@@ -358,7 +360,7 @@
   font-weight: 600;
 }
 .build-muted {
-  font-size: 0.75rem;
+  font-size: var(--ui-font-caption);
   color: var(--muted-foreground);
   margin: 0.5rem 0;
 }
@@ -371,7 +373,7 @@
   align-items: center;
   gap: 0.3rem;
   color: var(--muted-foreground);
-  font-size: 0.65rem;
+  font-size: var(--ui-font-caption);
   text-align: center;
 }
 .build-art-missing svg {

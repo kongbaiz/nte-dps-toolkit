@@ -115,7 +115,7 @@ function EquipmentCard({
           {kind === "arc" ? (
             <p>
               {t("Star level")}{" "}
-              {formatPanelNumber(entryValue(entry, "Star level"), "integer")} ·{" "}
+              {formatPanelNumber(entryValue(entry, "Star level"), "integer")} /{" "}
               {t("Breakthrough level")}{" "}
               {formatPanelNumber(
                 entryValue(entry, "Breakthrough level"),

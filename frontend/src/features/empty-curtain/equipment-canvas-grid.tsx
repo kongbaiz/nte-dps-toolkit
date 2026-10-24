@@ -98,7 +98,8 @@ export function EquipmentCanvasGrid({
       if (spacer) spacer.style.height = `${layout.totalHeight}px`;
 
       canvas.style.top = `${nextRenderWindow.top}px`;
-      canvas.style.width = `${width}px`;
+      // clientWidth rounds fractional CSS pixels; percentage width avoids a phantom scrollbar.
+      canvas.style.width = "100%";
       canvas.style.height = `${nextRenderWindow.height}px`;
       const logicalSizeChanged =
         backingLogicalWidth !== width ||
@@ -449,9 +450,9 @@ function drawEquipmentCard(
 
   context.textBaseline = "middle";
   context.fillStyle = theme.foreground;
-  context.font = "600 13px Geist Variable, sans-serif";
+  context.font = "600 14px Geist Variable, sans-serif";
   drawClippedText(context, item.name, x + 74, y + 22, header.titleWidth);
-  context.font = "11px ui-monospace, monospace";
+  context.font = "12px ui-monospace, monospace";
   context.fillStyle = theme.mutedForeground;
   const level = item.maxLevel
     ? tf("Lv.{}/{}", [String(item.level), String(item.maxLevel)])
@@ -486,7 +487,7 @@ function drawEquipmentCard(
   }
   if (visibleStatCounts.secondary > 0) {
     context.fillStyle = theme.mutedForeground;
-    context.font = "600 10px Geist Variable, sans-serif";
+    context.font = "600 12px Geist Variable, sans-serif";
     context.fillText(t("Secondary Stats").toUpperCase(), x + 16, cursorY + 4);
     cursorY += 19;
   }
@@ -535,11 +536,11 @@ function drawStatLine(
   unlockLabel: string | null = null,
 ) {
   context.fillStyle = locked ? theme.mutedForeground : theme.foreground;
-  context.font = `${strong ? "600" : "500"} 11px Geist Variable, sans-serif`;
+  context.font = `${strong ? "600" : "500"} 12px Geist Variable, sans-serif`;
   const rightReserve = locked ? 88 : 62;
   drawClippedText(context, label, x, y, width - rightReserve);
   context.textAlign = "right";
-  context.font = `${strong ? "600" : "500"} 11px ui-monospace, monospace`;
+  context.font = `${strong ? "600" : "500"} 12px ui-monospace, monospace`;
   if (!locked) {
     context.fillText(value, x + width, y);
   } else {
@@ -570,7 +571,7 @@ function drawEquipmentImage(
   context.fill();
   if (!url) {
     context.fillStyle = theme.mutedForeground;
-    context.font = "18px sans-serif";
+    context.font = "20px sans-serif";
     context.fillText("◇", x + 15, y + size / 2);
     return;
   }
@@ -611,7 +612,7 @@ function drawCharacterAvatar(
     context.drawImage(image, x, y, size, size);
   } else {
     context.fillStyle = theme.mutedForeground;
-    context.font = "600 10px ui-monospace, monospace";
+    context.font = "600 12px ui-monospace, monospace";
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText(String(characterId), x + size / 2, y + size / 2);

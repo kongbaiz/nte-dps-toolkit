@@ -208,7 +208,7 @@ function SkillsReady({
         <aside className="border-b border-border/70 p-2.5 min-[1040px]:border-r min-[1040px]:border-b-0">
           <div className="mb-2 flex items-center justify-between gap-3 px-1.5">
             <h2 className="text-sm font-semibold">{t("Character")}</h2>
-            <span className="font-mono text-[11px] text-muted-foreground">
+            <span className="font-mono text-xs text-muted-foreground">
               {characters.length}
             </span>
           </div>
@@ -233,13 +233,13 @@ function SkillsReady({
                 </span>
                 <span
                   className={cn(
-                    "block truncate font-mono text-[11px]",
+                    "block truncate font-mono text-xs",
                     selectedCharacterId === null
                       ? "text-primary-foreground/70"
                       : "text-muted-foreground",
                   )}
                 >
-                  {number(snapshot.totalDamage)} · {snapshot.totalHits}{" "}
+                  {number(snapshot.totalDamage)} / {snapshot.totalHits}{" "}
                   {t("hits")}
                 </span>
               </span>
@@ -475,17 +475,17 @@ function CharacterButton({
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-2">
           <span className="truncate text-sm font-medium">{character.name}</span>
-          <span className="font-mono text-[11px]">
+          <span className="font-mono text-xs">
             {(character.share * 100).toFixed(1)}%
           </span>
         </span>
         <span
           className={cn(
-            "block truncate font-mono text-[11px]",
+            "block truncate font-mono text-xs",
             selected ? "text-primary-foreground/70" : "text-muted-foreground",
           )}
         >
-          {number(character.damage)} · {character.entries} {t("Skill Entries")}
+          {number(character.damage)} / {character.entries} {t("Skill Entries")}
         </span>
       </span>
     </button>
@@ -528,8 +528,8 @@ function SkillRow({
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{row.name}</p>
             <p className="truncate text-xs text-muted-foreground">
-              {character.name} · {row.category}
-              {row.followUp ? ` · ${t("Follow-up")}` : ""}
+              {character.name} / {row.category}
+              {row.followUp ? ` / ${t("Follow-up")}` : ""}
             </p>
           </div>
           <div className="font-mono text-sm font-semibold min-[680px]:text-right">
@@ -537,7 +537,7 @@ function SkillRow({
           </div>
           <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground min-[680px]:w-28 min-[680px]:justify-end">
             <span>{(share * 100).toFixed(1)}%</span>
-            <span>·</span>
+            <span aria-hidden="true">/</span>
             <span>{tf("{} hits", [row.hits])}</span>
           </div>
         </div>
@@ -616,7 +616,7 @@ function UnmappedGameplayEffect({
   return (
     <span className="inline-flex items-center rounded-md bg-muted/55 pl-2 font-mono">
       <span className="py-1">
-        {effect.index} · {tf("{} hits", [effect.hits])} ·{" "}
+        {effect.index} / {tf("{} hits", [effect.hits])} /{" "}
         {number(effect.damage)}
       </span>
       <Tooltip>

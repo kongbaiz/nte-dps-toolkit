@@ -227,7 +227,7 @@ export function HistoryPage() {
                 {tf("{} records", [String(records.length)])}
               </span>
               {history.state.snapshot.skippedFiles > 0 && (
-                <span className="text-xs text-amber-600 dark:text-amber-300">
+                <span className="text-xs text-warning">
                   {tf("Skipped {} corrupt files", [
                     String(history.state.snapshot.skippedFiles),
                   ])}
@@ -244,7 +244,7 @@ export function HistoryPage() {
             </PageHeader>
 
             {records.length > 0 && (
-              <p className="border-b px-4 py-1.5 text-[11px] text-muted-foreground">
+              <p className="border-b px-4 py-1.5 text-xs text-muted-foreground">
                 {t(
                   "Click a record for details; right-click to compare, export or delete",
                 )}
@@ -399,7 +399,7 @@ export function HistoryPage() {
                             "text-primary-foreground/75",
                         )}
                       >
-                        {number(record.summary.totalDps)} DPS ·{" "}
+                        {number(record.summary.totalDps)} DPS /{" "}
                         {number(record.summary.totalDamage)}
                       </span>
                     </button>
@@ -582,7 +582,7 @@ function RecordDetail({
                 ? "Exclude Time Stop"
                 : "Real Time (incl. time stop)",
             )}
-            {` · ${t(summary.reactionDamageSeparated ? "Reactions separated from character damage" : "Reactions included in character damage")}`}
+            {` / ${t(summary.reactionDamageSeparated ? "Reactions separated from character damage" : "Reactions included in character damage")}`}
           </CardDescription>
           <CardAction className="flex gap-1">
             {record.canSetLowerPrediction && (
@@ -685,8 +685,8 @@ function HalfCard({ half }: { half: HistoryHalf }) {
           {t(half.half === "first" ? "First Half" : "Second Half")}
         </CardTitle>
         <CardDescription>
-          {number(half.totalDps)} DPS · {number(half.totalDamage)} {t("Damage")}{" "}
-          · {formatHistoryDuration(half.durationSeconds)}
+          {number(half.totalDps)} DPS / {number(half.totalDamage)} {t("Damage")}{" "}
+          / {formatHistoryDuration(half.durationSeconds)}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -738,7 +738,7 @@ function Breakdown({
             key: `${row.charId}:${row.name}:${index}`,
             title: row.name,
             value: number(row.damage),
-            detail: `${row.charName} · ${row.hits} ${t("hits")} · ${row.damageSharePercent.toFixed(1)}%`,
+            detail: `${row.charName} / ${row.hits} ${t("hits")} / ${row.damageSharePercent.toFixed(1)}%`,
             badge: row.isFollowUp ? t("Follow-up") : undefined,
           }))}
         />
@@ -788,7 +788,7 @@ function CharacterRows({
                   {row.name}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {number(row.damage)} · {row.damageSharePercent.toFixed(1)}%
+                  {number(row.damage)} / {row.damageSharePercent.toFixed(1)}%
                 </p>
               </div>
               <span className="col-start-2 whitespace-nowrap font-mono text-xs font-medium @min-[430px]/history:col-start-auto">
@@ -957,7 +957,7 @@ function HistorySelect({
         {records.map((record) => (
           <option key={record.id} value={record.id}>
             {record.partyLabel
-              ? `${record.displayTime} · ${record.partyLabel}`
+              ? `${record.displayTime} / ${record.partyLabel}`
               : record.displayTime}
           </option>
         ))}
@@ -1019,7 +1019,7 @@ function Delta({ label, value }: { label: string; value: number }) {
       <p
         className={cn(
           "mt-1 flex items-center gap-1 font-mono font-semibold",
-          tone === "positive" && "text-emerald-600 dark:text-emerald-300",
+          tone === "positive" && "text-success",
           tone === "negative" && "text-destructive",
           tone === "neutral" && "text-foreground",
         )}

@@ -1,3 +1,5 @@
+import { Tabs } from "@base-ui/react/tabs";
+import { PreferencesGrid } from "@/components/nte/page-layout";
 import { FormRow } from "@/components/nte/form-row";
 import {
   Input,
@@ -139,70 +141,93 @@ export interface SettingsCatalogActions {
   openAbyssValues(): Promise<void>;
 }
 
-export function PrimarySettingsColumn({
+export function SettingsCatalog({
   snapshot,
   pendingAction,
   actions,
+  hud,
 }: {
   snapshot: SettingsSnapshot;
   pendingAction: string | null;
   actions: SettingsCatalogActions;
-}) {
-  return (
-    <div className="ui-section-stack">
-      <InterfaceSettingsCard
-        snapshot={snapshot}
-        pending={settingsSectionPending(pendingAction, "interface")}
-        actions={actions}
-      />
-      <SoftwareUpdateCard
-        snapshot={snapshot}
-        pending={settingsSectionPending(pendingAction, "update")}
-        actions={actions}
-      />
-      <ParseSettingsCard
-        snapshot={snapshot}
-        pending={settingsSectionPending(pendingAction, "capture")}
-        actions={actions}
-      />
-    </div>
-  );
-}
-
-export function SecondarySettingsSections({
-  snapshot,
-  pendingAction,
-  actions,
-}: {
-  snapshot: SettingsSnapshot;
-  pendingAction: string | null;
-  actions: SettingsCatalogActions;
+  hud: ReactNode;
 }) {
   return (
     <>
-      <LayoutProfilesCard
-        pending={settingsSectionPending(pendingAction, "layout")}
-        actions={actions}
-      />
-      <MainDpsDisplayCard
-        snapshot={snapshot}
-        pending={settingsSectionPending(pendingAction, "main-dps-display")}
-        actions={actions}
-      />
-      <TeamDataCard
-        snapshot={snapshot}
-        pending={settingsSectionPending(pendingAction, "team-data")}
-        actions={actions}
-      />
-      <CaptureFilesCard
-        snapshot={snapshot}
-        pending={settingsSectionPending(pendingAction, "capture-files")}
-        actions={actions}
-      />
-      <AbyssValuesCard
-        pending={settingsSectionPending(pendingAction, "abyss-values")}
-        actions={actions}
-      />
+      {/* Keep drafts mounted when switching categories. */}
+      <Tabs.Panel
+        className="settings-section"
+        value="Interface"
+        aria-label={t("Interface")}
+        keepMounted
+      >
+        <PreferencesGrid>
+          <InterfaceSettingsCard
+            snapshot={snapshot}
+            pending={settingsSectionPending(pendingAction, "interface")}
+            actions={actions}
+          />
+          <SoftwareUpdateCard
+            snapshot={snapshot}
+            pending={settingsSectionPending(pendingAction, "update")}
+            actions={actions}
+          />
+        </PreferencesGrid>
+      </Tabs.Panel>
+      <Tabs.Panel
+        className="settings-section"
+        value="HUD"
+        aria-label={t("HUD")}
+        keepMounted
+      >
+        <PreferencesGrid>
+          {hud}
+          <div className="ui-section-stack">
+            <MainDpsDisplayCard
+              snapshot={snapshot}
+              pending={settingsSectionPending(
+                pendingAction,
+                "main-dps-display",
+              )}
+              actions={actions}
+            />
+            <LayoutProfilesCard
+              pending={settingsSectionPending(pendingAction, "layout")}
+              actions={actions}
+            />
+          </div>
+        </PreferencesGrid>
+      </Tabs.Panel>
+      <Tabs.Panel
+        className="settings-section"
+        value="Capture and data"
+        aria-label={t("Capture and data")}
+        keepMounted
+      >
+        <PreferencesGrid>
+          <ParseSettingsCard
+            snapshot={snapshot}
+            pending={settingsSectionPending(pendingAction, "capture")}
+            actions={actions}
+          />
+          <div className="ui-section-stack">
+            <TeamDataCard
+              snapshot={snapshot}
+              pending={settingsSectionPending(pendingAction, "team-data")}
+              actions={actions}
+            />
+            <CaptureFilesCard
+              snapshot={snapshot}
+              pending={settingsSectionPending(pendingAction, "capture-files")}
+              actions={actions}
+            />
+            <AbyssValuesCard
+              pending={settingsSectionPending(pendingAction, "abyss-values")}
+              actions={actions}
+            />
+          </div>
+        </PreferencesGrid>
+      </Tabs.Panel>
     </>
   );
 }
@@ -374,14 +399,9 @@ function SoftwareUpdateCard({
           <Download className="size-4" aria-hidden="true" />
           {t("Software Update")}
         </CardTitle>
-        <CardDescription>
-          {t(
-            "Update connections follow the Windows system proxy, automatic proxy script, and direct-connection fallback",
-          )}
-        </CardDescription>
-        <CardAction>
+        <CardAction className="@max-[18rem]/card-header:col-start-1 @max-[18rem]/card-header:row-start-auto @max-[18rem]/card-header:justify-self-start">
           <Badge variant="outline">
-            {t("Current Version")} · {update.currentVersion}
+            {t("Current Version")} / {update.currentVersion}
           </Badge>
         </CardAction>
       </CardHeader>
@@ -415,7 +435,7 @@ function SoftwareUpdateCard({
                 <strong className="text-sm">{available.version}</strong>
               </div>
               <span className="text-xs text-muted-foreground">
-                {available.publishedAt} ·{" "}
+                {available.publishedAt} /{" "}
                 {formatByteCount(available.artifactSize)}
               </span>
             </div>
@@ -481,7 +501,7 @@ function SoftwareUpdateCard({
               <div className="flex items-center gap-2">
                 <Badge>{t("Ready")}</Badge>
                 <span className="text-sm font-medium">
-                  {t(updateComponentLabelKey(update.prepared.component))} ·{" "}
+                  {t(updateComponentLabelKey(update.prepared.component))} /{" "}
                   {update.prepared.version}
                 </span>
               </div>
@@ -644,11 +664,11 @@ function ParseSettingsCard({
             </Button>
           </div>
           {!snapshot.capture.devicesAvailable ? (
-            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+            <p className="text-xs leading-relaxed text-warning">
               {t("Capture devices are unavailable.")}
             </p>
           ) : snapshot.capture.devices.length === 0 ? (
-            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+            <p className="text-xs leading-relaxed text-warning">
               {t(
                 "No usable NIC found; confirm Npcap is installed, then click refresh",
               )}
@@ -657,7 +677,7 @@ function ParseSettingsCard({
             !snapshot.capture.devices.some(
               (device) => device.id === settings.manualCaptureDevice,
             ) ? (
-            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+            <p className="text-xs leading-relaxed text-warning">
               {t(
                 "The selected NIC is currently unavailable; reselect or click refresh",
               )}
@@ -925,7 +945,7 @@ function TeamDataCard({
         <span
           aria-live="polite"
           className={cn(
-            "self-center text-xs text-emerald-600 transition-opacity",
+            "self-center text-xs text-success transition-opacity",
             exported ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         >
@@ -960,7 +980,7 @@ function CaptureFilesCard({
           {t("Capture Files")}
         </CardTitle>
         <CardDescription>
-          {replaceSequential(t("Raw captures: {} · {}"), [
+          {replaceSequential(t("Raw captures: {} / {}"), [
             String(snapshot.captureFiles.count),
             snapshot.captureFiles.formattedSize,
           ])}
@@ -1047,7 +1067,7 @@ function SettingsCard({
           {t(titleKey)}
         </CardTitle>
       </CardHeader>
-      <CardContent className="divide-y">{children}</CardContent>
+      <CardContent>{children}</CardContent>
     </Card>
   );
 }
@@ -1088,7 +1108,6 @@ function SettingsSwitchRow({
       <Switch
         checked={checked}
         disabled={disabled}
-        aria-label={t(labelKey)}
         onCheckedChange={onCheckedChange}
       />
     </label>
@@ -1107,11 +1126,10 @@ function LabeledSwitch({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex min-w-0 items-center gap-3">
+    <label className="flex min-h-(--ui-control-height) min-w-0 items-center gap-3">
       <Switch
         checked={checked}
         disabled={disabled}
-        aria-label={t(labelKey)}
         onCheckedChange={onCheckedChange}
       />
       <span className="min-w-0 text-sm">{t(labelKey)}</span>

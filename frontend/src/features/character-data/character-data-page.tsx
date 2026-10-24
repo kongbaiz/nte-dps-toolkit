@@ -107,7 +107,7 @@ export function CharacterDataPage() {
         )}
         {page ? (
           <p className="mt-1">
-            {t("Snapshot time")}: {snapshotTime(page.observedUnixUs)} ·{" "}
+            {t("Snapshot time")}: {snapshotTime(page.observedUnixUs)} /{" "}
             {t(
               "Client observation; collected across game-thread batches, not an atomic snapshot.",
             )}
@@ -186,8 +186,8 @@ export function CharacterDataPage() {
                       <span className="block truncate text-sm font-medium">
                         {r.name || r.itemId || t("Unknown character")}
                       </span>
-                      <span className="block text-[11px] opacity-70">
-                        {r.itemId} · {t("Level")}{" "}
+                      <span className="block text-xs opacity-70">
+                        {r.itemId} / {t("Level")}{" "}
                         {r.level ?? t("Unknown value")}
                       </span>
                     </span>

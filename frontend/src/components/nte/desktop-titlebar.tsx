@@ -75,7 +75,7 @@ export function DesktopTitlebar({
   return (
     <header className="desktop-titlebar" onPointerDown={startDragging}>
       <span className="absolute left-3 flex items-center">{status}</span>
-      <strong className="pointer-events-none truncate px-40 text-base font-medium">
+      <strong className="pointer-events-none min-w-0 flex-1 truncate px-40 text-center text-base font-medium max-[480px]:sr-only">
         {title}
       </strong>
       <div className="absolute right-1 flex h-full items-center">

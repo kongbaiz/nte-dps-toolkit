@@ -153,7 +153,7 @@ function ReleaseNotes({ update }: { update: AvailableUpdate }) {
         </Badge>
         <strong className="text-sm">{update.version}</strong>
         <span className="text-xs text-muted-foreground">
-          {update.publishedAt} · {formatByteCount(update.artifactSize)}
+          {update.publishedAt} / {formatByteCount(update.artifactSize)}
         </span>
       </div>
       <Markdown

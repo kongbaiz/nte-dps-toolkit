@@ -3384,13 +3384,14 @@ impl AppState {
         {
             return Err(HistoryRuntimeError::ReplayActive);
         }
-        self.archive_current_history_round_with(|state, archive| {
+        self.archive_current_history_round_with(false, |state, archive| {
             state.persist_history_archive_locked(archive)
         })
     }
 
     fn archive_current_history_round_with(
         &self,
+        only_if_idle: bool,
         persist: impl FnOnce(
             &Self,
             &PreparedHistoryArchive,
@@ -3420,12 +3421,17 @@ impl AppState {
         }
         let config = self.ui_config();
         let policy = history_archive_policy(&config);
-        let Some(cut) = self
-            .0
-            .live_capture
-            .cut_round_with_history_policy(policy)
-            .map_err(|_| HistoryRuntimeError::Unavailable)?
-        else {
+        let cut = if only_if_idle {
+            if !config.auto_round_after_idle {
+                return Ok(false);
+            }
+            self.0
+                .live_capture
+                .cut_idle_round(policy, config.auto_round_idle_seconds)
+        } else {
+            self.0.live_capture.cut_round_with_history_policy(policy)
+        };
+        let Some(cut) = cut.map_err(|_| HistoryRuntimeError::Unavailable)? else {
             return Ok(false);
         };
         let Some(archive) = prepare_history_archive_owned(
@@ -3522,7 +3528,10 @@ impl AppState {
             })
             .map_err(|_| HistoryRuntimeError::Unavailable)?;
         if due {
-            match self.archive_current_history_round() {
+            // This probe is only a hint; recheck after waiting for the History locks.
+            match self.archive_current_history_round_with(true, |state, archive| {
+                state.persist_history_archive_locked(archive)
+            }) {
                 Ok(_) => {}
                 Err(HistoryRuntimeError::Unavailable) => {
                     return Err(HistoryRuntimeError::Unavailable);
@@ -5858,7 +5867,9 @@ mod tests {
             CaptureQualitySource::JsonReplay
         );
         assert_eq!(
-            state.archive_current_history_round_with(|_, _| Err(HistoryRuntimeError::Persistence)),
+            state.archive_current_history_round_with(false, |_, _| Err(
+                HistoryRuntimeError::Persistence
+            )),
             Ok(true)
         );
         assert!(
@@ -5914,7 +5925,7 @@ mod tests {
         }
         assert!(
             state
-                .archive_current_history_round_with(|_, _| {
+                .archive_current_history_round_with(false, |_, _| {
                     panic!("a full retry queue must reject before persistence")
                 })
                 .is_err()
@@ -5944,7 +5955,7 @@ mod tests {
         let attempts = AtomicU64::new(0);
 
         assert_eq!(
-            state.archive_current_history_round_with(|state, _| {
+            state.archive_current_history_round_with(false, |state, _| {
                 attempts.fetch_add(1, Ordering::AcqRel);
                 Ok(state.finish_history_save(
                     nte_dps_tool::storage::history::HistorySaveOutcome::CommittedWithMaintenanceWarning {
@@ -5970,6 +5981,42 @@ mod tests {
     }
 
     #[test]
+    fn automatic_history_round_keeps_ineligible_state_but_manual_cut_still_works() {
+        for enabled in [false, true] {
+            let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
+            let mut current = CombatState::default();
+            current.push_hit(test_hit(321.0));
+            live_capture
+                .restore_session(current, CaptureQualitySource::Live)
+                .unwrap();
+            let config = UiConfig {
+                auto_round_after_idle: enabled,
+                ..UiConfig::default()
+            };
+            let state = AppState::new(config, live_capture.clone());
+            let revision = state.history_revision();
+            assert_eq!(
+                state.archive_current_history_round_with(true, |_, _| {
+                    panic!("disabled or non-running auto-round must not reach storage");
+                }),
+                Ok(false)
+            );
+            assert_eq!(state.history_revision(), revision);
+            assert_eq!(
+                live_capture.with_state(|state| state.total_damage).unwrap(),
+                321.0
+            );
+            assert_eq!(
+                state.archive_current_history_round_with(false, |_, archive| {
+                    assert_eq!(archive.summary.total_damage, 321.0);
+                    Ok(HistoryPersistenceOutcome::Committed)
+                }),
+                Ok(true)
+            );
+        }
+    }
+
+    #[test]
     fn permanent_history_failure_is_reported_once_and_never_enters_the_retry_queue() {
         let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
         let mut current = CombatState::default();
@@ -5981,7 +6028,7 @@ mod tests {
         let attempts = AtomicU64::new(0);
 
         assert_eq!(
-            state.archive_current_history_round_with(|_, _| {
+            state.archive_current_history_round_with(false, |_, _| {
                 attempts.fetch_add(1, Ordering::AcqRel);
                 Err(HistoryRuntimeError::PermanentPersistence)
             }),
@@ -6334,7 +6381,7 @@ mod tests {
         let persist_ran = AtomicBool::new(false);
         assert!(
             state
-                .archive_current_history_round_with(|_, _| {
+                .archive_current_history_round_with(false, |_, _| {
                     persist_ran.store(true, Ordering::Release);
                     Ok(HistoryPersistenceOutcome::Committed)
                 })
@@ -6376,7 +6423,7 @@ mod tests {
         let initial_revision = state.history_revision();
         assert!(
             state
-                .archive_current_history_round_with(|_, _| {
+                .archive_current_history_round_with(false, |_, _| {
                     persist_ran.store(true, Ordering::Release);
                     Ok(HistoryPersistenceOutcome::Committed)
                 })

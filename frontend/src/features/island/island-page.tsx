@@ -146,9 +146,7 @@ export function IslandPage() {
             {tf(notice.messageKey, notice.messageArguments)}
           </span>
           {error !== null ? (
-            <span className="block truncate text-[11px] text-red-300">
-              {error}
-            </span>
+            <span className="block truncate text-xs text-red-300">{error}</span>
           ) : null}
         </span>
         {notice.undoAvailable ? (

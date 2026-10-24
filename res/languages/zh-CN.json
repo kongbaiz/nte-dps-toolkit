@@ -2456,5 +2456,19 @@
   "The proxy deployment record is not a regular file. No files were removed.": "代理部署记录不是普通文件，未移除任何文件。",
   "The proxy deployment record exceeds the size limit. No files were removed.": "代理部署记录超出大小限制，未移除任何文件。",
   "The proxy deployment record version is unsupported. Update Toolkit before removing the proxy.": "不支持此代理部署记录版本，请更新 Toolkit 后再卸载代理。",
-  "The proxy deployment record is invalid. No files were removed.": "代理部署记录无效，未移除任何文件。"
+  "The proxy deployment record is invalid. No files were removed.": "代理部署记录无效，未移除任何文件。",
+  "{} hits / {}": "{}次 / {}",
+  "Damage {} / Share {}% / Taken {}": "伤害 {} / 占比 {}% / 受击 {}",
+  "Raw captures: {} / {}": "原始抓包：{} 个 / {}",
+  "{} monsters / {} waves": "{} 怪 / {} 波",
+  "{} enemies / {} kinds": "{} 只敌人 / {} 类",
+  "{} seasons / {} floors / {} abyss enemies": "共 {} 期 / {} 站 / {} 只深渊敌人",
+  "Confirmed output {} ({} hits) / candidate output {} ({} hits, {}% of total output)": "已确认我方输出 {}（{} 次） / 方向未确认的伤害 {}（{} 次，占总输出 {}%）",
+  "Marker {} / {}s": "标记 {} / {}秒",
+  "Selection / {}s - {}s": "选区 / {}秒 - {}秒",
+  "Session reset / use Undo within 5 seconds": "会话已重置 / 可在 5 秒内使用撤销恢复",
+  "PID {0} / local {1}": "PID {0} / 本地 {1}",
+  "{0} packets / {1}": "{0} 个包 / {1}",
+  "Paused / {} pending events / {} debug packets": "已暂停 / {} 个待处理事件 / {} 个调试封包",
+  "Capture and data": "采集与数据"
 }

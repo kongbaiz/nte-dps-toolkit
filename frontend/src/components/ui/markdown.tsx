@@ -41,7 +41,7 @@ export function Markdown({ children, className, ...props }: MarkdownProps) {
       const language = fence[1];
       blocks.push(
         <pre
-          className="mt-2 overflow-x-auto rounded-lg border bg-background/70 p-3 font-mono text-[0.6875rem] leading-relaxed text-foreground first:mt-0"
+          className="mt-2 overflow-x-auto rounded-lg border bg-background/70 p-3 font-mono text-xs leading-relaxed text-foreground first:mt-0"
           key={`code-${index}`}
         >
           <code className={language ? `language-${language}` : undefined}>
@@ -198,7 +198,7 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
     if (token.startsWith("`")) {
       nodes.push(
         <code
-          className="rounded bg-background/80 px-1 py-0.5 font-mono text-[0.9em] text-foreground"
+          className="rounded bg-background/80 px-1 py-0.5 font-mono text-xs text-foreground"
           key={key}
         >
           {token.slice(1, -1)}

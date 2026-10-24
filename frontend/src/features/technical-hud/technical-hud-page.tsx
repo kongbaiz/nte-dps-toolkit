@@ -306,7 +306,7 @@ function HudEditorRail({
   return (
     <div className="flex min-w-0 items-center gap-1">
       <div
-        className="hud-text-halo flex min-w-0 flex-1 cursor-grab items-center gap-1.5 py-1 text-[11px] font-semibold text-white select-none active:cursor-grabbing"
+        className="hud-text-halo flex min-w-0 flex-1 cursor-grab items-center gap-1.5 py-1 text-xs font-semibold text-white select-none active:cursor-grabbing"
         onPointerDown={onDragPointerDown}
         title={t("Drag this line to move the window.")}
       >
@@ -315,9 +315,9 @@ function HudEditorRail({
           aria-hidden="true"
         />
         <span className="truncate">NTE DPS</span>
-        <span className="hidden truncate text-[10px] font-normal text-cyan-100/70 min-[350px]:inline">
+        <span className="hidden truncate text-xs font-normal text-cyan-100/70 min-[350px]:inline">
           {snapshot.hud.dataState === "preview"
-            ? `${t("Preview only")} · `
+            ? `${t("Preview only")} / `
             : ""}
           {tf(status.key, status.arguments)}
         </span>
@@ -591,7 +591,7 @@ function HudModuleControls({
               aria-label={t("HUD modules")}
               className="motion-popover w-48 rounded-md border-0 bg-slate-950/90 p-2 text-white shadow-lg ring-1 ring-white/15"
             >
-              <PopoverTitle className="mb-1.5 text-[10px] font-semibold tracking-wide text-cyan-100/80">
+              <PopoverTitle className="mb-1.5 text-xs font-semibold tracking-wide text-cyan-100/80">
                 {t("HUD modules")}
               </PopoverTitle>
               <div className="flex flex-col gap-1">
@@ -613,7 +613,7 @@ function HudModuleControls({
                         }
                       }}
                       className={cn(
-                        "relative flex h-6 items-center gap-1 rounded px-1 text-[11px] hover:bg-white/5",
+                        "relative flex h-6 items-center gap-1 rounded px-1 text-xs hover:bg-white/5",
                         draggedModule === module && "opacity-45",
                       )}
                     >
@@ -723,7 +723,7 @@ function HudWidthControl({
   };
 
   return (
-    <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2 text-[11px]">
+    <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2 text-xs">
       <label htmlFor="hud-width" className="shrink-0 text-cyan-100/80">
         {t("HUD Width")}
       </label>
@@ -735,7 +735,7 @@ function HudWidthControl({
           step={4}
           value={draft}
           disabled={disabled}
-          className="h-6 w-16 rounded border border-white/15 bg-white/5 px-1.5 text-right font-mono text-[11px] text-white outline-none select-text focus:border-cyan-300/70 disabled:opacity-45"
+          className="h-6 w-16 rounded border border-white/15 bg-white/5 px-1.5 text-right font-mono text-xs text-white outline-none select-text focus:border-cyan-300/70 disabled:opacity-45"
           aria-label={t("HUD Width")}
           onChange={(event) => setDraft(event.currentTarget.value)}
           onFocus={(event) => event.currentTarget.select()}
@@ -1017,7 +1017,7 @@ function HudEditableModule({
       <button
         type="button"
         className={cn(
-          "hud-text-halo flex h-5 w-full touch-none cursor-grab select-none items-center gap-1 bg-emerald-400/15 px-1.5 text-left text-[10px] font-medium text-emerald-100 active:cursor-grabbing",
+          "hud-text-halo flex h-5 w-full touch-none cursor-grab select-none items-center gap-1 bg-emerald-400/15 px-1.5 text-left text-xs font-medium text-emerald-100 active:cursor-grabbing",
           draggedModule === module && "cursor-grabbing",
         )}
         disabled={movePending}
@@ -1060,11 +1060,11 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
       <div className="min-w-0">
         {hud.config.showTeamDps ? (
           <>
-            <p className="hud-text-halo text-[10px] text-white/60">
+            <p className="hud-text-halo text-xs text-white/60">
               {t("Team DPS")}
               {hud.config.showDuration ? (
                 <>
-                  {" · "}
+                  {" / "}
                   <AnimatedNumber
                     value={summary.durationSeconds}
                     format={formatHudDuration}
@@ -1072,7 +1072,7 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
                 </>
               ) : null}
             </p>
-            <p className="hud-text-halo truncate font-mono text-[26px] leading-8 font-semibold text-cyan-200">
+            <p className="hud-text-halo truncate font-mono text-2xl leading-8 font-semibold text-cyan-200">
               <AnimatedNumber
                 value={summary.teamDps}
                 format={formatHudNumber}
@@ -1090,7 +1090,7 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
 
       {showRight ? (
         <div className="min-w-0 text-right">
-          <p className="hud-text-halo text-[10px] text-white/60">
+          <p className="hud-text-halo text-xs text-white/60">
             {summaryLabel(hud)}
           </p>
           <p className="hud-text-halo truncate font-mono text-sm leading-8 text-white/90">
@@ -1131,7 +1131,7 @@ function HudMetric({
 }) {
   return (
     <>
-      <p className="hud-text-halo text-[10px] text-white/60">{label}</p>
+      <p className="hud-text-halo text-xs text-white/60">{label}</p>
       <p className="hud-text-halo font-mono text-sm leading-8 text-white/90">
         <AnimatedNumber value={value} format={format} />
       </p>
@@ -1154,7 +1154,7 @@ function HudStatus({
         : null;
 
   return (
-    <div className="flex h-5 items-center justify-between text-[11px]">
+    <div className="flex h-5 items-center justify-between text-xs">
       <p className="hud-text-halo truncate text-white/85">
         {hud.config.showAbyssHalf && hud.status.abyssDetected ? half : ""}
       </p>
@@ -1214,7 +1214,7 @@ function HudCharacterRow({
           aria-hidden="true"
         />
         <span
-          className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border border-white/30 text-[9px] font-semibold text-white"
+          className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border border-white/30 text-xs font-semibold text-white"
           style={{ backgroundColor: color }}
           title={name}
         >
@@ -1250,7 +1250,7 @@ function HudCharacterRow({
       <span className="hud-text-halo text-right font-mono text-xs text-white/90">
         <AnimatedNumber value={character.dps} format={formatHudNumber} />
       </span>
-      <span className="hud-text-halo text-right text-[10px]" style={{ color }}>
+      <span className="hud-text-halo text-right text-xs" style={{ color }}>
         <AnimatedNumber
           value={character.damageSharePercent}
           format={(value) => `${value.toFixed(1)}%`}
@@ -1288,7 +1288,7 @@ function HudToggle({ icon, label, pressed, onPressedChange }: HudToggleProps) {
         {icon}
       </TooltipTrigger>
       <TooltipContent>
-        {label} · {t(pressed ? "Disable" : "Enable")}
+        {label} / {t(pressed ? "Disable" : "Enable")}
       </TooltipContent>
     </Tooltip>
   );

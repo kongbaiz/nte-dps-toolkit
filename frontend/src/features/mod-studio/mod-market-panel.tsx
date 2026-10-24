@@ -242,10 +242,10 @@ function MarketItem({
             )}
           </h3>
           <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-            {item.id} · v{item.version}
+            {item.id} / v{item.version}
           </p>
         </div>
-        <span className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+        <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
           {(item.packageSize / 1024).toFixed(1)} KiB
         </span>
       </div>
@@ -269,7 +269,7 @@ function MarketItem({
         {item.capabilities.map((capability) => (
           <span
             key={capability}
-            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+            className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
           >
             {capability}
           </span>

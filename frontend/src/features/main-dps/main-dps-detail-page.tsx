@@ -250,7 +250,7 @@ export function MainDpsDetailPage() {
                         <option value="">{t("All moves")}</option>
                         {snapshot.skills.map((skill) => (
                           <option key={skill.id} value={skill.id}>
-                            {skill.name} · {formatMainMetric(skill.damage)} ·{" "}
+                            {skill.name} / {formatMainMetric(skill.damage)} /{" "}
                             {skill.hits} {t("hits")}
                           </option>
                         ))}
@@ -295,7 +295,7 @@ export function MainDpsDetailPage() {
                         )
                       }
                     >
-                      {summary.attackType} {formatMainMetric(summary.damage)} ·{" "}
+                      {summary.attackType} {formatMainMetric(summary.damage)} /{" "}
                       {summary.sharePercent.toFixed(1)}%
                     </FilterButton>
                   ))}
@@ -459,7 +459,7 @@ function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
         </div>
         <p className="mt-2 border-t pt-2 text-xs text-muted-foreground">
           {tf(
-            "Confirmed output {} ({} hits) · candidate output {} ({} hits, {}% of total output)",
+            "Confirmed output {} ({} hits) / candidate output {} ({} hits, {}% of total output)",
             [
               formatMainMetric(snapshot.direction.confirmedOutput),
               String(snapshot.direction.confirmedHits),
@@ -599,8 +599,8 @@ function SkillBreakdown({
               {index + 1}. {skill.name}
             </span>
             <span className="relative ml-3 shrink-0 tabular-nums">
-              {skill.sharePercent.toFixed(1)}% ·{" "}
-              {formatMainMetric(skill.damage)} · {skill.hits}
+              {skill.sharePercent.toFixed(1)}% /{" "}
+              {formatMainMetric(skill.damage)} / {skill.hits}
               {t("hits")}
             </span>
           </button>
@@ -962,7 +962,7 @@ function HitRow({
               )}
             </span>
             {row.overkillDamage !== null && row.overkillDamage > 0 && (
-              <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-destructive">
+              <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-xs font-semibold leading-none text-destructive">
                 {t("Overkill")} +{formatMainMetric(row.overkillDamage)}
               </span>
             )}
@@ -1029,7 +1029,7 @@ function HitRow({
                     value={formatMainMetric(row.maxHpReduction)}
                     percentage={hpCompression.reductionPercent}
                     compact
-                    className="shrink-0 px-1.5 py-0.5 text-[10px] leading-none"
+                    className="shrink-0 px-1.5 py-0.5 text-xs leading-none"
                   />
                 )}
               </span>
@@ -1038,7 +1038,7 @@ function HitRow({
                 row.targetMaxHp > 0 && (
                   <span className="block truncate text-xs tabular-nums text-muted-foreground">
                     {formatMainMetric(row.targetHpAfter)} /{" "}
-                    {formatMainMetric(hpCompression.remainingMaxHp)} ·{" "}
+                    {formatMainMetric(hpCompression.remainingMaxHp)} /{" "}
                     {hpPercent.toFixed(1)}%
                   </span>
                 )}
@@ -1061,21 +1061,21 @@ function HitRow({
         <td className="border-l px-2 py-1.5">
           <div className="flex items-center justify-between gap-2">
             <div
-              className="min-w-0 flex-1 space-y-1 text-[11px]"
+              className="min-w-0 flex-1 space-y-1 text-xs"
               title={t("Positive / negative (+other), not added / removed.")}
             >
               <p className="truncate">
                 {t("Role effects")}:{" "}
                 {effectCountsText(row.roleEffects) ?? t("Unknown value")}
                 {row.roleEffects?.complete === false
-                  ? ` · ${t("Partial snapshot")}`
+                  ? ` / ${t("Partial snapshot")}`
                   : ""}
               </p>
               <p className="truncate">
                 {t("Enemy effects")}:{" "}
                 {effectCountsText(row.enemyEffects) ?? t("Unknown value")}
                 {row.enemyEffects?.complete === false
-                  ? ` · ${t("Partial snapshot")}`
+                  ? ` / ${t("Partial snapshot")}`
                   : ""}
               </p>
             </div>
@@ -1084,7 +1084,7 @@ function HitRow({
               variant="outline"
               disabled={row.snapshotKey === null}
               onClick={openSnapshot}
-              aria-label={`${t("Hit snapshot details")} · ${formatHitTime(row.timestamp)}`}
+              aria-label={`${t("Hit snapshot details")} / ${formatHitTime(row.timestamp)}`}
             >
               {t("Details")}
             </Button>

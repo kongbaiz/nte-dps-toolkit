@@ -1026,7 +1026,16 @@ impl RawCaptureWriter {
                 )
             })?;
         }
-        let file = File::create(path).map_err(|error| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+            // Keep log cleanup from deleting a capture while its writer is alive.
+            options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+        }
+        let file = options.open(path).map_err(|error| {
             format!(
                 "failed to create raw capture file {}: {error}",
                 path.display()
@@ -12950,7 +12959,7 @@ mod tests {
             }
         }
         let _cleanup = Cleanup(directory.clone());
-        let path = directory.join("raw.pcapng");
+        let path = directory.join("nte_raw_active.pcapng");
         let device = CaptureDevice {
             name: "test-tun".to_owned(),
             description: "test TUN".to_owned(),
@@ -12969,6 +12978,18 @@ mod tests {
         writer
             .write_packet(Duration::from_secs(1), raw_ipv4.len() as u32, raw_ipv4)
             .unwrap();
+        #[cfg(windows)]
+        {
+            let cleanup = crate::storage::capture_logs::clear_capture_logs(&directory);
+            assert_eq!(
+                cleanup.deleted, 0,
+                "the active capture must survive cleanup"
+            );
+            assert_eq!(cleanup.failed, 1);
+            writer
+                .write_packet(Duration::from_secs(2), raw_ipv4.len() as u32, raw_ipv4)
+                .unwrap();
+        }
         writer.finish().unwrap();
 
         let file = File::open(&path).unwrap();
@@ -12977,6 +12998,10 @@ mod tests {
             assert!(reader.next_block().is_some());
         }
         assert_eq!(reader.interfaces()[0].linktype, DataLink::RAW);
+        drop(reader);
+        let cleanup = crate::storage::capture_logs::clear_capture_logs(&directory);
+        assert_eq!(cleanup.deleted, 1, "finished captures remain removable");
+        assert_eq!(cleanup.failed, 0);
     }
 
     #[test]

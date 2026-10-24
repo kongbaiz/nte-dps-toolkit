@@ -264,7 +264,7 @@ export function ConsolePage() {
           <button
             className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted hover:text-foreground active:scale-[0.97]"
             onClick={() => setCommandPaletteOpen(true)}
-            title={`${t("Command palette")} · Ctrl+K`}
+            title={`${t("Command palette")} / Ctrl+K`}
             type="button"
           >
             <Search className="size-3.5" aria-hidden="true" />

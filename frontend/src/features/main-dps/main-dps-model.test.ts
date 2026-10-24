@@ -25,7 +25,7 @@ describe("main DPS view model", () => {
         displayTime: "01:46:07",
         abyssFloor: 2,
       }),
-    ).toContain("2");
+    ).toBe("深渊 2 层 / 01:46:07");
   });
 
   it("formats attribution percentages and stable character accents", () => {

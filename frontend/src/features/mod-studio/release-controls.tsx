@@ -228,7 +228,7 @@ export function ReleaseControls({
                 <div className="divide-y border-t">
                   {group.advanced.map((action) => actionButton(action, true))}
                 </div>
-                <p className="border-t px-5 py-3 text-[11px] leading-relaxed text-muted-foreground">
+                <p className="border-t px-5 py-3 text-xs leading-relaxed text-muted-foreground">
                   {t(
                     "After submitting an asynchronous operation, check its operation status before continuing.",
                   )}
@@ -236,7 +236,7 @@ export function ReleaseControls({
               </details>
             )}
             {group.id === "host" && (
-              <p className="border-t bg-muted/20 px-5 py-3 text-[11px] leading-relaxed text-muted-foreground">
+              <p className="border-t bg-muted/20 px-5 py-3 text-xs leading-relaxed text-muted-foreground">
                 {t(
                   "Unloading stops host services. Exit the game to fully remove the host DLL.",
                 )}
@@ -271,7 +271,7 @@ export function ReleaseControls({
             {t("Native response")}{" "}
             <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
               {result.totalBytes} B
-              {result.truncated ? ` · ${t("Preview truncated")}` : ""}
+              {result.truncated ? ` / ${t("Preview truncated")}` : ""}
             </span>
           </summary>
           <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background p-3 text-xs">

@@ -172,7 +172,7 @@ export function TimelinePage() {
           ) : null}
 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg border bg-card p-3">
-            <label className="flex min-w-[16rem] flex-1 items-center gap-3 text-sm">
+            <label className="flex min-w-0 basis-64 flex-1 flex-wrap items-center gap-3 text-sm">
               <span className="whitespace-nowrap text-muted-foreground">
                 {t("Bucket Interval")}
               </span>
@@ -341,12 +341,12 @@ export function TimelinePage() {
               />
               <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-1 pt-0.5 pb-2 text-xs text-muted-foreground">
                 <span>
-                  {t("Retained window")} · {snapshot.duration.toFixed(1)}s ·{" "}
+                  {t("Retained window")} / {snapshot.duration.toFixed(1)}s /{" "}
                   {snapshot.effectiveBucketSeconds.toFixed(1)}s{" "}
                   {t("Bucket Interval").toLowerCase()}
                 </span>
                 <span>
-                  {snapshot.buckets.length} {t("samples")} ·{" "}
+                  {snapshot.buckets.length} {t("samples")} /{" "}
                   {snapshot.markers.length} {t("event markers")}
                 </span>
               </footer>

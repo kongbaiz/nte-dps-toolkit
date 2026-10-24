@@ -117,9 +117,9 @@ export function AttributeSnapshotView({
   return (
     <div className="space-y-3">
       <p className="break-words text-xs text-muted-foreground">
-        {snapshot.actorName} · {t("Snapshot ID")}:{" "}
-        {snapshot.id ?? t("Unknown value")} ·{" "}
-        {snapshot.status ?? t("Unknown value")} · {t("Sample time (µs)")}:{" "}
+        {snapshot.actorName} / {t("Snapshot ID")}:{" "}
+        {snapshot.id ?? t("Unknown value")} /{" "}
+        {snapshot.status ?? t("Unknown value")} / {t("Sample time (µs)")}:{" "}
         {snapshot.sampledUnixUs ?? t("Unknown value")}
       </p>
       <p className="text-xs text-muted-foreground">
@@ -175,8 +175,8 @@ export function EffectSnapshotView({
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        {t("Snapshot ID")}: {snapshot.id ?? t("Unknown value")} ·{" "}
-        {snapshot.status ?? t("Unknown value")} · {t("Sample time (µs)")}:{" "}
+        {t("Snapshot ID")}: {snapshot.id ?? t("Unknown value")} /{" "}
+        {snapshot.status ?? t("Unknown value")} / {t("Sample time (µs)")}:{" "}
         {snapshot.observedUs ?? t("Unknown value")}
       </p>
       {snapshot.complete === false && (
@@ -239,7 +239,7 @@ export function EffectSnapshotView({
                         </p>
                         <p>
                           {t("Start world time")}:{" "}
-                          {numberFormat.format(e.startWorldTime)} · {t("Level")}
+                          {numberFormat.format(e.startWorldTime)} / {t("Level")}
                           : {e.level}
                         </p>
                       </div>
@@ -384,9 +384,9 @@ export function HitSnapshotDialog({
                 )}
               </DialogDescription>
               <p className="mt-3 text-sm">
-                {row.characterName} · {row.typeLabel} ·{" "}
-                {new Date(row.timestamp * 1000).toLocaleTimeString()} ·{" "}
-                {row.damage.toLocaleString()} · {t("Critical hit")}:{" "}
+                {row.characterName} / {row.typeLabel} /{" "}
+                {new Date(row.timestamp * 1000).toLocaleTimeString()} /{" "}
+                {row.damage.toLocaleString()} / {t("Critical hit")}:{" "}
                 {t(criticalTranslationKey(row.critical))}
               </p>
               {snapshot?.criticalSource && (

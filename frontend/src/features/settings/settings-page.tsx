@@ -1,12 +1,11 @@
+import { Tabs } from "@base-ui/react/tabs";
 import { Input } from "@/components/ui/form-controls";
 import {
   PageHeader,
   PageTitle,
-  PageDescription,
   PageScrollArea,
-  PreferencesGrid,
 } from "@/components/nte/page-layout";
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowDown,
@@ -50,8 +49,7 @@ import type { HudModuleId } from "@/lib/tauri/technical-contract";
 import { cn } from "@/lib/utils";
 
 import {
-  PrimarySettingsColumn,
-  SecondarySettingsSections,
+  SettingsCatalog,
   type SettingsCatalogActions,
 } from "./settings-catalog";
 import {
@@ -60,6 +58,8 @@ import {
   settingsSectionPending,
 } from "./settings-view-model";
 import { useSettings } from "./use-settings";
+
+const SETTINGS_SECTIONS = ["Interface", "HUD", "Capture and data"] as const;
 
 const MODULE_LABEL_KEYS: Record<HudModuleId, string> = {
   title: "Title",
@@ -71,15 +71,30 @@ const MODULE_LABEL_KEYS: Record<HudModuleId, string> = {
 
 export function SettingsPage() {
   const settings = useSettings();
+  const contentRef = useRef<HTMLDivElement>(null);
   const catalogActions: SettingsCatalogActions = settings;
 
   return (
-    <section className="console-preferences flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <PageHeader>
+    <Tabs.Root
+      defaultValue="Interface"
+      onValueChange={() => {
+        if (contentRef.current) contentRef.current.scrollTop = 0;
+      }}
+      className="console-preferences flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+    >
+      <PageHeader className="settings-header">
         <PageTitle>{t("Settings")}</PageTitle>
-        <PageDescription>
-          {t("Interface, capture and HUD preferences")}
-        </PageDescription>
+        <Tabs.List
+          className="settings-navigation"
+          aria-label={t("Settings")}
+          activateOnFocus
+        >
+          {SETTINGS_SECTIONS.map((item) => (
+            <Tabs.Tab key={item} value={item} className="settings-tab">
+              {t(item)}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
       </PageHeader>
       {settings.mutationError ? (
         <MutationError
@@ -87,7 +102,7 @@ export function SettingsPage() {
           onDismiss={settings.clearMutationError}
         />
       ) : null}
-      <PageScrollArea>
+      <PageScrollArea ref={contentRef}>
         {settings.state.status === "loading" ? (
           <SettingsLoading />
         ) : settings.state.status === "error" ? (
@@ -96,13 +111,11 @@ export function SettingsPage() {
             onRetry={settings.refresh}
           />
         ) : (
-          <PreferencesGrid>
-            <PrimarySettingsColumn
-              snapshot={settings.state.snapshot}
-              pendingAction={settings.pendingAction}
-              actions={catalogActions}
-            />
-            <div className="ui-section-stack">
+          <SettingsCatalog
+            snapshot={settings.state.snapshot}
+            pendingAction={settings.pendingAction}
+            actions={catalogActions}
+            hud={
               <SettingsReady
                 snapshot={settings.state.snapshot}
                 pendingAction={settings.pendingAction}
@@ -112,16 +125,11 @@ export function SettingsPage() {
                 onSetModuleVisibility={settings.setHudModuleVisibility}
                 onSetWidth={settings.setHudWidth}
               />
-              <SecondarySettingsSections
-                snapshot={settings.state.snapshot}
-                pendingAction={settings.pendingAction}
-                actions={catalogActions}
-              />
-            </div>
-          </PreferencesGrid>
+            }
+          />
         )}
       </PageScrollArea>
-    </section>
+    </Tabs.Root>
   );
 }
 
@@ -316,7 +324,7 @@ function HudWindowSection({
               }
             }}
           />
-          <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
+          <div className="mt-1 flex justify-between text-xs text-muted-foreground">
             <span>{snapshot.hudWidthMin}px</span>
             <span>{Math.min(snapshot.hudWidthMax, 960)}px</span>
           </div>

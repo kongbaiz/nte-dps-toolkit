@@ -289,7 +289,7 @@ export function TimelineChart({
                 <span
                   key={`${marker.kind}-${marker.offset}`}
                   className={cn(
-                    "timeline-marker-label pointer-events-none absolute top-11 z-[3] rounded-full border px-1.5 py-0.5 font-mono text-[9px] tracking-wide",
+                    "timeline-marker-label pointer-events-none absolute top-11 z-[3] rounded-full border px-1.5 py-0.5 font-mono text-xs tracking-wide",
                     marker.offset <= snapshot.effectiveBucketSeconds * 0.5
                       ? "translate-x-0"
                       : marker.offset >=
@@ -298,7 +298,7 @@ export function TimelineChart({
                         ? "-translate-x-full"
                         : "-translate-x-1/2",
                     marker.kind === "clear"
-                      ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                      ? "border-emerald-500/35 bg-emerald-500/10 text-success"
                       : "border-border bg-background text-muted-foreground",
                   )}
                   style={{
@@ -320,7 +320,7 @@ export function TimelineChart({
               return (
                 <span
                   key={`${interval.start}-${interval.end}-${index}`}
-                  className="pointer-events-none absolute z-[3] -translate-x-1/2 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-700 dark:text-amber-300"
+                  className="pointer-events-none absolute z-[3] -translate-x-1/2 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-mono text-xs text-amber-700 dark:text-amber-300"
                   style={{
                     left: left + width / 2,
                     top: model.plot.top + 7,
@@ -346,8 +346,8 @@ export function TimelineChart({
                     height: model.plot.height,
                   }}
                 >
-                  <span className="absolute top-1 left-1 max-w-36 whitespace-nowrap rounded-full border border-primary/30 bg-background/90 px-1.5 py-0.5 font-mono text-[9px] text-primary shadow-sm">
-                    {tf("Marker {} · {}s", [
+                  <span className="absolute top-1 left-1 max-w-36 whitespace-nowrap rounded-full border border-primary/30 bg-background/90 px-1.5 py-0.5 font-mono text-xs text-primary shadow-sm">
+                    {tf("Marker {} / {}s", [
                       String(index + 1),
                       formatSeconds(marker),
                     ])}
@@ -367,8 +367,8 @@ export function TimelineChart({
                   height: model.plot.height,
                 }}
               >
-                <span className="absolute top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-background/90 px-2 py-0.5 text-[9px] text-primary shadow-sm">
-                  {tf("Selection · {}s - {}s", [
+                <span className="absolute top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-background/90 px-2 py-0.5 text-xs text-primary shadow-sm">
+                  {tf("Selection / {}s - {}s", [
                     formatSeconds(selection?.[0] ?? 0),
                     formatSeconds(selection?.[1] ?? 0),
                   ])}
@@ -382,7 +382,7 @@ export function TimelineChart({
                   style={{ left: hoveredX, top: model.plot.top }}
                 />
                 <div
-                  className="pointer-events-none absolute bottom-1.5 z-[4] -translate-x-1/2 rounded-full border bg-background px-2 py-0.5 font-mono text-[10px] shadow-sm"
+                  className="pointer-events-none absolute bottom-1.5 z-[4] -translate-x-1/2 rounded-full border bg-background px-2 py-0.5 font-mono text-xs shadow-sm"
                   style={{ left: hoveredX }}
                 >
                   {hoveredTime.toFixed(1)}s
@@ -551,7 +551,7 @@ function drawChart(
   context.lineWidth = 1;
   context.strokeStyle = color(border, 0.75);
   context.fillStyle = muted;
-  context.font = "10px ui-monospace, monospace";
+  context.font = "12px ui-monospace, monospace";
   context.textAlign = "right";
   context.textBaseline = "middle";
   for (let step = 0; step <= 4; step += 1) {

@@ -293,7 +293,7 @@ export function EncryptedIniPage() {
           <textarea
             ref={textareaRef}
             aria-label={t("Decrypted INI plaintext")}
-            className="size-full resize-none overflow-auto bg-transparent p-4 font-mono text-[13px] leading-6 outline-none select-text placeholder:text-muted-foreground/70 focus:ring-3 focus:ring-inset focus:ring-ring/20"
+            className="size-full resize-none overflow-auto bg-transparent p-4 font-mono text-sm leading-6 outline-none select-text placeholder:text-muted-foreground/70 focus:ring-3 focus:ring-inset focus:ring-ring/20"
             placeholder={t(
               "After opening an encrypted INI, the decrypted plaintext appears here.",
             )}

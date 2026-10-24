@@ -186,7 +186,7 @@ function CaptureBadge({ phase }: { phase: PacketsCapturePhase }) {
 
 function PacketCounters({ snapshot }: { snapshot: PacketsSnapshot }) {
   return (
-    <dl className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground tabular-nums">
+    <dl className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground tabular-nums">
       <div className="flex items-center gap-1">
         <dt>{t("Events")}</dt>
         <dd className="text-foreground">
@@ -230,11 +230,11 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
           {packet.source} <span className="text-muted-foreground">→</span>{" "}
           {packet.destination}
         </span>
-        <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums min-[820px]:inline">
+        <span className="hidden shrink-0 font-mono text-xs text-muted-foreground tabular-nums min-[820px]:inline">
           {packet.payloadLen.toLocaleString()} B
         </span>
         <span
-          className="hidden max-w-[220px] shrink-0 truncate font-mono text-[11px] text-muted-foreground min-[1040px]:inline"
+          className="hidden max-w-[220px] shrink-0 truncate font-mono text-xs text-muted-foreground min-[1040px]:inline"
           title={ids}
         >
           ids=[{ids}]

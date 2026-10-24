@@ -210,7 +210,7 @@ export function EmptyCurtainPage() {
                     String(snapshot.items.length),
                   ])}
                   {!snapshot.complete
-                    ? ` · ${t("Inventory snapshot is still being assembled")}`
+                    ? ` / ${t("Inventory snapshot is still being assembled")}`
                     : ""}
                 </span>
                 <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -963,7 +963,7 @@ function EquipmentDetailsDialog({
                 }
               />
               <TooltipContent>
-                {t("Equipped")} ·{" "}
+                {t("Equipped")} /{" "}
                 {equippedCharacter?.name ?? t("Unknown Character")}
               </TooltipContent>
             </Tooltip>
@@ -997,7 +997,7 @@ function EquipmentDetailsDialog({
           </dl>
           {item.stats.some((stat) => !stat.main) ? (
             <section className="border-t px-4 py-3">
-              <p className="mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
                 {t("Secondary Stats")}
               </p>
               <div className="space-y-1">
@@ -1037,7 +1037,7 @@ function EquipmentDetailsDialog({
                           {stat.unlockLevel !== null ? (
                             <Badge
                               variant="outline"
-                              className="h-5 min-w-9 justify-center px-1.5 font-mono text-[10px]"
+                              className="h-5 min-w-9 justify-center px-1.5 font-mono text-xs"
                               title={tf("Unlocks at level {}", [
                                 String(stat.unlockLevel),
                               ])}
@@ -1157,7 +1157,7 @@ function SetBadge({ item }: { item: EmptyCurtainItem }) {
       <TooltipTrigger
         render={
           <span
-            className="max-w-28 truncate rounded-full border bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            className="max-w-28 truncate rounded-full border bg-background/80 px-1.5 py-0.5 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             tabIndex={0}
           >
             {item.setName}

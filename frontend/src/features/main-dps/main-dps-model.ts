@@ -53,7 +53,7 @@ export function roundLabel(round: MainDpsRound): string {
       : tf("Abyss Floor {}", [String(round.abyssFloor)]);
   return round.displayTime === null
     ? prefix
-    : `${prefix} · ${round.displayTime}`;
+    : `${prefix} / ${round.displayTime}`;
 }
 
 export function isGenerationNewer(
