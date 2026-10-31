@@ -13,7 +13,6 @@ const {
   boolean: flag,
   boundedString: boundedText,
   cssHex6OrEmpty: color,
-  decimalString: decimal,
   integer,
   positiveInteger,
   record: object,
@@ -34,21 +33,8 @@ export interface CharacterDataRecord {
   avatar: string;
 }
 
-export interface CharacterDataRecordInput {
-  originalId: string | null;
-  id: string;
-  nameZh: string;
-  nameEn: string;
-  codename: string;
-  attribute: string;
-  verified: boolean;
-  color: string;
-  avatar: string;
-}
-
 export interface CharacterDataSnapshot {
   contractVersion: number;
-  generation: string;
   attributes: string[];
   records: CharacterDataRecord[];
 }
@@ -74,7 +60,6 @@ export function parseCharacterDataSnapshot(
   }
   return {
     contractVersion,
-    generation: decimal(item.generation, "characterData.generation"),
     attributes: list(item.attributes, "characterData.attributes").map(
       (value, index) =>
         boundedText(value, `characterData.attributes[${index}]`, 16),

@@ -1,17 +1,13 @@
-//! Frontend-neutral character-table loading, validation and atomic updates.
+//! Frontend-neutral character-table loading.
 
 use std::{fmt, path::Path};
 
 use serde_json::{Map, Value};
 
-use crate::storage::{io_util::atomic_write_text, resource::read_resource_text};
+use crate::storage::resource::read_resource_text;
 
 pub const CHARACTER_ATTRIBUTES: [&str; 6] = ["灵", "咒", "光", "魂", "暗", "相"];
-pub const CHARACTER_DATA_MAX_RECORDS: usize = 2_048;
-
-const CHARACTER_NAME_MAX_LENGTH: usize = 128;
-const CHARACTER_CODENAME_MAX_LENGTH: usize = 128;
-const CHARACTER_AVATAR_MAX_LENGTH: usize = 512;
+const CHARACTER_DATA_MAX_RECORDS: usize = 2_048;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CharacterDataProjection {
@@ -30,25 +26,6 @@ pub struct CharacterDataRecord {
     pub avatar: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CharacterDataRecordInput {
-    pub original_id: Option<String>,
-    pub id: String,
-    pub name_zh: String,
-    pub name_en: String,
-    pub codename: String,
-    pub attribute: String,
-    pub verified: bool,
-    pub color: String,
-    pub avatar: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CharacterDataSaveOutcome {
-    Saved,
-    Unchanged,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CharacterDataError {
     Read(String),
@@ -57,15 +34,6 @@ pub enum CharacterDataError {
     InvalidRecord(String),
     TooManyRecords,
     InvalidId,
-    IdAlreadyExists(u32),
-    RecordMissing(u32),
-    IdImmutable,
-    NameRequired,
-    InvalidColor,
-    InvalidAttribute,
-    FieldTooLong(&'static str),
-    Serialize(String),
-    Write(String),
 }
 
 impl fmt::Display for CharacterDataError {
@@ -79,17 +47,6 @@ impl fmt::Display for CharacterDataError {
             Self::InvalidRecord(id) => write!(formatter, "character {id} is not an object"),
             Self::TooManyRecords => write!(formatter, "character table exceeds the record limit"),
             Self::InvalidId => write!(formatter, "character ID must be a positive integer"),
-            Self::IdAlreadyExists(id) => write!(formatter, "character ID {id} already exists"),
-            Self::RecordMissing(id) => write!(formatter, "character ID {id} no longer exists"),
-            Self::IdImmutable => write!(formatter, "an existing character ID cannot be changed"),
-            Self::NameRequired => write!(formatter, "a Chinese or English name is required"),
-            Self::InvalidColor => write!(formatter, "character color is not #RRGGBB"),
-            Self::InvalidAttribute => write!(formatter, "character attribute is unsupported"),
-            Self::FieldTooLong(field) => write!(formatter, "character field {field} is too long"),
-            Self::Serialize(detail) => {
-                write!(formatter, "character table serialization failed: {detail}")
-            }
-            Self::Write(detail) => write!(formatter, "character table write failed: {detail}"),
         }
     }
 }
@@ -104,122 +61,6 @@ pub fn load_character_data(path: &Path) -> Result<CharacterDataProjection, Chara
     project_document(&document)
 }
 
-pub fn save_character_data_record(
-    path: &Path,
-    input: CharacterDataRecordInput,
-) -> Result<(CharacterDataProjection, CharacterDataSaveOutcome), CharacterDataError> {
-    let text =
-        read_resource_text(path).map_err(|error| CharacterDataError::Read(error.to_string()))?;
-    let mut document = serde_json::from_str::<Value>(&text)
-        .map_err(|error| CharacterDataError::Json(error.to_string()))?;
-    let previous = project_document(&document)?;
-    apply_character_data_record(&mut document, input)?;
-    let projection = project_document(&document)?;
-    if projection == previous {
-        return Ok((projection, CharacterDataSaveOutcome::Unchanged));
-    }
-    let serialized = serde_json::to_string_pretty(&document)
-        .map_err(|error| CharacterDataError::Serialize(error.to_string()))?;
-    atomic_write_text(path, &format!("{serialized}\n")).map_err(CharacterDataError::Write)?;
-    Ok((projection, CharacterDataSaveOutcome::Saved))
-}
-
-pub fn apply_character_data_record(
-    document: &mut Value,
-    input: CharacterDataRecordInput,
-) -> Result<CharacterDataRecord, CharacterDataError> {
-    let input = validate_input(input)?;
-    let characters = characters_mut(document)?;
-    let id = input.id.to_string();
-
-    match input.original_id {
-        Some(original_id) => {
-            if original_id != input.id {
-                return Err(CharacterDataError::IdImmutable);
-            }
-            if !characters.contains_key(&id) {
-                return Err(CharacterDataError::RecordMissing(input.id));
-            }
-        }
-        None => {
-            if characters.contains_key(&id) {
-                return Err(CharacterDataError::IdAlreadyExists(input.id));
-            }
-            if characters.len() >= CHARACTER_DATA_MAX_RECORDS {
-                return Err(CharacterDataError::TooManyRecords);
-            }
-        }
-    }
-
-    let row = characters
-        .entry(id.clone())
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .ok_or_else(|| CharacterDataError::InvalidRecord(id.clone()))?;
-    set_json_string(row, "name_zh", &input.name_zh);
-    set_json_string(row, "name_en", &input.name_en);
-    set_json_string(row, "codename", &input.codename);
-    set_optional_json_string(row, "attribute", &input.attribute);
-    row.insert("verified".to_owned(), Value::Bool(input.verified));
-    set_optional_json_string(row, "color", &input.color);
-    set_optional_json_string(row, "avatar", &input.avatar);
-    Ok(CharacterDataRecord {
-        id: input.id,
-        name_zh: input.name_zh,
-        name_en: input.name_en,
-        codename: input.codename,
-        attribute: input.attribute,
-        verified: input.verified,
-        color: input.color,
-        avatar: input.avatar,
-    })
-}
-
-struct ValidatedCharacterDataRecord {
-    original_id: Option<u32>,
-    id: u32,
-    name_zh: String,
-    name_en: String,
-    codename: String,
-    attribute: String,
-    verified: bool,
-    color: String,
-    avatar: String,
-}
-
-fn validate_input(
-    input: CharacterDataRecordInput,
-) -> Result<ValidatedCharacterDataRecord, CharacterDataError> {
-    let id = parse_id(&input.id)?;
-    let original_id = input.original_id.as_deref().map(parse_id).transpose()?;
-    let name_zh = trimmed_bounded(input.name_zh, "name_zh", CHARACTER_NAME_MAX_LENGTH)?;
-    let name_en = trimmed_bounded(input.name_en, "name_en", CHARACTER_NAME_MAX_LENGTH)?;
-    if name_zh.is_empty() && name_en.is_empty() {
-        return Err(CharacterDataError::NameRequired);
-    }
-    let codename = trimmed_bounded(input.codename, "codename", CHARACTER_CODENAME_MAX_LENGTH)?;
-    let attribute = input.attribute.trim().to_owned();
-    if !attribute.is_empty() && !CHARACTER_ATTRIBUTES.contains(&attribute.as_str()) {
-        return Err(CharacterDataError::InvalidAttribute);
-    }
-    let color = input.color.trim().to_owned();
-    if !color.is_empty() && !is_hex_color(&color) {
-        return Err(CharacterDataError::InvalidColor);
-    }
-    let avatar = trimmed_bounded(input.avatar, "avatar", CHARACTER_AVATAR_MAX_LENGTH)?;
-    Ok(ValidatedCharacterDataRecord {
-        original_id,
-        id,
-        name_zh,
-        name_en,
-        codename,
-        attribute,
-        verified: input.verified,
-        color,
-        avatar,
-    })
-}
-
 fn parse_id(value: &str) -> Result<u32, CharacterDataError> {
     value
         .trim()
@@ -227,18 +68,6 @@ fn parse_id(value: &str) -> Result<u32, CharacterDataError> {
         .ok()
         .filter(|id| *id > 0)
         .ok_or(CharacterDataError::InvalidId)
-}
-
-fn trimmed_bounded(
-    value: String,
-    field: &'static str,
-    max_length: usize,
-) -> Result<String, CharacterDataError> {
-    let value = value.trim().to_owned();
-    if value.chars().count() > max_length {
-        return Err(CharacterDataError::FieldTooLong(field));
-    }
-    Ok(value)
 }
 
 fn project_document(document: &Value) -> Result<CharacterDataProjection, CharacterDataError> {
@@ -277,38 +106,11 @@ fn project_record(id: &str, value: &Value) -> Result<CharacterDataRecord, Charac
     })
 }
 
-fn characters_mut(document: &mut Value) -> Result<&mut Map<String, Value>, CharacterDataError> {
-    document
-        .get_mut("characters")
-        .and_then(Value::as_object_mut)
-        .ok_or(CharacterDataError::MissingCharacters)
-}
-
 fn json_string(row: &Map<String, Value>, key: &str) -> String {
     row.get(key)
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned()
-}
-
-fn set_json_string(row: &mut Map<String, Value>, key: &str, value: &str) {
-    row.insert(key.to_owned(), Value::String(value.to_owned()));
-}
-
-fn set_optional_json_string(row: &mut Map<String, Value>, key: &str, value: &str) {
-    if value.is_empty() {
-        row.remove(key);
-    } else {
-        set_json_string(row, key, value);
-    }
-}
-
-fn is_hex_color(value: &str) -> bool {
-    value.len() == 7
-        && value.starts_with('#')
-        && value.as_bytes()[1..]
-            .iter()
-            .all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -364,101 +166,6 @@ mod tests {
         );
         assert_eq!(projection.records[0].attribute, "灵");
         assert!(projection.records[0].verified);
-        fs::remove_dir_all(path.ancestors().nth(3).expect("fixture root")).expect("remove fixture");
-    }
-
-    #[test]
-    fn atomic_update_preserves_unknown_fields_and_returns_projection() {
-        let path = temporary_character_path("save");
-        write_fixture(&path);
-        let (projection, outcome) = save_character_data_record(
-            &path,
-            CharacterDataRecordInput {
-                original_id: Some("20".to_owned()),
-                id: "20".to_owned(),
-                name_zh: "二十改".to_owned(),
-                name_en: "Twenty".to_owned(),
-                codename: "Twenty".to_owned(),
-                attribute: "咒".to_owned(),
-                verified: true,
-                color: "#123ABC".to_owned(),
-                avatar: "res/images/characters/player_020.png".to_owned(),
-            },
-        )
-        .expect("save character data");
-
-        assert_eq!(outcome, CharacterDataSaveOutcome::Saved);
-        assert_eq!(projection.records[1].name_zh, "二十改");
-        let saved: Value = serde_json::from_str(&fs::read_to_string(&path).expect("saved text"))
-            .expect("saved JSON");
-        assert_eq!(saved["characters"]["20"]["future"], 42);
-        fs::remove_dir_all(path.ancestors().nth(3).expect("fixture root")).expect("remove fixture");
-    }
-
-    #[test]
-    fn semantically_identical_update_skips_the_file_write() {
-        let path = temporary_character_path("no-op");
-        write_fixture(&path);
-        let before = fs::read(&path).expect("read original fixture");
-
-        let (projection, outcome) = save_character_data_record(
-            &path,
-            CharacterDataRecordInput {
-                original_id: Some("20".to_owned()),
-                id: "20".to_owned(),
-                name_zh: "二十".to_owned(),
-                name_en: "Twenty".to_owned(),
-                codename: String::new(),
-                attribute: String::new(),
-                verified: false,
-                color: String::new(),
-                avatar: String::new(),
-            },
-        )
-        .expect("save identical character data");
-
-        assert_eq!(outcome, CharacterDataSaveOutcome::Unchanged);
-        assert_eq!(projection.records[1].id, 20);
-        assert_eq!(fs::read(&path).expect("read unchanged fixture"), before);
-        fs::remove_dir_all(path.ancestors().nth(3).expect("fixture root")).expect("remove fixture");
-    }
-
-    #[test]
-    fn validation_rejects_duplicate_id_and_invalid_fields() {
-        let path = temporary_character_path("validation");
-        write_fixture(&path);
-        let base = CharacterDataRecordInput {
-            id: "20".to_owned(),
-            name_zh: "重复".to_owned(),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            save_character_data_record(&path, base.clone()),
-            Err(CharacterDataError::IdAlreadyExists(20))
-        );
-        assert_eq!(
-            save_character_data_record(
-                &path,
-                CharacterDataRecordInput {
-                    id: "21".to_owned(),
-                    color: "red".to_owned(),
-                    ..base.clone()
-                }
-            ),
-            Err(CharacterDataError::InvalidColor)
-        );
-        assert_eq!(
-            save_character_data_record(
-                &path,
-                CharacterDataRecordInput {
-                    id: "21".to_owned(),
-                    attribute: "water".to_owned(),
-                    ..base
-                }
-            ),
-            Err(CharacterDataError::InvalidAttribute)
-        );
         fs::remove_dir_all(path.ancestors().nth(3).expect("fixture root")).expect("remove fixture");
     }
 }

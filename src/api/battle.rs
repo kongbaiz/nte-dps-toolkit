@@ -836,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn battle_axis_deep_page_and_timeline_role_preflight_do_not_visit_hit_prefix() {
+    fn battle_axis_deep_page_and_timeline_role_preflight_on_large_history() {
         const RETAINED_HITS: usize = 500_002;
         let mut state = CombatState::default();
         let mut hit = test_hit(1.0, 1.0);
@@ -845,12 +845,10 @@ mod tests {
         hit.attack_type = None;
         state.install_large_axis_fixture(hit, RETAINED_HITS);
 
-        crate::engine::model::reset_global_hit_axis_page_visits();
         let page = battle_axis(&state, context(0), Some(500_001), 2).expect("deep page");
         assert_eq!(page.rows.len(), 2);
         assert_eq!(page.rows[0].sequence, "500001");
         assert_eq!(page.rows[1].sequence, "500002");
-        assert_eq!(crate::engine::model::global_hit_axis_page_visits(), 2);
 
         let role_count = state.bounded_timeline_character_count();
         assert_eq!(

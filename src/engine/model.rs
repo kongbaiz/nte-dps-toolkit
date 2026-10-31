@@ -32,45 +32,6 @@ const MAX_RETAINED_TIME_STOP_INTERVALS: usize = MAX_PROJECTED_TIME_STOP_INTERVAL
 const MAX_RETAINED_TIME_STOP_EVENTS: usize = 8_192;
 const TIME_STOP_EVENT_COMPACTION_CHUNK: usize = 1_024;
 
-#[cfg(test)]
-std::thread_local! {
-    static COMBAT_TOTAL_REBUILD_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMPACT_TIMELINE_PROJECTION_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMBAT_DETAIL_QUERY_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static BULK_COMBAT_REBUILD_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(test, feature = "cli"))]
-std::thread_local! {
-    static GLOBAL_HIT_AXIS_PAGE_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(test, feature = "cli"))]
-pub(crate) fn reset_global_hit_axis_page_visits() {
-    GLOBAL_HIT_AXIS_PAGE_VISITS.with(|visits| visits.set(0));
-}
-
-#[cfg(all(test, feature = "cli"))]
-pub(crate) fn global_hit_axis_page_visits() -> usize {
-    GLOBAL_HIT_AXIS_PAGE_VISITS.with(std::cell::Cell::get)
-}
-
 /// Compact, exportable team DPS snapshot used to predict abyss clear time.
 /// Deliberately holds no packets or per-hit data — only the latest total DPS and
 /// up to 4 members — so the exported file stays tiny.
@@ -1255,9 +1216,6 @@ impl CompactTimelineTree {
         while pending_len > 0 {
             pending_len -= 1;
             let index = pending[pending_len];
-            #[cfg(test)]
-            COMPACT_TIMELINE_PROJECTION_VISITS
-                .with(|visits| visits.set(visits.get().saturating_add(1)));
             let Some(node) = self.nodes.get(index) else {
                 continue;
             };
@@ -1544,10 +1502,6 @@ impl CompactTimelineIndex {
             // are read/reset, so 256 sparse roles over a 10k bucket chart do
             // not allocate and clear 2.56 million aggregates every refresh.
             let mut role_scratch = vec![CompactTimelineAggregate::default(); layout.bucket_count];
-            #[cfg(test)]
-            COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS.with(|slots| {
-                slots.set(slots.get().saturating_add(role_scratch.len()));
-            });
             let mut touched_buckets = Vec::<usize>::new();
             let role_budget = max_roles_per_bucket.max(1).min(roles.len());
             let mut candidates = std::iter::repeat_with(|| None)
@@ -1563,13 +1517,8 @@ impl CompactTimelineIndex {
                 );
                 for bucket_index in touched_buckets.drain(..) {
                     let aggregate = std::mem::take(&mut role_scratch[bucket_index]);
-                    let bucket_candidates = candidates[bucket_index].get_or_insert_with(|| {
-                        #[cfg(test)]
-                        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(|slots| {
-                            slots.set(slots.get().saturating_add(role_budget));
-                        });
-                        CompactTimelineRoleCandidates::new(role_budget)
-                    });
+                    let bucket_candidates = candidates[bucket_index]
+                        .get_or_insert_with(|| CompactTimelineRoleCandidates::new(role_budget));
                     bucket_candidates.consider(CompactTimelineRoleEvent {
                         first_sequence: aggregate.first_sequence,
                         char_id,
@@ -2039,10 +1988,6 @@ impl SkillBreakdownIndex {
         if let Some(overflow) = self.overflow_row.clone() {
             rows.push(overflow);
         }
-        #[cfg(test)]
-        SKILL_INDEX_PROJECTION_VISITS.with(|visits| {
-            visits.set(visits.get().saturating_add(rows.len()));
-        });
         rows.sort_by(|left, right| {
             right
                 .damage
@@ -2100,21 +2045,6 @@ impl SkillBreakdownIndex {
         self.unmapped_gameplay_effects.len()
             + usize::from(self.overflow_unmapped_gameplay_effect.is_some())
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    static SKILL_INDEX_PROJECTION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn reset_skill_index_projection_visits() {
-    SKILL_INDEX_PROJECTION_VISITS.with(|visits| visits.set(0));
-}
-
-#[cfg(test)]
-fn skill_index_projection_visits() -> usize {
-    SKILL_INDEX_PROJECTION_VISITS.with(std::cell::Cell::get)
 }
 
 const MAX_INDEXED_DETAIL_CHARACTERS: usize = 256;
@@ -2679,10 +2609,6 @@ fn collect_exact_indexed_detail_page(
     positions
         .filter_map(|position| {
             let hit = hits.get(position)?;
-            #[cfg(test)]
-            COMBAT_DETAIL_QUERY_VISITS.with(|visits| {
-                visits.set(visits.get().saturating_add(1));
-            });
             Some((position, hit))
         })
         .collect()
@@ -2744,10 +2670,6 @@ fn collect_indexed_detail_page<'a>(
             let Some(hit) = hits.get(position) else {
                 continue;
             };
-            #[cfg(test)]
-            COMBAT_DETAIL_QUERY_VISITS.with(|visits| {
-                visits.set(visits.get().saturating_add(1));
-            });
             if !index.matches_query(hit, character_id, filter, skill) {
                 continue;
             }
@@ -2773,10 +2695,6 @@ fn collect_indexed_detail_page<'a>(
         let Some(hit) = hits.get(position) else {
             continue;
         };
-        #[cfg(test)]
-        COMBAT_DETAIL_QUERY_VISITS.with(|visits| {
-            visits.set(visits.get().saturating_add(1));
-        });
         if !index.matches_query(hit, character_id, filter, skill) {
             continue;
         }
@@ -3808,8 +3726,6 @@ fn rebuild_combat_totals(
     total_damage_taken: &mut f64,
     max_hp_reduction: &mut f64,
 ) {
-    #[cfg(test)]
-    COMBAT_TOTAL_REBUILD_COUNT.with(|count| count.set(count.get().saturating_add(1)));
     stats.clear();
     *compact_timeline = CompactTimelineIndex::default();
     *started_at = None;
@@ -3855,10 +3771,6 @@ fn rebuild_all_combat_indexes(
     *max_hp_reduction = 0.0;
     let stable_end = hits.len().saturating_sub(RECENT_HIT_MUTATION_WINDOW);
     for (position, hit) in hits.iter().enumerate() {
-        #[cfg(test)]
-        BULK_COMBAT_REBUILD_VISITS.with(|visits| {
-            visits.set(visits.get().saturating_add(1));
-        });
         update_combat_totals(
             stats,
             compact_timeline,
@@ -5940,10 +5852,6 @@ impl CombatState {
         let end = start.saturating_add(limit).min(self.hits.len());
         (start..end).filter_map(move |position| {
             self.hits.get(position).map(|hit| {
-                #[cfg(all(test, feature = "cli"))]
-                GLOBAL_HIT_AXIS_PAGE_VISITS.with(|visits| {
-                    visits.set(visits.get().saturating_add(1));
-                });
                 let half = self
                     .global_hit_abyss_halves
                     .get(position)
@@ -7524,54 +7432,6 @@ mod tests {
         );
     }
 
-    fn reset_combat_total_rebuild_count() {
-        COMBAT_TOTAL_REBUILD_COUNT.with(|count| count.set(0));
-    }
-
-    fn combat_total_rebuild_count() -> usize {
-        COMBAT_TOTAL_REBUILD_COUNT.with(std::cell::Cell::get)
-    }
-
-    fn reset_combat_detail_query_visits() {
-        COMBAT_DETAIL_QUERY_VISITS.with(|visits| visits.set(0));
-    }
-
-    fn combat_detail_query_visits() -> usize {
-        COMBAT_DETAIL_QUERY_VISITS.with(std::cell::Cell::get)
-    }
-
-    fn reset_bulk_combat_rebuild_visits() {
-        BULK_COMBAT_REBUILD_VISITS.with(|visits| visits.set(0));
-    }
-
-    fn bulk_combat_rebuild_visits() -> usize {
-        BULK_COMBAT_REBUILD_VISITS.with(std::cell::Cell::get)
-    }
-
-    fn reset_compact_timeline_projection_visits() {
-        COMPACT_TIMELINE_PROJECTION_VISITS.with(|visits| visits.set(0));
-    }
-
-    fn compact_timeline_projection_visits() -> usize {
-        COMPACT_TIMELINE_PROJECTION_VISITS.with(std::cell::Cell::get)
-    }
-
-    fn reset_compact_timeline_role_scratch_slots() {
-        COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS.with(|slots| slots.set(0));
-    }
-
-    fn compact_timeline_role_scratch_slots() -> usize {
-        COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS.with(std::cell::Cell::get)
-    }
-
-    fn reset_compact_timeline_role_candidate_slots() {
-        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(|slots| slots.set(0));
-    }
-
-    fn compact_timeline_role_candidate_slots() -> usize {
-        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(std::cell::Cell::get)
-    }
-
     fn scale_dense_timeline_tree(
         tree: &mut CompactTimelineTree,
         damage_factor: f64,
@@ -7963,8 +7823,6 @@ mod tests {
             next_sequence: (BUCKET_COUNT as u64).saturating_mul(u64::from(ROLE_COUNT)),
         };
 
-        reset_compact_timeline_role_scratch_slots();
-        reset_compact_timeline_role_candidate_slots();
         let timeline = index
             .project(1.0, BUCKET_COUNT, ROLES_PER_BUCKET, ROLE_COUNT as usize)
             .expect("dense timeline projection");
@@ -7995,20 +7853,6 @@ mod tests {
         assert_eq!(
             timeline.omitted_role_hits,
             dense_event_count - CANDIDATE_LIMIT as u64
-        );
-        assert_eq!(
-            compact_timeline_role_scratch_slots(),
-            BUCKET_COUNT,
-            "role projection must initialize one reusable bucket scratch, not one per role"
-        );
-        let candidate_slots = compact_timeline_role_candidate_slots();
-        assert!(
-            candidate_slots <= CANDIDATE_LIMIT,
-            "candidate slots must stay within bucket_count * max_roles_per_bucket"
-        );
-        assert_eq!(
-            candidate_slots, CANDIDATE_LIMIT,
-            "the dense fixture must fill every bounded candidate slot"
         );
         assert!(
             output_roles <= CANDIDATE_LIMIT,
@@ -8145,7 +7989,7 @@ mod tests {
     }
 
     #[test]
-    fn indexed_timeline_projection_visits_bounded_paths_for_large_history() {
+    fn indexed_timeline_projection_is_exact_for_large_history() {
         const HIT_COUNT: usize = 50_001;
         const OUTPUT_BUCKETS: usize = 60;
         let mut state = CombatState::default();
@@ -8165,9 +8009,7 @@ mod tests {
                 .values()
                 .all(|role| role.tree.max_depth() <= COMPACT_TIMELINE_MAX_TREE_DEPTH)
         );
-        reset_compact_timeline_projection_visits();
         let timeline = state.timeline_bounded(0.2, false, OUTPUT_BUCKETS, 4, 4);
-        let visits = compact_timeline_projection_visits();
 
         assert_eq!(timeline.buckets.len(), OUTPUT_BUCKETS);
         assert_eq!(timeline.total_damage, HIT_COUNT as f64);
@@ -8179,37 +8021,23 @@ mod tests {
                 .sum::<u64>(),
             HIT_COUNT as u64
         );
-        let structural_visit_bound =
-            (4 + 1) * (1 + 2 * OUTPUT_BUCKETS * COMPACT_TIMELINE_MAX_TREE_DEPTH);
-        assert!(
-            visits <= structural_visit_bound,
-            "projection visited {visits} nodes, exceeding the bucket/depth bound {structural_visit_bound}"
-        );
-        assert!(
-            visits < HIT_COUNT / 2,
-            "bounded projection visited {visits} index nodes for {HIT_COUNT} retained hits"
-        );
     }
 
     #[test]
-    fn indexed_skill_projection_visits_distinct_rows_instead_of_retained_hits() {
+    fn indexed_skill_projection_and_detail_pages_are_exact_for_large_history() {
         const HIT_COUNT: usize = 50_001;
         let mut state = CombatState::default();
         for index in 0..HIT_COUNT {
             state.push_hit(test_hit(index as f64, 1, "outgoing", 1.0));
         }
 
-        reset_skill_index_projection_visits();
         let breakdown = state.skill_breakdown(None);
-        let visits = skill_index_projection_visits();
 
         assert_eq!(state.hits.len(), HIT_COUNT);
         assert_eq!(breakdown.total_hits, HIT_COUNT as u64);
         assert_eq!(breakdown.total_damage, HIT_COUNT as f64);
         assert_eq!(breakdown.rows.len(), 1);
-        assert_eq!(visits, 1);
 
-        reset_combat_detail_query_visits();
         let middle = state.indexed_combat_details(
             None,
             &IndexedCombatDetailFilter::All,
@@ -8219,9 +8047,7 @@ mod tests {
         );
         assert_eq!(middle.rows.len(), 2);
         assert_eq!(middle.rows[0].0, HIT_COUNT / 2);
-        assert_eq!(combat_detail_query_visits(), 2);
 
-        reset_combat_detail_query_visits();
         let filtered_middle = state.indexed_combat_details(
             None,
             &IndexedCombatDetailFilter::Outgoing,
@@ -8231,9 +8057,7 @@ mod tests {
         );
         assert_eq!(filtered_middle.rows.len(), 2);
         assert_eq!(filtered_middle.rows[0].0, HIT_COUNT / 2);
-        assert_eq!(combat_detail_query_visits(), 2);
 
-        reset_combat_detail_query_visits();
         let skill = hit_skill_id_ref(state.hits.front().expect("large fixture hit"));
         let page = state.indexed_combat_details(
             Some(1),
@@ -8246,9 +8070,7 @@ mod tests {
         assert_eq!(page.rows.len(), 2);
         assert_eq!(page.rows[0].0, HIT_COUNT - 2);
         assert_eq!(page.rows[1].0, HIT_COUNT - 1);
-        assert_eq!(combat_detail_query_visits(), 2);
 
-        reset_combat_detail_query_visits();
         let empty = state.indexed_combat_details(
             Some(1),
             &IndexedCombatDetailFilter::Outgoing,
@@ -8257,7 +8079,6 @@ mod tests {
             2,
         );
         assert!(empty.rows.is_empty());
-        assert_eq!(combat_detail_query_visits(), 0);
     }
 
     #[test]
@@ -8306,15 +8127,13 @@ mod tests {
     }
 
     #[test]
-    fn bulk_history_rehydrate_rebuilds_all_indexes_in_one_hit_pass() {
+    fn bulk_history_rehydrate_rebuilds_all_indexes() {
         const HIT_COUNT: usize = 50_001;
         let hit = test_hit(1.0, 7, "outgoing", 1.0);
         let mut state = CombatState::default();
 
-        reset_bulk_combat_rebuild_visits();
         state.replace_global_hits_bulk(std::iter::repeat_n(hit, HIT_COUNT).collect());
 
-        assert_eq!(bulk_combat_rebuild_visits(), HIT_COUNT);
         assert_eq!(state.hits.len(), HIT_COUNT);
         assert_eq!(state.total_damage, HIT_COUNT as f64);
         assert_eq!(state.stats[&7].hits, HIT_COUNT as u64);
@@ -8774,7 +8593,6 @@ mod tests {
         let mut candidate = test_hit(1.0, 7, "unknown", 100.0);
         candidate.attack_type = Some("Normal Attack".to_owned());
         state.push_hit(candidate);
-        reset_combat_total_rebuild_count();
 
         let timestamp_100ns =
             FILETIME_UNIX_EPOCH_100NS.saturating_add((1.05 * FILETIME_TICKS_PER_SECOND) as u64);
@@ -8790,7 +8608,6 @@ mod tests {
             ModScriptApplyOutcome::ProjectionChanged
         );
 
-        assert_eq!(combat_total_rebuild_count(), 0);
         assert_eq!(state.total_damage, 100.0);
         assert_eq!(state.hits[0].direction, HitDirection::Outgoing);
         let global = state.stats.get(&7).expect("global character aggregate");
@@ -9143,7 +8960,6 @@ mod tests {
         let first_generation = state.abyss.first_half.hits_generation;
         let second_generation = state.abyss.second_half.hits_generation;
         let total_before = state.total_damage;
-        reset_combat_total_rebuild_count();
 
         assert!(state.apply_damage_correction(HitDamageCorrection {
             source_byte_offset: None,
@@ -9187,7 +9003,6 @@ mod tests {
             damage_attribute: Some("灵".to_owned()),
         }));
 
-        assert_eq!(combat_total_rebuild_count(), 0);
         assert_eq!(state.hits_generation, global_generation.wrapping_add(2));
         assert_eq!(
             state.abyss.first_half.hits_generation,

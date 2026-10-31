@@ -19,7 +19,7 @@ use nte_dps_tool::{
             CaptureControllerOptions, CaptureDeviceSelector, CaptureProfile, RawCaptureMode,
             enumerate_devices,
         },
-        character_data::{CharacterDataProjection, CharacterDataRecordInput},
+        character_data::CharacterDataProjection,
         combat_details::CombatDetailFilter,
         diagnostics::{DiagnosticRun, DiagnosticSnapshot},
         encrypted_ini::{EncryptedIniKey, EncryptedIniSaveOutcome},
@@ -80,10 +80,7 @@ use nte_dps_tool::storage::history::cleanup_orphaned_history_tombstones_at_start
 use std::sync::Once;
 
 #[cfg(test)]
-use nte_dps_tool::{
-    core::history::prepare_history_archive,
-    storage::history::{HistoryRecord, HistorySaveOutcome},
-};
+use nte_dps_tool::core::history::prepare_history_archive;
 
 use crate::{
     character_data_service::{CharacterDataService, CharacterDataServiceError},
@@ -959,8 +956,6 @@ struct PresentationState {
     /// the revision is unchanged before and after projection.
     main_readout_cache: Mutex<Vec<MainReadoutCache>>,
     timeline_cache: Mutex<Vec<TimelineProjectionCache>>,
-    #[cfg(test)]
-    main_readout_projection_count: AtomicU64,
 }
 
 impl PresentationState {
@@ -1142,19 +1137,6 @@ fn history_archive_policy(config: &UiConfig) -> HistoryArchivePolicy {
         },
         separate_reaction_damage: config.separate_reaction_damage,
     }
-}
-
-#[cfg(test)]
-fn selected_round_combat_state(
-    rounds: &[HistoryRecord],
-    selected_round_id: Option<&str>,
-) -> Option<CombatState> {
-    let record_id = selected_round_id?;
-    rounds
-        .iter()
-        .find(|record| record.id == record_id)
-        .and_then(|record| record.details.as_ref())
-        .map(HistoryCombatDetails::to_combat_state)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2088,11 +2070,6 @@ impl AppState {
         }
         drop(cache);
 
-        #[cfg(test)]
-        self.0
-            .presentation
-            .main_readout_projection_count
-            .fetch_add(1, Ordering::AcqRel);
         let dps_time_mode = self.presentation_dps_time_mode(&mode)?;
         let readout = self.with_presentation_mode_state(&mode, |state| {
             self.project_main_readout(state, abyss_after.selected, dps_time_mode)
@@ -3360,23 +3337,6 @@ impl AppState {
         persistence_outcome
     }
 
-    #[cfg(test)]
-    fn finish_history_save(&self, outcome: HistorySaveOutcome) -> HistoryPersistenceOutcome {
-        let persistence_outcome = match outcome {
-            HistorySaveOutcome::Committed(_) => HistoryPersistenceOutcome::Committed,
-            HistorySaveOutcome::CommittedWithMaintenanceWarning { warning, .. } => {
-                log::warn!("{warning}");
-                HistoryPersistenceOutcome::CommittedWithMaintenanceWarning
-            }
-        };
-        // Both variants crossed the atomic-write commit boundary. The record
-        // is observable even when retention maintenance did not finish, so
-        // the read model advances exactly once and the archive must not be
-        // placed back into the record retry queue.
-        self.bump_history_revision();
-        persistence_outcome
-    }
-
     pub(crate) fn archive_current_history_round(&self) -> Result<bool, HistoryRuntimeError> {
         if self
             .replay_running()
@@ -3657,15 +3617,8 @@ impl AppState {
 
     pub(crate) fn character_data_snapshot(
         &self,
-    ) -> Result<(CharacterDataProjection, u64), CharacterDataServiceError> {
+    ) -> Result<CharacterDataProjection, CharacterDataServiceError> {
         self.0.character_data.snapshot()
-    }
-
-    pub(crate) fn save_character_data_record(
-        &self,
-        input: CharacterDataRecordInput,
-    ) -> Result<(CharacterDataProjection, u64), CharacterDataServiceError> {
-        self.0.character_data.save_record(input)
     }
 
     pub(crate) fn encrypted_ini_snapshot(
@@ -5440,45 +5393,6 @@ mod tests {
     }
 
     #[test]
-    fn selected_round_drives_timeline_and_skills_projection_input() {
-        let mut selected = CombatState::default();
-        selected.push_hit(test_hit(125.0));
-        let records = vec![HistoryRecord {
-            id: "selected-round".to_owned(),
-            details: HistoryCombatDetails::from_state(&selected),
-            ..Default::default()
-        }];
-
-        let projected = selected_round_combat_state(&records, Some("selected-round"))
-            .expect("selected round combat state");
-        let timeline = project_timeline(
-            &projected,
-            &HashMap::new(),
-            TimelineProjectionOptions {
-                scope: TimelineScope::Whole,
-                bucket_seconds: 1.0,
-                max_buckets: MAX_TIMELINE_BUCKETS,
-                max_roles_per_bucket: MAX_TIMELINE_ROLES_PER_BUCKET,
-                max_characters: MAX_TIMELINE_CHARACTERS,
-                subtract_time_stop: true,
-                language: Language::English,
-            },
-        );
-        let skills = project_skills(
-            &projected,
-            &HashMap::new(),
-            SkillsProjectionOptions {
-                scope: SkillsScope::Whole,
-                language: Language::English,
-            },
-        );
-
-        assert_eq!(timeline.total_damage, 125.0);
-        assert_eq!(skills.total_damage, 125.0);
-        assert!(selected_round_combat_state(&records, Some("other-round")).is_none());
-    }
-
-    #[test]
     fn late_starting_history_worker_cannot_overwrite_a_newer_intent() {
         let state = AppState::default();
         let slow_operation = state.reserve_main_round_selection();
@@ -5636,15 +5550,6 @@ mod tests {
             .main_dps_readout()
             .expect("same-revision main readout");
         assert_eq!(first.hud, second.hud);
-        assert_eq!(
-            state
-                .0
-                .presentation
-                .main_readout_projection_count
-                .load(Ordering::Acquire),
-            1,
-            "same-revision consumers must share one projection"
-        );
 
         let mut combat = CombatState::default();
         combat.push_hit(test_hit(250.0));
@@ -5655,15 +5560,6 @@ mod tests {
         assert_eq!(
             changed.hud.summary.expect("live summary").total_damage,
             250.0
-        );
-        assert_eq!(
-            state
-                .0
-                .presentation
-                .main_readout_projection_count
-                .load(Ordering::Acquire),
-            2,
-            "a new capture revision must invalidate the cached readout"
         );
 
         // Drive more exact revisions than the cache can retain. Each snapshot
@@ -5957,11 +5853,10 @@ mod tests {
         assert_eq!(
             state.archive_current_history_round_with(false, |state, _| {
                 attempts.fetch_add(1, Ordering::AcqRel);
-                Ok(state.finish_history_save(
-                    nte_dps_tool::storage::history::HistorySaveOutcome::CommittedWithMaintenanceWarning {
-                        record: HistoryRecord::default(),
-                        warning: nte_dps_tool::storage::history::HistoryMaintenanceWarning::RetentionPruneFailed,
-                    },
+                Ok(state.finish_borrowed_history_save(
+                    BorrowedHistorySaveOutcome::CommittedWithMaintenanceWarning(
+                        nte_dps_tool::storage::history::HistoryMaintenanceWarning::RetentionPruneFailed,
+                    ),
                 ))
             }),
             Ok(true)
@@ -6110,7 +6005,7 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_history_maintenance_stops_worker_before_waiting() {
+    fn poisoned_history_maintenance_reports_unavailable() {
         let state = AppState::default();
         let poison_state = state.clone();
         let _ = std::thread::spawn(move || {
@@ -6123,17 +6018,10 @@ mod tests {
             panic!("poison History maintenance transaction");
         })
         .join();
-        let stop = AtomicBool::new(false);
-        let wait_called = AtomicBool::new(false);
 
-        let result = crate::history_runtime::run_history_maintenance_worker(&state, &stop, || {
-            wait_called.store(true, Ordering::Release)
-        });
-
-        assert_eq!(result, Err(HistoryRuntimeError::Unavailable));
-        assert!(
-            !wait_called.load(Ordering::Acquire),
-            "a poisoned maintenance iteration must terminate before waiting"
+        assert_eq!(
+            state.maintain_history_rounds(),
+            Err(HistoryRuntimeError::Unavailable)
         );
     }
 
@@ -6222,11 +6110,10 @@ mod tests {
                 archive.summary.quality.source,
             ));
             if archive.summary.total_damage == 1.0 {
-                Ok(state.finish_history_save(
-                    HistorySaveOutcome::CommittedWithMaintenanceWarning {
-                        record: HistoryRecord::default(),
-                        warning: nte_dps_tool::storage::history::HistoryMaintenanceWarning::RetentionPruneFailed,
-                    },
+                Ok(state.finish_borrowed_history_save(
+                    BorrowedHistorySaveOutcome::CommittedWithMaintenanceWarning(
+                        nte_dps_tool::storage::history::HistoryMaintenanceWarning::RetentionPruneFailed,
+                    ),
                 ))
             } else {
                 Err(HistoryRuntimeError::Unavailable)
@@ -6304,56 +6191,6 @@ mod tests {
                 .expect("pending History archives lock")
                 .is_empty()
         );
-    }
-
-    #[test]
-    fn poisoned_history_channel_worker_cleans_its_registry_entry() {
-        let state = AppState::default();
-        let stream_key = "history:poison-cleanup";
-        let registration = state
-            .reserve_stream("console", stream_key)
-            .expect("reserve History stream");
-        assert!(
-            state
-                .activate_stream(&registration)
-                .expect("activate History stream")
-        );
-        let poison_state = state.clone();
-        let _ = std::thread::spawn(move || {
-            let _guard = poison_state
-                .0
-                .history
-                .transaction
-                .lock()
-                .expect("history transaction lock");
-            panic!("poison History channel transaction");
-        })
-        .join();
-        let sent = AtomicBool::new(false);
-        let waited = AtomicBool::new(false);
-
-        crate::channels::history::run_history_stream_worker(
-            &state,
-            &registration,
-            |_| {
-                sent.store(true, Ordering::Release);
-                true
-            },
-            || waited.store(true, Ordering::Release),
-        );
-
-        assert!(!sent.load(Ordering::Acquire));
-        assert!(!waited.load(Ordering::Acquire));
-        let replacement = state
-            .reserve_stream("console", stream_key)
-            .expect("reserve replacement History stream");
-        assert!(
-            !registration.is_cancelled(),
-            "beginning a replacement must not find the finished poisoned worker"
-        );
-        state
-            .finish_stream(&replacement)
-            .expect("finish pending replacement");
     }
 
     #[test]

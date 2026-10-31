@@ -176,7 +176,6 @@ pub fn run() {
             commands::abyss_values::import_current_abyss_prediction_team,
             commands::abyss_values::swap_abyss_prediction_teams,
             commands::character_data::get_character_data_snapshot,
-            commands::character_data::save_character_data_record,
             commands::console_control::execute_console_control,
             commands::diagnostics::export_diagnostics_json,
             commands::diagnostics::export_diagnostics_pcapng,

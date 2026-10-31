@@ -2,7 +2,6 @@ import {
   characterDataError,
   parseCharacterDataSnapshot,
   type CharacterDataCommandError,
-  type CharacterDataRecordInput,
   type CharacterDataSnapshot,
 } from "@/lib/tauri/character-data-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
@@ -13,12 +12,10 @@ import {
 
 const COMMANDS = {
   getSnapshot: "get_character_data_snapshot",
-  saveRecord: "save_character_data_record",
 } as const;
 
 export interface CharacterDataClient {
   getSnapshot(): Promise<CharacterDataSnapshot>;
-  saveRecord(input: CharacterDataRecordInput): Promise<CharacterDataSnapshot>;
 }
 
 export function createCharacterDataClient(
@@ -39,7 +36,6 @@ export function createCharacterDataClient(
   };
   return {
     getSnapshot: () => request(COMMANDS.getSnapshot),
-    saveRecord: (input) => request(COMMANDS.saveRecord, { input }),
   };
 }
 

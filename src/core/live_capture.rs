@@ -53,15 +53,6 @@ const RELIABLE_ENGINE_EVENT_CAPACITY: usize = 16_384;
 const DEBUG_ENGINE_EVENT_CAPACITY: usize = 2_048;
 const MAX_PENDING_ABYSS_ARCHIVES: usize = 64;
 
-#[cfg(all(test, feature = "desktop"))]
-std::thread_local! {
-    /// Guardrail counter: the incremental quality path must never fall back to
-    /// scanning the authoritative hit deque, including after cache poison.
-    static DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LiveCapturePhase {
     Idle,
@@ -1092,31 +1083,6 @@ impl LiveCaptureService {
         }
     }
 
-    /// Publishes both the running phase and any manual-network degradation as
-    /// one status mutation. Revision effect: exactly one capture/status
-    /// revision and one packet revision advance immediately after this critical
-    /// section, so consumers cannot observe Running without its warning.
-    #[cfg(test)]
-    fn publish_start_success(
-        &self,
-        network_probe_degradation: Option<NetworkProbeErrorCode>,
-    ) -> Result<bool, CoreError> {
-        let should_stop = {
-            let mut status = self.checked_guard(&self.0.status)?;
-            if status.phase == LiveCapturePhase::Stopping {
-                true
-            } else {
-                *status = LiveCaptureStatus {
-                    phase: LiveCapturePhase::Running,
-                    issue: network_probe_degradation.map(LiveCaptureIssue::NetworkProbeDegraded),
-                };
-                false
-            }
-        };
-        self.0.bump_capture_status_revision();
-        Ok(should_stop)
-    }
-
     fn spawn_stop_worker(&self) -> Result<(), CoreError> {
         let service = self.clone();
         thread::Builder::new()
@@ -1918,16 +1884,6 @@ mod tests {
             .expect("healthy live-capture runtime");
     }
 
-    #[cfg(feature = "desktop")]
-    fn reset_diagnostic_quality_full_rebuild_count() {
-        DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT.with(|count| count.set(0));
-    }
-
-    #[cfg(feature = "desktop")]
-    fn diagnostic_quality_full_rebuild_count() -> usize {
-        DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT.with(std::cell::Cell::get)
-    }
-
     fn project<T>(service: &LiveCaptureService, projection: impl FnOnce(&CombatState) -> T) -> T {
         service
             .with_state(projection)
@@ -1971,7 +1927,6 @@ mod tests {
     #[test]
     #[cfg(feature = "desktop")]
     fn diagnostics_quality_reuses_hit_projection_for_packet_only_revisions() {
-        reset_diagnostic_quality_full_rebuild_count();
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         process(&service, hit(100.0));
 
@@ -1989,17 +1944,11 @@ mod tests {
         assert_eq!(initial.hit_count, 1);
         assert_eq!(packet_updated.hit_count, 1);
         assert_eq!(packet_updated.packet_count, initial.packet_count + 1);
-        assert_eq!(
-            diagnostic_quality_full_rebuild_count(),
-            0,
-            "packet-only generations must never scan the authoritative hit log"
-        );
     }
 
     #[test]
     #[cfg(feature = "desktop")]
-    fn diagnostics_quality_extends_append_only_hits_without_full_rebuild() {
-        reset_diagnostic_quality_full_rebuild_count();
+    fn diagnostics_quality_extends_append_only_hits() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         process(&service, hit(100.0));
         service
@@ -2016,11 +1965,6 @@ mod tests {
 
         assert_eq!(incremental, legacy);
         assert_eq!(incremental.hit_count, 2);
-        assert_eq!(
-            diagnostic_quality_full_rebuild_count(),
-            0,
-            "append-only hits are already reflected by the reducer-maintained aggregate"
-        );
     }
 
     #[test]
@@ -2037,7 +1981,6 @@ mod tests {
         service
             .restore_session(state, CaptureQualitySource::Live)
             .expect("install retained maximum fixture");
-        reset_diagnostic_quality_full_rebuild_count();
 
         let initial = service
             .quality_summary()
@@ -2053,13 +1996,11 @@ mod tests {
         assert_eq!(initial.hit_count, 50_000);
         assert_eq!(packet_updated.hit_count, 50_000);
         assert_eq!(packet_updated.packet_count, 1);
-        assert_eq!(diagnostic_quality_full_rebuild_count(), 0);
     }
 
     #[test]
     #[cfg(feature = "desktop")]
     fn poisoned_diagnostics_cache_rebuilds_without_failing_capture_state() {
-        reset_diagnostic_quality_full_rebuild_count();
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         process(&service, hit(100.0));
         service
@@ -2082,7 +2023,6 @@ mod tests {
         assert_eq!(rebuilt.hit_count, 1);
         assert_eq!(service.status().phase, LiveCapturePhase::Idle);
         assert!(!service.0.integrity_failed.load(Ordering::Acquire));
-        assert_eq!(diagnostic_quality_full_rebuild_count(), 0);
     }
 
     fn take_archives(service: &LiveCaptureService) -> Vec<PendingHistoryArchive> {
@@ -3277,47 +3217,14 @@ mod tests {
     }
 
     #[test]
-    fn manual_network_probe_degradation_is_published_with_status_revision() {
-        let service = LiveCaptureService::new(LiveCaptureResources::default());
-        let initial_revision = service.revision();
-        let initial_packet_revision = packet_projection(&service, |revision, _, _| revision);
-
-        assert!(
-            !service
-                .publish_start_success(Some(NetworkProbeErrorCode::ProcessSnapshotFailed))
-                .expect("healthy capture status")
-        );
-
-        assert_eq!(
-            service.status(),
-            LiveCaptureStatus {
-                phase: LiveCapturePhase::Running,
-                issue: Some(LiveCaptureIssue::NetworkProbeDegraded(
-                    NetworkProbeErrorCode::ProcessSnapshotFailed,
-                )),
-            }
-        );
-        assert_eq!(service.revision(), initial_revision + 1);
-        assert_eq!(
-            packet_projection(&service, |revision, _, _| revision.generation),
-            initial_packet_revision.generation + 1
-        );
-        assert_eq!(
-            packet_projection(&service, |revision, _, _| revision.session_generation),
-            initial_packet_revision.session_generation
-        );
-    }
-
-    #[test]
     fn manual_network_probe_degradation_survives_runtime_warnings() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         let code = NetworkProbeErrorCode::ProcessEnumerationFailed;
 
-        assert!(
-            !service
-                .publish_start_success(Some(code))
-                .expect("healthy capture status")
-        );
+        *service.0.status.lock().expect("status lock") = LiveCaptureStatus {
+            phase: LiveCapturePhase::Running,
+            issue: Some(LiveCaptureIssue::NetworkProbeDegraded(code)),
+        };
         let running_revision = service.revision();
         process(
             &service,

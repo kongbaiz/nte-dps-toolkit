@@ -65,9 +65,9 @@ use crate::storage::io_util::atomic_write_file;
 
 use crate::engine::protocol::{
     BunchPacket, BunchReassembler, ReassembledBunch, SequencedPacket, SingleBunch, TransportPacket,
-    parse_bunch_packet, parse_expected_bunch_continuations, parse_inventory_bunches,
-    parse_single_bunch, parse_transport_packet, parse_verified_bunch_starts,
-    reliable_bunch_channel,
+    append_bounded_bits, parse_bunch_packet, parse_expected_bunch_continuations,
+    parse_inventory_bunches, parse_single_bunch, parse_transport_packet,
+    parse_verified_bunch_starts, reliable_bunch_channel,
 };
 
 const PCAP_ERRBUF_SIZE: usize = 256;
@@ -3231,30 +3231,6 @@ impl InventoryConnectionState {
             })
             .collect()
     }
-}
-
-fn append_bounded_bits(
-    destination: &mut Vec<u8>,
-    destination_bit_len: &mut usize,
-    source: &[u8],
-    source_bit_len: usize,
-    max_bits: usize,
-) -> Option<()> {
-    if source_bit_len > source.len().checked_mul(8)? {
-        return None;
-    }
-    let new_bit_len = destination_bit_len.checked_add(source_bit_len)?;
-    if new_bit_len > max_bits {
-        return None;
-    }
-    destination.resize(new_bit_len.div_ceil(8), 0);
-    for index in 0..source_bit_len {
-        let bit = (source[index / 8] >> (index % 8)) & 1;
-        let target = *destination_bit_len + index;
-        destination[target / 8] |= bit << (target % 8);
-    }
-    *destination_bit_len = new_bit_len;
-    Some(())
 }
 
 #[derive(Default)]

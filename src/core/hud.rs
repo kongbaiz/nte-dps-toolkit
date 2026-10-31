@@ -15,9 +15,6 @@ use crate::{
     storage::config::{HudConfig, HudModule},
 };
 
-#[cfg(test)]
-use crate::engine::model::TimelineSeries;
-
 pub const HUD_SNAPSHOT_VERSION: u32 = 3;
 pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
 /// UTF-8 byte budget for a live/read-model character label. Imported hit names
@@ -481,56 +478,6 @@ fn project_compact_timeline(series: CompactTimelineSeries) -> HudTimelineSnapsho
     }
 }
 
-#[cfg(test)]
-fn project_timeline(series: TimelineSeries) -> Option<HudTimelineSnapshot> {
-    if series.buckets.is_empty() {
-        return None;
-    }
-
-    let group_size = series
-        .buckets
-        .len()
-        .div_ceil(HUD_TIMELINE_MAX_BUCKETS)
-        .max(1);
-    let buckets = series
-        .buckets
-        .chunks(group_size)
-        .map(|group| {
-            let start_seconds =
-                finite_nonnegative(group.first().map_or(0.0, |bucket| bucket.start_offset));
-            let end_seconds = finite_nonnegative(
-                group
-                    .last()
-                    .map_or(start_seconds, |bucket| bucket.end_offset),
-            )
-            .max(start_seconds);
-            let damage = finite_nonnegative(group.iter().map(|bucket| bucket.damage).sum());
-            let hits = group
-                .iter()
-                .fold(0_u64, |total, bucket| total.saturating_add(bucket.hits));
-            HudTimelineBucketSnapshot {
-                start_seconds,
-                end_seconds,
-                damage,
-                dps: finite_nonnegative(damage / (end_seconds - start_seconds).max(0.001)),
-                hits: hits.to_string(),
-            }
-        })
-        .collect::<Vec<_>>();
-    let duration_seconds = buckets
-        .last()
-        .map_or(0.0, |bucket| bucket.end_seconds)
-        .max(0.0);
-    let peak_dps = buckets.iter().map(|bucket| bucket.dps).fold(0.0, f64::max);
-
-    Some(HudTimelineSnapshot {
-        bucket_seconds: finite_nonnegative(series.bucket_seconds * group_size as f64),
-        duration_seconds,
-        peak_dps,
-        buckets,
-    })
-}
-
 fn character_has_visible_totals(row: &CharacterStats) -> bool {
     row.hits > 0 || row.damage > 0.0 || row.hits_taken > 0 || row.damage_taken > 0.0
 }
@@ -960,9 +907,6 @@ mod tests {
             state.push_hit(hit(index as f64, 1, 100.0));
         }
 
-        let legacy_projection =
-            project_timeline(state.timeline(1.0, true)).expect("legacy live timeline projection");
-
         let snapshot = project_hud(
             &state,
             &HudConfig::detailed(),
@@ -971,7 +915,6 @@ mod tests {
         );
         let timeline = snapshot.timeline.expect("live timeline");
 
-        assert_eq!(timeline, legacy_projection);
         assert!(timeline.buckets.len() <= HUD_TIMELINE_MAX_BUCKETS);
         assert_eq!(
             timeline

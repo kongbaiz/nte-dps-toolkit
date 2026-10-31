@@ -1,8 +1,5 @@
 use tauri::{State, WebviewWindow, ipc::Channel};
 
-#[cfg(test)]
-use std::{sync::atomic::Ordering, thread, time::Duration};
-
 use crate::{
     channels::stream_runtime::{stream_registry_error, validate_subscription_id},
     contract::{
@@ -59,43 +56,6 @@ pub(crate) fn subscribe_history(
         HISTORY_STREAM_INTERVAL_MS,
     ))
 }
-#[cfg(test)]
-pub(crate) fn run_history_stream_worker(
-    state: &AppState,
-    registration: &crate::state::StreamRegistration,
-    mut send: impl FnMut(crate::contract::history::HistoryEvent) -> bool,
-    mut wait: impl FnMut(),
-) {
-    let stop = registration.stop_token();
-    while !registration.activation_token().load(Ordering::Acquire) && !stop.load(Ordering::Acquire)
-    {
-        thread::sleep(Duration::from_millis(1));
-    }
-    let mut last_revision = None;
-    while !stop.load(Ordering::Acquire) {
-        let observed_revision = state.history_revision();
-        if last_revision != Some(observed_revision) {
-            let (revision, snapshot) =
-                match crate::history_runtime::project_history_stream_snapshot(state) {
-                    Ok(projected) => projected,
-                    Err(_) => break,
-                };
-            if stop.load(Ordering::Acquire) {
-                break;
-            }
-            if last_revision != Some(revision) {
-                let event = crate::contract::history::HistoryEvent::Snapshot(snapshot);
-                if !send(event) {
-                    break;
-                }
-                last_revision = Some(revision);
-            }
-        }
-        wait();
-    }
-    let _ = state.finish_stream(registration);
-}
-
 #[tauri::command]
 pub(crate) fn unsubscribe_history(
     subscription_id: String,

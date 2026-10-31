@@ -21,13 +21,11 @@ describe("Character data contract", () => {
     expect(
       parseCharacterDataSnapshot({
         contractVersion: 1,
-        generation: "9007199254740992",
         attributes: ["灵", "咒"],
         records: [RECORD],
       }),
     ).toEqual(
       expect.objectContaining({
-        generation: "9007199254740992",
         records: [expect.objectContaining({ id: 1003, verified: true })],
       }),
     );
@@ -37,7 +35,6 @@ describe("Character data contract", () => {
     expect(() =>
       parseCharacterDataSnapshot({
         contractVersion: 2,
-        generation: "0",
         attributes: [],
         records: [],
       }),
@@ -45,7 +42,6 @@ describe("Character data contract", () => {
     expect(() =>
       parseCharacterDataSnapshot({
         contractVersion: 1,
-        generation: "0",
         attributes: [],
         records: Array.from(
           { length: CHARACTER_DATA_MAX_RECORDS + 1 },
@@ -59,7 +55,6 @@ describe("Character data contract", () => {
     expect(() =>
       parseCharacterDataSnapshot({
         contractVersion: 1,
-        generation: "0",
         attributes: [],
         records: [{ ...RECORD, color: "red" }],
       }),
