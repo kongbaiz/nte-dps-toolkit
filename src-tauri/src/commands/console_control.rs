@@ -37,28 +37,20 @@ pub(crate) async fn execute_console_control(
     match action {
         ConsoleControlAction::ToggleCapture => toggle_capture(&state),
         ConsoleControlAction::ResetSession => {
-            state
-                .ensure_session_undo_runtime_available()
-                .map_err(super::main_dps::session_undo_error)?;
+            state.ensure_session_undo_runtime_available()?;
             if matches!(
                 state.capture_phase(),
                 LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
-            ) || state.replay_running().map_err(CommandError::from_core)?
+            ) || state.replay_running()?
             {
-                return Err(CommandError::main_dps(
+                return Err(CommandError::new(
                     "confirmation_required",
                     "Confirm resetting the active capture from the main window",
                 ));
             }
-            let undo_token = state
-                .reset_session_with_undo_action()
-                .map_err(super::main_dps::session_undo_error)?;
-            state
-                .set_main_processing_paused(false)
-                .map_err(super::main_dps::presentation_error)?;
-            state
-                .set_main_selected_round_id(None)
-                .map_err(super::main_dps::presentation_error)?;
+            let undo_token = state.reset_session_with_undo_action()?;
+            state.set_main_processing_paused(false)?;
+            state.set_main_selected_round_id(None)?;
             state.publish_island_notice(
                 IslandTone::Success,
                 if undo_token.is_some() {
@@ -75,9 +67,7 @@ pub(crate) async fn execute_console_control(
         ConsoleControlAction::ToggleHud => toggle_hud(&app, &state),
         ConsoleControlAction::TogglePassthrough => toggle_passthrough(&app, &state),
         ConsoleControlAction::ToggleProcessing => {
-            state
-                .set_main_processing_paused(!state.main_processing_paused())
-                .map_err(super::main_dps::presentation_error)?;
+            state.set_main_processing_paused(!state.main_processing_paused())?;
             Ok(())
         }
         ConsoleControlAction::TogglePin => toggle_pin(&state, &window),
@@ -88,13 +78,13 @@ pub(crate) async fn execute_console_control(
 
 fn toggle_capture(state: &AppState) -> Result<(), CommandError> {
     match state.capture_phase() {
-        LiveCapturePhase::Starting | LiveCapturePhase::Running => state
-            .request_capture_stop()
-            .map_err(CommandError::from_core),
+        LiveCapturePhase::Starting | LiveCapturePhase::Running => {
+            state.request_capture_stop().map_err(CommandError::from)
+        }
         LiveCapturePhase::Stopping => Ok(()),
         LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed => state
             .request_capture_start(false)
-            .map_err(CommandError::from_core),
+            .map_err(CommandError::from),
     }
 }
 

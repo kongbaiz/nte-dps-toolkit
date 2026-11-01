@@ -23,6 +23,7 @@ use windows_sys::Win32::{
     },
 };
 
+use crate::core::sync::lock_or_repair;
 use crate::storage::config::{GlobalHotkeyAction, GlobalHotkeys, HotkeyBinding, HotkeyKey};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,16 +65,10 @@ fn disabled_global_hotkeys() -> GlobalHotkeys {
 /// Callback routing is ephemeral OS state. Discard the complete value after
 /// poison and report recovery so the triggering callback can be dropped.
 fn lock_hotkey_state(state: &Mutex<HookState>) -> (std::sync::MutexGuard<'_, HookState>, bool) {
-    match state.lock() {
-        Ok(guard) => (guard, false),
-        Err(poisoned) => {
-            let mut guard = poisoned.into_inner();
-            *guard = HookState::default();
-            state.clear_poison();
-            reset_pressed_key_state();
-            (guard, true)
-        }
-    }
+    lock_or_repair(state, |state| {
+        *state = HookState::default();
+        reset_pressed_key_state();
+    })
 }
 
 fn lock_or_reset_hotkey_state(state: &Mutex<HookState>) -> std::sync::MutexGuard<'_, HookState> {
@@ -90,16 +85,10 @@ fn hook_sender_for_event(state: &Mutex<HookState>) -> Option<Sender<PassthroughH
 fn lock_global_hotkeys(
     hotkeys: &Mutex<GlobalHotkeys>,
 ) -> (std::sync::MutexGuard<'_, GlobalHotkeys>, bool) {
-    match hotkeys.lock() {
-        Ok(guard) => (guard, false),
-        Err(poisoned) => {
-            let mut guard = poisoned.into_inner();
-            *guard = disabled_global_hotkeys();
-            hotkeys.clear_poison();
-            reset_pressed_key_state();
-            (guard, true)
-        }
-    }
+    lock_or_repair(hotkeys, |hotkeys| {
+        *hotkeys = disabled_global_hotkeys();
+        reset_pressed_key_state();
+    })
 }
 
 fn global_hotkeys_for_event(hotkeys: &Mutex<GlobalHotkeys>) -> Option<GlobalHotkeys> {

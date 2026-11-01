@@ -1,12 +1,9 @@
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
-    channels::stream_runtime::{stream_registry_error, validate_subscription_id},
+    channels::stream_runtime::validate_subscription_id,
     contract::{CommandError, SubscriptionReceipt, history::HistoryEvent, stream::StreamKind},
-    history_runtime::{
-        HISTORY_STREAM_INTERVAL, HistoryRuntime, HistoryStreamRegistration,
-        history_runtime_unavailable,
-    },
+    history_runtime::{HISTORY_STREAM_INTERVAL, HistoryRuntime, HistoryStreamRegistration},
     state::AppState,
     windows::console,
 };
@@ -27,12 +24,8 @@ pub(crate) fn subscribe_history(
     let stream_kind = StreamKind::History;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    state
-        .with_history_transaction(|| ())
-        .map_err(history_runtime_unavailable)?;
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    state.with_history_transaction(|| ())?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     if runtime
         .register_stream(HistoryStreamRegistration {
@@ -61,11 +54,9 @@ pub(crate) fn unsubscribe_history(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::History.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::History.stream_key(&subscription_id),
+    )?;
     Ok(())
 }

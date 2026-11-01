@@ -22,7 +22,7 @@ pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
 pub const HUD_CHARACTER_NAME_MAX_BYTES: usize = 128;
 const HUD_PREVIEW_ROW_COUNT: usize = 4;
 
-pub fn bounded_character_name(character_id: u32, candidate: &str) -> String {
+fn bounded_character_name(character_id: u32, candidate: &str) -> String {
     let candidate = candidate.trim();
     if !candidate.is_empty() && candidate.len() <= HUD_CHARACTER_NAME_MAX_BYTES {
         candidate.to_owned()

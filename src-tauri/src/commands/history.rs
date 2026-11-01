@@ -19,9 +19,7 @@ use crate::{
         },
     },
     file_dialog::{self, DialogOutcome},
-    history_runtime::history_runtime_unavailable,
     state::AppState,
-    team_import_service::TeamImportError,
     windows::{console, island},
 };
 
@@ -87,15 +85,12 @@ pub(crate) async fn save_current_history_summary(
 ) -> Result<HistorySnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    let archive = state
-        .prepare_current_history_archive()
-        .map_err(CommandError::from_core)?
-        .ok_or_else(|| {
-            CommandError::history(
-                "history_no_current_summary",
-                "No combat summary to save; capture first or import a replay",
-            )
-        })?;
+    let archive = state.prepare_current_history_archive()?.ok_or_else(|| {
+        CommandError::new(
+            "history_no_current_summary",
+            "No combat summary to save; capture first or import a replay",
+        )
+    })?;
     let state_for_task = state.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         run_history_operation(&state_for_task, || {
@@ -105,7 +100,7 @@ pub(crate) async fn save_current_history_summary(
             };
             result.map_err(|error| {
                 log::warn!("save History record failed: {error}");
-                CommandError::history("history_save_failed", "History record could not be saved.")
+                CommandError::new("history_save_failed", "History record could not be saved.")
             })?;
             state_for_task.bump_history_revision();
             Ok(())
@@ -133,7 +128,7 @@ pub(crate) async fn import_history_record_json(
 ) -> Result<HistorySnapshot, CommandError> {
     console::validate_window(&window)?;
     if json.len() as u64 > MAX_HISTORY_IMPORT_BYTES {
-        return Err(CommandError::history(
+        return Err(CommandError::new(
             "history_import_too_large",
             "History record exceeds the supported import size.",
         ));
@@ -173,16 +168,12 @@ pub(crate) async fn delete_history_record(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let undo_token = run_history_operation(&state, || {
             state
-                .ensure_history_undo_available()
-                .map_err(history_runtime_unavailable)?;
+                .ensure_history_undo_available()?;
             // Storage moves the main manifest and every validated sidecar into
             // a same-volume tombstone without hydrating the detail payload.
             let tombstone = tombstone_record(&record_id).map_err(|error| {
                 log::warn!("delete History record failed: {error}");
-                CommandError::history(
-                    "history_delete_failed",
-                    "History record could not be deleted.",
-                )
+                CommandError::new("history_delete_failed", "History record could not be deleted.")
             })?
             .ok_or_else(history_record_not_found)?;
             let undo_token = match state.remember_deleted_history_tombstone(tombstone.clone()) {
@@ -193,13 +184,13 @@ pub(crate) async fn delete_history_record(
                             "History undo registration and deletion rollback failed: {restore_error}"
                         );
                     }
-                    return Err(history_runtime_unavailable(error));
+                    return Err(CommandError::from(error));
                 }
             };
             state.bump_history_revision();
             Ok(undo_token)
         })?;
-        Ok(HistoryDeleteSnapshot {
+        Ok::<_, CommandError>(HistoryDeleteSnapshot {
             history: load_stable_snapshot(&state)?,
             undo_token,
             undo_expires_ms: crate::state::HISTORY_UNDO_WINDOW.as_millis() as u32,
@@ -232,7 +223,7 @@ pub(crate) async fn restore_deleted_history_record(
             restore_deleted_history_operation(&state, &undo_token, |tombstone| {
                 restore_tombstoned_record(tombstone).map_err(|_| {
                     log::warn!("restore History record storage operation did not finish");
-                    CommandError::history(
+                    CommandError::new(
                         "history_restore_failed",
                         "History record could not be restored.",
                     )
@@ -313,7 +304,7 @@ pub(crate) async fn compare_history_records(
 ) -> Result<HistoryComparisonSnapshot, CommandError> {
     console::validate_window(&window)?;
     if left_id == right_id {
-        return Err(CommandError::history(
+        return Err(CommandError::new(
             "history_compare_invalid",
             "Select two different history records to compare.",
         ));
@@ -363,7 +354,7 @@ pub(crate) async fn set_history_prediction_team(
             record.lower_team_dps()
         };
         team.ok_or_else(|| {
-            CommandError::history(
+            CommandError::new(
                 "history_prediction_unavailable",
                 "History record has no team usable for this prediction line.",
             )
@@ -371,14 +362,8 @@ pub(crate) async fn set_history_prediction_team(
     })
     .await
     .map_err(history_task_failed)??;
-    state
-        .set_history_prediction_team(team, upper)
-        .map_err(team_import_error)?;
+    state.set_history_prediction_team(team, upper)?;
     load_snapshot(state).await
-}
-
-fn team_import_error(_error: TeamImportError) -> CommandError {
-    CommandError::team_import_state_unavailable()
 }
 
 async fn load_snapshot(state: AppState) -> Result<HistorySnapshot, CommandError> {
@@ -396,18 +381,14 @@ fn load_stable_history_summaries(
     state: &AppState,
 ) -> Result<(nte_dps_tool::storage::history::HistoryLoadResult, u64), CommandError> {
     for _ in 0..3 {
-        let revision = state
-            .with_history_transaction(|| state.history_revision())
-            .map_err(history_runtime_unavailable)?;
+        let revision = state.with_history_transaction(|| state.history_revision())?;
         let loaded = load_history_summaries();
-        let current_revision = state
-            .with_history_transaction(|| state.history_revision())
-            .map_err(history_runtime_unavailable)?;
+        let current_revision = state.with_history_transaction(|| state.history_revision())?;
         if current_revision == revision {
             return Ok((loaded, revision));
         }
     }
-    Err(history_runtime_unavailable(
+    Err(CommandError::from(
         crate::state::HistoryRuntimeError::Unavailable,
     ))
 }
@@ -448,15 +429,15 @@ fn history_file_export_error(error: HistoryRecordExportError) -> CommandError {
         HistoryRecordExportError::InvalidId | HistoryRecordExportError::NotFound => {
             history_record_not_found()
         }
-        HistoryRecordExportError::SourceChanged => CommandError::history(
+        HistoryRecordExportError::SourceChanged => CommandError::new(
             "history_export_source_changed",
             "History record could not be exported.",
         ),
-        HistoryRecordExportError::CorruptRecord => CommandError::history(
+        HistoryRecordExportError::CorruptRecord => CommandError::new(
             "history_record_load_failed",
             "History record could not be loaded.",
         ),
-        HistoryRecordExportError::DestinationWriteFailed => CommandError::history(
+        HistoryRecordExportError::DestinationWriteFailed => CommandError::new(
             "history_export_failed",
             "History record could not be exported.",
         ),
@@ -467,9 +448,7 @@ fn run_history_operation<T>(
     state: &AppState,
     action: impl FnOnce() -> Result<T, CommandError>,
 ) -> Result<T, CommandError> {
-    state
-        .with_history_transaction(action)
-        .map_err(history_runtime_unavailable)?
+    state.with_history_transaction(action)?
 }
 
 fn restore_deleted_history_operation(
@@ -478,20 +457,16 @@ fn restore_deleted_history_operation(
     restore: impl FnOnce(&HistoryDeleteTombstone) -> Result<(), CommandError>,
 ) -> Result<(), CommandError> {
     let tombstone = state
-        .peek_deleted_history_tombstone(undo_token)
-        .map_err(history_runtime_unavailable)?
+        .peek_deleted_history_tombstone(undo_token)?
         .ok_or_else(|| {
-            CommandError::history(
+            CommandError::new(
                 "history_undo_expired",
                 "The deleted history record can no longer be restored.",
             )
         })?;
     restore(&tombstone)?;
-    if !state
-        .consume_deleted_history(undo_token)
-        .map_err(history_runtime_unavailable)?
-    {
-        return Err(history_runtime_unavailable(
+    if !state.consume_deleted_history(undo_token)? {
+        return Err(CommandError::from(
             crate::state::HistoryRuntimeError::Unavailable,
         ));
     }
@@ -501,12 +476,12 @@ fn restore_deleted_history_operation(
 fn history_import_error(error: String) -> CommandError {
     log::warn!("import History record failed: {error}");
     if error == "History record exceeds the supported file size" {
-        CommandError::history(
+        CommandError::new(
             "history_import_too_large",
             "History record exceeds the supported import size.",
         )
     } else {
-        CommandError::history(
+        CommandError::new(
             "history_import_failed",
             "History record JSON is invalid or unsupported.",
         )
@@ -514,16 +489,16 @@ fn history_import_error(error: String) -> CommandError {
 }
 
 fn history_file_dialog_failed() -> CommandError {
-    CommandError::history("history_file_dialog_failed", "History file dialog failed.")
+    CommandError::new("history_file_dialog_failed", "History file dialog failed.")
 }
 
 fn history_record_not_found() -> CommandError {
-    CommandError::history("history_record_not_found", "History record was not found.")
+    CommandError::new("history_record_not_found", "History record was not found.")
 }
 
 fn history_task_failed(error: tauri::Error) -> CommandError {
     log::warn!("History background task failed: {error}");
-    CommandError::history("history_task_failed", "History operation did not finish.")
+    CommandError::new("history_task_failed", "History operation did not finish.")
 }
 
 #[cfg(test)]
@@ -586,7 +561,7 @@ mod tests {
 
     #[test]
     fn poisoned_history_runtime_has_a_stable_boundary_error() {
-        let error = history_runtime_unavailable(crate::state::HistoryRuntimeError::Unavailable);
+        let error = CommandError::from(crate::state::HistoryRuntimeError::Unavailable);
 
         assert_eq!(error.code, "history_runtime_unavailable");
         assert_eq!(error.message_key, "History operation did not finish.");
@@ -605,7 +580,7 @@ mod tests {
 
         let failed = run_history_operation(&state, || {
             restore_deleted_history_operation(&state, &token, |_| {
-                Err(CommandError::history(
+                Err(CommandError::new(
                     "history_restore_failed",
                     "History record could not be restored.",
                 ))

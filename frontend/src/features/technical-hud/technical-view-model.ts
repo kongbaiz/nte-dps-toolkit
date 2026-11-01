@@ -143,10 +143,9 @@ export function parseHudWidthDraft(value: string): number | null {
   if (value.trim() === "") {
     return null;
   }
+  // The command takes a u16; Rust clamps it to the HUD width bounds.
   const width = Number(value);
-  return Number.isSafeInteger(width) &&
-    width >= -2_147_483_648 &&
-    width <= 2_147_483_647
+  return Number.isInteger(width) && width >= 0 && width <= 65_535
     ? width
     : null;
 }

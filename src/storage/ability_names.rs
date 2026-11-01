@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::core::sync::{read_or_repair, write_or_repair};
 use crate::engine::parser::{
     ABILITY_TIPS_PATH, AbilityCatalog, GAMEPLAY_EFFECT_SEMANTICS_PATH, SKILL_DAMAGE_DATA_PATH,
     find_data_file, load_ability_tip_names, load_gameplay_effect_semantic_names,
@@ -33,27 +34,11 @@ static STORE: LazyLock<RwLock<Store>> = LazyLock::new(|| RwLock::new(Store::defa
 /// contain a mixed catalog/name generation, so discard it wholesale rather
 /// than exposing the poisoned guard's contents.
 fn write_rebuildable_store(store: &RwLock<Store>) -> RwLockWriteGuard<'_, Store> {
-    match store.write() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            let mut guard = poisoned.into_inner();
-            *guard = Store::default();
-            store.clear_poison();
-            guard
-        }
-    }
+    write_or_repair(store, |store| *store = Store::default()).0
 }
 
 fn read_rebuildable_store(store: &RwLock<Store>) -> RwLockReadGuard<'_, Store> {
-    loop {
-        match store.read() {
-            Ok(guard) => return guard,
-            Err(poisoned) => {
-                drop(poisoned);
-                drop(write_rebuildable_store(store));
-            }
-        }
-    }
+    read_or_repair(store, |store| *store = Store::default())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

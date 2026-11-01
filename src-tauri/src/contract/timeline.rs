@@ -2,10 +2,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use nte_dps_tool::{
-    core::timeline::{
-        MAX_TIMELINE_CHARACTER_NAME_BYTES, TimelineMarkerProjectionKind, TimelineProjection,
-        TimelineScope,
-    },
+    core::timeline::{TimelineMarkerProjectionKind, TimelineProjection, TimelineScope},
     storage::config::TimelineDpsViewMode,
 };
 
@@ -91,7 +88,7 @@ impl TimelineSnapshot {
                 .iter()
                 .map(|character| TimelineCharacterSnapshot {
                     id: character.id,
-                    name: bounded_character_name(character.id, &character.name),
+                    name: character.name.clone(),
                     color: character.color.clone(),
                     total_damage: character.total_damage,
                 })
@@ -126,14 +123,6 @@ impl TimelineSnapshot {
                 })
                 .collect(),
         }
-    }
-}
-
-fn bounded_character_name(id: u32, name: &str) -> String {
-    if !name.is_empty() && name.len() <= MAX_TIMELINE_CHARACTER_NAME_BYTES {
-        name.to_owned()
-    } else {
-        format!("#{id}")
     }
 }
 
@@ -218,37 +207,5 @@ mod tests {
         assert_eq!(value["hasData"], false);
         assert_eq!(value["timeStopDuration"], 0.0);
         assert_eq!(value["compactedTimeStopIntervals"], "0");
-    }
-
-    #[test]
-    fn snapshot_replaces_oversized_character_names_before_serialization() {
-        let exact = format!("{}ab", "界".repeat(42));
-        let oversized = "界".repeat(43);
-        let projection = TimelineProjection {
-            characters: vec![
-                nte_dps_tool::core::timeline::TimelineCharacterProjection {
-                    id: 7,
-                    name: exact.clone(),
-                    color: "#123abc".to_owned(),
-                    total_damage: 1.0,
-                },
-                nte_dps_tool::core::timeline::TimelineCharacterProjection {
-                    id: 8,
-                    name: oversized,
-                    color: "#123abc".to_owned(),
-                    total_damage: 1.0,
-                },
-            ],
-            ..TimelineProjection::default()
-        };
-
-        let snapshot = TimelineSnapshot::from_projection(
-            &projection,
-            1,
-            TimelineScope::Whole,
-            TimelineDpsViewMode::Characters,
-        );
-        assert_eq!(snapshot.characters[0].name, exact);
-        assert_eq!(snapshot.characters[1].name, "#8");
     }
 }

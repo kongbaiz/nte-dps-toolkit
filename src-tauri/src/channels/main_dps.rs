@@ -4,8 +4,7 @@ use tauri::{AppHandle, State, WebviewWindow, ipc::Channel};
 
 use crate::{
     channels::stream_runtime::{
-        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
-        validate_subscription_id,
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, validate_subscription_id,
     },
     commands::main_dps::snapshot,
     contract::{CommandError, SubscriptionReceipt, main_dps::MainDpsEvent, stream::StreamKind},
@@ -24,15 +23,11 @@ pub(crate) fn subscribe_main_dps(
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     main_dps::validate_window(&window)?;
-    state
-        .main_dps_stream_revision()
-        .map_err(CommandError::from_core)?;
+    state.main_dps_stream_revision()?;
     let stream_kind = StreamKind::MainDps;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     let mut last_revision = None;
     let mut last_game_detected = None;
@@ -149,12 +144,10 @@ pub(crate) fn unsubscribe_main_dps(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     main_dps::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::MainDps.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::MainDps.stream_key(&subscription_id),
+    )?;
     Ok(())
 }
 

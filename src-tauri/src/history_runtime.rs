@@ -1,11 +1,12 @@
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
+use nte_dps_tool::core::sync::lock_or_repair;
 use nte_dps_tool::storage::history::load_history_summaries;
 use nte_dps_tool::storage::i18n::{self, Language};
 use tauri::{async_runtime::JoinHandle, ipc::Channel};
@@ -23,12 +24,14 @@ use crate::{
 const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(250);
 pub(crate) const HISTORY_STREAM_INTERVAL: Duration = Duration::from_millis(250);
 
-pub(crate) fn history_runtime_unavailable(_error: HistoryRuntimeError) -> CommandError {
-    log::warn!("History operation did not finish after a runtime interruption");
-    CommandError::history(
-        "history_runtime_unavailable",
-        "History operation did not finish.",
-    )
+impl From<HistoryRuntimeError> for CommandError {
+    fn from(_error: HistoryRuntimeError) -> Self {
+        log::warn!("History operation did not finish after a runtime interruption");
+        CommandError::new(
+            "history_runtime_unavailable",
+            "History operation did not finish.",
+        )
+    }
 }
 
 pub(crate) struct HistoryRuntime {
@@ -65,11 +68,7 @@ impl HistoryProjectionCache {
         &self,
         key: HistoryProjectionKey,
     ) -> Result<Option<Arc<CachedHistoryProjection>>, HistoryRuntimeError> {
-        let entry = self.entry.lock().map_err(|mut poison| {
-            **poison.get_mut() = None;
-            self.entry.clear_poison();
-            HistoryRuntimeError::Unavailable
-        })?;
+        let entry = self.lock_entry()?;
         Ok(entry.as_ref().filter(|entry| entry.key == key).cloned())
     }
 
@@ -77,11 +76,7 @@ impl HistoryProjectionCache {
         &self,
         projection: CachedHistoryProjection,
     ) -> Result<Arc<CachedHistoryProjection>, HistoryRuntimeError> {
-        let mut entry = self.entry.lock().map_err(|mut poison| {
-            **poison.get_mut() = None;
-            self.entry.clear_poison();
-            HistoryRuntimeError::Unavailable
-        })?;
+        let mut entry = self.lock_entry()?;
         if let Some(cached) = entry.as_ref().filter(|cached| cached.key == projection.key) {
             return Ok(Arc::clone(cached));
         }
@@ -91,13 +86,17 @@ impl HistoryProjectionCache {
     }
 
     fn clear(&self) {
-        match self.entry.lock() {
-            Ok(mut entry) => *entry = None,
-            Err(mut poison) => {
-                **poison.get_mut() = None;
-                self.entry.clear_poison();
-            }
+        *lock_or_repair(&self.entry, |_| {}).0 = None;
+    }
+
+    fn lock_entry(
+        &self,
+    ) -> Result<MutexGuard<'_, Option<Arc<CachedHistoryProjection>>>, HistoryRuntimeError> {
+        let (entry, recovered) = lock_or_repair(&self.entry, |entry| *entry = None);
+        if recovered {
+            return Err(HistoryRuntimeError::Unavailable);
         }
+        Ok(entry)
     }
 }
 
@@ -165,14 +164,7 @@ impl HistoryRuntime {
 
     pub(crate) fn shutdown(&self) -> bool {
         self.stop.store(true, Ordering::Release);
-        let maintenance = match self.maintenance.lock() {
-            Ok(mut task) => task.take(),
-            Err(mut poison) => {
-                let task = poison.get_mut().take();
-                self.maintenance.clear_poison();
-                task
-            }
-        };
+        let maintenance = lock_or_repair(&self.maintenance, |_| {}).0.take();
         if let Some(task) = &maintenance {
             task.abort();
         }

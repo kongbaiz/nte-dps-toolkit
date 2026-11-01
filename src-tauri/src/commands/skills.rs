@@ -22,9 +22,7 @@ pub(crate) fn snapshot(
     scope: TimelineScope,
 ) -> Result<SkillsSnapshot, CommandError> {
     Ok(SkillsSnapshot::from_projection(
-        state
-            .skills_projection(scope)
-            .map_err(CommandError::from_core)?,
+        state.skills_projection(scope)?,
         state.next_sequence(),
         scope,
     ))

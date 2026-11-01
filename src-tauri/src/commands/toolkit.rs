@@ -83,7 +83,7 @@ fn sanitize_operation(mut operation: PluginOperation) -> Result<PluginOperation,
         "" | "queued" | "pending" | "completed" | "failed" | "rejected"
     ) || operation.error.len() > 512
     {
-        return Err(error(ToolkitError::InvalidProtocol));
+        return Err(CommandError::from(ToolkitError::InvalidProtocol));
     }
     // Native diagnostics can contain game-directory paths. Expose a stable key only.
     if !operation.error.is_empty() {
@@ -93,45 +93,42 @@ fn sanitize_operation(mut operation: PluginOperation) -> Result<PluginOperation,
 }
 
 pub(crate) fn unsupported() -> CommandError {
-    error(ToolkitError::Unsupported)
+    ToolkitError::Unsupported.into()
 }
 
-pub(super) fn error(e: ToolkitError) -> CommandError {
-    let (code, key) = match e {
-        ToolkitError::Unavailable => (
-            "plugin_unavailable",
-            "UE Tools is not connected. Load the compiled Toolkit package in the game first.",
-        ),
-        ToolkitError::Busy => (
-            "plugin_busy",
-            "The plugin is busy. Query its status before retrying.",
-        ),
-        ToolkitError::Timeout => (
-            "plugin_timeout",
-            "The plugin operation timed out. Its result is unknown; do not retry automatically.",
-        ),
-        ToolkitError::Unsupported => (
-            "plugin_unsupported",
-            "This feature is not supported by the connected plugin.",
-        ),
-        _ => (
-            "plugin_invalid",
-            "Plugin data is unavailable or invalid. Packet capture was not started.",
-        ),
-    };
-    CommandError {
-        code,
-        message_key: key,
-        message_arguments: vec![],
-        diagnostic_line: None,
+impl From<ToolkitError> for CommandError {
+    fn from(e: ToolkitError) -> Self {
+        let (code, key) = match e {
+            ToolkitError::Unavailable => (
+                "plugin_unavailable",
+                "UE Tools is not connected. Load the compiled Toolkit package in the game first.",
+            ),
+            ToolkitError::Busy => (
+                "plugin_busy",
+                "The plugin is busy. Query its status before retrying.",
+            ),
+            ToolkitError::Timeout => (
+                "plugin_timeout",
+                "The plugin operation timed out. Its result is unknown; do not retry automatically.",
+            ),
+            ToolkitError::Unsupported => (
+                "plugin_unsupported",
+                "This feature is not supported by the connected plugin.",
+            ),
+            _ => (
+                "plugin_invalid",
+                "Plugin data is unavailable or invalid. Packet capture was not started.",
+            ),
+        };
+        CommandError::new(code, key)
     }
 }
 pub(super) fn client() -> Result<(ToolkitClient, Vec<u32>), CommandError> {
     let pid = network::game_process_id()
-        .map_err(|_| error(ToolkitError::Failed))?
-        .ok_or_else(|| error(ToolkitError::Unavailable))?;
-    let c = ToolkitClient::open(pid).map_err(error)?;
-    let capabilities = c.capabilities().map_err(error)?;
+        .map_err(|_| CommandError::from(ToolkitError::Failed))?
+        .ok_or_else(|| CommandError::from(ToolkitError::Unavailable))?;
+    let c = ToolkitClient::open(pid)?;
+    let capabilities = c.capabilities()?;
     Ok((c, capabilities))
 }
 fn runtime_directory(
@@ -143,10 +140,10 @@ fn runtime_directory(
         && (!root.join("tools/NTE-Loader.exe").is_file()
             || !root.join("driver/uetools.sys").is_file())
     {
-        return Err(error(ToolkitError::Unsupported));
+        return Err(CommandError::from(ToolkitError::Unsupported));
     }
     if !runtime.join("d3d12.dll").is_file() || runtime.join("dwmapi.dll").exists() {
-        return Err(error(ToolkitError::Unsupported));
+        return Err(CommandError::from(ToolkitError::Unsupported));
     }
     Ok(runtime)
 }
@@ -193,14 +190,14 @@ fn snapshot(state: &AppState) -> PluginPanel {
     let read = (|| {
         let (c, capabilities) = client()?;
         let identity = c.identity();
-        let plugins: Vec<Plugin> = c.json(3, 0, "", &|| false).map_err(error)?;
+        let plugins: Vec<Plugin> = c.json(3, 0, "", &|| false)?;
         if plugins.len() > 64 || plugins.iter().any(|p| !valid_file(&p.file)) {
-            return Err(error(ToolkitError::InvalidProtocol));
+            return Err(CommandError::from(ToolkitError::InvalidProtocol));
         }
         let combat: Option<CombatStatus> = match c.json(100, 0, "", &|| false) {
             Ok(value) => Some(value),
             Err(ToolkitError::Unavailable | ToolkitError::Unsupported) => None,
-            Err(e) => return Err(error(e)),
+            Err(e) => return Err(CommandError::from(e)),
         };
         if let Some(combat) = &combat
             && (combat.encounter_id.len() > 256
@@ -214,9 +211,9 @@ fn snapshot(state: &AppState) -> PluginPanel {
                 .iter()
                 .any(|x| !x.is_finite() || *x < 0.0))
         {
-            return Err(error(ToolkitError::InvalidProtocol));
+            return Err(CommandError::from(ToolkitError::InvalidProtocol));
         }
-        let operation = sanitize_operation(c.json(7, 0, "", &|| false).map_err(error)?)?;
+        let operation = sanitize_operation(c.json(7, 0, "", &|| false)?)?;
         Ok((plugins, combat, operation, capabilities, identity))
     })();
     match read {
@@ -265,7 +262,7 @@ pub(crate) async fn get_plugin_panel(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || snapshot(&state))
         .await
-        .map_err(|_| error(ToolkitError::Failed))
+        .map_err(|_| CommandError::from(ToolkitError::Failed))
 }
 #[tauri::command]
 pub(crate) async fn set_data_mode(
@@ -280,13 +277,13 @@ pub(crate) async fn set_data_mode(
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        state.set_data_mode(mode).map_err(CommandError::from_core)?;
+        state.set_data_mode(mode)?;
         // Choosing a mode does not discard a recorded session. The normal Start
         // command retains its existing replace-current confirmation contract.
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 #[derive(Clone, Copy, Debug, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
@@ -308,7 +305,7 @@ pub(crate) async fn control_plugin(
         return Err(CommandError::mod_studio_risk_acknowledgement_required());
     }
     if !valid_file(&file) {
-        return Err(error(ToolkitError::Unsupported));
+        return Err(CommandError::from(ToolkitError::Unsupported));
     }
     let command = match action {
         PluginControlAction::Enable => 4,
@@ -321,13 +318,11 @@ pub(crate) async fn control_plugin(
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
     ) {
-        return Err(error(ToolkitError::Busy));
+        return Err(CommandError::from(ToolkitError::Busy));
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _reservation = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _reservation = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(unsupported());
         }
@@ -337,17 +332,17 @@ pub(crate) async fn control_plugin(
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         ) {
-            return Err(error(ToolkitError::Busy));
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         let (c, capabilities) = client()?;
         if !capabilities.contains(&command) {
             return Err(unsupported());
         }
-        c.call(command, 0, &file, &|| false).map_err(error)?;
+        c.call(command, 0, &file, &|| false)?;
         Ok(())
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -512,7 +507,7 @@ pub(crate) async fn release_plugin_action(
         return Err(unsupported());
     }
     if expected_identity.is_empty() || expected_identity.len() > 64 {
-        return Err(error(ToolkitError::InvalidProtocol));
+        return Err(CommandError::from(ToolkitError::InvalidProtocol));
     }
     if action.requires_confirmation() && !confirmed {
         return Err(CommandError::mod_studio_risk_acknowledgement_required());
@@ -525,14 +520,12 @@ pub(crate) async fn release_plugin_action(
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         )
     {
-        return Err(error(ToolkitError::Busy));
+        return Err(CommandError::from(ToolkitError::Busy));
     }
-    let (command, argument) = action.wire(value).map_err(error)?;
+    let (command, argument) = action.wire(value)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _reservation = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _reservation = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(unsupported());
         }
@@ -544,20 +537,20 @@ pub(crate) async fn release_plugin_action(
                     | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
             )
         {
-            return Err(error(ToolkitError::Busy));
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         let (c, capabilities) = client()?;
         if c.identity() != expected_identity {
-            return Err(error(ToolkitError::SessionChanged));
+            return Err(CommandError::from(ToolkitError::SessionChanged));
         }
         if !capabilities.contains(&command) {
             return Err(unsupported());
         }
-        let bytes = c.call(command, argument, "", &|| false).map_err(error)?;
-        preview(command, &bytes).map_err(error)
+        let bytes = c.call(command, argument, "", &|| false)?;
+        preview(command, &bytes).map_err(CommandError::from)
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -569,25 +562,21 @@ pub(crate) async fn set_host_loading_method(
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         state
             .set_mod_studio_loading_method(method)
             .map_err(|_| CommandError::settings_config_save_failed())?;
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 fn directory_error() -> CommandError {
-    CommandError {
-        code: "plugin_game_directory_invalid",
-        message_key: "Select a valid game directory containing HTGame.exe. No files were changed.",
-        message_arguments: vec![],
-        diagnostic_line: None,
-    }
+    CommandError::new(
+        "plugin_game_directory_invalid",
+        "Select a valid game directory containing HTGame.exe. No files were changed.",
+    )
 }
 
 #[tauri::command]
@@ -619,9 +608,7 @@ pub(crate) async fn select_host_game_directory(
                         && !s.chars().any(|c| matches!(c, '\0' | '\r' | '\n'))
                 })
                 .ok_or_else(directory_error)?;
-            let _permit = state
-                .reserve_plugin_control()
-                .map_err(CommandError::from_core)?;
+            let _permit = state.reserve_plugin_control()?;
             state
                 .set_proxy_game_directory(Some(text.to_owned()))
                 .map_err(|_| CommandError::settings_config_save_failed())?;
@@ -629,7 +616,7 @@ pub(crate) async fn select_host_game_directory(
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -640,16 +627,14 @@ pub(crate) async fn clear_host_game_directory(
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         state
             .set_proxy_game_directory(None)
             .map_err(|_| CommandError::settings_config_save_failed())?;
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -669,19 +654,17 @@ pub(crate) async fn uninstall_proxy_host(
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         if matches!(
             state.capture_phase(),
             nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         ) {
-            return Err(error(ToolkitError::Busy));
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         if network::game_process_id()
-            .map_err(|_| error(ToolkitError::Failed))?
+            .map_err(|_| CommandError::from(ToolkitError::Failed))?
             .is_some()
         {
             return Err(CommandError {
@@ -704,7 +687,7 @@ pub(crate) async fn uninstall_proxy_host(
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[derive(Serialize, TS)]
@@ -724,8 +707,7 @@ pub(crate) async fn launch_plugin_host(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+            .reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(CommandError::mod_studio_risk_acknowledgement_required());
         }
@@ -735,13 +717,13 @@ pub(crate) async fn launch_plugin_host(
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         ) {
-            return Err(error(ToolkitError::Busy));
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         let root = nte_dps_tool::storage::paths::toolkit_dir();
         let method = state.mod_studio_loading_method();
         let runtime = runtime_directory(&root, method)?;
         if method == ModStudioLoadingMethod::Proxy {
-            if network::game_process_id().map_err(|_| error(ToolkitError::Failed))?.is_some() {
+            if network::game_process_id().map_err(|_| CommandError::from(ToolkitError::Failed))?.is_some() {
                 return Err(CommandError { code: "plugin_close_game_required", message_key: "Close the game before deploying the proxy host, then restart it to load the host.", message_arguments: vec![], diagnostic_line: None });
             }
             let manual = state.proxy_game_directory();
@@ -750,7 +732,7 @@ pub(crate) async fn launch_plugin_host(
             nte_dps_tool::core::mod_market::deploy_proxy(&runtime, &destination).map_err(CommandError::from_mod_market)?;
             return Ok(HostLaunchResult { panel: snapshot(&state), outcome: "proxyDeployed" });
         }
-        let root = std::fs::canonicalize(root).map_err(|_| error(ToolkitError::Unavailable))?;
+        let root = std::fs::canonicalize(root).map_err(|_| CommandError::from(ToolkitError::Unavailable))?;
         let runtime = root.join("game");
         // Execute only the managed package's compiled Loader. It owns UAC, driver
         // cleanup and bounded handshake. Never kill it while cleanup may be pending.
@@ -785,7 +767,7 @@ pub(crate) async fn launch_plugin_host(
         Ok(HostLaunchResult { panel: snapshot(&state), outcome: "connected" })
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 const MAX_LOADER_RECEIPT_BYTES: usize = 64 * 1024;
@@ -801,16 +783,15 @@ fn read_loader_receipt(mut output: impl std::io::Read) -> std::io::Result<Vec<u8
 }
 
 fn loader_spawn_failed(error: &std::io::Error) -> CommandError {
-    CommandError {
-        code: "plugin_loader_launch_failed",
-        message_key: "Could not start or wait for Loader (OS error {}). Check the managed Loader file and access permissions.",
-        message_arguments: vec![
+    CommandError::with_arguments(
+        "plugin_loader_launch_failed",
+        "Could not start or wait for Loader (OS error {}). Check the managed Loader file and access permissions.",
+        vec![
             error
                 .raw_os_error()
                 .map_or("unknown".into(), |n| n.to_string()),
         ],
-        diagnostic_line: None,
-    }
+    )
 }
 
 fn loader_receipt_error(bytes: &[u8], exit: Option<i32>) -> CommandError {
@@ -896,18 +877,17 @@ fn loader_receipt_error(bytes: &[u8], exit: Option<i32>) -> CommandError {
         "connect" => "plugin_loader_handshake_failed",
         _ => "plugin_loader_result_invalid",
     };
-    CommandError {
+    CommandError::with_arguments(
         code,
-        message_key: "Loader failed: stage={}, reason={}, exit={}, Win32={}, driver cleanup={}. Check this stage before retrying; host startup may have been attempted.",
-        message_arguments: vec![
+        "Loader failed: stage={}, reason={}, exit={}, Win32={}, driver cleanup={}. Check this stage before retrying; host startup may have been attempted.",
+        vec![
             phase.into(),
             reason.into(),
             exit.map_or("unknown".into(), |n| n.to_string()),
             win32,
             cleanup,
         ],
-        diagnostic_line: None,
-    }
+    )
 }
 
 #[cfg(test)]

@@ -31,8 +31,10 @@ pub(crate) fn validate_subscription_id(value: &str) -> Result<(), CommandError> 
     }
 }
 
-pub(crate) fn stream_registry_error(_: StreamRegistryError) -> CommandError {
-    CommandError::stream_runtime_unavailable()
+impl From<StreamRegistryError> for CommandError {
+    fn from(_: StreamRegistryError) -> Self {
+        Self::stream_runtime_unavailable()
+    }
 }
 
 // The receipt binds generation; the ordered Channel binds delivery sequence.
@@ -56,7 +58,7 @@ pub(crate) fn acknowledge_stream_delivery(
             sequence,
         )
         .map(|_| ())
-        .map_err(stream_registry_error)
+        .map_err(CommandError::from)
 }
 
 fn parse_delivery_counter(value: &str) -> Result<u64, CommandError> {

@@ -79,7 +79,7 @@ pub(crate) async fn get_empty_curtain_snapshot(
         snapshot(&state)
     })
     .await
-    .map_err(|_| super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -92,9 +92,7 @@ pub(crate) fn get_empty_curtain_positions(
     console::validate_window(&window)?;
     let item_id = HtItemNetId::from(item);
     let character_id = HtItemNetId::from(character);
-    let (items, characters, catalog) = state
-        .empty_curtain_data_snapshot()
-        .map_err(CommandError::from_core)?;
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot()?;
     let item = items
         .iter()
         .find(|item| item.id == item_id)
@@ -106,10 +104,9 @@ pub(crate) fn get_empty_curtain_positions(
     let positions = catalog
         .valid_module_positions(character.character_id, &item.item_id)
         .ok_or_else(|| {
-            CommandError::empty_curtain(
+            CommandError::new(
                 "empty_curtain_position_unavailable",
                 "No compatible position is available for this drive module",
-                Vec::new(),
             )
         })?;
     Ok(positions
@@ -137,7 +134,7 @@ pub(crate) async fn manage_empty_curtain_item(
         manage_empty_curtain_item_inner(item, action, character, row, column, &state)
     })
     .await
-    .map_err(|_| super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
 }
 
 fn manage_empty_curtain_item_inner(
@@ -149,9 +146,7 @@ fn manage_empty_curtain_item_inner(
     state: &AppState,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     let item_id = HtItemNetId::from(item);
-    let (items, characters, catalog) = state
-        .empty_curtain_data_snapshot()
-        .map_err(CommandError::from_core)?;
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot()?;
     let operation = {
         let item = items
             .iter()
@@ -162,7 +157,7 @@ fn manage_empty_curtain_item_inner(
             .get(&item.item_id)
             .ok_or_else(metadata_unavailable)?;
         match action {
-            EquipmentAction::Lock => Ok((
+            EquipmentAction::Lock => Ok::<_, CommandError>((
                 HtItemNetId::ZERO,
                 ModsPluginOperation::SetItemLocked {
                     equipment: item.id,
@@ -266,7 +261,7 @@ pub(crate) async fn apply_empty_curtain_character_action(
         apply_empty_curtain_character_action_inner(character, action, &state)
     })
     .await
-    .map_err(|_| super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(nte_dps_tool::platform::toolkit::ToolkitError::Failed))?
 }
 
 fn apply_empty_curtain_character_action_inner(
@@ -275,9 +270,7 @@ fn apply_empty_curtain_character_action_inner(
     state: &AppState,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     let character_uid = HtItemNetId::from(character);
-    let (items, characters, catalog) = state
-        .empty_curtain_data_snapshot()
-        .map_err(CommandError::from_core)?;
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot()?;
     let operation = {
         let character = characters
             .iter()
@@ -299,7 +292,7 @@ fn apply_empty_curtain_character_action_inner(
                         .collect(),
                     core: loadout.core,
                 })
-                .map_err(recommended_loadout_error),
+                .map_err(CommandError::from),
         }
     }?;
     submit(state, character_uid, operation)?;
@@ -312,23 +305,19 @@ pub(crate) async fn export_empty_curtain_inventory(
     window: WebviewWindow,
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
-    let (items, _, catalog) = state
-        .empty_curtain_data_snapshot()
-        .map_err(CommandError::from_core)?;
+    let (items, _, catalog) = state.empty_curtain_data_snapshot()?;
     if items.is_empty() {
-        return Err(CommandError::empty_curtain(
+        return Err(CommandError::new(
             "empty_curtain_inventory_empty",
             "No Console equipment to export",
-            Vec::new(),
         ));
     }
     let json = serde_json::to_string_pretty(&build_drive_calculator_inventory(&items, &catalog))
         .map_err(|error| {
             log::error!("serialize Drive Calculator inventory failed: {error}");
-            CommandError::empty_curtain(
+            CommandError::new(
                 "empty_curtain_export_serialize_failed",
                 "Failed to serialize Console equipment",
-                Vec::new(),
             )
         })?;
     let completed = save_json(
@@ -352,17 +341,14 @@ pub(crate) async fn export_empty_curtain_loadout(
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
     let character_uid = HtItemNetId::from(character);
-    let (items, characters, catalog) = state
-        .empty_curtain_data_snapshot()
-        .map_err(CommandError::from_core)?;
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot()?;
     let character = characters
         .iter()
         .copied()
         .find(|candidate| candidate.net_id == character_uid)
         .ok_or_else(character_unavailable)?;
     let (json, character_id) = export_character_loadout_json(character, &items, &catalog)
-        .map(|json| (json, character.character_id))
-        .map_err(character_loadout_error)?;
+        .map(|json| (json, character.character_id))?;
     let completed = save_json(
         &window,
         i18n::t("Console character loadout"),
@@ -382,10 +368,7 @@ pub(crate) async fn import_empty_curtain_loadout(
     window: WebviewWindow,
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
-    if !state
-        .uses_plugin_equipment()
-        .map_err(CommandError::from_core)?
-    {
+    if !state.uses_plugin_equipment()? {
         return Err(super::toolkit::unsupported());
     }
     let Some(json) = open_json(&window, i18n::t("Console character loadout")).await? else {
@@ -394,12 +377,9 @@ pub(crate) async fn import_empty_curtain_loadout(
             snapshot: snapshot(state.inner())?,
         });
     };
-    let (items, characters, catalog) = state
-        .empty_curtain_data_snapshot()
-        .map_err(CommandError::from_core)?;
-    let file = parse_character_loadout_json(&json).map_err(character_loadout_error)?;
-    let loadout = validate_character_loadout(&file, &characters, &items, &catalog)
-        .map_err(character_loadout_error)?;
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot()?;
+    let file = parse_character_loadout_json(&json)?;
+    let loadout = validate_character_loadout(&file, &characters, &items, &catalog)?;
     let operation = (
         loadout.character.net_id,
         ModsPluginOperation::EquipOneKey {
@@ -418,9 +398,7 @@ pub(crate) async fn import_empty_curtain_loadout(
     let owned = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || submit(&owned, operation.0, operation.1))
         .await
-        .map_err(|_| {
-            super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Failed)
-        })??;
+        .map_err(|_| CommandError::from(nte_dps_tool::platform::toolkit::ToolkitError::Failed))??;
     Ok(EmptyCurtainFileResult {
         completed: true,
         snapshot: snapshot(state.inner())?,
@@ -428,10 +406,7 @@ pub(crate) async fn import_empty_curtain_loadout(
 }
 
 pub(crate) fn snapshot(state: &AppState) -> Result<EmptyCurtainSnapshot, CommandError> {
-    let operation = state
-        .empty_curtain_operation_snapshot()
-        .map_err(equipment_operation_error)?
-        .operation;
+    let operation = state.empty_curtain_operation_snapshot()?.operation;
     snapshot_with_operation(state, operation)
 }
 
@@ -439,14 +414,10 @@ pub(crate) fn snapshot_with_operation(
     state: &AppState,
     operation: EmptyCurtainOperationState,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
-    let inventory = state
-        .empty_curtain_snapshot()
-        .map_err(CommandError::from_core)?;
+    let inventory = state.empty_curtain_snapshot()?;
     let catalog = state.equipment_catalog();
     let resources = state.live_capture_resources();
-    let can_operate = state
-        .uses_plugin_equipment()
-        .map_err(CommandError::from_core)?;
+    let can_operate = state.uses_plugin_equipment()?;
     let operation = if can_operate {
         operation
     } else {
@@ -468,10 +439,7 @@ pub(crate) fn settle_equipment_confirmation(
 ) -> Result<bool, CommandError> {
     use nte_dps_tool::core::equipment_runtime::ConfirmationState;
     let service = state.equipment_service();
-    let outcome = service
-        .inventory
-        .settle_confirmation(identity, data)
-        .map_err(runtime_error)?;
+    let outcome = service.inventory.settle_confirmation(identity, data)?;
     match outcome {
         Some(ConfirmationState::Waiting) => service.set("pending", CONFIRMING),
         Some(ConfirmationState::Confirmed) => service.set(
@@ -482,57 +450,54 @@ pub(crate) fn settle_equipment_confirmation(
             service.set("error", CONFIRMATION_TIMEOUT)
         }
         None => return Ok(false),
-    }
-    .map_err(equipment_operation_error)?;
+    }?;
     Ok(true)
 }
-fn runtime_error(error: nte_dps_tool::core::equipment_runtime::Error) -> CommandError {
-    use nte_dps_tool::core::{equipment_runtime::Error, user_equipment};
-    match error {
-        Error::Transport(e) => {
-            if e == nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged {
-                return CommandError::empty_curtain(
-                    "equipment_snapshot_changed",
-                    "Equipment data changed. Refresh before trying again.",
-                    vec![],
-                );
+impl From<nte_dps_tool::core::equipment_runtime::Error> for CommandError {
+    fn from(error: nte_dps_tool::core::equipment_runtime::Error) -> Self {
+        use nte_dps_tool::core::{equipment_runtime::Error, user_equipment};
+        match error {
+            Error::Transport(e) => {
+                if e == nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged {
+                    return CommandError::new(
+                        "equipment_snapshot_changed",
+                        "Equipment data changed. Refresh before trying again.",
+                    );
+                }
+                let mut error = CommandError::from(e);
+                error.message_key = match e {
+                    nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged => {
+                        "Equipment data changed. Refresh before trying again."
+                    }
+                    nte_dps_tool::platform::toolkit::ToolkitError::Busy => {
+                        "Equipment synchronization is busy. Try again shortly."
+                    }
+                    nte_dps_tool::platform::toolkit::ToolkitError::InvalidProtocol
+                    | nte_dps_tool::platform::toolkit::ToolkitError::Failed => {
+                        "The equipment request could not be verified. Refresh and try again."
+                    }
+                    _ => {
+                        "Equipment connection is unavailable. Check the User and Combat plugins, then refresh."
+                    }
+                };
+                error
             }
-            let mut error = super::toolkit::error(e);
-            error.message_key = match e {
-                nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged => {
-                    "Equipment data changed. Refresh before trying again."
-                }
-                nte_dps_tool::platform::toolkit::ToolkitError::Busy => {
-                    "Equipment synchronization is busy. Try again shortly."
-                }
-                nte_dps_tool::platform::toolkit::ToolkitError::InvalidProtocol
-                | nte_dps_tool::platform::toolkit::ToolkitError::Failed => {
-                    "The equipment request could not be verified. Refresh and try again."
-                }
-                _ => {
-                    "Equipment connection is unavailable. Check the User and Combat plugins, then refresh."
-                }
-            };
-            error
+            Error::ConfirmationPending(_) => {
+                CommandError::new("equipment_confirmation_pending", CONFIRMING)
+            }
+            Error::Snapshot(user_equipment::Error::Changed) => CommandError::new(
+                "equipment_snapshot_changed",
+                "Equipment data changed. Refresh before trying again.",
+            ),
+            Error::Unconfirmed => CommandError::new(
+                "equipment_unconfirmed",
+                "Equipment request sent, but the refreshed inventory did not confirm the change.",
+            ),
+            Error::Snapshot(_) => CommandError::new(
+                "equipment_snapshot_invalid",
+                "A complete, verified equipment snapshot could not be read.",
+            ),
         }
-        Error::ConfirmationPending(_) => {
-            CommandError::empty_curtain("equipment_confirmation_pending", CONFIRMING, vec![])
-        }
-        Error::Snapshot(user_equipment::Error::Changed) => CommandError::empty_curtain(
-            "equipment_snapshot_changed",
-            "Equipment data changed. Refresh before trying again.",
-            vec![],
-        ),
-        Error::Unconfirmed => CommandError::empty_curtain(
-            "equipment_unconfirmed",
-            "Equipment request sent, but the refreshed inventory did not confirm the change.",
-            vec![],
-        ),
-        Error::Snapshot(_) => CommandError::empty_curtain(
-            "equipment_snapshot_invalid",
-            "A complete, verified equipment snapshot could not be read.",
-            vec![],
-        ),
     }
 }
 fn equipment_permit(
@@ -544,15 +509,14 @@ fn equipment_permit(
             Ok(permit) => return Ok(permit),
             Err(e) if e.code == nte_dps_tool::core::CoreErrorCode::CaptureAlreadyRunning => {
                 if std::time::Instant::now() >= deadline {
-                    return Err(CommandError::empty_curtain(
+                    return Err(CommandError::new(
                         "equipment_sync_busy",
                         "Equipment synchronization is busy. Try again shortly.",
-                        vec![],
                     ));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            Err(e) => return Err(CommandError::from_core(e)),
+            Err(e) => return Err(CommandError::from(e)),
         }
     }
 }
@@ -566,43 +530,28 @@ fn equipment_host()
 }
 fn refresh_plugin(state: &AppState) -> Result<(), CommandError> {
     use nte_dps_tool::core::equipment_runtime;
-    if !state
-        .uses_plugin_equipment()
-        .map_err(CommandError::from_core)?
-    {
+    if !state.uses_plugin_equipment()? {
         return Ok(());
     }
     let _permit = equipment_permit(state)?;
     let (host, _) = equipment_host()?;
     let mut client =
-        equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)
-            .map_err(runtime_error)?;
-    let observed = equipment_runtime::watch(&host, &std::sync::atomic::AtomicBool::new(false))
-        .map_err(runtime_error)?;
-    let data = equipment_runtime::collect(&mut client, &state.equipment_catalog())
-        .map_err(runtime_error)?;
-    if !state
-        .uses_plugin_equipment()
-        .map_err(CommandError::from_core)?
-    {
+        equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)?;
+    let observed = equipment_runtime::watch(&host, &std::sync::atomic::AtomicBool::new(false))?;
+    let data = equipment_runtime::collect(&mut client, &state.equipment_catalog())?;
+    if !state.uses_plugin_equipment()? {
         return Err(super::toolkit::unsupported());
     }
     let settled = settle_equipment_confirmation(state, &host.identity(), Some(&data))?;
     state
         .equipment_service()
         .inventory
-        .publish(host.identity(), data)
-        .map_err(runtime_error)?;
-    state
-        .equipment_service()
-        .inventory
-        .set_watch(observed)
-        .map_err(runtime_error)?;
+        .publish(host.identity(), data)?;
+    state.equipment_service().inventory.set_watch(observed)?;
     if !settled {
         state
             .equipment_service()
-            .set("idle", "No equipment operation is pending")
-            .map_err(equipment_operation_error)?;
+            .set("idle", "No equipment operation is pending")?;
     }
     Ok(())
 }
@@ -611,15 +560,11 @@ pub(crate) fn poll_plugin_changes(
     stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), CommandError> {
     use nte_dps_tool::core::equipment_runtime;
-    if stop.load(std::sync::atomic::Ordering::Acquire)
-        || !state
-            .uses_plugin_equipment()
-            .map_err(CommandError::from_core)?
-    {
+    if stop.load(std::sync::atomic::Ordering::Acquire) || !state.uses_plugin_equipment()? {
         return Ok(());
     }
     let service = state.equipment_service();
-    let (before, _) = service.inventory.get().map_err(runtime_error)?;
+    let (before, _) = service.inventory.get()?;
     let Some(before) = before else { return Ok(()) };
     let Ok(_permit) = state.reserve_plugin_control() else {
         return Ok(());
@@ -629,35 +574,27 @@ pub(crate) fn poll_plugin_changes(
             "Equipment connection is unavailable. Check the User and Combat plugins, then refresh.";
         e
     })?;
-    let next = equipment_runtime::watch(&host, stop).map_err(runtime_error)?;
-    let previous = service.inventory.watch().map_err(runtime_error)?;
-    let confirming = service.inventory.confirming().map_err(runtime_error)?;
+    let next = equipment_runtime::watch(&host, stop)?;
+    let previous = service.inventory.watch()?;
+    let confirming = service.inventory.confirming()?;
     if !confirming
-        && service.inventory.identity().map_err(runtime_error)? == host.identity()
+        && service.inventory.identity()? == host.identity()
         && previous.as_ref().is_some_and(|p| {
             p.provider_id == next.provider_id && p.equipment_revision == next.equipment_revision
         })
     {
-        if service
-            .poll_snapshot()
-            .map_err(equipment_operation_error)?
-            .operation
-            .message_key
+        if service.poll_snapshot()?.operation.message_key
             == "Equipment connection is unavailable. Check the User and Combat plugins, then refresh."
         {
-            service
-                .set("idle", "No equipment operation is pending")
-                .map_err(equipment_operation_error)?;
+            service.set("idle", "No equipment operation is pending")?;
         }
         return Ok(());
     }
     let mut client =
-        equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)
-            .map_err(runtime_error)?
+        equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)?
             .with_cancel(stop.clone());
     let data = if confirming {
-        equipment_runtime::collect(&mut client, &state.equipment_catalog())
-            .map_err(runtime_error)?
+        equipment_runtime::collect(&mut client, &state.equipment_catalog())?
     } else if let Some(previous) = previous
         .as_ref()
         .filter(|p| p.provider_id == next.provider_id)
@@ -665,35 +602,21 @@ pub(crate) fn poll_plugin_changes(
         match equipment_runtime::update_flags(&mut client, &before, previous, &next) {
             Ok(data) => data,
             Err(equipment_runtime::Error::Snapshot(_)) => {
-                equipment_runtime::collect(&mut client, &state.equipment_catalog())
-                    .map_err(runtime_error)?
+                equipment_runtime::collect(&mut client, &state.equipment_catalog())?
             }
-            Err(error) => return Err(runtime_error(error)),
+            Err(error) => return Err(CommandError::from(error)),
         }
     } else {
-        equipment_runtime::collect(&mut client, &state.equipment_catalog())
-            .map_err(runtime_error)?
+        equipment_runtime::collect(&mut client, &state.equipment_catalog())?
     };
     if stop.load(std::sync::atomic::Ordering::Acquire) {
         return Ok(());
     }
     let settled = settle_equipment_confirmation(state, &host.identity(), Some(&data))?;
-    service
-        .inventory
-        .publish(host.identity(), data)
-        .map_err(runtime_error)?;
-    service.inventory.set_watch(next).map_err(runtime_error)?;
-    if !settled
-        && service
-            .poll_snapshot()
-            .map_err(equipment_operation_error)?
-            .operation
-            .status
-            == "error"
-    {
-        service
-            .set("idle", "No equipment operation is pending")
-            .map_err(equipment_operation_error)?;
+    service.inventory.publish(host.identity(), data)?;
+    service.inventory.set_watch(next)?;
+    if !settled && service.poll_snapshot()?.operation.status == "error" {
+        service.set("idle", "No equipment operation is pending")?;
     }
     Ok(())
 }
@@ -703,36 +626,29 @@ fn submit(
     operation: ModsPluginOperation,
 ) -> Result<(), CommandError> {
     use nte_dps_tool::core::equipment_runtime;
-    if !state
-        .uses_plugin_equipment()
-        .map_err(CommandError::from_core)?
-    {
+    if !state.uses_plugin_equipment()? {
         return Err(super::toolkit::unsupported());
     }
     let _permit = equipment_permit(state)?;
     let (host, _) = equipment_host()?;
     let service = state.equipment_service();
-    if service.inventory.identity().map_err(runtime_error)? != host.identity() {
-        return Err(super::toolkit::error(
+    if service.inventory.identity()? != host.identity() {
+        return Err(CommandError::from(
             nte_dps_tool::platform::toolkit::ToolkitError::SessionChanged,
         ));
     }
-    let (data, _) = service.inventory.get().map_err(runtime_error)?;
+    let (data, _) = service.inventory.get()?;
     let before = data.ok_or_else(item_unavailable)?;
-    if service.inventory.confirming().map_err(runtime_error)? {
-        return Err(CommandError::empty_curtain(
+    if service.inventory.confirming()? {
+        return Err(CommandError::new(
             "equipment_confirmation_pending",
             CONFIRMING,
-            vec![],
         ));
     }
-    service
-        .set("pending", "Sending equipment request...")
-        .map_err(equipment_operation_error)?;
+    service.set("pending", "Sending equipment request...")?;
     let result = (|| {
         let mut client =
-            equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)
-                .map_err(runtime_error)?;
+            equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)?;
         match equipment_runtime::execute(
             &mut client,
             &before,
@@ -741,21 +657,20 @@ fn submit(
             &state.equipment_catalog(),
         ) {
             Ok(after) => {
-                service
-                    .inventory
-                    .publish(host.identity(), after)
-                    .map_err(runtime_error)?;
+                service.inventory.publish(host.identity(), after)?;
                 Ok(true)
             }
             Err(equipment_runtime::Error::ConfirmationPending(cause)) => {
                 log::warn!("equipment confirmation readback deferred: {cause:?}");
-                service
-                    .inventory
-                    .defer_confirmation(host.identity(), &before, character, operation.clone())
-                    .map_err(runtime_error)?;
+                service.inventory.defer_confirmation(
+                    host.identity(),
+                    &before,
+                    character,
+                    operation.clone(),
+                )?;
                 Ok(false)
             }
-            Err(error) => Err(runtime_error(error)),
+            Err(error) => Err(CommandError::from(error)),
         }
     })();
     match &result {
@@ -765,22 +680,25 @@ fn submit(
             "Equipment change confirmed by refreshed inventory.",
         ),
         Err(e) => service.set("error", e.message_key),
-    }
-    .map_err(equipment_operation_error)?;
+    }?;
     result.map(|_| ())
 }
 
-pub(crate) fn empty_curtain_runtime_error(error: EmptyCurtainRuntimeError) -> CommandError {
-    match error {
-        EmptyCurtainRuntimeError::Capture(error) => CommandError::from_core(error),
-        EmptyCurtainRuntimeError::Operation(error) => equipment_operation_error(error),
+impl From<EmptyCurtainRuntimeError> for CommandError {
+    fn from(error: EmptyCurtainRuntimeError) -> Self {
+        match error {
+            EmptyCurtainRuntimeError::Capture(error) => CommandError::from(error),
+            EmptyCurtainRuntimeError::Operation(error) => CommandError::from(error),
+        }
     }
 }
 
-fn equipment_operation_error(error: EquipmentOperationError) -> CommandError {
-    match error {
-        EquipmentOperationError::Unavailable => {
-            super::toolkit::error(nte_dps_tool::platform::toolkit::ToolkitError::Unavailable)
+impl From<EquipmentOperationError> for CommandError {
+    fn from(error: EquipmentOperationError) -> Self {
+        match error {
+            EquipmentOperationError::Unavailable => {
+                CommandError::from(nte_dps_tool::platform::toolkit::ToolkitError::Unavailable)
+            }
         }
     }
 }
@@ -829,7 +747,7 @@ async fn open_json(window: &WebviewWindow, title: String) -> Result<Option<Strin
             DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
                 let metadata = fs::metadata(&path).map_err(|_| file_read_error())?;
                 if metadata.len() > CHARACTER_LOADOUT_MAX_JSON_BYTES as u64 {
-                    return Err(character_loadout_error(CharacterLoadoutError::JsonTooLarge));
+                    return Err(CommandError::from(CharacterLoadoutError::JsonTooLarge));
                 }
                 fs::read_to_string(path)
                     .map(Some)
@@ -847,143 +765,137 @@ async fn open_json(window: &WebviewWindow, title: String) -> Result<Option<Strin
     }
 }
 
-fn character_loadout_error(error: CharacterLoadoutError) -> CommandError {
-    let (code, key, arguments) = match error {
-        CharacterLoadoutError::JsonTooLarge => (
-            "empty_curtain_loadout_too_large",
-            "Character loadout file is too large",
-            Vec::new(),
-        ),
-        CharacterLoadoutError::InvalidJson => (
-            "empty_curtain_loadout_invalid",
-            "Character loadout JSON is invalid",
-            Vec::new(),
-        ),
-        CharacterLoadoutError::UnsupportedVersion(version) => (
-            "empty_curtain_loadout_version",
-            "Unsupported character loadout version: {}",
-            vec![version.to_string()],
-        ),
-        CharacterLoadoutError::CharacterUnavailable(character) => (
-            "empty_curtain_character_unavailable",
-            "Character {} is not available in the current session",
-            vec![character.to_string()],
-        ),
-        CharacterLoadoutError::MissingCharacterPlan(_) => (
-            "empty_curtain_plan_unavailable",
-            "No character equipment template is available",
-            Vec::new(),
-        ),
-        CharacterLoadoutError::MissingCore => (
-            "empty_curtain_loadout_missing_core",
-            "Character loadout has no cassette",
-            Vec::new(),
-        ),
-        CharacterLoadoutError::MultipleCores => (
-            "empty_curtain_loadout_multiple_cores",
-            "Character loadout has multiple cassettes",
-            Vec::new(),
-        ),
-        CharacterLoadoutError::MissingModules => (
-            "empty_curtain_loadout_missing_modules",
-            "Character loadout has no drive modules",
-            Vec::new(),
-        ),
-        CharacterLoadoutError::TooManyModules => (
-            "empty_curtain_loadout_too_many_modules",
-            "Character loadout has too many drive modules",
-            Vec::new(),
-        ),
-        CharacterLoadoutError::OverlappingModules => (
-            "empty_curtain_loadout_overlap",
-            "Character loadout contains overlapping drive modules",
-            Vec::new(),
-        ),
-        other => (
-            "empty_curtain_loadout_item_invalid",
-            "Character loadout contains invalid equipment data: {}",
-            vec![format!("{other:?}")],
-        ),
-    };
-    CommandError::empty_curtain(code, key, arguments)
+impl From<CharacterLoadoutError> for CommandError {
+    fn from(error: CharacterLoadoutError) -> Self {
+        let (code, key, arguments) = match error {
+            CharacterLoadoutError::JsonTooLarge => (
+                "empty_curtain_loadout_too_large",
+                "Character loadout file is too large",
+                Vec::new(),
+            ),
+            CharacterLoadoutError::InvalidJson => (
+                "empty_curtain_loadout_invalid",
+                "Character loadout JSON is invalid",
+                Vec::new(),
+            ),
+            CharacterLoadoutError::UnsupportedVersion(version) => (
+                "empty_curtain_loadout_version",
+                "Unsupported character loadout version: {}",
+                vec![version.to_string()],
+            ),
+            CharacterLoadoutError::CharacterUnavailable(character) => (
+                "empty_curtain_character_unavailable",
+                "Character {} is not available in the current session",
+                vec![character.to_string()],
+            ),
+            CharacterLoadoutError::MissingCharacterPlan(_) => (
+                "empty_curtain_plan_unavailable",
+                "No character equipment template is available",
+                Vec::new(),
+            ),
+            CharacterLoadoutError::MissingCore => (
+                "empty_curtain_loadout_missing_core",
+                "Character loadout has no cassette",
+                Vec::new(),
+            ),
+            CharacterLoadoutError::MultipleCores => (
+                "empty_curtain_loadout_multiple_cores",
+                "Character loadout has multiple cassettes",
+                Vec::new(),
+            ),
+            CharacterLoadoutError::MissingModules => (
+                "empty_curtain_loadout_missing_modules",
+                "Character loadout has no drive modules",
+                Vec::new(),
+            ),
+            CharacterLoadoutError::TooManyModules => (
+                "empty_curtain_loadout_too_many_modules",
+                "Character loadout has too many drive modules",
+                Vec::new(),
+            ),
+            CharacterLoadoutError::OverlappingModules => (
+                "empty_curtain_loadout_overlap",
+                "Character loadout contains overlapping drive modules",
+                Vec::new(),
+            ),
+            other => (
+                "empty_curtain_loadout_item_invalid",
+                "Character loadout contains invalid equipment data: {}",
+                vec![format!("{other:?}")],
+            ),
+        };
+        CommandError::with_arguments(code, key, arguments)
+    }
 }
 
-fn recommended_loadout_error(error: RecommendedLoadoutError) -> CommandError {
-    match error {
-        RecommendedLoadoutError::MissingTemplate => CommandError::empty_curtain(
-            "empty_curtain_plan_unavailable",
-            "No character equipment template is available",
-            Vec::new(),
-        ),
-        RecommendedLoadoutError::MissingEquipment => CommandError::empty_curtain(
-            "empty_curtain_plan_equipment_missing",
-            "Required equipment for the character template is unavailable",
-            Vec::new(),
-        ),
+impl From<RecommendedLoadoutError> for CommandError {
+    fn from(error: RecommendedLoadoutError) -> Self {
+        match error {
+            RecommendedLoadoutError::MissingTemplate => CommandError::new(
+                "empty_curtain_plan_unavailable",
+                "No character equipment template is available",
+            ),
+            RecommendedLoadoutError::MissingEquipment => CommandError::new(
+                "empty_curtain_plan_equipment_missing",
+                "Required equipment for the character template is unavailable",
+            ),
+        }
     }
 }
 
 fn item_unavailable() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_item_unavailable",
         "Equipment is no longer present in the current inventory",
-        Vec::new(),
     )
 }
 
 fn character_unavailable() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_character_unavailable",
         "Character is no longer available in the current session",
-        Vec::new(),
     )
 }
 
 fn metadata_unavailable() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_metadata_unavailable",
         "Equipment metadata is unavailable",
-        Vec::new(),
     )
 }
 
 fn item_not_equipped() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_item_not_equipped",
         "Equipment is not currently equipped",
-        Vec::new(),
     )
 }
 
 fn position_required() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_position_required",
         "Choose a compatible drive module position",
-        Vec::new(),
     )
 }
 
 fn file_dialog_error() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_file_dialog_failed",
         "Console equipment file dialog failed",
-        Vec::new(),
     )
 }
 
 fn file_write_error() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_file_write_failed",
         "Failed to write Console equipment file",
-        Vec::new(),
     )
 }
 
 fn file_read_error() -> CommandError {
-    CommandError::empty_curtain(
+    CommandError::new(
         "empty_curtain_file_read_failed",
         "Failed to read character loadout",
-        Vec::new(),
     )
 }
 
@@ -1024,9 +936,9 @@ mod tests {
             core::equipment_runtime::{Error, ReadbackFailure},
             platform::toolkit::ToolkitError,
         };
-        let changed = super::runtime_error(Error::Transport(ToolkitError::SessionChanged));
+        let changed = CommandError::from(Error::Transport(ToolkitError::SessionChanged));
         assert_eq!(changed.code, "equipment_snapshot_changed");
-        let pending = super::runtime_error(Error::ConfirmationPending(ReadbackFailure::Transport(
+        let pending = CommandError::from(Error::ConfirmationPending(ReadbackFailure::Transport(
             ToolkitError::Busy,
         )));
         assert_eq!(pending.code, "equipment_confirmation_pending");
@@ -1045,7 +957,7 @@ mod tests {
     #[test]
     fn loadout_errors_keep_stable_codes() {
         assert_eq!(
-            character_loadout_error(CharacterLoadoutError::InvalidJson).code,
+            CommandError::from(CharacterLoadoutError::InvalidJson).code,
             "empty_curtain_loadout_invalid"
         );
     }

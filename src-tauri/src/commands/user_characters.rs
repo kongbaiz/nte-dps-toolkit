@@ -56,32 +56,26 @@ pub(crate) struct CharacterResponse {
     sdk_compatible: bool,
     page: Option<CharacterPage>,
 }
-fn failure(code: &'static str, message_key: &'static str) -> CommandError {
-    CommandError {
-        code,
-        message_key,
-        message_arguments: vec![],
-        diagnostic_line: None,
-    }
-}
-fn projection_error(e: SnapshotError) -> CommandError {
-    match e {
-        SnapshotError::TooLarge => failure(
-            "character_snapshot_too_large",
-            "The character snapshot exceeds the data limit.",
-        ),
-        SnapshotError::UnsupportedVersion => failure(
-            "character_snapshot_version",
-            "This account snapshot version is not supported.",
-        ),
-        SnapshotError::InvalidFormat => failure(
-            "character_snapshot_invalid",
-            "The character snapshot is invalid.",
-        ),
-        SnapshotError::SessionChanged => failure(
-            "character_snapshot_changed",
-            "The account snapshot changed. Reload before continuing.",
-        ),
+impl From<SnapshotError> for CommandError {
+    fn from(e: SnapshotError) -> Self {
+        match e {
+            SnapshotError::TooLarge => CommandError::new(
+                "character_snapshot_too_large",
+                "The character snapshot exceeds the data limit.",
+            ),
+            SnapshotError::UnsupportedVersion => CommandError::new(
+                "character_snapshot_version",
+                "This account snapshot version is not supported.",
+            ),
+            SnapshotError::InvalidFormat => CommandError::new(
+                "character_snapshot_invalid",
+                "The character snapshot is invalid.",
+            ),
+            SnapshotError::SessionChanged => CommandError::new(
+                "character_snapshot_changed",
+                "The account snapshot changed. Reload before continuing.",
+            ),
+        }
     }
 }
 fn validate_status(s: &NativeStatus, identity: &str) -> Result<(), CommandError> {
@@ -89,17 +83,16 @@ fn validate_status(s: &NativeStatus, identity: &str) -> Result<(), CommandError>
         .as_ref()
         .is_some_and(|s| s.is_empty() || s.len() > 128)
     {
-        return Err(projection_error(SnapshotError::InvalidFormat));
+        return Err(CommandError::from(SnapshotError::InvalidFormat));
     }
     let created = user_characters::decimal(&serde_json::Value::String(
         s.process_created_file_time.clone(),
-    ))
-    .map_err(projection_error)?;
+    ))?;
     if format!("{}:{}", s.process_id, created) != identity {
-        return Err(projection_error(SnapshotError::SessionChanged));
+        return Err(CommandError::from(SnapshotError::SessionChanged));
     }
     if s.state == CharacterReadState::Completed && !s.dirty && s.snapshot_id.is_none() {
-        return Err(projection_error(SnapshotError::InvalidFormat));
+        return Err(CommandError::from(SnapshotError::InvalidFormat));
     }
     Ok(())
 }
@@ -124,10 +117,10 @@ pub(crate) async fn get_user_characters(
             .is_some_and(|s| s.is_empty() || s.len() > 128)
         || (request.refresh && request.expected_identity.is_none())
     {
-        return Err(projection_error(SnapshotError::InvalidFormat));
+        return Err(CommandError::from(SnapshotError::InvalidFormat));
     }
     if state.data_mode() != DataMode::Plugin {
-        return Err(failure(
+        return Err(CommandError::new(
             "character_plugin_mode_required",
             "Select Plugin mode on the home page to read character snapshots.",
         ));
@@ -135,9 +128,7 @@ pub(crate) async fn get_user_characters(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         // Reuse the capacity-one control reservation; no hot state lock spans IPC.
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(toolkit::unsupported());
         }
@@ -148,24 +139,22 @@ pub(crate) async fn get_user_characters(
             .as_ref()
             .is_some_and(|s| s != &identity)
         {
-            return Err(projection_error(SnapshotError::SessionChanged));
+            return Err(CommandError::from(SnapshotError::SessionChanged));
         }
         if ![302, 303].iter().all(|c| capabilities.contains(c))
             || (request.refresh && !capabilities.contains(&301))
         {
             return Err(toolkit::unsupported());
         }
-        let prior: NativeStatus = client.json(302, 0, "", &|| false).map_err(toolkit::error)?;
+        let prior: NativeStatus = client.json(302, 0, "", &|| false)?;
         validate_status(&prior, &identity)?;
         let status: NativeStatus = if request.refresh {
-            client
-                .json(
-                    301,
-                    u32::from(prior.character_refresh_supported),
-                    "",
-                    &|| false,
-                )
-                .map_err(toolkit::error)?
+            client.json(
+                301,
+                u32::from(prior.character_refresh_supported),
+                "",
+                &|| false,
+            )?
         } else {
             prior
         };
@@ -177,17 +166,17 @@ pub(crate) async fn get_user_characters(
             let id = status
                 .snapshot_id
                 .as_deref()
-                .ok_or_else(|| projection_error(SnapshotError::InvalidFormat))?;
+                .ok_or_else(|| CommandError::from(SnapshotError::InvalidFormat))?;
             if request
                 .expected_snapshot_id
                 .as_ref()
                 .is_some_and(|s| s != id)
             {
-                return Err(projection_error(SnapshotError::SessionChanged));
+                return Err(CommandError::from(SnapshotError::SessionChanged));
             }
             // Read the complete paged Toolkit blob, NOT release_action's 8 KiB preview.
             // Pass native snapshot identity to reject concurrent refresh/invalidation.
-            let bytes = client.call(303, 0, id, &|| false).map_err(toolkit::error)?;
+            let bytes = client.call(303, 0, id, &|| false)?;
             let page = user_characters::project(
                 &bytes,
                 &identity,
@@ -195,15 +184,14 @@ pub(crate) async fn get_user_characters(
                 request.offset,
                 request.selected_uid.as_deref(),
                 &request.query,
-            )
-            .map_err(projection_error)?;
-            let after: NativeStatus = client.json(302, 0, "", &|| false).map_err(toolkit::error)?;
+            )?;
+            let after: NativeStatus = client.json(302, 0, "", &|| false)?;
             validate_status(&after, &identity)?;
             if after.dirty
                 || after.state != CharacterReadState::Completed
                 || after.snapshot_id != status.snapshot_id
             {
-                return Err(projection_error(SnapshotError::SessionChanged));
+                return Err(CommandError::from(SnapshotError::SessionChanged));
             }
             Some(page)
         } else {
@@ -221,7 +209,7 @@ pub(crate) async fn get_user_characters(
         })
     })
     .await
-    .map_err(|_| toolkit::error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[cfg(test)]

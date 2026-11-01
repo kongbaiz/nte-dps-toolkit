@@ -31,6 +31,7 @@ use super::{
         HistoryArchivePolicy, PendingHistoryArchive, abyss_event_starts_new_round, auto_round_due,
     },
     reducer::{CoreSignal, apply_engine_event},
+    sync::lock_or_repair,
 };
 use crate::{
     engine::{
@@ -435,18 +436,12 @@ impl LiveCaptureService {
 
     #[cfg(feature = "desktop")]
     fn cached_quality_summary(&self) -> Result<CaptureQualitySummary, CoreError> {
-        let mut cache = match self.0.diagnostic_quality.lock() {
-            Ok(cache) => cache,
-            Err(error) => {
-                // This cache is a derived read model with no authoritative
-                // state. Resetting it fully restores its only invariant; the
-                // next projection rebuilds from the retained hit ring.
-                let mut cache = error.into_inner();
-                *cache = DiagnosticQualityCache;
-                self.0.diagnostic_quality.clear_poison();
-                cache
-            }
-        };
+        // This cache is a derived read model with no authoritative state.
+        // Resetting it fully restores its only invariant; the next projection
+        // rebuilds from the retained hit ring.
+        let (mut cache, _) = lock_or_repair(&self.0.diagnostic_quality, |cache| {
+            *cache = DiagnosticQualityCache;
+        });
         let input = self.with_state_and_source(|state, source| {
             cache.prepare(
                 state,
@@ -595,29 +590,27 @@ impl LiveCaptureService {
 
     fn pending_archives_for_cleanup(&self) -> MutexGuard<'_, VecDeque<PendingHistoryArchive>> {
         loop {
-            match self.0.pending_abyss_archives.lock() {
-                Ok(pending) => return pending,
-                Err(error) => {
-                    // `VecDeque` remains structurally valid across unwind. Its
-                    // only service invariant is the explicit capacity bound,
-                    // which cleanup repairs before clearing poison. No capture
-                    // producer is stopped or joined while this guard is held.
-                    let mut pending = error.into_inner();
-                    let mut dropped = 0_u64;
-                    while pending.len() > MAX_PENDING_ABYSS_ARCHIVES {
-                        pending.pop_back();
-                        dropped += 1;
-                    }
-                    self.0.pending_abyss_archives.clear_poison();
-                    drop(pending);
-                    if dropped > 0 {
-                        self.0
-                            .dropped_history_archives
-                            .fetch_add(dropped, Ordering::AcqRel);
-                    }
-                    self.0.trip_integrity_failure();
+            // `VecDeque` remains structurally valid across unwind. Its only
+            // service invariant is the explicit capacity bound, which the
+            // repair restores. No capture producer is stopped or joined while
+            // this guard is held.
+            let mut dropped = 0_u64;
+            let (pending, recovered) = lock_or_repair(&self.0.pending_abyss_archives, |pending| {
+                while pending.len() > MAX_PENDING_ABYSS_ARCHIVES {
+                    pending.pop_back();
+                    dropped += 1;
                 }
+            });
+            if !recovered {
+                return pending;
             }
+            drop(pending);
+            if dropped > 0 {
+                self.0
+                    .dropped_history_archives
+                    .fetch_add(dropped, Ordering::AcqRel);
+            }
+            self.0.trip_integrity_failure();
         }
     }
 
@@ -1176,13 +1169,7 @@ impl LiveCaptureInner {
             return;
         }
 
-        match self.status.lock() {
-            Ok(mut status) => *status = terminal_capture_status(),
-            Err(mut error) => {
-                **error.get_mut() = terminal_capture_status();
-                self.status.clear_poison();
-            }
-        }
+        *lock_or_repair(&self.status, |_| {}).0 = terminal_capture_status();
         // One terminal state mutation invalidates both general and packet
         // projections. Outgoing-hit revision is deliberately untouched.
         self.revision.fetch_add(1, Ordering::AcqRel);
@@ -1190,14 +1177,7 @@ impl LiveCaptureInner {
             .fetch_add(1, Ordering::AcqRel);
         self.packet_revision.fetch_add(1, Ordering::AcqRel);
 
-        let control = match self.event_worker.lock() {
-            Ok(runtime) => runtime.control.clone(),
-            Err(mut error) => {
-                let control = error.get_mut().control.clone();
-                self.event_worker.clear_poison();
-                control
-            }
-        };
+        let control = lock_or_repair(&self.event_worker, |_| {}).0.control.clone();
         if let Some(control) = control {
             let _ = control.try_send(EventWorkerControl::FailClosed);
         } else {
@@ -1209,22 +1189,8 @@ impl LiveCaptureInner {
     }
 
     fn take_failure_producers(&self) -> FailureProducers {
-        let controller = match self.controller.lock() {
-            Ok(mut controller) => std::mem::take(&mut *controller),
-            Err(mut error) => {
-                let controller = std::mem::take(&mut **error.get_mut());
-                self.controller.clear_poison();
-                controller
-            }
-        };
-        let replay = match self.replay.lock() {
-            Ok(mut replay) => replay.take(),
-            Err(mut error) => {
-                let replay = error.get_mut().take();
-                self.replay.clear_poison();
-                replay
-            }
-        };
+        let controller = std::mem::take(&mut *lock_or_repair(&self.controller, |_| {}).0);
+        let replay = lock_or_repair(&self.replay, |_| {}).0.take();
         FailureProducers { controller, replay }
     }
 

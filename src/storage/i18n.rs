@@ -20,6 +20,7 @@ use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::sync::{read_or_repair, write_or_repair};
 use crate::storage::resource::{BoundedResourceTextError, read_resource_text_bounded};
 
 const MAX_LOCALE_RESOURCE_BYTES: usize = 1024 * 1024;
@@ -156,27 +157,11 @@ static JAPANESE_OVERLAY: LazyLock<LocaleOverlay> =
 /// Locale data is a rebuildable projection. If a writer panics, discard the
 /// entire partially-updated projection before allowing any later read/write.
 fn write_rebuildable_store(store: &RwLock<Store>) -> RwLockWriteGuard<'_, Store> {
-    match store.write() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            let mut guard = poisoned.into_inner();
-            *guard = Store::poison_fallback();
-            store.clear_poison();
-            guard
-        }
-    }
+    write_or_repair(store, |store| *store = Store::poison_fallback()).0
 }
 
 fn read_rebuildable_store(store: &RwLock<Store>) -> RwLockReadGuard<'_, Store> {
-    loop {
-        match store.read() {
-            Ok(guard) => return guard,
-            Err(poisoned) => {
-                drop(poisoned);
-                drop(write_rebuildable_store(store));
-            }
-        }
-    }
+    read_or_repair(store, |store| *store = Store::poison_fallback())
 }
 
 /// Load the overlay map for `language`. Missing/invalid files degrade to an empty

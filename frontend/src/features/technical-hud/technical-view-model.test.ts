@@ -220,9 +220,9 @@ describe("technical HUD projection", () => {
 
   it("accepts only integer HUD width drafts that fit the Tauri command", () => {
     expect(parseHudWidthDraft("512")).toBe(512);
-    expect(parseHudWidthDraft("-1")).toBe(-1);
+    expect(parseHudWidthDraft("-1")).toBeNull();
     expect(parseHudWidthDraft("512.5")).toBeNull();
     expect(parseHudWidthDraft("")).toBeNull();
-    expect(parseHudWidthDraft("9007199254740991")).toBeNull();
+    expect(parseHudWidthDraft("65536")).toBeNull();
   });
 });

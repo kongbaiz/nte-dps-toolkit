@@ -14,45 +14,43 @@ pub(crate) fn get_character_data_snapshot(
     window: WebviewWindow,
 ) -> Result<CharacterDataSnapshot, CommandError> {
     windows::validate_character_avatar_window(&window)?;
-    let projection = state
-        .character_data_snapshot()
-        .map_err(character_data_error)?;
+    let projection = state.character_data_snapshot()?;
     Ok(CharacterDataSnapshot::from_projection(projection))
 }
 
-fn character_data_error(error: CharacterDataServiceError) -> CommandError {
-    match error {
-        CharacterDataServiceError::Busy => CommandError::character_data(
-            "character_data_busy",
-            "Another character data operation is in progress.",
-            Vec::new(),
-        ),
-        CharacterDataServiceError::Domain(error) => character_data_domain_error(error),
+impl From<CharacterDataServiceError> for CommandError {
+    fn from(error: CharacterDataServiceError) -> Self {
+        match error {
+            CharacterDataServiceError::Busy => CommandError::new(
+                "character_data_busy",
+                "Another character data operation is in progress.",
+            ),
+            CharacterDataServiceError::Domain(error) => CommandError::from(error),
+        }
     }
 }
 
-fn character_data_domain_error(error: CharacterDataError) -> CommandError {
-    match error {
-        CharacterDataError::InvalidId => CommandError::character_data(
-            "character_id_invalid",
-            "Character ID must be a positive integer.",
-            Vec::new(),
-        ),
-        CharacterDataError::TooManyRecords => CommandError::character_data(
-            "character_table_too_large",
-            "Character table has too many entries.",
-            Vec::new(),
-        ),
-        CharacterDataError::Read(_)
-        | CharacterDataError::Json(_)
-        | CharacterDataError::MissingCharacters
-        | CharacterDataError::InvalidRecord(_) => {
-            log::error!("load Console character data failed");
-            CommandError::character_data(
-                "character_data_load_failed",
-                "Character data could not be loaded.",
-                Vec::new(),
-            )
+impl From<CharacterDataError> for CommandError {
+    fn from(error: CharacterDataError) -> Self {
+        match error {
+            CharacterDataError::InvalidId => CommandError::new(
+                "character_id_invalid",
+                "Character ID must be a positive integer.",
+            ),
+            CharacterDataError::TooManyRecords => CommandError::new(
+                "character_table_too_large",
+                "Character table has too many entries.",
+            ),
+            CharacterDataError::Read(_)
+            | CharacterDataError::Json(_)
+            | CharacterDataError::MissingCharacters
+            | CharacterDataError::InvalidRecord(_) => {
+                log::error!("load Console character data failed");
+                CommandError::new(
+                    "character_data_load_failed",
+                    "Character data could not be loaded.",
+                )
+            }
         }
     }
 }
@@ -63,7 +61,7 @@ mod tests {
 
     #[test]
     fn validation_errors_map_to_stable_contract_codes() {
-        let invalid_id = character_data_domain_error(CharacterDataError::InvalidId);
+        let invalid_id = CommandError::from(CharacterDataError::InvalidId);
         assert_eq!(invalid_id.code, "character_id_invalid");
         assert_eq!(
             invalid_id.message_key,
@@ -73,7 +71,7 @@ mod tests {
 
     #[test]
     fn service_state_errors_are_stable_and_redacted() {
-        let busy = character_data_error(CharacterDataServiceError::Busy);
+        let busy = CommandError::from(CharacterDataServiceError::Busy);
         assert_eq!(busy.code, "character_data_busy");
         assert!(busy.diagnostic_line.is_none());
     }

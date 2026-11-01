@@ -8,7 +8,7 @@ use std::{
 };
 
 use nte_dps_tool::{
-    core::{CoreError, capture::enumerate_devices},
+    core::{CoreError, capture::enumerate_devices, sync::lock_or_repair},
     storage::config::{self, UiConfig},
 };
 
@@ -54,6 +54,19 @@ struct DeviceCatalogState {
     available: bool,
 }
 
+/// Device state is rebuildable. Never project possibly partial entries; the
+/// next successful OS enumeration replaces all data.
+fn discard_device_catalog(state: &mut DeviceCatalogState) {
+    *state = DeviceCatalogState {
+        devices: Vec::new(),
+        available: false,
+    };
+}
+
+fn close_transaction(state: &mut TransactionState) {
+    *state = TransactionState::Unavailable;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransactionState {
     Ready,
@@ -94,19 +107,15 @@ impl SettingsService {
     }
 
     pub(crate) fn config_snapshot(&self) -> UiConfig {
-        match self.config.lock() {
-            Ok(config) => config.clone(),
-            Err(mut poison) => {
-                // `config` never exposes a mutable guard. Updates build a complete,
-                // sanitized candidate without this lock and only replace the whole
-                // value while locked, so a panic cannot expose a partial mutation.
-                let recovered = poison.get_mut().clone().sanitized();
-                **poison.get_mut() = recovered.clone();
-                self.config.clear_poison();
-                log::warn!("Settings snapshot recovered a complete committed configuration");
-                recovered
-            }
+        // `config` never exposes a mutable guard. Updates build a complete,
+        // sanitized candidate without this lock and only replace the whole
+        // value while locked, so a panic cannot expose a partial mutation.
+        let (config, recovered) =
+            lock_or_repair(&self.config, |config| *config = config.clone().sanitized());
+        if recovered {
+            log::warn!("Settings snapshot recovered a complete committed configuration");
         }
+        config.clone()
     }
 
     pub(crate) fn update_config(
@@ -123,14 +132,7 @@ impl SettingsService {
         save: impl FnOnce(&Path, &UiConfig) -> Result<(), String>,
         on_commit: impl FnOnce(&ConfigUpdate),
     ) -> Result<Option<ConfigUpdate>, SettingsServiceError> {
-        let transaction = match self.config_transaction.lock() {
-            Ok(transaction) => transaction,
-            Err(mut poison) => {
-                **poison.get_mut() = TransactionState::Unavailable;
-                self.config_transaction.clear_poison();
-                return Err(SettingsServiceError::TransactionUnavailable);
-            }
-        };
+        let (transaction, _) = lock_or_repair(&self.config_transaction, close_transaction);
         if *transaction == TransactionState::Unavailable {
             return Err(SettingsServiceError::TransactionUnavailable);
         }
@@ -146,15 +148,8 @@ impl SettingsService {
         // The transaction gate deliberately serializes config file commits, but
         // no config/device/team state lock is held across this disk I/O.
         save(&self.config_path, &current).map_err(|_| SettingsServiceError::ConfigSave)?;
-        let mut config = match self.config.lock() {
-            Ok(config) => config,
-            Err(mut poison) => {
-                // See `config_snapshot`: only whole validated values are stored.
-                **poison.get_mut() = current.clone();
-                self.config.clear_poison();
-                poison.into_inner()
-            }
-        };
+        // See `config_snapshot`: only whole validated values are stored.
+        let (mut config, _) = lock_or_repair(&self.config, |_| {});
         *config = current.clone();
         let committed = ConfigUpdate { previous, current };
         // Publish the revision while the committed value is still locked. A
@@ -167,26 +162,14 @@ impl SettingsService {
     }
 
     pub(crate) fn device_catalog_snapshot(&self, on_recovery: impl Fn()) -> DeviceCatalogSnapshot {
-        match self.devices.lock() {
-            Ok(devices) => DeviceCatalogSnapshot {
-                devices: devices.devices.clone(),
-                available: devices.available,
-            },
-            Err(mut poison) => {
-                // Device state is rebuildable. Never project possibly partial
-                // entries; the next successful OS enumeration replaces all data.
-                **poison.get_mut() = DeviceCatalogState {
-                    devices: Vec::new(),
-                    available: false,
-                };
-                self.devices.clear_poison();
-                on_recovery();
-                log::warn!("Capture device catalog was discarded after an interrupted update");
-                DeviceCatalogSnapshot {
-                    devices: Vec::new(),
-                    available: false,
-                }
-            }
+        let (devices, recovered) = lock_or_repair(&self.devices, discard_device_catalog);
+        if recovered {
+            on_recovery();
+            log::warn!("Capture device catalog was discarded after an interrupted update");
+        }
+        DeviceCatalogSnapshot {
+            devices: devices.devices.clone(),
+            available: devices.available,
         }
     }
 
@@ -211,54 +194,33 @@ impl SettingsService {
             .wrapping_add(1);
         // Enumeration is an OS/FFI boundary and must complete without the catalog lock.
         let candidate = enumerate();
-        let devices = self.devices.lock();
+        let (mut devices, recovered) = lock_or_repair(&self.devices, discard_device_catalog);
         if generation != self.device_probe_generation.load(Ordering::Acquire) {
             // A newer request owns publication. Stale success and failure both
             // leave the latest whole catalog and its availability untouched.
-            drop(devices);
+            if recovered {
+                on_change();
+            }
             return DeviceRefreshOutcome { error: None };
         }
         match candidate {
-            Ok(candidate) => match devices {
-                Ok(mut devices) => {
-                    let changed = !devices.available || devices.devices != candidate;
-                    *devices = DeviceCatalogState {
-                        devices: candidate,
-                        available: true,
-                    };
-                    if changed {
-                        on_change();
-                    }
-                    DeviceRefreshOutcome { error: None }
-                }
-                Err(mut poison) => {
-                    **poison.get_mut() = DeviceCatalogState {
-                        devices: candidate,
-                        available: true,
-                    };
-                    self.devices.clear_poison();
-                    on_change();
-                    DeviceRefreshOutcome { error: None }
-                }
-            },
-            Err(error) => {
-                match devices {
-                    Ok(mut devices) => {
-                        let changed = devices.available;
-                        devices.available = false;
-                        if changed {
-                            on_change();
-                        }
-                    }
-                    Err(mut poison) => {
-                        **poison.get_mut() = DeviceCatalogState {
-                            devices: Vec::new(),
-                            available: false,
-                        };
-                        self.devices.clear_poison();
-                        on_change();
-                    }
+            Ok(candidate) => {
+                let changed = recovered || !devices.available || devices.devices != candidate;
+                *devices = DeviceCatalogState {
+                    devices: candidate,
+                    available: true,
                 };
+                if changed {
+                    on_change();
+                }
+                DeviceRefreshOutcome { error: None }
+            }
+            Err(error) => {
+                let changed = recovered || devices.available;
+                devices.available = false;
+                if changed {
+                    on_change();
+                }
                 DeviceRefreshOutcome { error: Some(error) }
             }
         }
@@ -267,14 +229,7 @@ impl SettingsService {
     pub(crate) fn lock_passthrough_transaction(
         &self,
     ) -> Result<PassthroughTransactionGuard<'_>, SettingsServiceError> {
-        let guard = match self.passthrough_transaction.lock() {
-            Ok(guard) => guard,
-            Err(mut poison) => {
-                **poison.get_mut() = TransactionState::Unavailable;
-                self.passthrough_transaction.clear_poison();
-                return Err(SettingsServiceError::PassthroughUnavailable);
-            }
-        };
+        let (guard, _) = lock_or_repair(&self.passthrough_transaction, close_transaction);
         if *guard == TransactionState::Unavailable {
             return Err(SettingsServiceError::PassthroughUnavailable);
         }

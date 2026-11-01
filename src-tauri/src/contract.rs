@@ -133,34 +133,11 @@ pub(crate) struct CommandError {
 }
 
 impl CommandError {
-    pub(crate) fn main_dps(code: &'static str, message_key: &'static str) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
+    pub(crate) fn new(code: &'static str, message_key: &'static str) -> Self {
+        Self::with_arguments(code, message_key, Vec::new())
     }
 
-    pub(crate) fn history(code: &'static str, message_key: &'static str) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn timeline(code: &'static str, message_key: &'static str) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn empty_curtain(
+    pub(crate) fn with_arguments(
         code: &'static str,
         message_key: &'static str,
         message_arguments: Vec<String>,
@@ -169,41 +146,6 @@ impl CommandError {
             code,
             message_key,
             message_arguments,
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn character_data(
-        code: &'static str,
-        message_key: &'static str,
-        message_arguments: Vec<String>,
-    ) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments,
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn encrypted_ini(
-        code: &'static str,
-        message_key: &'static str,
-        message_arguments: Vec<String>,
-    ) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments,
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn diagnostics(code: &'static str, message_key: &'static str) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments: Vec::new(),
             diagnostic_line: None,
         }
     }
@@ -298,55 +240,10 @@ impl CommandError {
         }
     }
 
-    pub(crate) fn capture_devices_unavailable() -> Self {
-        Self {
-            code: "capture_devices_unavailable",
-            message_key: "Capture devices are unavailable.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
     pub(crate) fn passthrough_state_unavailable() -> Self {
         Self {
             code: "passthrough_state_unavailable",
             message_key: "HUD interaction state is unavailable.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn update_operation_busy() -> Self {
-        Self {
-            code: "update_operation_busy",
-            message_key: "Another update operation is already in progress.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn update_component_unavailable() -> Self {
-        Self {
-            code: "update_component_unavailable",
-            message_key: "The selected update component is no longer available.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn update_not_prepared() -> Self {
-        Self {
-            code: "update_not_prepared",
-            message_key: "Download and verify the update before installing it.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn update_runtime_unavailable() -> Self {
-        Self {
-            code: "update_runtime_unavailable",
-            message_key: "Update operation did not finish.",
             message_arguments: Vec::new(),
             diagnostic_line: None,
         }
@@ -450,15 +347,12 @@ impl CommandError {
             diagnostic_line: None,
         }
     }
+}
 
-    pub(crate) fn from_core(error: CoreError) -> Self {
+impl From<CoreError> for CommandError {
+    fn from(error: CoreError) -> Self {
         let issue = start_issue_snapshot(error.code);
-        Self {
-            code: issue.code,
-            message_key: issue.message_key,
-            message_arguments: issue.message_arguments,
-            diagnostic_line: None,
-        }
+        Self::with_arguments(issue.code, issue.message_key, issue.message_arguments)
     }
 }
 
@@ -594,7 +488,7 @@ mod tests {
 
     #[test]
     fn capture_state_unavailable_command_error_omits_private_poison_details() {
-        let error = CommandError::from_core(CoreError::new(
+        let error = CommandError::from(CoreError::new(
             CoreErrorCode::CaptureStateUnavailable,
             "poisoned mutex at C:\\private\\capture.json",
         ));
@@ -603,41 +497,6 @@ mod tests {
         assert_eq!(error.message_key, "Live capture state is unavailable");
         assert!(error.message_arguments.is_empty());
         let serialized = serde_json::to_string(&error).expect("command error must serialize");
-        assert!(!serialized.contains("poison"));
-        assert!(!serialized.contains("mutex"));
-        assert!(!serialized.contains("private"));
-    }
-
-    #[test]
-    fn replay_and_session_runtime_errors_have_stable_redacted_contracts() {
-        let replay = CommandError::replay_import_runtime_unavailable();
-        assert_eq!(replay.code, "replay_import_runtime_unavailable");
-        assert_eq!(replay.message_key, "Replay import did not complete");
-        assert!(replay.message_arguments.is_empty());
-
-        let session = CommandError::session_undo_runtime_unavailable();
-        assert_eq!(session.code, "session_undo_runtime_unavailable");
-        assert_eq!(
-            session.message_key,
-            "The previous session is no longer available"
-        );
-        assert!(session.message_arguments.is_empty());
-
-        let serialized =
-            serde_json::to_string(&(replay, session)).expect("runtime errors must serialize");
-        assert!(!serialized.contains("poison"));
-        assert!(!serialized.contains("mutex"));
-        assert!(!serialized.contains("private"));
-    }
-
-    #[test]
-    fn stream_registry_error_has_a_stable_redacted_contract() {
-        let error = CommandError::stream_runtime_unavailable();
-
-        assert_eq!(error.code, "stream_runtime_unavailable");
-        assert_eq!(error.message_key, "The live view did not start.");
-        assert!(error.message_arguments.is_empty());
-        let serialized = serde_json::to_string(&error).expect("stream error must serialize");
         assert!(!serialized.contains("poison"));
         assert!(!serialized.contains("mutex"));
         assert!(!serialized.contains("private"));

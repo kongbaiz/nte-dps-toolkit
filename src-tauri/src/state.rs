@@ -38,6 +38,7 @@ use nte_dps_tool::{
         },
         skills::{SkillsProjection, SkillsProjectionOptions, project_skills},
         snapshot::{InventorySnapshot, inventory_snapshot},
+        sync::lock_or_repair,
         timeline::{
             TimelineProjection, TimelineProjectionOptions, TimelineScope, project_timeline,
         },
@@ -604,18 +605,17 @@ impl StreamRegistry {
     fn lock_entries(
         &self,
     ) -> Result<MutexGuard<'_, HashMap<StreamIdentity, StreamSlot>>, StreamRegistryError> {
-        match self.entries.lock() {
-            Ok(entries) => Ok(entries),
-            Err(mut poison) => {
-                let removed = std::mem::take(&mut **poison.get_mut());
-                self.entries.clear_poison();
-                drop(poison);
-                for slot in removed.into_values() {
-                    cancel_stream_slot(slot);
-                }
-                Err(StreamRegistryError::RuntimeUnavailable)
-            }
+        let mut removed = HashMap::new();
+        let (entries, recovered) =
+            lock_or_repair(&self.entries, |entries| removed = std::mem::take(entries));
+        if !recovered {
+            return Ok(entries);
         }
+        drop(entries);
+        for slot in removed.into_values() {
+            cancel_stream_slot(slot);
+        }
+        Err(StreamRegistryError::RuntimeUnavailable)
     }
 
     #[cfg(test)]
@@ -753,15 +753,11 @@ impl IslandNoticeRuntime {
     }
 
     fn lock_discarding_poison(&self) -> (MutexGuard<'_, Option<IslandNoticeState>>, bool) {
-        match self.notice.lock() {
-            Ok(notice) => (notice, false),
-            Err(mut poison) => {
-                let discarded_notice = poison.get_ref().is_some();
-                **poison.get_mut() = None;
-                self.notice.clear_poison();
-                (poison.into_inner(), discarded_notice)
-            }
-        }
+        let mut discarded_notice = false;
+        let (notice, _) = lock_or_repair(&self.notice, |notice| {
+            discarded_notice = notice.take().is_some();
+        });
+        (notice, discarded_notice)
     }
 
     fn bump_revision(&self) -> u64 {
@@ -958,77 +954,57 @@ struct PresentationState {
     timeline_cache: Mutex<Vec<TimelineProjectionCache>>,
 }
 
+/// Presentation state and caches are rebuildable projections, so poison
+/// resets them to their default.
+fn lock_or_reset<'a, T: Default>(mutex: &'a Mutex<T>, warning: &str) -> (MutexGuard<'a, T>, bool) {
+    let (guard, recovered) = lock_or_repair(mutex, |value| *value = T::default());
+    if recovered {
+        log::warn!("{warning}");
+    }
+    (guard, recovered)
+}
+
 impl PresentationState {
     fn lock_mode(&self) -> (MutexGuard<'_, PresentationModeState>, bool) {
-        match self.mode.lock() {
-            Ok(mode) => (mode, false),
-            Err(mut poison) => {
-                **poison.get_mut() = PresentationModeState::default();
-                self.mode.clear_poison();
-                log::warn!("Presentation mode was reset after an interrupted update");
-                (poison.into_inner(), true)
-            }
-        }
+        lock_or_reset(
+            &self.mode,
+            "Presentation mode was reset after an interrupted update",
+        )
     }
 
     fn lock_abyss(&self) -> (MutexGuard<'_, AbyssPresentationState>, bool) {
-        match self.abyss.lock() {
-            Ok(abyss) => (abyss, false),
-            Err(mut poison) => {
-                **poison.get_mut() = AbyssPresentationState::default();
-                self.abyss.clear_poison();
-                log::warn!("Presentation abyss selection was reset after an interrupted update");
-                (poison.into_inner(), true)
-            }
-        }
+        lock_or_reset(
+            &self.abyss,
+            "Presentation abyss selection was reset after an interrupted update",
+        )
     }
 
     fn lock_details(&self) -> (MutexGuard<'_, MainDpsDetailsState>, bool) {
-        match self.details.lock() {
-            Ok(details) => (details, false),
-            Err(mut poison) => {
-                **poison.get_mut() = MainDpsDetailsState::default();
-                self.details.clear_poison();
-                log::warn!("Presentation detail requests were reset after an interrupted update");
-                (poison.into_inner(), true)
-            }
-        }
+        lock_or_reset(
+            &self.details,
+            "Presentation detail requests were reset after an interrupted update",
+        )
     }
 
     fn lock_cache(&self) -> (MutexGuard<'_, Vec<MainDpsDetailCache>>, bool) {
-        match self.cache.lock() {
-            Ok(cache) => (cache, false),
-            Err(mut poison) => {
-                poison.get_mut().clear();
-                self.cache.clear_poison();
-                log::warn!("Presentation detail cache was discarded after an interrupted update");
-                (poison.into_inner(), true)
-            }
-        }
+        lock_or_reset(
+            &self.cache,
+            "Presentation detail cache was discarded after an interrupted update",
+        )
     }
 
     fn lock_timeline_cache(&self) -> (MutexGuard<'_, Vec<TimelineProjectionCache>>, bool) {
-        match self.timeline_cache.lock() {
-            Ok(cache) => (cache, false),
-            Err(mut poison) => {
-                poison.get_mut().clear();
-                self.timeline_cache.clear_poison();
-                log::warn!("Timeline projection cache was discarded after an interrupted update");
-                (poison.into_inner(), true)
-            }
-        }
+        lock_or_reset(
+            &self.timeline_cache,
+            "Timeline projection cache was discarded after an interrupted update",
+        )
     }
 
     fn lock_main_readout_cache(&self) -> (MutexGuard<'_, Vec<MainReadoutCache>>, bool) {
-        match self.main_readout_cache.lock() {
-            Ok(cache) => (cache, false),
-            Err(mut poison) => {
-                poison.get_mut().clear();
-                self.main_readout_cache.clear_poison();
-                log::warn!("Main readout cache was discarded after an interrupted update");
-                (poison.into_inner(), true)
-            }
-        }
+        lock_or_reset(
+            &self.main_readout_cache,
+            "Main readout cache was discarded after an interrupted update",
+        )
     }
 
     fn publish_technical_and_main(&self) {
@@ -2005,15 +1981,11 @@ impl AppState {
 
     fn load_main_round_index(&self) -> Arc<Vec<HistoryRoundIndex>> {
         let revision = self.history_revision();
-        let cache = match self.0.history.round_cache.lock() {
-            Ok(cache) => cache,
-            Err(mut poison) => {
-                **poison.get_mut() = MainRoundCache::default();
-                self.0.history.round_cache.clear_poison();
-                log::warn!("History round index cache was discarded after an interrupted update");
-                poison.into_inner()
-            }
-        };
+        let cache = lock_or_reset(
+            &self.0.history.round_cache,
+            "History round index cache was discarded after an interrupted update",
+        )
+        .0;
         if cache.revision == Some(revision) {
             return Arc::clone(&cache.index);
         }
@@ -2029,15 +2001,11 @@ impl AppState {
                 .map(HistoryRoundIndex::from_storage)
                 .collect(),
         );
-        let mut cache = match self.0.history.round_cache.lock() {
-            Ok(cache) => cache,
-            Err(mut poison) => {
-                **poison.get_mut() = MainRoundCache::default();
-                self.0.history.round_cache.clear_poison();
-                log::warn!("History round index cache was discarded after an interrupted update");
-                poison.into_inner()
-            }
-        };
+        let mut cache = lock_or_reset(
+            &self.0.history.round_cache,
+            "History round index cache was discarded after an interrupted update",
+        )
+        .0;
         if self.history_revision() == revision {
             cache.index = Arc::clone(&loaded);
             cache.revision = Some(revision);

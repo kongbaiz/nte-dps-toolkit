@@ -10,15 +10,13 @@ use crate::{
     windows::{hud, island},
 };
 
-use super::sanitize_hud_width;
-
 #[tauri::command]
 pub(crate) fn get_technical_snapshot(
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -42,7 +40,7 @@ pub(crate) fn set_hud_passthrough(
         message_key,
         vec![state.passthrough_hotkey().label().to_owned()],
     )?;
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -65,7 +63,7 @@ pub(crate) fn set_hud_always_on_top(
         },
         Vec::new(),
     )?;
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -83,7 +81,7 @@ pub(crate) fn move_hud_module(
             log::error!("save HUD module order failed: {error}");
             CommandError::hud_config_save_failed()
         })?;
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -103,17 +101,16 @@ pub(crate) fn set_hud_module_visibility(
     if changed && hud::sync_content_height(&window, &state).is_err() {
         log::warn!("native HUD height refresh failed after module visibility change");
     }
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub(crate) fn set_hud_width(
-    width: i32,
+    width: u16,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
-    let width = sanitize_hud_width(width);
     let changed = state.set_hud_width(width).map_err(|error| {
         log::error!("save HUD width failed: {error}");
         CommandError::hud_config_save_failed()
@@ -121,7 +118,7 @@ pub(crate) fn set_hud_width(
     if changed && hud::sync_content_width(&window, &state).is_err() {
         log::warn!("native HUD width refresh failed after configuration change");
     }
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -134,9 +131,7 @@ pub(crate) fn start_hud_capture(
     // Starting a new capture from the compact HUD is an explicit new-session
     // action. Replace the stopped session instead of surfacing the main-window
     // confirmation flow, which the HUD cannot present.
-    state
-        .request_capture_start(true)
-        .map_err(CommandError::from_core)?;
+    state.request_capture_start(true)?;
     island::publish_notice(
         &app,
         state.inner(),
@@ -144,7 +139,7 @@ pub(crate) fn start_hud_capture(
         "Starting live capture...",
         Vec::new(),
     )?;
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -154,9 +149,7 @@ pub(crate) fn stop_hud_capture(
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
-    state
-        .request_capture_stop()
-        .map_err(CommandError::from_core)?;
+    state.request_capture_stop()?;
     island::publish_notice(
         &app,
         state.inner(),
@@ -164,7 +157,7 @@ pub(crate) fn stop_hud_capture(
         "Stopping live capture...",
         Vec::new(),
     )?;
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -177,33 +170,23 @@ pub(crate) async fn reset_hud_session(
     let active = matches!(
         state.capture_phase(),
         LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
-    ) || state.replay_running().map_err(CommandError::from_core)?;
+    ) || state.replay_running()?;
     let state = state.inner().clone();
     let worker_state = state.clone();
     let undo_token = tauri::async_runtime::spawn_blocking(move || {
         let undo_token = if active {
-            worker_state
-                .stop_active_capture_and_wait(Duration::from_secs(5))
-                .map_err(CommandError::from_core)?;
-            worker_state
-                .clear_session()
-                .map_err(CommandError::from_core)?;
+            worker_state.stop_active_capture_and_wait(Duration::from_secs(5))?;
+            worker_state.clear_session()?;
             None
         } else {
-            worker_state
-                .reset_session_with_undo()
-                .map_err(CommandError::from_core)?
+            worker_state.reset_session_with_undo()?
         };
-        worker_state
-            .set_main_processing_paused(false)
-            .map_err(super::main_dps::presentation_error)?;
-        worker_state
-            .set_main_selected_round_id(None)
-            .map_err(super::main_dps::presentation_error)?;
+        worker_state.set_main_processing_paused(false)?;
+        worker_state.set_main_selected_round_id(None)?;
         Ok::<_, CommandError>(undo_token)
     })
     .await
-    .map_err(|_| CommandError::main_dps("reset_failed", "Failed to reset the current session"))??;
+    .map_err(|_| CommandError::new("reset_failed", "Failed to reset the current session"))??;
     state.publish_island_notice(
         IslandTone::Success,
         if undo_token.is_some() {
@@ -217,5 +200,5 @@ pub(crate) async fn reset_hud_session(
     if let Err(error) = island::show_notice(&app, &state) {
         log::warn!("show reset notification from HUD failed: {error:?}");
     }
-    state.snapshot().map_err(CommandError::from_core)
+    state.snapshot().map_err(CommandError::from)
 }

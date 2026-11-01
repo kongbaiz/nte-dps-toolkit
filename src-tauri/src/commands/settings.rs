@@ -43,12 +43,9 @@ use crate::{
     },
     file_dialog::{self, DialogOutcome},
     settings_service::SettingsServiceError,
-    state::{AppState, HudPreset, HudSettingOption, TeamOperationError, UpdateActionError},
-    team_import_service::TeamImportError,
+    state::{AppState, HudPreset, HudSettingOption, UpdateActionError},
     windows::{abyss_values, combat_details, console, hud, island, main_dps},
 };
-
-use super::sanitize_hud_width;
 
 #[derive(Clone, Copy, Debug, Deserialize, TS)]
 #[ts(export)]
@@ -126,9 +123,7 @@ pub(crate) async fn check_settings_updates(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    run_update_check(state.clone())
-        .await
-        .map_err(update_action_error)?;
+    run_update_check(state.clone()).await?;
     Ok(state.settings_snapshot())
 }
 
@@ -141,9 +136,7 @@ pub(crate) async fn download_settings_update(
     console::validate_window(&window)?;
     let component = app_update_component(component)?;
     let state = state.inner().clone();
-    run_update_download(state.clone(), component)
-        .await
-        .map_err(update_action_error)?;
+    run_update_download(state.clone(), component).await?;
     Ok(state.settings_snapshot())
 }
 
@@ -155,15 +148,10 @@ pub(crate) async fn install_settings_update(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    if let Some(message_key) = state
-        .update_install_blocked_message_key()
-        .map_err(update_action_error)?
-    {
+    if let Some(message_key) = state.update_install_blocked_message_key()? {
         return Err(CommandError::update_install_blocked(message_key));
     }
-    install_update(app, state.clone())
-        .await
-        .map_err(update_action_error)?;
+    install_update(app, state.clone()).await?;
     Ok(state.settings_snapshot())
 }
 
@@ -421,9 +409,12 @@ pub(crate) fn refresh_settings_capture_devices(
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    state
-        .refresh_capture_devices()
-        .map_err(|_| CommandError::capture_devices_unavailable())?;
+    state.refresh_capture_devices().map_err(|_| {
+        CommandError::new(
+            "capture_devices_unavailable",
+            "Capture devices are unavailable.",
+        )
+    })?;
     Ok(state.settings_snapshot())
 }
 
@@ -573,7 +564,7 @@ pub(crate) fn import_settings_team_data(
         log::warn!("reject imported team DPS data: {detail}");
         CommandError::team_data_invalid()
     })?;
-    state.import_team_data(export).map_err(team_import_error)?;
+    state.import_team_data(export)?;
     Ok(state.settings_snapshot())
 }
 
@@ -607,7 +598,7 @@ pub(crate) async fn import_settings_team_data_file(
                 log::warn!("reject imported team DPS data: {detail}");
                 CommandError::team_data_invalid()
             })?;
-            state.import_team_data(export).map_err(team_import_error)?;
+            state.import_team_data(export)?;
             true
         } else {
             false
@@ -632,8 +623,7 @@ pub(crate) async fn export_settings_team_data(
 ) -> Result<TeamDataExportResult, CommandError> {
     console::validate_window(&window)?;
     let export = state
-        .export_team_data()
-        .map_err(team_operation_error)?
+        .export_team_data()?
         .ok_or_else(CommandError::team_data_unavailable)?;
     let json = serialize_team_data(&export)?;
 
@@ -782,15 +772,13 @@ pub(crate) fn move_settings_hud_module(
 
 #[tauri::command]
 pub(crate) fn set_settings_hud_width(
-    width: i32,
+    width: u16,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    state
-        .set_hud_width(sanitize_hud_width(width))
-        .map_err(config_save_error)?;
+    state.set_hud_width(width).map_err(config_save_error)?;
     if let Some(hud_window) = app.get_webview_window(hud::HUD_WINDOW_LABEL)
         && let Err(error) = hud::sync_content_width(&hud_window, &state)
     {
@@ -916,17 +904,6 @@ fn settings_save_error(error: SettingsServiceError) -> CommandError {
     }
 }
 
-fn team_import_error(_error: TeamImportError) -> CommandError {
-    CommandError::team_import_state_unavailable()
-}
-
-fn team_operation_error(error: TeamOperationError) -> CommandError {
-    match error {
-        TeamOperationError::State(error) => team_import_error(error),
-        TeamOperationError::Capture(error) => CommandError::from_core(error),
-    }
-}
-
 #[derive(Debug)]
 enum CheckSettingsUpdateError {
     NotConfigured,
@@ -974,12 +951,27 @@ pub(crate) fn app_update_component(
     }
 }
 
-pub(crate) fn update_action_error(error: UpdateActionError) -> CommandError {
-    match error {
-        UpdateActionError::Busy => CommandError::update_operation_busy(),
-        UpdateActionError::Unavailable => CommandError::update_component_unavailable(),
-        UpdateActionError::NotPrepared => CommandError::update_not_prepared(),
-        UpdateActionError::RuntimeUnavailable => CommandError::update_runtime_unavailable(),
+impl From<UpdateActionError> for CommandError {
+    fn from(error: UpdateActionError) -> Self {
+        let (code, message_key) = match error {
+            UpdateActionError::Busy => (
+                "update_operation_busy",
+                "Another update operation is already in progress.",
+            ),
+            UpdateActionError::Unavailable => (
+                "update_component_unavailable",
+                "The selected update component is no longer available.",
+            ),
+            UpdateActionError::NotPrepared => (
+                "update_not_prepared",
+                "Download and verify the update before installing it.",
+            ),
+            UpdateActionError::RuntimeUnavailable => (
+                "update_runtime_unavailable",
+                "Update operation did not finish.",
+            ),
+        };
+        Self::new(code, message_key)
     }
 }
 
@@ -1224,7 +1216,7 @@ mod tests {
 
     #[test]
     fn update_runtime_unavailable_has_a_stable_redacted_command_error() {
-        let error = update_action_error(UpdateActionError::RuntimeUnavailable);
+        let error = CommandError::from(UpdateActionError::RuntimeUnavailable);
 
         assert_eq!(error.code, "update_runtime_unavailable");
         assert_eq!(error.message_key, "Update operation did not finish.");

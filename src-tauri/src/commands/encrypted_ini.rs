@@ -28,7 +28,7 @@ pub(crate) fn get_encrypted_ini_snapshot(
     state
         .encrypted_ini_snapshot()
         .map(EncryptedIniSnapshot::from)
-        .map_err(encrypted_ini_error)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -58,16 +58,13 @@ pub(crate) async fn open_encrypted_ini(
                         opened: true,
                         snapshot: snapshot.into(),
                     })
-                    .map_err(encrypted_ini_error)
+                    .map_err(CommandError::from)
             })
             .await
             .map_err(|_| operation_error())??,
             DialogOutcome::Cancelled => OpenEncryptedIniResult {
                 opened: false,
-                snapshot: state
-                    .encrypted_ini_snapshot()
-                    .map_err(encrypted_ini_error)?
-                    .into(),
+                snapshot: state.encrypted_ini_snapshot()?.into(),
             },
         };
         if result.opened {
@@ -102,7 +99,7 @@ pub(crate) async fn reload_encrypted_ini(
         state
             .reload_encrypted_ini()
             .map(EncryptedIniSnapshot::from)
-            .map_err(encrypted_ini_error)
+            .map_err(CommandError::from)
     })
     .await
     .map_err(|_| operation_error())??;
@@ -136,7 +133,7 @@ pub(crate) async fn save_encrypted_ini(
                 saved: outcome == EncryptedIniSaveOutcome::Saved,
                 snapshot: snapshot.into(),
             })
-            .map_err(encrypted_ini_error)
+            .map_err(CommandError::from)
     })
     .await
     .map_err(|_| operation_error())??;
@@ -161,10 +158,7 @@ pub(crate) fn clear_encrypted_ini(
     window: WebviewWindow,
 ) -> Result<EncryptedIniSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let snapshot = state
-        .clear_encrypted_ini()
-        .map_err(encrypted_ini_error)?
-        .into();
+    let snapshot = state.clear_encrypted_ini()?.into();
     island::publish_notice_best_effort(
         &app,
         state.inner(),
@@ -175,79 +169,75 @@ pub(crate) fn clear_encrypted_ini(
     Ok(snapshot)
 }
 
-fn encrypted_ini_error(error: EncryptedIniServiceError) -> CommandError {
-    match error {
-        EncryptedIniServiceError::Busy => CommandError::encrypted_ini(
-            "encrypted_ini_busy",
-            "Another encrypted INI operation is in progress.",
-            Vec::new(),
-        ),
-        EncryptedIniServiceError::Unavailable => CommandError::encrypted_ini(
-            "encrypted_ini_state_unavailable",
-            "Encrypted INI editor state is unavailable.",
-            Vec::new(),
-        ),
-        EncryptedIniServiceError::NoFile => CommandError::encrypted_ini(
-            "encrypted_ini_not_open",
-            "Open an INI file first",
-            Vec::new(),
-        ),
-        EncryptedIniServiceError::StaleGeneration => CommandError::encrypted_ini(
-            "encrypted_ini_stale_generation",
-            "Encrypted INI editor changed; reload and try again.",
-            Vec::new(),
-        ),
-        EncryptedIniServiceError::Document(error) => encrypted_ini_document_error(error),
+impl From<EncryptedIniServiceError> for CommandError {
+    fn from(error: EncryptedIniServiceError) -> Self {
+        match error {
+            EncryptedIniServiceError::Busy => CommandError::new(
+                "encrypted_ini_busy",
+                "Another encrypted INI operation is in progress.",
+            ),
+            EncryptedIniServiceError::Unavailable => CommandError::new(
+                "encrypted_ini_state_unavailable",
+                "Encrypted INI editor state is unavailable.",
+            ),
+            EncryptedIniServiceError::NoFile => {
+                CommandError::new("encrypted_ini_not_open", "Open an INI file first")
+            }
+            EncryptedIniServiceError::StaleGeneration => CommandError::new(
+                "encrypted_ini_stale_generation",
+                "Encrypted INI editor changed; reload and try again.",
+            ),
+            EncryptedIniServiceError::Document(error) => CommandError::from(error),
+        }
     }
 }
 
-fn encrypted_ini_document_error(error: EncryptedIniError) -> CommandError {
-    let (code, message_key) = match error {
-        EncryptedIniError::TooLarge => (
-            "encrypted_ini_too_large",
-            "Encrypted INI file is too large.",
-        ),
-        EncryptedIniError::ReadFailed => (
-            "encrypted_ini_read_failed",
-            "Encrypted INI file could not be read.",
-        ),
-        EncryptedIniError::InvalidCiphertext => (
-            "encrypted_ini_invalid_ciphertext",
-            "Encrypted INI ciphertext is invalid.",
-        ),
-        EncryptedIniError::PlaintextTooLarge => (
-            "encrypted_ini_plaintext_too_large",
-            "Encrypted INI plaintext is too large.",
-        ),
-        EncryptedIniError::WriteFailed => (
-            "encrypted_ini_write_failed",
-            "Encrypted INI file could not be written.",
-        ),
-    };
-    CommandError::encrypted_ini(code, message_key, Vec::new())
+impl From<EncryptedIniError> for CommandError {
+    fn from(error: EncryptedIniError) -> Self {
+        let (code, message_key) = match error {
+            EncryptedIniError::TooLarge => (
+                "encrypted_ini_too_large",
+                "Encrypted INI file is too large.",
+            ),
+            EncryptedIniError::ReadFailed => (
+                "encrypted_ini_read_failed",
+                "Encrypted INI file could not be read.",
+            ),
+            EncryptedIniError::InvalidCiphertext => (
+                "encrypted_ini_invalid_ciphertext",
+                "Encrypted INI ciphertext is invalid.",
+            ),
+            EncryptedIniError::PlaintextTooLarge => (
+                "encrypted_ini_plaintext_too_large",
+                "Encrypted INI plaintext is too large.",
+            ),
+            EncryptedIniError::WriteFailed => (
+                "encrypted_ini_write_failed",
+                "Encrypted INI file could not be written.",
+            ),
+        };
+        CommandError::new(code, message_key)
+    }
 }
 
 fn invalid_request_error() -> CommandError {
-    CommandError::encrypted_ini(
+    CommandError::new(
         "encrypted_ini_invalid_request",
         "Encrypted INI request is invalid.",
-        Vec::new(),
     )
 }
 
 fn file_dialog_error() -> CommandError {
-    CommandError::encrypted_ini(
+    CommandError::new(
         "encrypted_ini_file_dialog_failed",
         "Encrypted INI file dialog failed.",
-        Vec::new(),
     )
 }
 
 fn operation_error() -> CommandError {
-    CommandError::encrypted_ini(
+    CommandError::new(
         "encrypted_ini_operation_failed",
         "Encrypted INI operation did not finish.",
-        Vec::new(),
     )
 }
 
@@ -257,7 +247,7 @@ mod tests {
 
     #[test]
     fn core_errors_map_to_stable_contract_codes() {
-        let error = encrypted_ini_document_error(EncryptedIniError::InvalidCiphertext);
+        let error = CommandError::from(EncryptedIniError::InvalidCiphertext);
         assert_eq!(error.code, "encrypted_ini_invalid_ciphertext");
         assert_eq!(error.message_key, "Encrypted INI ciphertext is invalid.");
         assert!(error.message_arguments.is_empty());
@@ -265,14 +255,14 @@ mod tests {
 
     #[test]
     fn runtime_generation_error_does_not_expose_internal_state() {
-        let error = encrypted_ini_error(EncryptedIniServiceError::StaleGeneration);
+        let error = CommandError::from(EncryptedIniServiceError::StaleGeneration);
         assert_eq!(error.code, "encrypted_ini_stale_generation");
         assert!(error.diagnostic_line.is_none());
     }
 
     #[test]
     fn unavailable_runtime_error_is_stable_and_redacted() {
-        let error = encrypted_ini_error(EncryptedIniServiceError::Unavailable);
+        let error = CommandError::from(EncryptedIniServiceError::Unavailable);
 
         assert_eq!(error.code, "encrypted_ini_state_unavailable");
         assert!(error.message_arguments.is_empty());

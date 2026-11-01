@@ -30,7 +30,7 @@ pub(crate) fn set_timeline_preferences(
         .update_timeline_preferences(bucket_seconds, view_mode)
         .map_err(|error| {
             log::warn!("save Timeline preferences failed: {error}");
-            CommandError::timeline(
+            CommandError::new(
                 "timeline_config_save_failed",
                 "Timeline preferences could not be saved.",
             )
@@ -43,9 +43,7 @@ pub(crate) fn snapshot(
     scope: TimelineScope,
 ) -> Result<TimelineSnapshot, CommandError> {
     let (_, view_mode) = state.timeline_preferences();
-    let projection = state
-        .timeline_projection(scope)
-        .map_err(CommandError::from_core)?;
+    let projection = state.timeline_projection(scope)?;
     Ok(TimelineSnapshot::from_projection(
         projection.as_ref(),
         state.next_sequence(),

@@ -17,9 +17,7 @@ pub(crate) fn get_packets_snapshot(
 }
 
 pub(crate) fn snapshot(state: &AppState) -> Result<PacketsSnapshot, CommandError> {
-    let (_, _, projection) = state
-        .packets_projection(None)
-        .map_err(CommandError::from_core)?;
+    let (_, _, projection) = state.packets_projection(None)?;
     Ok(PacketsSnapshot::from_projection(
         projection,
         state.capture_phase(),
@@ -30,9 +28,7 @@ pub(crate) fn snapshot_since(
     state: &AppState,
     after: Option<PacketStreamRevision>,
 ) -> Result<(PacketStreamRevision, bool, PacketsSnapshot), CommandError> {
-    let (revision, replace, projection) = state
-        .packets_projection(after)
-        .map_err(CommandError::from_core)?;
+    let (revision, replace, projection) = state.packets_projection(after)?;
     Ok((
         revision,
         replace,
