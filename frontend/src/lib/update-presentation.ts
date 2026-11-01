@@ -1,4 +1,4 @@
-import type { UpdateComponentId } from "@/lib/tauri/settings-contract";
+import type { UpdateComponent } from "@/lib/tauri/generated/UpdateComponent";
 
 const KIBIBYTE = 1_024n;
 const MEBIBYTE = KIBIBYTE * KIBIBYTE;
@@ -11,7 +11,7 @@ const BYTE_UNITS = [
 ] as const;
 
 export function updateComponentLabelKey(
-  component: UpdateComponentId,
+  component: UpdateComponent,
 ): "Application" | "Mod loader" {
   return component === "app" ? "Application" : "Mod loader";
 }

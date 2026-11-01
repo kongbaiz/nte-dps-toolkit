@@ -53,7 +53,9 @@ const RELIABLE_ENGINE_EVENT_CAPACITY: usize = 16_384;
 const DEBUG_ENGINE_EVENT_CAPACITY: usize = 2_048;
 const MAX_PENDING_ABYSS_ARCHIVES: usize = 64;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
 pub enum LiveCapturePhase {
     Idle,
     Starting,
@@ -141,7 +143,9 @@ impl LiveCaptureResources {
 #[derive(Clone)]
 pub struct LiveCaptureService(Arc<LiveCaptureInner>);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
 pub enum CaptureReplayKind {
     Pcapng,
     Json,

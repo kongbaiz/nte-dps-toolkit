@@ -187,8 +187,8 @@
     --input: var(--console-success);
   }
 
-  [data-theme-preset="high-contrast"],
-  [data-theme-preset="high-contrast"] .console-light {
+  [data-theme-preset="high_contrast"],
+  [data-theme-preset="high_contrast"] .console-light {
     --radius: 0.2rem;
     --ui-border-width: 1px;
     --border: currentColor;

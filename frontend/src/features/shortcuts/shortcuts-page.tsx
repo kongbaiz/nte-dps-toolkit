@@ -27,24 +27,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useSettings } from "@/features/settings/use-settings";
 import { t, tf } from "@/lib/i18n";
-import {
-  formatHotkeyBinding,
-  type CaptureSettingsInput,
-  type GlobalHotkeyActionId,
-  type HotkeyBinding,
-  type SettingsSnapshot,
-} from "@/lib/tauri/settings-contract";
+import type { CaptureSettingsInput } from "@/lib/tauri/generated/CaptureSettingsInput";
+import type { GlobalHotkeyAction } from "@/lib/tauri/generated/GlobalHotkeyAction";
+import type { HotkeyBindingSnapshot } from "@/lib/tauri/generated/HotkeyBindingSnapshot";
+import type { SettingsSnapshot } from "@/lib/tauri/generated/SettingsSnapshot";
 
-import { bindingFromKeyboardEvent } from "./shortcut-binding";
+import {
+  bindingFromKeyboardEvent,
+  formatHotkeyBinding,
+} from "./shortcut-binding";
 
 const HOTKEY_ACTIONS: ReadonlyArray<{
-  id: GlobalHotkeyActionId;
+  id: GlobalHotkeyAction;
   labelKey: string;
 }> = [
-  { id: "capture", labelKey: "Start / Stop Capture" },
-  { id: "reset", labelKey: "Reset Session" },
-  { id: "hud", labelKey: "Toggle Combat HUD" },
-  { id: "new-round", labelKey: "New Round" },
+  { id: "toggle_capture", labelKey: "Start / Stop Capture" },
+  { id: "reset_session", labelKey: "Reset Session" },
+  { id: "toggle_hud", labelKey: "Toggle Combat HUD" },
+  { id: "new_round", labelKey: "New Round" },
 ];
 export function ShortcutsPage() {
   const settings = useSettings();
@@ -132,11 +132,11 @@ function GlobalHotkeysCard({
   pending: boolean;
   onSetEnabled: (enabled: boolean) => Promise<void>;
   onSetBinding: (
-    action: GlobalHotkeyActionId,
-    binding: HotkeyBinding | null,
+    action: GlobalHotkeyAction,
+    binding: HotkeyBindingSnapshot | null,
   ) => Promise<void>;
 }) {
-  const [recording, setRecording] = useState<GlobalHotkeyActionId | null>(null);
+  const [recording, setRecording] = useState<GlobalHotkeyAction | null>(null);
   const bindings = new Map(
     snapshot.hotkeys.bindings.map((item) => [item.action, item.binding]),
   );

@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  AbyssMonster,
-  AbyssSeason,
-} from "@/lib/tauri/abyss-values-contract";
+import type { AbyssMonsterSnapshot } from "@/lib/tauri/generated/AbyssMonsterSnapshot";
+import type { AbyssSeasonSnapshot } from "@/lib/tauri/generated/AbyssSeasonSnapshot";
 
 import {
   filterMonsters,
@@ -19,7 +17,9 @@ import {
   teamHeaderMembers,
 } from "./abyss-values-model";
 
-function monster(overrides: Partial<AbyssMonster> = {}): AbyssMonster {
+function monster(
+  overrides: Partial<AbyssMonsterSnapshot> = {},
+): AbyssMonsterSnapshot {
   return {
     packId: "pack:0",
     attributeId: "attribute",
@@ -45,7 +45,7 @@ describe("abyss values view model", () => {
         season: 7,
         floors: [{ season: 7, floor: 8 }],
       },
-    ] as AbyssSeason[];
+    ] as AbyssSeasonSnapshot[];
 
     const key = initialFloorKey(seasons);
     expect(key).toEqual({ season: 7, floor: 8 });

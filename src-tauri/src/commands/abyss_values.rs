@@ -1,4 +1,6 @@
-use nte_dps_tool::{core::team_data::parse_team_data, storage::abyss_remote};
+use nte_dps_tool::{
+    core::team_data::parse_team_data, engine::model::AbyssHalf, storage::abyss_remote,
+};
 use tauri::{State, WebviewWindow};
 
 use crate::{
@@ -46,13 +48,13 @@ pub(crate) async fn get_abyss_values_snapshot(
 
 #[tauri::command]
 pub(crate) fn import_abyss_prediction_team(
-    half: String,
+    half: AbyssHalf,
     json: String,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<AbyssPredictionTeamsSnapshot, CommandError> {
     abyss_values::validate_window(&window)?;
-    let upper = parse_half(&half)?;
+    let upper = half == AbyssHalf::First;
     let export = parse_team_data(&json).map_err(|detail| {
         log::warn!("reject imported abyss team data: {detail}");
         CommandError::team_data_invalid()
@@ -71,13 +73,13 @@ pub(crate) fn import_abyss_prediction_team(
 
 #[tauri::command]
 pub(crate) fn import_current_abyss_prediction_team(
-    half: String,
+    half: AbyssHalf,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<AbyssPredictionTeamsSnapshot, CommandError> {
     abyss_values::validate_window(&window)?;
     if !state
-        .import_current_abyss_team(parse_half(&half)?)
+        .import_current_abyss_team(half == AbyssHalf::First)
         .map_err(team_operation_error)?
     {
         return Err(CommandError::abyss_team_unavailable());
@@ -90,13 +92,13 @@ pub(crate) fn import_current_abyss_prediction_team(
 
 #[tauri::command]
 pub(crate) fn clear_abyss_prediction_team(
-    half: String,
+    half: AbyssHalf,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<AbyssPredictionTeamsSnapshot, CommandError> {
     abyss_values::validate_window(&window)?;
     state
-        .clear_abyss_team(parse_half(&half)?)
+        .clear_abyss_team(half == AbyssHalf::First)
         .map_err(team_import_error)?;
     Ok(state
         .imported_abyss_teams()
@@ -117,14 +119,6 @@ pub(crate) fn swap_abyss_prediction_teams(
         .into())
 }
 
-fn parse_half(half: &str) -> Result<bool, CommandError> {
-    match half {
-        "upper" => Ok(true),
-        "lower" => Ok(false),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
 fn team_import_error(_error: TeamImportError) -> CommandError {
     CommandError::team_import_state_unavailable()
 }
@@ -133,17 +127,5 @@ fn team_operation_error(error: TeamOperationError) -> CommandError {
     match error {
         TeamOperationError::State(error) => team_import_error(error),
         TeamOperationError::Capture(error) => CommandError::from_core(error),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_half;
-
-    #[test]
-    fn parses_stable_half_identifiers() {
-        assert!(parse_half("upper").expect("upper is valid"));
-        assert!(!parse_half("lower").expect("lower is valid"));
-        assert!(parse_half("first").is_err());
     }
 }

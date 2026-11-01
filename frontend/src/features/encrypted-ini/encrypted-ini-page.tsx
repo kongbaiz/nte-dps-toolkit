@@ -39,7 +39,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
-import type { EncryptedIniKey } from "@/lib/tauri/encrypted-ini-contract";
+import type { EncryptedIniKey } from "@/lib/tauri/generated/EncryptedIniKey";
 import { cn } from "@/lib/utils";
 
 import {

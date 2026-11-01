@@ -204,15 +204,9 @@
     var(--motion-ease-emphasized) both;
 }
 
-.motion-drop-indicator {
-  animation: ui-drop-indicator-in var(--motion-duration-fast)
-    var(--motion-ease-emphasized) both;
-}
-
 .hud-layout-module {
   position: relative;
   width: 100%;
-  will-change: transform;
   animation: ui-content-reveal var(--motion-duration-base)
     var(--motion-ease-standard) both;
 }
@@ -524,17 +518,6 @@ html[data-window-route="notification-island"] .motion-skeleton {
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-@keyframes ui-drop-indicator-in {
-  from {
-    opacity: 0;
-    transform: scaleX(0.35);
-  }
-  to {
-    opacity: 1;
-    transform: scaleX(1);
   }
 }
 

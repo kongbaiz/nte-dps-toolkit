@@ -36,11 +36,11 @@ use serde::{
 };
 
 use crate::engine::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, CombatClockRuntimeHealth, CombatState, DpsTimeBasis,
-    EmptyCurtainCharacter, EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit,
-    HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId,
-    ModScriptEvent, ModScriptEventPhase, PacketDebug, PacketObservation, PartyCombatState,
-    TimeStopEvent, UnattributedServerDamage,
+    AbyssEvent, AbyssHalf, COMBAT_CLOCK_RELEVANT_PAUSE_MASK, CharacterInfo,
+    CombatClockRuntimeHealth, CombatState, DpsTimeBasis, EmptyCurtainCharacter, EmptyCurtainItem,
+    EmptyCurtainPlacement, EngineEvent, Hit, HitCharacterSource, HitDamageCorrection, HitDirection,
+    HitFollowUp, HtItemNetId, ModScriptEvent, ModScriptEventPhase, PacketDebug, PacketObservation,
+    PartyCombatState, TimeStopEvent, UnattributedServerDamage,
 };
 use crate::engine::parser::{
     AbilityCatalog, DamageDisplayType, DamageRecordEncoding, ENEMY_CATALOG_PATH,
@@ -58,8 +58,6 @@ use crate::engine::parser::{
     parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects,
     parse_server_damage_settlements, valid_item_net_id, validate_empty_curtain_snapshot,
 };
-#[cfg(test)]
-use crate::platform::mods_plugin::CombatClockQueryError;
 use crate::platform::mods_plugin::CombatClockTransitionSnapshot;
 use crate::storage::io_util::atomic_write_file;
 
@@ -89,11 +87,8 @@ const NTE_MOD_SCRIPT_BLOCK_SIZE: usize = 120;
 const NTE_MOD_SCRIPT_STRING_CAPACITY: usize = 32;
 const NTE_MOD_SCRIPT_VALUE_CAPACITY: usize = 3;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
-const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
-#[cfg(test)]
-const COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD: u8 = 3;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS: usize = 256 * 1024 * 8;
 const GAMEPLAY_EFFECT_FRAGMENT_TIMEOUT_SECONDS: f64 = 0.5;
@@ -1298,15 +1293,6 @@ fn send_game_pause_transition(
     sender.send(EngineEvent::TimeStop(event))
 }
 
-#[cfg(test)]
-fn combat_clock_error_health(error: CombatClockQueryError) -> CombatClockRuntimeHealth {
-    match error {
-        CombatClockQueryError::ProviderUnavailable => CombatClockRuntimeHealth::ProviderUnavailable,
-        CombatClockQueryError::ModDisabled => CombatClockRuntimeHealth::ModDisabled,
-        CombatClockQueryError::InvalidResponse => CombatClockRuntimeHealth::InvalidResponse,
-    }
-}
-
 fn combat_clock_sample_health(state_flags: u32, recorded: bool) -> CombatClockRuntimeHealth {
     if state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 {
         CombatClockRuntimeHealth::DataUnavailable
@@ -1328,36 +1314,6 @@ fn publish_combat_clock_health(
     sender.send(EngineEvent::CombatClockHealth(health))?;
     *previous = Some(health);
     Ok(())
-}
-
-#[cfg(test)]
-fn stable_combat_clock_error_health(
-    error: CombatClockQueryError,
-    consecutive_provider_failures: &mut u8,
-) -> Option<CombatClockRuntimeHealth> {
-    if error != CombatClockQueryError::ProviderUnavailable {
-        *consecutive_provider_failures = 0;
-        return Some(combat_clock_error_health(error));
-    }
-    *consecutive_provider_failures = consecutive_provider_failures.saturating_add(1);
-    (*consecutive_provider_failures >= COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD)
-        .then_some(CombatClockRuntimeHealth::ProviderUnavailable)
-}
-
-#[cfg(test)]
-fn publish_combat_clock_snapshot_health(
-    sender: &EngineEventSink,
-    previous: &mut Option<CombatClockRuntimeHealth>,
-    transitions: &[CombatClockTransitionSnapshot],
-) -> Result<(), EngineEventSendError> {
-    let Some(transition) = transitions.last() else {
-        return Ok(());
-    };
-    publish_combat_clock_health(
-        sender,
-        previous,
-        combat_clock_sample_health(transition.state_flags, false),
-    )
 }
 
 fn npcap_library_path() -> PathBuf {
@@ -7629,6 +7585,8 @@ enum CaptureTimeStopEvent {
         timestamp: f64,
         pause_type_mask: u32,
     },
+    // Variants below come from exports written by releases before 2026-07-27
+    // (v0.3.x). Remove them when CAPTURE_EXPORT_VERSION is bumped.
     GamePause {
         start_timestamp: f64,
         end_timestamp: f64,
@@ -7899,7 +7857,7 @@ struct ExportPacket {
     #[serde(default)]
     payload_len: usize,
     #[serde(default, deserialize_with = "deserialize_export_declared_ids")]
-    declared_ids: serde_json::Value,
+    declared_ids: Vec<u32>,
     #[serde(default)]
     parsed_hits: usize,
     #[serde(default)]
@@ -7912,18 +7870,17 @@ struct ExportPacket {
     decoded_text: String,
 }
 
-fn deserialize_export_declared_ids<'de, D>(deserializer: D) -> Result<serde_json::Value, D::Error>
+fn deserialize_export_declared_ids<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct DeclaredIdsVisitor;
 
     impl<'de> serde::de::Visitor<'de> for DeclaredIdsVisitor {
-        type Value = serde_json::Value;
+        type Value = Vec<u32>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter
-                .write_str("an array of at most 64 unsigned 32-bit ids or a bounded legacy string")
+            formatter.write_str("an array of at most 64 unsigned 32-bit ids")
         }
 
         fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
@@ -7943,50 +7900,13 @@ where
                 let value = u32::try_from(value).map_err(|_| {
                     serde::de::Error::custom("declared_ids contains a non-u32 value")
                 })?;
-                ids.push(serde_json::Value::from(value));
+                ids.push(value);
             }
-            Ok(serde_json::Value::Array(ids))
-        }
-
-        fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            parse_legacy_declared_ids(value).map_err(E::custom)
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            parse_legacy_declared_ids(value).map_err(E::custom)
+            Ok(ids)
         }
     }
 
-    deserializer.deserialize_any(DeclaredIdsVisitor)
-}
-
-fn parse_legacy_declared_ids(value: &str) -> Result<serde_json::Value, &'static str> {
-    if value.len() > MAX_CAPTURE_JSON_IMPORT_FILTER_BYTES {
-        return Err("declared_ids legacy string exceeds byte budget");
-    }
-    let mut ids = Vec::new();
-    for part in value
-        .trim()
-        .trim_matches(['[', ']'])
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-    {
-        if ids.len() >= MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS {
-            return Err("declared_ids exceeds item budget");
-        }
-        let parsed = part
-            .parse::<u32>()
-            .map_err(|_| "declared_ids legacy string contains a non-u32 value")?;
-        ids.push(serde_json::Value::from(parsed));
-    }
-    Ok(serde_json::Value::Array(ids))
+    deserializer.deserialize_seq(DeclaredIdsVisitor)
 }
 
 impl CaptureExportDocument {
@@ -8109,7 +8029,7 @@ impl From<&PacketDebug> for ExportPacket {
             destination: packet.destination.clone(),
             direction: packet.direction.clone(),
             payload_len: packet.payload_len,
-            declared_ids: serde_json::json!(packet.declared_ids),
+            declared_ids: packet.declared_ids.clone(),
             parsed_hits: packet.parsed_hits,
             note: packet.note.clone(),
             payload_preview: packet.payload_preview.clone(),
@@ -8302,10 +8222,6 @@ fn format_capture_time(timestamp: f64) -> String {
 /// The check runs on the shared Rust import boundary, never only in a Tauri
 /// command or frontend drag-drop handler.
 pub const MAX_CAPTURE_JSON_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
-/// Legacy comma repair is intentionally lower than the normal import budget:
-/// a current document parses without a second text buffer, while a malformed
-/// legacy document needs one bounded replacement allocation.
-pub const MAX_CAPTURE_JSON_LEGACY_REPAIR_BYTES: usize = 64 * 1024 * 1024;
 /// Structural budget for parsed hits. Runtime capture retains the complete
 /// combat, while this external-file boundary still needs a finite allocation
 /// budget before an untrusted document is accepted.
@@ -8345,7 +8261,6 @@ struct CaptureImportStructureLimits {
     time_stop_events: usize,
     item_stats: usize,
     target_context: usize,
-    declared_ids: usize,
 }
 
 const CAPTURE_IMPORT_STRUCTURE_LIMITS: CaptureImportStructureLimits =
@@ -8359,7 +8274,6 @@ const CAPTURE_IMPORT_STRUCTURE_LIMITS: CaptureImportStructureLimits =
         time_stop_events: MAX_CAPTURE_JSON_IMPORT_TIME_STOP_EVENTS,
         item_stats: MAX_CAPTURE_JSON_IMPORT_ITEM_STATS,
         target_context: MAX_CAPTURE_JSON_IMPORT_TARGET_CONTEXT,
-        declared_ids: MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS,
     };
 
 /// Typed rejection reasons for capture JSON imports. Messages intentionally
@@ -8817,21 +8731,6 @@ fn validate_capture_export_structure_with_limits(
         aggregate_damage = next_aggregate_damage;
     }
     for packet in &document.packets {
-        let declared_id_count = match &packet.declared_ids {
-            serde_json::Value::Array(values) => values.len(),
-            serde_json::Value::String(value) => value
-                .trim_matches(['[', ']'])
-                .split(',')
-                .filter(|part| !part.trim().is_empty())
-                .take(limits.declared_ids.saturating_add(1))
-                .count(),
-            _ => 0,
-        };
-        validate_capture_collection(
-            "packets[].declared_ids",
-            declared_id_count,
-            limits.declared_ids,
-        )?;
         for (field, value, limit) in [
             (
                 "packets[].time_local",
@@ -8875,13 +8774,6 @@ fn validate_capture_export_structure_with_limits(
             ),
         ] {
             validate_capture_text(field, value, limit)?;
-        }
-        if let serde_json::Value::String(value) = &packet.declared_ids {
-            validate_capture_text(
-                "packets[].declared_ids",
-                value,
-                MAX_CAPTURE_JSON_IMPORT_FILTER_BYTES,
-            )?;
         }
         validate_capture_number(
             "packets[].timestamp_unix",
@@ -9279,7 +9171,7 @@ fn send_export_packet(
     sender: &EngineEventSink,
     empty_curtain: &mut EmptyCurtainDecoder,
 ) -> Result<bool, String> {
-    let mut declared_ids = parse_export_ids(&packet.declared_ids);
+    let mut declared_ids = packet.declared_ids;
     let payload = if packet.payload_hex.trim().is_empty() {
         Vec::new()
     } else {
@@ -9417,21 +9309,8 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
 fn parse_capture_export_typed(
     text: impl Into<String>,
 ) -> Result<CaptureExportDocument, CaptureImportError> {
-    let text = text.into();
-    let document: CaptureExportDocument = match serde_json::from_str(&text) {
-        Ok(document) => document,
-        Err(_) => {
-            // Legacy v1 writers omitted a comma after pretty-printed payload_hex
-            // lines. Build one bounded replacement buffer, release the original,
-            // and only then deserialize. The old Vec<String> + join path retained
-            // the original, every line allocation, and the repaired document at
-            // the same time for inputs up to the full import limit.
-            let repaired = repair_legacy_capture_export(&text)
-                .map_err(|_| CaptureImportError::InvalidFormat)?;
-            drop(text);
-            serde_json::from_str(&repaired).map_err(|_| CaptureImportError::InvalidFormat)?
-        }
-    };
+    let document: CaptureExportDocument =
+        serde_json::from_str(&text.into()).map_err(|_| CaptureImportError::InvalidFormat)?;
     if document.version != CAPTURE_EXPORT_VERSION {
         return Err(CaptureImportError::UnsupportedVersion {
             found: document.version,
@@ -9442,77 +9321,11 @@ fn parse_capture_export_typed(
 }
 
 #[cfg(test)]
-fn parse_capture_export(text: impl Into<String>) -> Result<CaptureExportDocument, String> {
-    parse_capture_export_typed(text).map_err(|error| error.to_string())
-}
-
-fn repair_legacy_capture_export(text: &str) -> Result<String, String> {
-    repair_legacy_capture_export_with_limit(text, MAX_CAPTURE_JSON_LEGACY_REPAIR_BYTES)
-}
-
-fn repair_legacy_capture_export_with_limit(text: &str, limit: usize) -> Result<String, String> {
-    if text.len() > limit {
-        return Err(format!("legacy capture repair input exceeds {limit} bytes"));
-    }
-    let inserted_commas = text
-        .split_inclusive('\n')
-        .filter(|line| legacy_payload_hex_line_needs_comma(line))
-        .count();
-    let repaired_len = text
-        .len()
-        .checked_add(inserted_commas)
-        .filter(|size| *size <= limit)
-        .ok_or_else(|| format!("legacy capture repair exceeds {limit} bytes"))?;
-    let mut repaired = String::with_capacity(repaired_len);
-    for line in text.split_inclusive('\n') {
-        let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
-        let content = line_without_newline
-            .strip_suffix('\r')
-            .unwrap_or(line_without_newline);
-        repaired.push_str(content);
-        if legacy_payload_hex_line_needs_comma(content) {
-            repaired.push(',');
-        }
-        if line_without_newline.len() != line.len() {
-            if line_without_newline.ends_with('\r') {
-                repaired.push('\r');
-            }
-            repaired.push('\n');
-        }
-    }
-    debug_assert_eq!(repaired.len(), repaired_len);
-    Ok(repaired)
-}
-
-fn legacy_payload_hex_line_needs_comma(line: &str) -> bool {
-    let content = line.trim_end_matches(['\r', '\n']);
-    if content.trim_end().ends_with(',') {
-        return false;
-    }
-    let Some(after_key) = content.trim_start().strip_prefix(r#""payload_hex""#) else {
-        return false;
-    };
-    after_key.trim_start().starts_with(':')
-}
-
-fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
-    match value {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .filter_map(serde_json::Value::as_u64)
-            .filter_map(|value| u32::try_from(value).ok())
-            .collect(),
-        serde_json::Value::String(value) => value
-            .trim_matches(['[', ']'])
-            .split(',')
-            .filter_map(|part| part.trim().parse().ok())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-#[cfg(test)]
 mod tests {
+    fn parse_capture_export(text: impl Into<String>) -> Result<CaptureExportDocument, String> {
+        parse_capture_export_typed(text).map_err(|error| error.to_string())
+    }
+
     use super::*;
 
     use crossbeam_channel::unbounded;
@@ -9593,18 +9406,6 @@ mod tests {
     #[test]
     fn combat_clock_health_is_typed_and_published_only_on_change() {
         assert_eq!(
-            combat_clock_error_health(CombatClockQueryError::ProviderUnavailable),
-            CombatClockRuntimeHealth::ProviderUnavailable
-        );
-        assert_eq!(
-            combat_clock_error_health(CombatClockQueryError::ModDisabled),
-            CombatClockRuntimeHealth::ModDisabled
-        );
-        assert_eq!(
-            combat_clock_error_health(CombatClockQueryError::InvalidResponse),
-            CombatClockRuntimeHealth::InvalidResponse
-        );
-        assert_eq!(
             combat_clock_sample_health(0, false),
             CombatClockRuntimeHealth::DataUnavailable
         );
@@ -9623,19 +9424,19 @@ mod tests {
         publish_combat_clock_health(
             &sink,
             &mut previous,
-            CombatClockRuntimeHealth::ProviderUnavailable,
+            CombatClockRuntimeHealth::DataUnavailable,
         )
         .expect("first degradation is published");
         publish_combat_clock_health(
             &sink,
             &mut previous,
-            CombatClockRuntimeHealth::ProviderUnavailable,
+            CombatClockRuntimeHealth::DataUnavailable,
         )
         .expect("duplicate degradation is a no-op");
         assert!(matches!(
             receiver.try_recv(),
             Ok(EngineEvent::CombatClockHealth(
-                CombatClockRuntimeHealth::ProviderUnavailable
+                CombatClockRuntimeHealth::DataUnavailable
             ))
         ));
         assert!(receiver.try_recv().is_err());
@@ -9669,73 +9470,6 @@ mod tests {
                 CombatClockRuntimeHealth::DataUnavailable,
             ]
         );
-    }
-
-    #[test]
-    fn successful_repeated_combat_clock_snapshot_recovers_transient_degradation() {
-        let (sender, receiver) = bounded(2);
-        let sink = EngineEventSink::reliable(sender);
-        let mut previous = None;
-        publish_combat_clock_health(
-            &sink,
-            &mut previous,
-            CombatClockRuntimeHealth::ProviderUnavailable,
-        )
-        .expect("publish transient degradation");
-
-        publish_combat_clock_snapshot_health(
-            &sink,
-            &mut previous,
-            &[CombatClockTransitionSnapshot {
-                sequence: 7,
-                timestamp_100ns: 133_000_000_000_000_000,
-                pause_type_mask: 0,
-                reserved_value: 0,
-                state_flags: COMBAT_CLOCK_PAUSE_VALID,
-            }],
-        )
-        .expect("repeated authoritative snapshot restores health");
-
-        let health = receiver
-            .try_iter()
-            .filter_map(|event| match event {
-                EngineEvent::CombatClockHealth(health) => Some(health),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            health,
-            vec![
-                CombatClockRuntimeHealth::ProviderUnavailable,
-                CombatClockRuntimeHealth::Available,
-            ]
-        );
-    }
-
-    #[test]
-    fn transient_provider_failure_requires_a_stable_threshold() {
-        let mut consecutive = 0;
-        for _ in 1..COMBAT_CLOCK_PROVIDER_FAILURE_THRESHOLD {
-            assert_eq!(
-                stable_combat_clock_error_health(
-                    CombatClockQueryError::ProviderUnavailable,
-                    &mut consecutive,
-                ),
-                None
-            );
-        }
-        assert_eq!(
-            stable_combat_clock_error_health(
-                CombatClockQueryError::ProviderUnavailable,
-                &mut consecutive,
-            ),
-            Some(CombatClockRuntimeHealth::ProviderUnavailable)
-        );
-        assert_eq!(
-            stable_combat_clock_error_health(CombatClockQueryError::ModDisabled, &mut consecutive),
-            Some(CombatClockRuntimeHealth::ModDisabled)
-        );
-        assert_eq!(consecutive, 0);
     }
 
     #[test]
@@ -9902,7 +9636,6 @@ mod tests {
             time_stop_events: 1,
             item_stats: 1,
             target_context: 1,
-            declared_ids: 1,
         };
         assert!(
             validate_capture_export_structure_with_limits(&document, at_limit).is_ok(),
@@ -10010,13 +9743,6 @@ mod tests {
                 "hits[].target_context",
                 CaptureImportStructureLimits {
                     target_context: 0,
-                    ..at_limit
-                },
-            ),
-            (
-                "packets[].declared_ids",
-                CaptureImportStructureLimits {
-                    declared_ids: 0,
                     ..at_limit
                 },
             ),
@@ -12468,7 +12194,7 @@ mod tests {
         assert_eq!(restored.hits[0].ability_name.as_deref(), Some("GA_Test"));
         assert_eq!(restored.hits[0].target_context, ["context-a", "context-b"]);
         assert_eq!(restored.packets[0].note, "round trip");
-        assert_eq!(restored.packets[0].declared_ids, serde_json::json!([]));
+        assert_eq!(restored.packets[0].declared_ids, Vec::<u32>::new());
         assert_eq!(restored.time_stop_events, state.time_stop_events);
     }
 
@@ -12477,46 +12203,6 @@ mod tests {
         let error = parse_capture_export(r#"{"version":2,"hits":[],"packets":[]}"#)
             .expect_err("unknown capture export versions must be rejected");
         assert!(error.contains("unsupported capture export version 2"));
-    }
-
-    #[test]
-    fn legacy_capture_repair_uses_one_bounded_buffer_and_preserves_crlf() {
-        let legacy = concat!(
-            "{\r\n",
-            "  \"version\":1,\r\n",
-            "  \"hits\":[],\r\n",
-            "  \"packets\":[{\r\n",
-            "    \"timestamp_unix\":1,\r\n",
-            "    \"source\":\"a\",\r\n",
-            "    \"destination\":\"b\",\r\n",
-            "    \"payload_hex\" : \"00\"\r\n",
-            "    \"decoded_text\":\"ok\"\r\n",
-            "  }]\r\n",
-            "}"
-        );
-        let repaired = repair_legacy_capture_export(legacy)
-            .expect("bounded legacy capture should be repairable");
-        assert!(repaired.contains("\"payload_hex\" : \"00\",\r\n"));
-        let parsed = parse_capture_export(legacy)
-            .expect("legacy missing payload comma should remain replayable");
-        assert_eq!(parsed.packets.len(), 1);
-        assert_eq!(parsed.packets[0].decoded_text, "ok");
-        assert!(repair_legacy_capture_export_with_limit(legacy, legacy.len() - 1).is_err());
-        let exact_limit_missing_comma = "  \"payload_hex\": \"00\"";
-        assert!(
-            repair_legacy_capture_export_with_limit(
-                exact_limit_missing_comma,
-                exact_limit_missing_comma.len(),
-            )
-            .is_err(),
-            "the extra comma must be budgeted before allocating the output buffer"
-        );
-        let unrelated = "  \"decoded_text\": \"payload_hex\"";
-        assert_eq!(
-            repair_legacy_capture_export_with_limit(unrelated, unrelated.len())
-                .expect("unrelated lines need no allocation growth"),
-            unrelated
-        );
     }
 
     #[test]
@@ -12548,14 +12234,7 @@ mod tests {
             )))
             .is_err()
         );
-        let legacy = format!(
-            "[{}]",
-            (0..MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS)
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        assert!(parse_capture_export(packet_document(serde_json::json!(legacy))).is_ok());
+        assert!(parse_capture_export(packet_document(serde_json::json!("1,2"))).is_err());
     }
 
     #[test]
@@ -13304,19 +12983,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_export_ids_from_array_and_legacy_string() {
-        assert_eq!(
-            parse_export_ids(&serde_json::json!([1001, 1002])),
-            [1001, 1002]
-        );
-        assert_eq!(
-            parse_export_ids(&serde_json::json!("[1001, 1002]")),
-            [1001, 1002]
-        );
-        assert!(parse_export_ids(&serde_json::json!([4294967296_u64])).is_empty());
-    }
-
-    #[test]
     fn final_tower_ids_merge_with_declared_ids() {
         let declared = [(1001, 0, 4)];
         let final_tower = [(1076, 5, 30), (1001, 5, 52)];
@@ -13339,7 +13005,7 @@ mod tests {
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
             payload_len: 0,
-            declared_ids: serde_json::json!([1]),
+            declared_ids: vec![1],
             parsed_hits: 0,
             note: String::new(),
             payload_preview: String::new(),
@@ -13367,7 +13033,7 @@ mod tests {
             destination: "127.0.0.1:5678".to_owned(),
             direction: "C2S".to_owned(),
             payload_len: payload.len(),
-            declared_ids: serde_json::json!([]),
+            declared_ids: vec![],
             parsed_hits: 0,
             note: String::new(),
             payload_preview: hex::encode(&payload[..payload.len().min(48)]),
@@ -13394,7 +13060,7 @@ mod tests {
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
             payload_len: 0,
-            declared_ids: serde_json::json!([1]),
+            declared_ids: vec![1],
             parsed_hits: 0,
             note: String::new(),
             payload_preview: String::new(),
@@ -13420,7 +13086,7 @@ mod tests {
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
             payload_len: 2,
-            declared_ids: serde_json::json!([]),
+            declared_ids: Vec::new(),
             parsed_hits: 1,
             note: String::new(),
             payload_preview: "0000".to_owned(),

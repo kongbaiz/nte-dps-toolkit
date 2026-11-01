@@ -9,8 +9,10 @@ use nte_dps_tool::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::{State, WebviewWindow};
+use ts_rs::TS;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CharacterRequest {
     refresh: bool,
@@ -20,24 +22,36 @@ pub(crate) struct CharacterRequest {
     selected_uid: Option<String>,
     query: String,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CharacterReadState {
+    Idle,
+    Queued,
+    Reading,
+    Completed,
+    Failed,
+    Canceled,
+    Stopped,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeStatus {
     process_id: u32,
     process_created_file_time: String,
-    state: String,
+    state: CharacterReadState,
     snapshot_id: Option<String>,
     dirty: bool,
     sdk_compatible: bool,
     #[serde(default)]
     character_refresh_supported: bool,
 }
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CharacterResponse {
-    contract_version: u32,
     connection_identity: String,
-    state: String,
+    state: CharacterReadState,
     dirty: bool,
     sdk_compatible: bool,
     page: Option<CharacterPage>,
@@ -71,11 +85,7 @@ fn projection_error(e: SnapshotError) -> CommandError {
     }
 }
 fn validate_status(s: &NativeStatus, identity: &str) -> Result<(), CommandError> {
-    if !matches!(
-        s.state.as_str(),
-        "idle" | "queued" | "reading" | "completed" | "failed" | "canceled" | "stopped"
-    ) || s
-        .snapshot_id
+    if s.snapshot_id
         .as_ref()
         .is_some_and(|s| s.is_empty() || s.len() > 128)
     {
@@ -88,7 +98,7 @@ fn validate_status(s: &NativeStatus, identity: &str) -> Result<(), CommandError>
     if format!("{}:{}", s.process_id, created) != identity {
         return Err(projection_error(SnapshotError::SessionChanged));
     }
-    if s.state == "completed" && !s.dirty && s.snapshot_id.is_none() {
+    if s.state == CharacterReadState::Completed && !s.dirty && s.snapshot_id.is_none() {
         return Err(projection_error(SnapshotError::InvalidFormat));
     }
     Ok(())
@@ -160,7 +170,10 @@ pub(crate) async fn get_user_characters(
             prior
         };
         validate_status(&status, &identity)?;
-        let page = if status.state == "completed" && !status.dirty && status.sdk_compatible {
+        let page = if status.state == CharacterReadState::Completed
+            && !status.dirty
+            && status.sdk_compatible
+        {
             let id = status
                 .snapshot_id
                 .as_deref()
@@ -186,7 +199,9 @@ pub(crate) async fn get_user_characters(
             .map_err(projection_error)?;
             let after: NativeStatus = client.json(302, 0, "", &|| false).map_err(toolkit::error)?;
             validate_status(&after, &identity)?;
-            if after.dirty || after.state != "completed" || after.snapshot_id != status.snapshot_id
+            if after.dirty
+                || after.state != CharacterReadState::Completed
+                || after.snapshot_id != status.snapshot_id
             {
                 return Err(projection_error(SnapshotError::SessionChanged));
             }
@@ -198,7 +213,6 @@ pub(crate) async fn get_user_characters(
             return Err(toolkit::unsupported());
         }
         Ok(CharacterResponse {
-            contract_version: user_characters::USER_CHARACTERS_CONTRACT_VERSION,
             connection_identity: identity,
             state: status.state,
             dirty: status.dirty,
@@ -218,7 +232,7 @@ mod tests {
         let mut s = NativeStatus {
             process_id: 42,
             process_created_file_time: "99".into(),
-            state: "completed".into(),
+            state: CharacterReadState::Completed,
             snapshot_id: Some("provider:1".into()),
             dirty: false,
             sdk_compatible: true,
@@ -227,8 +241,6 @@ mod tests {
         assert!(validate_status(&s, "42:99").is_ok());
         assert!(validate_status(&s, "42:100").is_err());
         s.snapshot_id = None;
-        assert!(validate_status(&s, "42:99").is_err());
-        s.state = "PRIVATE_PATH".into();
         assert!(validate_status(&s, "42:99").is_err());
     }
 }

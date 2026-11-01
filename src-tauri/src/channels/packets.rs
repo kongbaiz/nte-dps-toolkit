@@ -6,11 +6,7 @@ use crate::{
         validate_subscription_id,
     },
     commands::packets::snapshot_since,
-    contract::{
-        CommandError, SubscriptionReceipt,
-        packets::PacketsEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
+    contract::{CommandError, SubscriptionReceipt, packets::PacketsEvent, stream::StreamKind},
     state::AppState,
     windows::console,
 };
@@ -19,7 +15,7 @@ pub(crate) const PACKETS_STREAM_INTERVAL_MS: u32 = 100;
 #[tauri::command]
 pub(crate) fn subscribe_packets(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<PacketsEvent>>,
+    on_event: Channel<PacketsEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {

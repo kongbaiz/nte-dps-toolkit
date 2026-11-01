@@ -2932,6 +2932,7 @@ fn remove_inline_detail_aggregate(row: &mut IndexedDetailAggregate, hits: u64, d
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureQualitySource {
     Plugin,
@@ -3955,6 +3956,7 @@ fn apply_combat_totals_delta(
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum AbyssHalf {
     #[default]
@@ -4023,9 +4025,17 @@ pub enum TimeStopEvent {
 /// is separate from the user's configured DPS basis: `TimeStopAdjusted` must
 /// never imply that the provider is actually connected and producing data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum CombatClockRuntimeHealth {
+    /// The aliases read degraded states persisted in history by v0.4.2-v0.4.4.
+    /// Remove them when HISTORY_RECORD_VERSION is bumped.
     #[default]
+    #[serde(
+        alias = "provider_unavailable",
+        alias = "mod_disabled",
+        alias = "invalid_response"
+    )]
     Unknown,
     /// Replay/import supplied authoritative recorded pause transitions.
     Recorded,
@@ -4033,9 +4043,6 @@ pub enum CombatClockRuntimeHealth {
     /// Provider/controller responded, but the current generation has not
     /// produced a pause-valid combat-clock sample (or validity was lost).
     DataUnavailable,
-    ProviderUnavailable,
-    ModDisabled,
-    InvalidResponse,
 }
 
 impl CombatClockRuntimeHealth {
@@ -4347,7 +4354,7 @@ impl TimeStopTracker {
     }
 }
 
-const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
+pub(crate) const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 
 const fn known_pause_type_mask(pause_type_mask: u32) -> Option<u32> {
     if pause_type_mask == 0 || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0 {
@@ -7028,6 +7035,15 @@ impl From<&HitDamageCorrection> for HitSourceIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_written_by_v0_4_4_loads_degraded_clock_health_as_unknown() {
+        for value in ["provider_unavailable", "mod_disabled", "invalid_response"] {
+            let health: CombatClockRuntimeHealth =
+                serde_json::from_value(serde_json::json!(value)).expect("legacy health loads");
+            assert_eq!(health, CombatClockRuntimeHealth::Unknown);
+        }
+    }
 
     #[test]
     fn mod_script_bridge_classifies_preprocess_and_postprocess_names() {

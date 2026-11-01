@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
+import type { ModMarketItemSnapshot } from "@/lib/tauri/generated/ModMarketItemSnapshot";
 
 import {
   hasModMarketUpdate,
@@ -10,7 +10,7 @@ import {
   modMarketSearchText,
 } from "./mod-market-model";
 
-const ITEM: ModMarketItem = {
+const ITEM: ModMarketItemSnapshot = {
   id: "combat-clock",
   bindings: ["feature.dps-time-stop"],
   localizations: {
@@ -69,7 +69,7 @@ describe("Mod Market localization", () => {
 });
 
 describe("market component separation", () => {
-  const items: ModMarketItem[] = (
+  const items: ModMarketItemSnapshot[] = (
     ["host", "plugin", "loader", "driver"] as const
   ).map((component) => ({ ...ITEM, id: component, component }));
   it("keeps the shared runtime out of feature plugin results", () => {

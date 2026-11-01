@@ -33,12 +33,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { t, tf } from "@/lib/i18n";
-import type {
-  PacketSnapshot,
-  PacketsCapturePhase,
-  PacketsCommandError,
-  PacketsSnapshot,
-} from "@/lib/tauri/packets-contract";
+import type { LiveCapturePhase } from "@/lib/tauri/generated/LiveCapturePhase";
+import type { PacketSnapshot } from "@/lib/tauri/generated/PacketSnapshot";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
+import { type CommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 
 import {
@@ -49,7 +47,7 @@ import {
 } from "./packets-model";
 import { usePackets } from "./use-packets";
 
-const PHASE_LABELS: Record<PacketsCapturePhase, string> = {
+const PHASE_LABELS: Record<LiveCapturePhase, string> = {
   idle: "Capture idle",
   starting: "Capture starting",
   running: "Live",
@@ -168,7 +166,7 @@ export function PacketsPage() {
   );
 }
 
-function CaptureBadge({ phase }: { phase: PacketsCapturePhase }) {
+function CaptureBadge({ phase }: { phase: LiveCapturePhase }) {
   const active = phase === "running";
   return (
     <Badge variant="outline" className="gap-1.5">
@@ -292,7 +290,7 @@ function PacketsLoadError({
   error,
   onRetry,
 }: {
-  error: PacketsCommandError;
+  error: CommandError;
   onRetry: () => void;
 }) {
   return (
@@ -348,7 +346,7 @@ function PacketsStreamError({
   error,
   onDismiss,
 }: {
-  error: PacketsCommandError;
+  error: CommandError;
   onDismiss: () => void;
 }) {
   return createPortal(

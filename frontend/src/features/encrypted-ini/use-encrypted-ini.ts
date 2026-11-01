@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { encryptedIniClient } from "@/lib/tauri/encrypted-ini-client";
-import {
-  encryptedIniError,
-  type EncryptedIniKey,
-  type EncryptedIniSnapshot,
-} from "@/lib/tauri/encrypted-ini-contract";
+import type { EncryptedIniKey } from "@/lib/tauri/generated/EncryptedIniKey";
+import type { EncryptedIniSnapshot } from "@/lib/tauri/generated/EncryptedIniSnapshot";
+import { toCommandError } from "@/lib/tauri/command-error";
 
 export interface EncryptedIniNotice {
   kind: "success" | "error";
@@ -167,7 +165,7 @@ export function useEncryptedIni() {
 }
 
 function errorNotice(error: unknown): EncryptedIniNotice {
-  const parsed = encryptedIniError(error);
+  const parsed = toCommandError(error);
   return {
     kind: "error",
     titleKey: "Encrypted INI operation failed",

@@ -56,20 +56,18 @@ import {
 import { characterAttributeUrl } from "@/lib/character-attribute";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
-import { t, tf, useTranslationRevision } from "@/lib/i18n";
+import { t, tf, useFrontendLanguage } from "@/lib/i18n";
 import {
   applySettingsPresentation,
   useSettingsPresentation,
 } from "@/lib/settings-presentation";
 import { mainDpsClient } from "@/lib/tauri/main-dps-client";
-import type { MainDpsDetailFilter } from "@/lib/tauri/main-dps-detail-contract";
-import {
-  parseMainDpsCommandError,
-  type MainDpsCharacter,
-  type MainDpsSnapshot,
-} from "@/lib/tauri/main-dps-contract";
+import type { MainDpsCharacterSnapshot } from "@/lib/tauri/generated/MainDpsCharacterSnapshot";
+import type { MainDpsDetailFilter } from "@/lib/tauri/generated/MainDpsDetailFilter";
+import type { MainDpsSnapshot } from "@/lib/tauri/generated/MainDpsSnapshot";
+import type { UpdatePromptSnapshot } from "@/lib/tauri/generated/UpdatePromptSnapshot";
+import { toCommandError } from "@/lib/tauri/command-error";
 import { updatePromptClient } from "@/lib/tauri/update-prompt-client";
-import type { UpdatePromptSnapshot } from "@/lib/tauri/update-prompt-contract";
 import { subscribeMainDpsConfirmationRequested } from "@/lib/tauri/window-events";
 import { cn } from "@/lib/utils";
 
@@ -95,7 +93,7 @@ type MainDpsConfirmation =
   | { kind: "drop"; path: string };
 
 export function MainDpsPage() {
-  useTranslationRevision();
+  useFrontendLanguage();
   const presentation = useSettingsPresentation();
   const {
     snapshot,
@@ -131,7 +129,7 @@ export function MainDpsPage() {
   const [abyssCollapsed, setAbyssCollapsed] = useState(false);
   const [hidden, setHidden] = useState<Set<number>>(() => new Set());
   const [context, setContext] = useState<{
-    row: MainDpsCharacter;
+    row: MainDpsCharacterSnapshot;
   } | null>(null);
   const selectedIndex =
     snapshot?.rounds.findIndex(
@@ -169,7 +167,7 @@ export function MainDpsPage() {
         }
       } catch (value) {
         if (openWhenAvailable) {
-          const commandError = parseMainDpsCommandError(value);
+          const commandError = toCommandError(value);
           setUpdatePromptError(
             tf(commandError.messageKey, commandError.messageArguments),
           );
@@ -215,7 +213,7 @@ export function MainDpsPage() {
         }
       }
     } catch (value) {
-      const commandError = parseMainDpsCommandError(value);
+      const commandError = toCommandError(value);
       setUpdatePromptError(
         tf(commandError.messageKey, commandError.messageArguments),
       );
@@ -856,21 +854,21 @@ export function MainDpsPage() {
 
             {snapshot.display.metrics.length > 0 && (
               <section className="main-dps-metrics grid grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-1.5">
-                {snapshot.display.metrics.includes("team-dps") && (
+                {snapshot.display.metrics.includes("team_dps") && (
                   <Metric
                     value={snapshot.readout.summary.teamDps}
                     format={formatMainMetric}
                     label={t("Team DPS")}
                   />
                 )}
-                {snapshot.display.metrics.includes("total-damage") && (
+                {snapshot.display.metrics.includes("total_damage") && (
                   <Metric
                     value={snapshot.readout.summary.totalDamage}
                     format={formatMainMetric}
                     label={t("Total Damage")}
                   />
                 )}
-                {snapshot.display.metrics.includes("total-damage-taken") && (
+                {snapshot.display.metrics.includes("total_damage_taken") && (
                   <Metric
                     value={snapshot.readout.summary.totalDamageTaken}
                     format={formatMainMetric}
@@ -1147,7 +1145,7 @@ function CharacterRow({
   onClick,
   onContext,
 }: {
-  row: MainDpsCharacter;
+  row: MainDpsCharacterSnapshot;
   index: number;
   onClick(): void;
   onContext(event: React.MouseEvent): void;
@@ -1286,7 +1284,7 @@ function DamageAttributionStrip({
       : []),
   ];
 
-  const showMaxHpReduction = visible.includes("max-hp-reduction");
+  const showMaxHpReduction = visible.includes("max_hp_reduction");
   if (items.length === 0 && !showMaxHpReduction) return null;
 
   return (

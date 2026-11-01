@@ -7,11 +7,7 @@ use crate::{
         PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
         validate_subscription_id,
     },
-    contract::{
-        CommandError, SubscriptionReceipt,
-        settings::SettingsEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
+    contract::{CommandError, SubscriptionReceipt, settings::SettingsEvent, stream::StreamKind},
     state::{AppState, UpdateActionError},
     windows::console,
 };
@@ -20,7 +16,7 @@ pub(crate) const SETTINGS_STREAM_INTERVAL_MS: u32 = 200;
 #[tauri::command]
 pub(crate) fn subscribe_settings(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<SettingsEvent>>,
+    on_event: Channel<SettingsEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -158,7 +154,7 @@ mod tests {
         ));
         assert!(combat_clock_projection_changed(
             Some(Some(CombatClockRuntimeHealth::Available)),
-            Some(CombatClockRuntimeHealth::ProviderUnavailable),
+            Some(CombatClockRuntimeHealth::DataUnavailable),
         ));
         assert!(combat_clock_projection_changed(
             Some(Some(CombatClockRuntimeHealth::Available)),

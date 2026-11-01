@@ -1,30 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { shouldAcceptDecimalVersion } from "@/lib/decimal-string";
-import {
-  timelineClient,
-  type TimelineClient,
-} from "@/lib/tauri/timeline-client";
-import {
-  timelineError,
-  type TimelineCommandError,
-  type TimelineCurveMode,
-  type TimelineScope,
-  type TimelineSnapshot,
-} from "@/lib/tauri/timeline-contract";
+import { timelineClient } from "@/lib/tauri/timeline-client";
+import type { TimelineDpsViewMode } from "@/lib/tauri/generated/TimelineDpsViewMode";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
+import type { TimelineSnapshot } from "@/lib/tauri/generated/TimelineSnapshot";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
 export type TimelinePageState =
   | { status: "loading" }
-  | { status: "error"; error: TimelineCommandError }
+  | { status: "error"; error: CommandError }
   | { status: "ready"; snapshot: TimelineSnapshot };
 
-export function useTimeline(client: TimelineClient = timelineClient) {
+export function useTimeline() {
   const [scope, setScope] = useState<TimelineScope>("all");
   const [state, setState] = useState<TimelinePageState>({ status: "loading" });
   const [pending, setPending] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [mutationError, setMutationError] =
-    useState<TimelineCommandError | null>(null);
+  const [mutationError, setMutationError] = useState<CommandError | null>(null);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
   const acceptedGeneration = useRef<string | null>(null);
@@ -42,7 +35,7 @@ export function useTimeline(client: TimelineClient = timelineClient) {
     const generation = ++requestGeneration.current;
     setState({ status: "loading" });
     setMutationError(null);
-    void client
+    void timelineClient
       .getSnapshot(scope)
       .then((snapshot) => {
         if (
@@ -66,10 +59,10 @@ export function useTimeline(client: TimelineClient = timelineClient) {
           generation === requestGeneration.current &&
           !streamSnapshotReceived
         ) {
-          setState({ status: "error", error: timelineError(error) });
+          setState({ status: "error", error: toCommandError(error) });
         }
       });
-    const unsubscribe = client.subscribe(
+    const unsubscribe = timelineClient.subscribe(
       scope,
       (snapshot) => {
         if (
@@ -94,7 +87,7 @@ export function useTimeline(client: TimelineClient = timelineClient) {
       active = false;
       void unsubscribe();
     };
-  }, [client, reloadKey, scope]);
+  }, [reloadKey, scope]);
 
   const retry = useCallback(() => {
     setState({ status: "loading" });
@@ -102,12 +95,12 @@ export function useTimeline(client: TimelineClient = timelineClient) {
   }, []);
 
   const setPreferences = useCallback(
-    async (bucketSeconds: number, viewMode: TimelineCurveMode) => {
+    async (bucketSeconds: number, viewMode: TimelineDpsViewMode) => {
       if (pending) return;
       setPending(true);
       setMutationError(null);
       try {
-        const snapshot = await client.setPreferences(
+        const snapshot = await timelineClient.setPreferences(
           scope,
           bucketSeconds,
           viewMode,
@@ -126,12 +119,12 @@ export function useTimeline(client: TimelineClient = timelineClient) {
           }
         }
       } catch (error) {
-        if (mounted.current) setMutationError(timelineError(error));
+        if (mounted.current) setMutationError(toCommandError(error));
       } finally {
         if (mounted.current) setPending(false);
       }
     },
-    [client, pending, scope],
+    [pending, scope],
   );
 
   return {

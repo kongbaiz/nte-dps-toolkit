@@ -12,7 +12,7 @@ import {
   AlertDialogDescription,
 } from "@/components/ui/alert-dialog";
 import { t } from "@/lib/i18n";
-import type { PluginPanel } from "@/lib/tauri/toolkit-client";
+import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import {
   RELEASE_ACTIONS,
   releasePluginClient,

@@ -31,10 +31,8 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t } from "@/lib/i18n";
-import type {
-  TimelineCurveMode,
-  TimelineScope,
-} from "@/lib/tauri/timeline-contract";
+import type { TimelineDpsViewMode } from "@/lib/tauri/generated/TimelineDpsViewMode";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
 import { cn } from "@/lib/utils";
 
 import { TimelineChart } from "./timeline-chart";
@@ -87,7 +85,7 @@ export function TimelinePage() {
     }
   };
 
-  const changeMode = (nextMode: TimelineCurveMode) => {
+  const changeMode = (nextMode: TimelineDpsViewMode) => {
     if (!snapshot || nextMode === mode) return;
     setSelectedCharacterId(null);
     void setPreferences(snapshot.bucketSeconds, nextMode);

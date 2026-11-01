@@ -1,8 +1,6 @@
-import type {
-  PacketSnapshot,
-  PacketsEvent,
-  PacketsSnapshot,
-} from "@/lib/tauri/packets-contract";
+import type { PacketSnapshot } from "@/lib/tauri/generated/PacketSnapshot";
+import type { PacketsEvent } from "@/lib/tauri/generated/PacketsEvent";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
 
 export type PacketsContentKind =
   "loading" | "error" | "empty" | "filtered-empty" | "list";
@@ -22,7 +20,7 @@ export function mergePacketsEvent(
   current: PacketsSnapshot | null,
   event: PacketsEvent,
 ): PacketsSnapshot {
-  const incoming = event.snapshot;
+  const incoming = event.payload;
   if (
     current !== null &&
     compareDecimal(incoming.generation, current.generation) <= 0
@@ -31,7 +29,7 @@ export function mergePacketsEvent(
   }
   if (
     current === null ||
-    event.mode === "replace" ||
+    event.event === "snapshot" ||
     incoming.sessionGeneration !== current.sessionGeneration
   ) {
     return incoming;
@@ -47,9 +45,6 @@ export function mergePacketsEvent(
         compareDecimal(packet.sequence, incoming.firstDisplaySequence) >= 0,
     )
     .sort((left, right) => compareDecimal(left.sequence, right.sequence));
-  if (merged.length > incoming.displayLimit) {
-    throw new Error("Packets server window exceeds its declared display limit");
-  }
   return { ...incoming, packets: merged };
 }
 

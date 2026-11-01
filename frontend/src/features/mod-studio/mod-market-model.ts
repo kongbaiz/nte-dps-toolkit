@@ -1,19 +1,17 @@
-import type { SettingsLanguage } from "@/lib/tauri/settings-contract";
-import type {
-  ModMarketItem,
-  ModMarketLocalizedText,
-} from "@/lib/tauri/mod-studio-contract";
+import type { Language } from "@/lib/tauri/generated/Language";
+import type { ModMarketItemSnapshot } from "@/lib/tauri/generated/ModMarketItemSnapshot";
+import type { ModMarketLocalizedTextSnapshot } from "@/lib/tauri/generated/ModMarketLocalizedTextSnapshot";
 
 export function localizedModMarketText(
-  item: ModMarketItem,
-  language: SettingsLanguage,
-): ModMarketLocalizedText {
+  item: ModMarketItemSnapshot,
+  language: Language,
+): ModMarketLocalizedTextSnapshot {
   return item.localizations[language];
 }
 
 export function modMarketSearchText(
-  item: ModMarketItem,
-  language: SettingsLanguage,
+  item: ModMarketItemSnapshot,
+  language: Language,
 ): string {
   const localized = localizedModMarketText(item, language);
   return [
@@ -34,7 +32,7 @@ export interface ModMarketLocalStatus {
 }
 
 export function modMarketLocalStatus(
-  item: ModMarketItem,
+  item: ModMarketItemSnapshot,
 ): ModMarketLocalStatus {
   switch (item.localState.status) {
     case "notInstalled":
@@ -67,11 +65,11 @@ export function modMarketLocalStatus(
 export type ModMarketCategory = "plugins" | "foundation";
 
 export function filterModMarketItems(
-  items: ModMarketItem[],
+  items: ModMarketItemSnapshot[],
   category: ModMarketCategory,
   query: string,
-  language: SettingsLanguage,
-): ModMarketItem[] {
+  language: Language,
+): ModMarketItemSnapshot[] {
   const search = query.trim().toLocaleLowerCase();
   return items.filter((item) => {
     const matchesCategory =
@@ -91,6 +89,6 @@ export function filterModMarketItems(
 }
 
 // Use the backend's verified content comparison, never compare version labels.
-export function hasModMarketUpdate(item: ModMarketItem): boolean {
+export function hasModMarketUpdate(item: ModMarketItemSnapshot): boolean {
   return item.localState.status === "installed" && !item.localState.current;
 }

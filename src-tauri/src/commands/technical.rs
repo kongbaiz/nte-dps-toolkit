@@ -1,6 +1,7 @@
+use crate::contract::island::IslandTone;
 use std::time::Duration;
 
-use nte_dps_tool::core::live_capture::LiveCapturePhase;
+use nte_dps_tool::{core::live_capture::LiveCapturePhase, storage::config::HudModule};
 use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
@@ -9,7 +10,7 @@ use crate::{
     windows::{hud, island},
 };
 
-use super::{parse_hud_module, sanitize_hud_width};
+use super::sanitize_hud_width;
 
 #[tauri::command]
 pub(crate) fn get_technical_snapshot(
@@ -37,7 +38,7 @@ pub(crate) fn set_hud_passthrough(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         message_key,
         vec![state.passthrough_hotkey().label().to_owned()],
     )?;
@@ -56,7 +57,7 @@ pub(crate) fn set_hud_always_on_top(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         if enabled {
             "Always-on-top enabled"
         } else {
@@ -69,15 +70,13 @@ pub(crate) fn set_hud_always_on_top(
 
 #[tauri::command]
 pub(crate) fn move_hud_module(
-    dragged: String,
-    target: String,
+    dragged: HudModule,
+    target: HudModule,
     insert_after: bool,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
-    let dragged = parse_hud_module(&dragged)?;
-    let target = parse_hud_module(&target)?;
     state
         .move_hud_module(dragged, target, insert_after)
         .map_err(|error| {
@@ -89,13 +88,12 @@ pub(crate) fn move_hud_module(
 
 #[tauri::command]
 pub(crate) fn set_hud_module_visibility(
-    module: String,
+    module: HudModule,
     visible: bool,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
-    let module = parse_hud_module(&module)?;
     let changed = state
         .set_hud_module_visibility(module, visible)
         .map_err(|error| {
@@ -142,7 +140,7 @@ pub(crate) fn start_hud_capture(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         "Starting live capture...",
         Vec::new(),
     )?;
@@ -162,7 +160,7 @@ pub(crate) fn stop_hud_capture(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         "Stopping live capture...",
         Vec::new(),
     )?;
@@ -207,7 +205,7 @@ pub(crate) async fn reset_hud_session(
     .await
     .map_err(|_| CommandError::main_dps("reset_failed", "Failed to reset the current session"))??;
     state.publish_island_notice(
-        "success",
+        IslandTone::Success,
         if undo_token.is_some() {
             "Session reset · use Undo within 5 seconds"
         } else {

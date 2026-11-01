@@ -7,7 +7,7 @@ import {
   parseHudOptions,
   releasePluginClient,
 } from "@/lib/tauri/release-plugin-client";
-import type { PluginPanel } from "@/lib/tauri/toolkit-client";
+import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 
 const FEATURES = [
   [1, "Skill cooldown HUD"],

@@ -21,13 +21,9 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  currentFrontendLanguage,
-  t,
-  tf,
-  useTranslationRevision,
-} from "@/lib/i18n";
-import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
+import { t, tf, useFrontendLanguage } from "@/lib/i18n";
+import type { Language } from "@/lib/tauri/generated/Language";
+import type { ModMarketItemSnapshot } from "@/lib/tauri/generated/ModMarketItemSnapshot";
 
 import {
   hasModMarketUpdate,
@@ -44,8 +40,7 @@ export function ModMarketPanel({
   market: ReturnType<typeof useModMarket>;
 }) {
   const { state, installStates, refresh, install } = market;
-  useTranslationRevision();
-  const language = currentFrontendLanguage();
+  const language = useFrontendLanguage();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<ModMarketCategory>("plugins");
   const visibleMods = useMemo(() => {
@@ -211,8 +206,8 @@ function MarketItem({
   installState,
   onInstall,
 }: {
-  item: ModMarketItem;
-  language: ReturnType<typeof currentFrontendLanguage>;
+  item: ModMarketItemSnapshot;
+  language: Language;
   installState: ModMarketInstallState;
   onInstall: () => void;
 }) {

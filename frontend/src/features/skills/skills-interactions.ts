@@ -1,4 +1,4 @@
-import type { SkillsRow } from "@/lib/tauri/skills-contract";
+import type { SkillsRowSnapshot } from "@/lib/tauri/generated/SkillsRowSnapshot";
 
 export interface SkillTechnicalDetail {
   label: "GA" | "GE" | "GE Index";
@@ -11,7 +11,7 @@ export interface ClipboardWriter {
 
 export function skillTechnicalDetails(
   row: Pick<
-    SkillsRow,
+    SkillsRowSnapshot,
     "abilityName" | "gameplayEffectName" | "gameplayEffectIndex"
   >,
 ): SkillTechnicalDetail[] {

@@ -1,83 +1,69 @@
-import { parseHitSnapshotReply } from "./hit-snapshot-contract";
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import {
-  parseMainDpsDetailSnapshot,
-  type MainDpsDetailFilter,
-  type MainDpsDetailColumns,
-  type MainDpsDetailSnapshot,
-} from "@/lib/tauri/main-dps-detail-contract";
-import {
-  subscribeStream,
-  tauriStreamTransport,
-} from "@/lib/tauri/stream-client";
+import { invokeCommand, type CommandError } from "@/lib/tauri/command-error";
+import type { HitSnapshotReply } from "@/lib/tauri/generated/HitSnapshotReply";
+import type { MainDpsDetailColumns } from "@/lib/tauri/generated/MainDpsDetailColumns";
+import type { MainDpsDetailSnapshot } from "@/lib/tauri/generated/MainDpsDetailSnapshot";
+import { subscribeStream } from "@/lib/tauri/stream-client";
 
-const DETAIL_CHANGED_EVENT = "main-dps-detail-requested";
+export type MainDpsDetailFilter =
+  | "all"
+  | "outgoing"
+  | "incoming"
+  | "characterAttributed"
+  | "characterDirect"
+  | "reactionDamage"
+  | "sharedMechanics"
+  | "unattributed"
+  | "qteType";
 
 export const mainDpsDetailClient = {
-  async getHitSnapshot(hitId: string, snapshotKey: string) {
-    return parseHitSnapshotReply(
-      await invoke<unknown>("get_main_dps_hit_snapshot", {
+  getHitSnapshot: async (hitId: string, snapshotKey: string) =>
+    (
+      await invokeCommand<HitSnapshotReply>("get_main_dps_hit_snapshot", {
         hitId,
         snapshotKey,
-      }),
-      hitId,
-      snapshotKey,
-    );
-  },
-  async getSnapshot(offset = 0, limit = 200): Promise<MainDpsDetailSnapshot> {
-    return parseMainDpsDetailSnapshot(
-      await invoke<unknown>("get_main_dps_detail_snapshot", { offset, limit }),
-    );
-  },
-  async setView(
+      })
+    ).snapshot,
+  getSnapshot: (offset = 0, limit = 200) =>
+    invokeCommand<MainDpsDetailSnapshot>("get_main_dps_detail_snapshot", {
+      offset,
+      limit,
+    }),
+  setView: (
     filter: MainDpsDetailFilter,
     qteType: string | null,
     skillFilter: string | null,
-  ): Promise<MainDpsDetailSnapshot> {
-    return parseMainDpsDetailSnapshot(
-      await invoke<unknown>("set_main_dps_detail_view", {
-        filter,
-        qteType,
-        skillFilter,
-      }),
-    );
-  },
-  async setColumns(
-    columns: MainDpsDetailColumns,
-  ): Promise<MainDpsDetailSnapshot> {
-    return parseMainDpsDetailSnapshot(
-      await invoke<unknown>("set_main_dps_detail_columns", { columns }),
-    );
-  },
+  ) =>
+    invokeCommand<MainDpsDetailSnapshot>("set_main_dps_detail_view", {
+      filter,
+      qteType,
+      skillFilter,
+    }),
+  setColumns: (columns: MainDpsDetailColumns) =>
+    invokeCommand<MainDpsDetailSnapshot>("set_main_dps_detail_columns", {
+      columns,
+    }),
   startCapture: () =>
-    invoke<unknown>("start_main_dps_capture", { replaceCurrent: false }),
+    invokeCommand<unknown>("start_main_dps_capture", { replaceCurrent: false }),
   importReplay: () =>
-    invoke<unknown>("import_main_dps_replay", {
+    invokeCommand<unknown>("import_main_dps_replay", {
       kind: "json",
       replaceCurrent: false,
     }),
-  subscribeRequested(onRequested: () => void): Promise<UnlistenFn> {
-    return listen(DETAIL_CHANGED_EVENT, onRequested);
-  },
+  subscribeRequested: (onRequested: () => void): Promise<UnlistenFn> =>
+    listen("main-dps-detail-requested", onRequested),
   subscribe(
     onSnapshot: (snapshot: MainDpsDetailSnapshot) => void,
-    onError: (error: unknown) => void,
+    onError: (error: CommandError) => void,
   ): () => void {
-    const subscriptionId = crypto.randomUUID();
-    const close = subscribeStream({
-      transport: tauriStreamTransport,
+    const close = subscribeStream<MainDpsDetailSnapshot>({
       streamKind: "mainDpsDetail",
-      subscriptionId,
       subscribeCommand: "subscribe_main_dps_detail",
       unsubscribeCommand: "unsubscribe_main_dps_detail",
-      parseEvent: parseMainDpsDetailSnapshot,
       onEvent: onSnapshot,
       onError,
     });
-    return () => {
-      void close().catch(onError);
-    };
+    return () => void close().catch(onError);
   },
 };

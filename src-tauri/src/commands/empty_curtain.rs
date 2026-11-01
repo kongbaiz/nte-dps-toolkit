@@ -16,6 +16,7 @@ use nte_dps_tool::{
 };
 use serde::Deserialize;
 use tauri::{State, WebviewWindow};
+use ts_rs::TS;
 
 use crate::{
     contract::{
@@ -35,6 +36,26 @@ use crate::{
 pub(crate) struct ItemUidInput {
     slot: u32,
     serial: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EquipmentAction {
+    Lock,
+    Unlock,
+    Discard,
+    Restore,
+    Unequip,
+    Equip,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum CharacterEquipmentAction {
+    UnequipAll,
+    OneClick,
 }
 
 impl From<ItemUidInput> for HtItemNetId {
@@ -103,7 +124,7 @@ pub(crate) fn get_empty_curtain_positions(
 #[tauri::command]
 pub(crate) async fn manage_empty_curtain_item(
     item: ItemUidInput,
-    action: String,
+    action: EquipmentAction,
     character: Option<ItemUidInput>,
     row: Option<i32>,
     column: Option<i32>,
@@ -121,7 +142,7 @@ pub(crate) async fn manage_empty_curtain_item(
 
 fn manage_empty_curtain_item_inner(
     item: ItemUidInput,
-    action: String,
+    action: EquipmentAction,
     character: Option<ItemUidInput>,
     row: Option<i32>,
     column: Option<i32>,
@@ -140,36 +161,36 @@ fn manage_empty_curtain_item_inner(
             .items
             .get(&item.item_id)
             .ok_or_else(metadata_unavailable)?;
-        match action.as_str() {
-            "lock" => Ok((
+        match action {
+            EquipmentAction::Lock => Ok((
                 HtItemNetId::ZERO,
                 ModsPluginOperation::SetItemLocked {
                     equipment: item.id,
                     locked: true,
                 },
             )),
-            "unlock" => Ok((
+            EquipmentAction::Unlock => Ok((
                 HtItemNetId::ZERO,
                 ModsPluginOperation::SetItemLocked {
                     equipment: item.id,
                     locked: false,
                 },
             )),
-            "discard" => Ok((
+            EquipmentAction::Discard => Ok((
                 HtItemNetId::ZERO,
                 ModsPluginOperation::SetItemDiscarded {
                     equipment: item.id,
                     discarded: true,
                 },
             )),
-            "restore" => Ok((
+            EquipmentAction::Restore => Ok((
                 HtItemNetId::ZERO,
                 ModsPluginOperation::SetItemDiscarded {
                     equipment: item.id,
                     discarded: false,
                 },
             )),
-            "unequip" => {
+            EquipmentAction::Unequip => {
                 let equipped = item.character_net_id.ok_or_else(item_not_equipped)?;
                 let operation = match definition.kind {
                     nte_dps_tool::engine::parser::EquipmentKind::Module => {
@@ -181,7 +202,7 @@ fn manage_empty_curtain_item_inner(
                 };
                 Ok((equipped, operation))
             }
-            "equip" => {
+            EquipmentAction::Equip => {
                 let target_uid = character.ok_or_else(character_unavailable)?.into();
                 let target = characters
                     .iter()
@@ -226,11 +247,6 @@ fn manage_empty_curtain_item_inner(
                 };
                 Ok((target.net_id, operation))
             }
-            _ => Err(CommandError::empty_curtain(
-                "empty_curtain_action_invalid",
-                "Equipment action is invalid",
-                Vec::new(),
-            )),
         }
     }?;
     submit(state, operation.0, operation.1)?;
@@ -240,7 +256,7 @@ fn manage_empty_curtain_item_inner(
 #[tauri::command]
 pub(crate) async fn apply_empty_curtain_character_action(
     character: ItemUidInput,
-    action: String,
+    action: CharacterEquipmentAction,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
@@ -255,7 +271,7 @@ pub(crate) async fn apply_empty_curtain_character_action(
 
 fn apply_empty_curtain_character_action_inner(
     character: ItemUidInput,
-    action: String,
+    action: CharacterEquipmentAction,
     state: &AppState,
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     let character_uid = HtItemNetId::from(character);
@@ -268,9 +284,9 @@ fn apply_empty_curtain_character_action_inner(
             .copied()
             .find(|candidate| candidate.net_id == character_uid)
             .ok_or_else(character_unavailable)?;
-        match action.as_str() {
-            "unequip-all" => Ok(ModsPluginOperation::UnequipAll),
-            "one-click" => recommended_loadout(character, &items, &catalog)
+        match action {
+            CharacterEquipmentAction::UnequipAll => Ok(ModsPluginOperation::UnequipAll),
+            CharacterEquipmentAction::OneClick => recommended_loadout(character, &items, &catalog)
                 .map(|loadout| ModsPluginOperation::EquipOneKey {
                     placements: loadout
                         .placements
@@ -284,11 +300,6 @@ fn apply_empty_curtain_character_action_inner(
                     core: loadout.core,
                 })
                 .map_err(recommended_loadout_error),
-            _ => Err(CommandError::empty_curtain(
-                "empty_curtain_character_action_invalid",
-                "Character equipment action is invalid",
-                Vec::new(),
-            )),
         }
     }?;
     submit(state, character_uid, operation)?;

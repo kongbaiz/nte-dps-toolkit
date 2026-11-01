@@ -1,11 +1,8 @@
 import { useEffect, useRef } from "react";
 
 import { t, tf } from "@/lib/i18n";
-import { subscribeCharacterAvatarCatalog } from "@/lib/character-avatar";
-import {
-  type EmptyCurtainItem,
-  type EquipmentQuality,
-} from "@/lib/tauri/empty-curtain-contract";
+import { useCharacterAvatarCatalog } from "@/lib/character-avatar";
+import type { EmptyCurtainItemSnapshot } from "@/lib/tauri/generated/EmptyCurtainItemSnapshot";
 
 import {
   equipmentCanvasBackingStore,
@@ -27,10 +24,10 @@ import {
 } from "./equipment-canvas-layout";
 
 interface EquipmentCanvasGridProps {
-  items: EmptyCurtainItem[];
-  imageUrl: (item: EmptyCurtainItem) => string | null;
+  items: EmptyCurtainItemSnapshot[];
+  imageUrl: (item: EmptyCurtainItemSnapshot) => string | null;
   characterAvatarUrl: (characterId: number) => string | null;
-  onOpenItem: (item: EmptyCurtainItem) => void;
+  onOpenItem: (item: EmptyCurtainItemSnapshot) => void;
 }
 
 interface CanvasTheme {
@@ -196,7 +193,7 @@ export function EquipmentCanvasGrid({
     };
     drawRef.current = scheduleDraw;
     const unsubscribeAvatarCatalog =
-      subscribeCharacterAvatarCatalog(scheduleDraw);
+      useCharacterAvatarCatalog.subscribe(scheduleDraw);
     const resizeObserver = new ResizeObserver(scheduleResize);
     resizeObserver.observe(scroller);
     const themeObserver = new MutationObserver(() => {
@@ -390,10 +387,10 @@ function drawEquipmentCard(
   context: CanvasRenderingContext2D,
   cell: EquipmentCanvasCell,
   scrollTop: number,
-  item: EmptyCurtainItem,
+  item: EmptyCurtainItemSnapshot,
   theme: CanvasTheme,
   focused: boolean,
-  imageUrl: (item: EmptyCurtainItem) => string | null,
+  imageUrl: (item: EmptyCurtainItemSnapshot) => string | null,
   characterAvatarUrl: (characterId: number) => string | null,
   requestDraw: () => void,
 ) {
@@ -702,7 +699,7 @@ function readCanvasTheme(): CanvasTheme {
   };
 }
 
-function qualityColor(quality: EquipmentQuality): string {
+function qualityColor(quality: string | null): string {
   if (quality === "orange") return "#f59e0b";
   if (quality === "purple") return "#8b5cf6";
   if (quality === "blue") return "#0ea5e9";

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setFrontendLanguage } from "@/lib/i18n";
-import type { PluginPanel } from "@/lib/tauri/toolkit-client";
+import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import { RELEASE_ACTIONS } from "@/lib/tauri/release-plugin-client";
 import { HostLoadingControls } from "./host-loading-controls";
 import { HostControls } from "./host-controls";
@@ -9,7 +9,6 @@ import { PluginControls } from "./plugin-controls";
 import { pluginControlGroup } from "./release-control-groups";
 
 const panel: PluginPanel = {
-  contractVersion: 5,
   loadingMethod: "proxy",
   gameDirectory: null,
   connectionIdentity: "123:456",

@@ -1,5 +1,7 @@
+use crate::contract::island::IslandTone;
 use std::io::{self, Write};
 
+use nte_dps_tool::engine::model::AbyssHalf;
 use nte_dps_tool::storage::history::{
     HistoryDeleteTombstone, HistoryRecord, HistoryRecordExportError, HistoryRecordLoadError,
     MAX_HISTORY_IMPORT_BYTES, compare_records, export_prepared_history_record_to_path,
@@ -119,7 +121,7 @@ pub(crate) async fn save_current_history_summary(
     island::publish_notice_best_effort(
         &app,
         &state,
-        "success",
+        IslandTone::Success,
         "History summary saved",
         Vec::new(),
     );
@@ -155,7 +157,7 @@ pub(crate) async fn import_history_record_json(
     island::publish_notice_best_effort(
         &app,
         &notice_state,
-        "success",
+        IslandTone::Success,
         "History summary imported",
         Vec::new(),
     );
@@ -212,7 +214,7 @@ pub(crate) async fn delete_history_record(
     island::publish_notice_best_effort(
         &app,
         &notice_state,
-        "success",
+        IslandTone::Success,
         "History summary deleted",
         Vec::new(),
     );
@@ -250,7 +252,7 @@ pub(crate) async fn restore_deleted_history_record(
     island::publish_notice_best_effort(
         &app,
         &notice_state,
-        "success",
+        IslandTone::Success,
         "History summary restored",
         Vec::new(),
     );
@@ -359,21 +361,12 @@ pub(crate) async fn compare_history_records(
 #[tauri::command]
 pub(crate) async fn set_history_prediction_team(
     record_id: String,
-    line: String,
+    line: AbyssHalf,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<HistorySnapshot, CommandError> {
     console::validate_window(&window)?;
-    let upper = match line.as_str() {
-        "upper" => true,
-        "lower" => false,
-        _ => {
-            return Err(CommandError::history(
-                "history_prediction_line_invalid",
-                "History prediction line is invalid.",
-            ));
-        }
-    };
+    let upper = line == AbyssHalf::First;
     let state = state.inner().clone();
     let state_for_task = state.clone();
     let team = tauri::async_runtime::spawn_blocking(move || {

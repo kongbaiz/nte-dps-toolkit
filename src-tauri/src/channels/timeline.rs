@@ -1,3 +1,4 @@
+use nte_dps_tool::core::timeline::TimelineScope;
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
@@ -5,12 +6,8 @@ use crate::{
         PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
         validate_subscription_id,
     },
-    commands::timeline::{parse_scope, snapshot},
-    contract::{
-        CommandError, SubscriptionReceipt,
-        stream::{StreamDeliveryBody, StreamKind},
-        timeline::TimelineEvent,
-    },
+    commands::timeline::snapshot,
+    contract::{CommandError, SubscriptionReceipt, stream::StreamKind, timeline::TimelineEvent},
     state::AppState,
     windows::console,
 };
@@ -19,14 +16,13 @@ pub(crate) const TIMELINE_STREAM_INTERVAL_MS: u32 = 100;
 #[tauri::command]
 pub(crate) fn subscribe_timeline(
     subscription_id: String,
-    scope: String,
-    on_event: Channel<StreamDeliveryBody<TimelineEvent>>,
+    scope: TimelineScope,
+    on_event: Channel<TimelineEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    let scope = parse_scope(&scope)?;
     state
         .main_dps_stream_revision()
         .map_err(CommandError::from_core)?;
@@ -93,14 +89,11 @@ mod tests {
         TimelineRoleProjection, TimelineScope, TimelineSegmentProjection,
     };
 
-    use crate::{
-        channels::stream_runtime::serialize_stream_events,
-        contract::{
-            stream::MAX_STREAM_DELIVERY_BYTES,
-            timeline::{
-                MAX_TIMELINE_BUCKETS, MAX_TIMELINE_CHARACTERS, MAX_TIMELINE_ROLES_PER_BUCKET,
-                TimelineSnapshot,
-            },
+    use crate::contract::{
+        stream::MAX_STREAM_DELIVERY_BYTES,
+        timeline::{
+            MAX_TIMELINE_BUCKETS, MAX_TIMELINE_CHARACTERS, MAX_TIMELINE_ROLES_PER_BUCKET,
+            TimelineSnapshot,
         },
     };
     use nte_dps_tool::storage::config::TimelineDpsViewMode;
@@ -160,7 +153,7 @@ mod tests {
             TimelineScope::Whole,
             TimelineDpsViewMode::Characters,
         );
-        let bytes = serialize_stream_events(vec![TimelineEvent::Snapshot(snapshot)])
+        let bytes = serde_json::to_vec(&TimelineEvent::Snapshot(snapshot))
             .expect("maximal legal Timeline delivery stays serializable");
         assert!(bytes.len() <= MAX_STREAM_DELIVERY_BYTES);
         assert!(

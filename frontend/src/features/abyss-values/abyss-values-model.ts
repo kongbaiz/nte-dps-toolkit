@@ -1,9 +1,7 @@
-import type {
-  AbyssFloor,
-  AbyssMonster,
-  AbyssSeason,
-  AbyssTeam,
-} from "@/lib/tauri/abyss-values-contract";
+import type { AbyssFloorSnapshot } from "@/lib/tauri/generated/AbyssFloorSnapshot";
+import type { AbyssMonsterSnapshot } from "@/lib/tauri/generated/AbyssMonsterSnapshot";
+import type { AbyssSeasonSnapshot } from "@/lib/tauri/generated/AbyssSeasonSnapshot";
+import type { AbyssTeamSnapshot } from "@/lib/tauri/generated/AbyssTeamSnapshot";
 
 export interface AbyssFloorKey {
   season: number;
@@ -17,7 +15,7 @@ export interface AbyssWaveSummary {
 }
 
 export function initialFloorKey(
-  seasons: readonly AbyssSeason[],
+  seasons: readonly AbyssSeasonSnapshot[],
 ): AbyssFloorKey | null {
   const latest = seasons.at(-1);
   const floor = latest?.floors[0];
@@ -30,9 +28,9 @@ export function initialFloorKey(
 }
 
 export function findFloor(
-  seasons: readonly AbyssSeason[],
+  seasons: readonly AbyssSeasonSnapshot[],
   key: AbyssFloorKey | null,
-): AbyssFloor | null {
+): AbyssFloorSnapshot | null {
   if (!key) return null;
   return (
     seasons
@@ -42,9 +40,9 @@ export function findFloor(
 }
 
 export function filterMonsters(
-  monsters: readonly AbyssMonster[],
+  monsters: readonly AbyssMonsterSnapshot[],
   query: string,
-): AbyssMonster[] {
+): AbyssMonsterSnapshot[] {
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return [...monsters];
   return monsters.filter((monster) =>
@@ -59,17 +57,17 @@ export function filterMonsters(
 }
 
 export function monstersForHalf(
-  monsters: readonly AbyssMonster[],
+  monsters: readonly AbyssMonsterSnapshot[],
   half: 0 | 1,
-): AbyssMonster[] {
+): AbyssMonsterSnapshot[] {
   return monsters.filter((monster) => monster.half === half);
 }
 
-export function monsterTotalHp(monster: AbyssMonster): number {
+export function monsterTotalHp(monster: AbyssMonsterSnapshot): number {
   return monster.hpMaxBase * monster.count;
 }
 
-export function lineTotalHp(monsters: readonly AbyssMonster[]): number {
+export function lineTotalHp(monsters: readonly AbyssMonsterSnapshot[]): number {
   return monsters.reduce(
     (total, monster) => total + monsterTotalHp(monster),
     0,
@@ -77,7 +75,7 @@ export function lineTotalHp(monsters: readonly AbyssMonster[]): number {
 }
 
 export function requiredDps(
-  monsters: readonly AbyssMonster[],
+  monsters: readonly AbyssMonsterSnapshot[],
   seconds: number,
 ): number | null {
   const hp = lineTotalHp(monsters);
@@ -87,19 +85,21 @@ export function requiredDps(
 }
 
 export function predictedSeconds(
-  monsters: readonly AbyssMonster[],
-  team: AbyssTeam | null,
+  monsters: readonly AbyssMonsterSnapshot[],
+  team: AbyssTeamSnapshot | null,
 ): number | null {
   const hp = lineTotalHp(monsters);
   return team && team.dps > 0 && hp > 0 ? hp / team.dps : null;
 }
 
-export function teamHeaderMembers(team: AbyssTeam): AbyssTeam["members"] {
+export function teamHeaderMembers(
+  team: AbyssTeamSnapshot,
+): AbyssTeamSnapshot["members"] {
   return team.members.slice(0, 4);
 }
 
 export function summarizeWaves(
-  monsters: readonly AbyssMonster[],
+  monsters: readonly AbyssMonsterSnapshot[],
 ): AbyssWaveSummary[] {
   const waves = new Map<number | null, AbyssWaveSummary>();
   for (const monster of monsters) {

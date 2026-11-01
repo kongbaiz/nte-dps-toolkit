@@ -1772,7 +1772,10 @@ mod tests {
             .attacker_attributes
             .as_ref()
             .unwrap();
-        assert_eq!(attributes.id.as_deref(), Some("9007199254740993"));
+        assert_eq!(
+            serde_json::to_value(&attributes.id).unwrap(),
+            "9007199254740993"
+        );
         assert!(matches!(
             attributes.values.as_ref().unwrap()["hp"].value,
             Some(AttributeValue::Number(0.0))

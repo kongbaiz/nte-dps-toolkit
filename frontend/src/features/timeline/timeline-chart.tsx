@@ -29,13 +29,13 @@ import {
   timelineCanvasBackingSize,
   timelineTimeToX,
   timelineXToTime,
-  type TimelineCurveMode,
+  type TimelineDpsViewMode,
   type TimelinePreviewSnapshot,
   type TimelineRange,
 } from "./timeline-ui-model";
 
 interface TimelineChartProps {
-  mode: TimelineCurveMode;
+  mode: TimelineDpsViewMode;
   selectedCharacterId: number | null;
   snapshot: TimelinePreviewSnapshot;
 }

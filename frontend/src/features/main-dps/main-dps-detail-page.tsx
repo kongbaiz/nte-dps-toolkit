@@ -15,22 +15,15 @@ import {
 } from "@/components/ui/popover";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
-import {
-  currentFrontendLanguage,
-  t,
-  tf,
-  useTranslationRevision,
-} from "@/lib/i18n";
+import { t, tf, useFrontendLanguage } from "@/lib/i18n";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import { mainDpsDetailClient } from "@/lib/tauri/main-dps-detail-client";
-import type {
-  MainDpsAttributionSummary,
-  MainDpsDetailColumns,
-  MainDpsDetailFilter,
-  MainDpsDetailSnapshot,
-  MainDpsFilterSummary,
-  MainDpsHit,
-} from "@/lib/tauri/main-dps-detail-contract";
+import type { MainDpsAttributionSummary } from "@/lib/tauri/generated/MainDpsAttributionSummary";
+import type { MainDpsDetailColumns } from "@/lib/tauri/generated/MainDpsDetailColumns";
+import type { MainDpsDetailFilter } from "@/lib/tauri/generated/MainDpsDetailFilter";
+import type { MainDpsDetailSnapshot } from "@/lib/tauri/generated/MainDpsDetailSnapshot";
+import type { MainDpsFilterSummary } from "@/lib/tauri/generated/MainDpsFilterSummary";
+import type { MainDpsHitSnapshot } from "@/lib/tauri/generated/MainDpsHitSnapshot";
 import { cn } from "@/lib/utils";
 import { monsterImageUrl } from "@/features/abyss-values/abyss-values-model";
 
@@ -57,7 +50,7 @@ import {
 } from "./main-dps-detail-model";
 
 export function MainDpsDetailPage() {
-  useTranslationRevision();
+  useFrontendLanguage();
   useSettingsPresentation();
   const [snapshot, setSnapshot] = useState<MainDpsDetailSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -632,7 +625,9 @@ function HitTable({
   importReplay(): void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [selectedHit, setSelectedHit] = useState<MainDpsHit | null>(null);
+  const [selectedHit, setSelectedHit] = useState<MainDpsHitSnapshot | null>(
+    null,
+  );
   useEffect(
     () => setSelectedHit(null),
     [snapshot.kind, snapshot.characterId, snapshot.abyssHalf],
@@ -844,7 +839,7 @@ function HitRow({
   openSnapshot,
 }: {
   openSnapshot: () => void;
-  row: MainDpsHit;
+  row: MainDpsHitSnapshot;
   team: boolean;
   columns: MainDpsDetailColumns;
   maxDamage: number;
@@ -1179,7 +1174,7 @@ function ReactionLabelImages({
   reaction: number;
   fallback: string;
 }) {
-  const language = currentFrontendLanguage();
+  const language = useFrontendLanguage();
   const folder = language === "zh-CN" ? "zh" : language;
   const urls = damageImageLookup.reaction(folder, reaction);
   if (urls.length === 0) return fallback;

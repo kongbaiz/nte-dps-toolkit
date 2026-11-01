@@ -1,22 +1,17 @@
-import {
-  compareSettingsGeneration,
-  isHudModuleId,
-  type SettingsCommandError,
-  type SettingsSnapshot,
-} from "@/lib/tauri/settings-contract";
-import type {
-  HudConfigSnapshot,
-  HudModuleId,
-} from "@/lib/tauri/technical-contract";
+import type { HudConfigSnapshot } from "@/lib/tauri/generated/HudConfigSnapshot";
+import type { HudModule } from "@/lib/tauri/generated/HudModule";
+import type { SettingsSnapshot } from "@/lib/tauri/generated/SettingsSnapshot";
+import { compareDecimalStrings } from "@/lib/decimal-string";
+import { type CommandError } from "@/lib/tauri/command-error";
 
 export type SettingsPageState =
   | { status: "loading" }
   | { status: "ready"; snapshot: SettingsSnapshot }
-  | { status: "error"; error: SettingsCommandError };
+  | { status: "error"; error: CommandError };
 
 export interface HudModuleMove {
-  dragged: HudModuleId;
-  target: HudModuleId;
+  dragged: HudModule;
+  target: HudModule;
   insertAfter: boolean;
 }
 
@@ -45,21 +40,19 @@ export function shouldAcceptSettingsGeneration(
   accepted: string | null,
   incoming: string,
 ): boolean {
-  return accepted === null || compareSettingsGeneration(incoming, accepted) > 0;
+  return accepted === null || compareDecimalStrings(incoming, accepted) > 0;
 }
 
 export function shouldAcceptSettingsRefresh(
   accepted: string | null,
   incoming: string,
 ): boolean {
-  return (
-    accepted === null || compareSettingsGeneration(incoming, accepted) >= 0
-  );
+  return accepted === null || compareDecimalStrings(incoming, accepted) >= 0;
 }
 
 export function hudModuleVisible(
   hud: HudConfigSnapshot,
-  module: HudModuleId,
+  module: HudModule,
 ): boolean {
   switch (module) {
     case "title":
@@ -81,14 +74,14 @@ export function hudModuleVisible(
 }
 
 export function adjacentHudModuleMove(
-  order: readonly string[],
-  module: HudModuleId,
+  order: readonly HudModule[],
+  module: HudModule,
   direction: "up" | "down",
 ): HudModuleMove | null {
   const index = order.indexOf(module);
   const targetIndex = direction === "up" ? index - 1 : index + 1;
   const target = order[targetIndex];
-  if (index < 0 || target === undefined || !isHudModuleId(target)) {
+  if (target === undefined) {
     return null;
   }
   return {

@@ -1,5 +1,7 @@
+import { create } from "zustand";
+
 import { characterDataClient } from "@/lib/tauri/character-data-client";
-import type { CharacterDataRecord } from "@/lib/tauri/character-data-contract";
+import type { CharacterDataRecordSnapshot } from "@/lib/tauri/generated/CharacterDataRecordSnapshot";
 
 const characterImages = import.meta.glob<string>(
   "@res/images/characters/player*.png",
@@ -14,20 +16,14 @@ const imageByFileName = new Map(
   Object.entries(characterImages).map(([path, url]) => [fileName(path), url]),
 );
 
-let avatarByCharacterId = new Map<number, string>();
-let avatarCatalogRevision = 0;
-const avatarCatalogListeners = new Set<() => void>();
+/** Runtime avatar paths by character id, replaced whenever Rust reloads them. */
+export const useCharacterAvatarCatalog = create<ReadonlyMap<number, string>>(
+  () => new Map(),
+);
 
-/**
- * Resolve an avatar from the latest runtime catalog.
- *
- * Keep this function identity stable. React consumers subscribe to the
- * catalog store through `useCharacterAvatar` and non-React consumers can
- * subscribe directly; changing the resolver reference is no longer used as a
- * refresh signal.
- */
+/** Resolve an avatar from the latest runtime catalog. */
 export function resolveCharacterAvatar(charId: number): string | null {
-  const avatar = avatarByCharacterId.get(charId);
+  const avatar = useCharacterAvatarCatalog.getState().get(charId);
   return avatar ? characterAvatarPathUrl(avatar) : null;
 }
 
@@ -37,26 +33,16 @@ export async function bootstrapCharacterAvatarCatalog(): Promise<void> {
 }
 
 export function replaceCharacterAvatarCatalog(
-  records: readonly Pick<CharacterDataRecord, "id" | "avatar">[],
+  records: readonly Pick<CharacterDataRecordSnapshot, "id" | "avatar">[],
 ): void {
-  avatarByCharacterId = new Map(
-    records
-      .map((record) => [record.id, record.avatar.trim()] as const)
-      .filter((entry) => entry[1] !== ""),
+  useCharacterAvatarCatalog.setState(
+    new Map(
+      records
+        .map((record) => [record.id, record.avatar.trim()] as const)
+        .filter((entry) => entry[1] !== ""),
+    ),
+    true,
   );
-  avatarCatalogRevision += 1;
-  avatarCatalogListeners.forEach((listener) => listener());
-}
-
-export function getCharacterAvatarCatalogRevision(): number {
-  return avatarCatalogRevision;
-}
-
-export function subscribeCharacterAvatarCatalog(
-  listener: () => void,
-): () => void {
-  avatarCatalogListeners.add(listener);
-  return () => avatarCatalogListeners.delete(listener);
 }
 
 export function characterAvatarPathUrl(avatar: string): string | null {

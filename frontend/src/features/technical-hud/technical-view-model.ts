@@ -1,17 +1,14 @@
-import type {
-  CaptureSnapshot,
-  HudConfigSnapshot,
-  HudCharacterSnapshot,
-  HudModuleId,
-  HudSnapshot,
-  TechnicalCommandError,
-  TechnicalSnapshot,
-} from "@/lib/tauri/technical-contract";
-import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
+import type { CaptureSnapshot } from "@/lib/tauri/generated/CaptureSnapshot";
+import type { HudCharacterSnapshot } from "@/lib/tauri/generated/HudCharacterSnapshot";
+import type { HudConfigSnapshot } from "@/lib/tauri/generated/HudConfigSnapshot";
+import type { HudModule } from "@/lib/tauri/generated/HudModule";
+import type { HudSnapshot } from "@/lib/tauri/generated/HudSnapshot";
+import type { TechnicalSnapshot } from "@/lib/tauri/generated/TechnicalSnapshot";
+import { type CommandError } from "@/lib/tauri/command-error";
 
 export type TechnicalPageState =
   | { status: "loading" }
-  | { status: "error"; error: TechnicalCommandError }
+  | { status: "error"; error: CommandError }
   | { status: "ready"; snapshot: TechnicalSnapshot };
 
 export type HudDataTone = "empty" | "preview" | "live" | "unknown";
@@ -20,7 +17,7 @@ export type HudSurfaceTone = "blurred" | "transparent";
 export type HudModuleMoveDirection = "up" | "down";
 
 export interface HudModuleMoveIntent {
-  target: HudModuleId;
+  target: HudModule;
   insertAfter: boolean;
 }
 
@@ -87,21 +84,9 @@ export function hudCharacterName(character: HudCharacterSnapshot): string {
     : `${character.previewLabelSuffix}`;
 }
 
-export function hudModulesInOrder(config: HudConfigSnapshot): HudModuleId[] {
-  const knownModules = new Set<string>(HUD_MODULE_IDS);
-  const seen = new Set<string>();
-  return config.moduleOrder.filter((module): module is HudModuleId => {
-    if (!knownModules.has(module) || seen.has(module)) {
-      return false;
-    }
-    seen.add(module);
-    return true;
-  });
-}
-
 export function hudModuleConfiguredVisible(
   config: HudConfigSnapshot,
-  module: HudModuleId,
+  module: HudModule,
 ): boolean {
   switch (module) {
     case "title":
@@ -122,7 +107,7 @@ export function hudModuleConfiguredVisible(
   }
 }
 
-export function hudModuleLabelKey(module: HudModuleId): string {
+export function hudModuleLabelKey(module: HudModule): string {
   switch (module) {
     case "title":
       return "Title";
@@ -137,17 +122,9 @@ export function hudModuleLabelKey(module: HudModuleId): string {
   }
 }
 
-export function hudModuleDropInsertAfter(
-  pointerY: number,
-  targetTop: number,
-  targetHeight: number,
-): boolean {
-  return pointerY >= targetTop + targetHeight / 2;
-}
-
 export function hudModuleKeyboardMove(
-  modules: HudModuleId[],
-  module: HudModuleId,
+  modules: readonly HudModule[],
+  module: HudModule,
   direction: HudModuleMoveDirection,
 ): HudModuleMoveIntent | null {
   const index = modules.indexOf(module);
@@ -174,8 +151,8 @@ export function parseHudWidthDraft(value: string): number | null {
     : null;
 }
 
-export function visibleHudModules(snapshot: HudSnapshot): HudModuleId[] {
-  return hudModulesInOrder(snapshot.config).filter((module) => {
+export function visibleHudModules(snapshot: HudSnapshot): HudModule[] {
+  return snapshot.config.moduleOrder.filter((module) => {
     switch (module) {
       case "title":
         return snapshot.config.showTitle;

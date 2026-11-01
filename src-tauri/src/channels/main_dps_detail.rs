@@ -8,7 +8,7 @@ use crate::{
     contract::{
         CommandError, SubscriptionReceipt,
         main_dps_detail::{MAIN_DPS_DETAIL_PAGE_LIMIT, MainDpsDetailSnapshot},
-        stream::{StreamDeliveryBody, StreamKind},
+        stream::StreamKind,
     },
     state::AppState,
     windows::combat_details,
@@ -18,7 +18,7 @@ pub(crate) const MAIN_DPS_DETAIL_STREAM_INTERVAL_MS: u32 = 250;
 #[tauri::command]
 pub(crate) fn subscribe_main_dps_detail(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<MainDpsDetailSnapshot>>,
+    on_event: Channel<MainDpsDetailSnapshot>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {

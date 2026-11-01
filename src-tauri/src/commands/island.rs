@@ -1,3 +1,4 @@
+use crate::contract::island::IslandTone;
 use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
@@ -54,7 +55,12 @@ pub(crate) fn undo_island_notice(
         .undo_session_reset(&token)
         .map_err(super::main_dps::session_undo_error)?;
     state.dismiss_island_notice(&notice_id);
-    state.publish_island_notice("success", "Previous session restored", Vec::new(), None);
+    state.publish_island_notice(
+        IslandTone::Success,
+        "Previous session restored",
+        Vec::new(),
+        None,
+    );
     island::show_notice(&app, state.inner())?;
     Ok(IslandSnapshot::from_state(state.inner()))
 }

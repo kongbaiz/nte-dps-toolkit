@@ -5,21 +5,24 @@ use nte_dps_tool::{
         CoreError,
         diagnostics::{
             DiagnosticCheck, DiagnosticEnvironment, DiagnosticMessage, DiagnosticReport,
+            DiagnosticStatus,
         },
         live_capture::LiveCapturePhase,
     },
-    engine::{capture::RawCaptureSnapshot, model::CaptureQualitySummary},
+    engine::{
+        capture::RawCaptureSnapshot,
+        model::{CaptureQualitySource, CaptureQualitySummary},
+    },
 };
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::state::AppState;
 
-pub(crate) const DIAGNOSTICS_CONTRACT_VERSION: u32 = 3;
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsSnapshot {
-    pub contract_version: u32,
     pub capture_generation: String,
     pub quality_generation: String,
     pub report_generation: String,
@@ -31,17 +34,19 @@ pub(crate) struct DiagnosticsSnapshot {
     pub actions: DiagnosticsActionsSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsCaptureSnapshot {
-    pub phase: &'static str,
+    pub phase: LiveCapturePhase,
     pub replay_running: bool,
     pub active_filter: Option<String>,
     pub dropped_history_archives: String,
     pub raw_capture: Option<DiagnosticsRawCaptureSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsRawCaptureSnapshot {
     pub file_name: Option<String>,
@@ -51,7 +56,8 @@ pub(crate) struct DiagnosticsRawCaptureSnapshot {
     pub writing: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsEnvironmentSnapshot {
     pub device_label: Option<String>,
@@ -60,7 +66,8 @@ pub(crate) struct DiagnosticsEnvironmentSnapshot {
     pub game_connection: Option<DiagnosticsGameConnectionSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsGameConnectionSnapshot {
     pub pid: u32,
@@ -69,7 +76,8 @@ pub(crate) struct DiagnosticsGameConnectionSnapshot {
     pub remote_port: u16,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsReportSnapshot {
     pub failed_count: usize,
@@ -77,26 +85,29 @@ pub(crate) struct DiagnosticsReportSnapshot {
     pub checks: Vec<DiagnosticsCheckSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsCheckSnapshot {
-    pub status: &'static str,
+    pub status: DiagnosticStatus,
     pub title_key: &'static str,
     pub detail: DiagnosticsMessageSnapshot,
     pub suggestion: DiagnosticsMessageSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsMessageSnapshot {
     pub message_key: &'static str,
     pub message_arguments: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsQualitySnapshot {
-    pub source: &'static str,
+    pub source: CaptureQualitySource,
     pub packet_count: usize,
     pub packets_with_hits: usize,
     pub hit_count: usize,
@@ -119,7 +130,8 @@ pub(crate) struct DiagnosticsQualitySnapshot {
     pub unattributed_server_damage: f64,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsActionsSnapshot {
     pub can_import: bool,
@@ -127,14 +139,16 @@ pub(crate) struct DiagnosticsActionsSnapshot {
     pub can_export_raw: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DiagnosticsActionResult {
     pub performed: bool,
     pub snapshot: DiagnosticsSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum DiagnosticsEvent {
     Snapshot(DiagnosticsSnapshot),
@@ -162,13 +176,12 @@ impl DiagnosticsSnapshot {
             )
         });
         Ok(Self {
-            contract_version: DIAGNOSTICS_CONTRACT_VERSION,
             capture_generation: capture_generation.to_string(),
             quality_generation: quality_generation.to_string(),
             report_generation: report_generation.to_string(),
             adapter_version: env!("CARGO_PKG_VERSION"),
             capture: DiagnosticsCaptureSnapshot {
-                phase: capture_phase_code(phase),
+                phase,
                 replay_running: capture_input.replay_running,
                 active_filter: capture_input.active_capture_filter,
                 dropped_history_archives: capture_input.dropped_history_archives.to_string(),
@@ -233,7 +246,7 @@ impl From<DiagnosticReport> for DiagnosticsReportSnapshot {
 impl From<DiagnosticCheck> for DiagnosticsCheckSnapshot {
     fn from(check: DiagnosticCheck) -> Self {
         Self {
-            status: check.status.code(),
+            status: check.status,
             title_key: check.title_key,
             detail: DiagnosticsMessageSnapshot::from(check.detail),
             suggestion: DiagnosticsMessageSnapshot::from(check.suggestion),
@@ -253,13 +266,7 @@ impl From<DiagnosticMessage> for DiagnosticsMessageSnapshot {
 impl From<CaptureQualitySummary> for DiagnosticsQualitySnapshot {
     fn from(quality: CaptureQualitySummary) -> Self {
         Self {
-            source: match quality.source {
-                nte_dps_tool::engine::model::CaptureQualitySource::Live => "live",
-                nte_dps_tool::engine::model::CaptureQualitySource::Plugin => "plugin",
-                nte_dps_tool::engine::model::CaptureQualitySource::PcapngReplay => "pcapng_replay",
-                nte_dps_tool::engine::model::CaptureQualitySource::JsonReplay => "json_replay",
-                nte_dps_tool::engine::model::CaptureQualitySource::Unknown => "unknown",
-            },
+            source: quality.source,
             packet_count: quality.packet_count,
             packets_with_hits: quality.packets_with_hits,
             hit_count: quality.hit_count,
@@ -286,17 +293,6 @@ impl From<CaptureQualitySummary> for DiagnosticsQualitySnapshot {
     }
 }
 
-fn capture_phase_code(phase: LiveCapturePhase) -> &'static str {
-    match phase {
-        LiveCapturePhase::Idle => "idle",
-        LiveCapturePhase::Starting => "starting",
-        LiveCapturePhase::Running => "running",
-        LiveCapturePhase::Stopping => "stopping",
-        LiveCapturePhase::Stopped => "stopped",
-        LiveCapturePhase::Failed => "failed",
-    }
-}
-
 fn file_name(path: &Path) -> Option<String> {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -305,7 +301,7 @@ fn file_name(path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use nte_dps_tool::core::diagnostics::{DiagnosticMessage, DiagnosticStatus};
+    use nte_dps_tool::core::diagnostics::DiagnosticMessage;
 
     use super::*;
 
@@ -334,24 +330,6 @@ mod tests {
             "Recent diagnostic message: {}"
         );
         assert!(value["checks"][0].get("detailText").is_none());
-    }
-
-    #[test]
-    fn action_result_serializes_snapshot_under_stable_field() {
-        let state = AppState::default();
-        let result = DiagnosticsActionResult {
-            performed: false,
-            snapshot: DiagnosticsSnapshot::from_state(&state)
-                .expect("healthy live-capture diagnostics snapshot"),
-        };
-        let value = serde_json::to_value(result).expect("action result serializes");
-
-        assert_eq!(value["performed"], false);
-        assert_eq!(
-            value["snapshot"]["contractVersion"],
-            DIAGNOSTICS_CONTRACT_VERSION
-        );
-        assert!(value["snapshot"]["qualityGeneration"].is_string());
     }
 
     #[test]

@@ -1,10 +1,13 @@
+use crate::contract::island::IslandTone;
 use nte_dps_tool::{
     core::combat_details::CombatDetailFilter,
     core::live_capture::CaptureReplayKind,
+    core::update::UpdateComponent,
     engine::model::{AbyssHalf, MAX_INDEXED_DETAIL_KEY_BYTES},
     storage::i18n,
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+use ts_rs::TS;
 
 use crate::{
     commands::{desktop_window, settings},
@@ -12,7 +15,8 @@ use crate::{
         CommandError,
         main_dps::{MainDpsActionResult, MainDpsResetResult, MainDpsSnapshot},
         main_dps_detail::{
-            MAIN_DPS_DETAIL_DEFAULT_LIMIT, MainDpsDetailColumns, MainDpsDetailSnapshot,
+            MAIN_DPS_DETAIL_DEFAULT_LIMIT, MainDpsDetailColumns, MainDpsDetailFilter,
+            MainDpsDetailSnapshot,
         },
         update::UpdatePromptSnapshot,
     },
@@ -46,12 +50,12 @@ pub(crate) fn get_main_dps_update_prompt(
 
 #[tauri::command]
 pub(crate) async fn download_main_dps_update(
-    component: String,
+    component: UpdateComponent,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<UpdatePromptSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    let component = settings::parse_update_component(&component)?;
+    let component = settings::app_update_component(component)?;
     let state = state.inner().clone();
     settings::run_update_download(state.clone(), component)
         .await
@@ -100,7 +104,7 @@ pub(crate) fn start_main_dps_capture(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         "Starting live capture...",
         Vec::new(),
     )?;
@@ -120,7 +124,7 @@ pub(crate) fn stop_main_dps_capture(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         "Stopping live capture...",
         Vec::new(),
     )?;
@@ -177,7 +181,7 @@ pub(crate) async fn reset_main_dps_session(
     .await
     .map_err(|_| CommandError::main_dps("reset_failed", "Failed to reset the current session"))??;
     state.publish_island_notice(
-        "success",
+        IslandTone::Success,
         if result.undo_token.is_some() {
             "Session reset · use Undo within 5 seconds"
         } else {
@@ -201,7 +205,12 @@ pub(crate) fn undo_main_dps_reset(
     state
         .undo_session_reset(&undo_token)
         .map_err(session_undo_error)?;
-    state.publish_island_notice("success", "Previous session restored", Vec::new(), None);
+    state.publish_island_notice(
+        IslandTone::Success,
+        "Previous session restored",
+        Vec::new(),
+        None,
+    );
     island::show_notice(&app, state.inner())?;
     snapshot(state.inner())
 }
@@ -232,7 +241,7 @@ pub(crate) fn start_main_dps_new_round_action(
     island::publish_notice(
         app,
         state,
-        "success",
+        IslandTone::Success,
         "New combat round started",
         Vec::new(),
     )?;
@@ -253,7 +262,7 @@ pub(crate) fn set_main_dps_paused(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         if paused {
             "Processing paused"
         } else {
@@ -311,42 +320,36 @@ pub(crate) fn set_main_dps_onboarding_step(
 
 #[tauri::command]
 pub(crate) fn finish_main_dps_onboarding(
-    hud_preset: String,
+    hud_preset: crate::state::HudPreset,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    let preset = match hud_preset.as_str() {
-        "minimal" => crate::state::HudPreset::Minimal,
-        "standard" => crate::state::HudPreset::Standard,
-        "detailed" => crate::state::HudPreset::Detailed,
-        _ => return Err(action_unavailable()),
-    };
-    state.finish_onboarding(preset).map_err(|error| {
+    state.finish_onboarding(hud_preset).map_err(|error| {
         log::error!("finish main DPS onboarding failed: {error}");
         CommandError::main_dps("config_save_failed", "Failed to finish onboarding")
     })?;
     if let Some(hud_window) = app.get_webview_window(hud::HUD_WINDOW_LABEL) {
         let _ = hud::sync_content_height(&hud_window, state.inner());
     }
-    island::publish_notice(&app, state.inner(), "success", "Setup complete", Vec::new())?;
+    island::publish_notice(
+        &app,
+        state.inner(),
+        IslandTone::Success,
+        "Setup complete",
+        Vec::new(),
+    )?;
     snapshot(state.inner())
 }
 
 #[tauri::command]
 pub(crate) fn select_main_dps_abyss_half(
-    half: String,
+    half: Option<AbyssHalf>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    let half = match half.as_str() {
-        "all" => None,
-        "first" => Some(AbyssHalf::First),
-        "second" => Some(AbyssHalf::Second),
-        _ => return Err(action_unavailable()),
-    };
     state
         .set_main_selected_abyss_half(half)
         .map_err(presentation_error)?;
@@ -355,7 +358,7 @@ pub(crate) fn select_main_dps_abyss_half(
 
 #[tauri::command]
 pub(crate) async fn import_main_dps_replay(
-    kind: String,
+    kind: CaptureReplayKind,
     replace_current: bool,
     app: AppHandle,
     state: State<'_, AppState>,
@@ -377,11 +380,6 @@ pub(crate) async fn import_main_dps_replay(
     let reservation = state
         .begin_replay_import(replace_current)
         .map_err(replay_import_error)?;
-    let kind = match kind.as_str() {
-        "pcapng" => CaptureReplayKind::Pcapng,
-        "json" => CaptureReplayKind::Json,
-        _ => return Err(action_unavailable()),
-    };
     let title = i18n::t(match kind {
         CaptureReplayKind::Pcapng => "Wireshark capture",
         CaptureReplayKind::Json => "NTE exported capture",
@@ -419,7 +417,7 @@ pub(crate) async fn import_main_dps_replay(
         island::publish_notice(
             &app,
             &state,
-            "status",
+            IslandTone::Info,
             "Importing and parsing capture",
             Vec::new(),
         )?;
@@ -491,16 +489,24 @@ pub(crate) async fn import_main_dps_replay_path(
     island::publish_notice(
         &app,
         &state,
-        "status",
+        IslandTone::Info,
         "Importing and parsing capture",
         Vec::new(),
     )?;
     Ok(result)
 }
 
+#[derive(Clone, Copy, Debug, serde::Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ConsoleShortcutTarget {
+    Palette,
+    Packets,
+}
+
 #[tauri::command]
 pub(crate) fn open_main_dps_console_shortcut(
-    target: String,
+    target: ConsoleShortcutTarget,
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
@@ -508,14 +514,13 @@ pub(crate) fn open_main_dps_console_shortcut(
     let console_window = app
         .get_webview_window(console::CONSOLE_WINDOW_LABEL)
         .ok_or_else(CommandError::window_operation_failed)?;
-    match target.as_str() {
-        "palette" => console_window
+    match target {
+        ConsoleShortcutTarget::Palette => console_window
             .emit("console-command-palette-open", ())
             .map_err(window_error)?,
-        "packets" => console_window
+        ConsoleShortcutTarget::Packets => console_window
             .emit(console::CONSOLE_NAVIGATE_EVENT, "packets")
             .map_err(window_error)?,
-        _ => return Err(action_unavailable()),
     }
     console_window.show().map_err(window_error)?;
     console_window.unminimize().map_err(window_error)?;
@@ -539,7 +544,7 @@ pub(crate) fn set_main_dps_always_on_top(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         if enabled {
             "Always-on-top enabled"
         } else {
@@ -642,13 +647,13 @@ pub(crate) fn open_main_dps_character_details(
 
 #[tauri::command]
 pub(crate) fn open_main_dps_team_details(
-    filter: String,
+    filter: MainDpsDetailFilter,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
     main_dps::validate_window(&window)?;
-    let filter = parse_detail_filter(&filter)?;
+    let filter = combat_detail_filter(filter, None)?;
     open_team_details_with_filter(&app, state.inner(), filter)
 }
 
@@ -677,10 +682,10 @@ fn open_team_details_with_filter(
     show_combat_details(app, state, MainDpsDetailKind::Team)
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HitSnapshotReply {
-    contract_version: u32,
     hit_id: String,
     snapshot_key: String,
     snapshot: nte_dps_tool::engine::model::plugin_snapshot::PluginHitSnapshot,
@@ -709,7 +714,6 @@ pub(crate) fn get_main_dps_hit_snapshot(
     })?;
     // Clone/serialize the bounded requested detail outside the authoritative state lock.
     Ok(HitSnapshotReply {
-        contract_version: 1,
         hit_id,
         snapshot_key,
         snapshot: (*snapshot).clone(),
@@ -736,7 +740,7 @@ pub(crate) fn get_main_dps_detail_snapshot(
 
 #[tauri::command]
 pub(crate) fn set_main_dps_detail_view(
-    filter: String,
+    filter: MainDpsDetailFilter,
     qte_type: Option<String>,
     skill_filter: Option<String>,
     state: State<'_, AppState>,
@@ -747,12 +751,7 @@ pub(crate) fn set_main_dps_detail_view(
     let current = state.main_dps_detail_request(kind);
     let qte_type = validate_optional_detail_key(qte_type)?;
     let skill_filter = validate_optional_detail_key(skill_filter)?;
-    let filter = if filter == "qteType" {
-        let attack_type = qte_type.ok_or_else(action_unavailable)?;
-        CombatDetailFilter::QteType(attack_type)
-    } else {
-        parse_detail_filter(&filter)?
-    };
+    let filter = combat_detail_filter(filter, qte_type)?;
     state
         .set_main_dps_detail_request(
             kind,
@@ -808,7 +807,7 @@ pub(crate) fn set_main_dps_passthrough(
     island::publish_notice(
         &app,
         state.inner(),
-        "status",
+        IslandTone::Info,
         message_key,
         message_arguments,
     )?;
@@ -897,18 +896,23 @@ fn validate_main_detail_or_console_window(window: &WebviewWindow) -> Result<(), 
     }
 }
 
-fn parse_detail_filter(value: &str) -> Result<CombatDetailFilter, CommandError> {
-    match value {
-        "all" => Ok(CombatDetailFilter::All),
-        "outgoing" => Ok(CombatDetailFilter::Outgoing),
-        "incoming" => Ok(CombatDetailFilter::Incoming),
-        "characterAttributed" => Ok(CombatDetailFilter::CharacterAttributed),
-        "characterDirect" => Ok(CombatDetailFilter::CharacterDirect),
-        "reactionDamage" => Ok(CombatDetailFilter::ReactionDamage),
-        "sharedMechanics" => Ok(CombatDetailFilter::SharedMechanics),
-        "unattributed" => Ok(CombatDetailFilter::Unattributed),
-        _ => Err(action_unavailable()),
-    }
+fn combat_detail_filter(
+    filter: MainDpsDetailFilter,
+    qte_type: Option<String>,
+) -> Result<CombatDetailFilter, CommandError> {
+    Ok(match filter {
+        MainDpsDetailFilter::All => CombatDetailFilter::All,
+        MainDpsDetailFilter::Outgoing => CombatDetailFilter::Outgoing,
+        MainDpsDetailFilter::Incoming => CombatDetailFilter::Incoming,
+        MainDpsDetailFilter::CharacterAttributed => CombatDetailFilter::CharacterAttributed,
+        MainDpsDetailFilter::CharacterDirect => CombatDetailFilter::CharacterDirect,
+        MainDpsDetailFilter::ReactionDamage => CombatDetailFilter::ReactionDamage,
+        MainDpsDetailFilter::SharedMechanics => CombatDetailFilter::SharedMechanics,
+        MainDpsDetailFilter::Unattributed => CombatDetailFilter::Unattributed,
+        MainDpsDetailFilter::QteType => {
+            CombatDetailFilter::QteType(qte_type.ok_or_else(action_unavailable)?)
+        }
+    })
 }
 
 fn validate_optional_detail_key(value: Option<String>) -> Result<Option<String>, CommandError> {
@@ -1006,20 +1010,6 @@ fn window_error(error: tauri::Error) -> CommandError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detail_filter_ids_are_bounded_to_the_shared_contract() {
-        assert_eq!(
-            parse_detail_filter("characterDirect").expect("character filter"),
-            CombatDetailFilter::CharacterDirect
-        );
-        assert_eq!(
-            parse_detail_filter("sharedMechanics").expect("shared filter"),
-            CombatDetailFilter::SharedMechanics
-        );
-        assert!(parse_detail_filter("../all").is_err());
-        assert!(parse_detail_filter("qteType").is_err());
-    }
 
     #[test]
     fn detail_string_filters_enforce_utf8_byte_budget() {

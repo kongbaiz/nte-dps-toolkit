@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { HistoryRecord } from "@/lib/tauri/history-contract";
+import type { HistoryRecordSnapshot } from "@/lib/tauri/generated/HistoryRecordSnapshot";
 import {
   adjacentHistoryRecordId,
   historyComparisonWarningKeys,
@@ -11,7 +11,7 @@ import {
   validHistoryComparisonPair,
 } from "./history-view-model";
 
-const record = (id: string) => ({ id }) as HistoryRecord;
+const record = (id: string) => ({ id }) as HistoryRecordSnapshot;
 
 describe("History view model", () => {
   it("preserves selection across refresh and falls back to newest", () => {

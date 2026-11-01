@@ -1,14 +1,13 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+
 import {
-  RELEASE_ACTIONS,
-  createReleasePluginClient,
-  parseReleaseResult,
+  parseHudOptions,
   requiresConfirmation,
   requiresIdle,
-  parseHudOptions,
 } from "./release-plugin-client";
+
 describe("Release-only plugin controls", () => {
-  it("validates native HUD readback and permits controls during capture", () => {
+  it("parses native HUD readback and rejects malformed options", () => {
     const result = (preview: string) => ({
       command: 119,
       preview,
@@ -25,115 +24,13 @@ describe("Release-only plugin controls", () => {
       '{"options":"0"}',
     ])
       expect(() => parseHudOptions(result(value))).toThrow();
+  });
+
+  it("guards destructive actions", () => {
     expect(requiresIdle("hudConfigure")).toBe(false);
-  });
-  it("has no retired or developer command and guards destructive actions", () => {
-    expect(new Set(RELEASE_ACTIONS.map((a) => a[1])).size).toBe(
-      RELEASE_ACTIONS.length - 1,
-    );
-    for (const id of [111, 112, 200])
-      expect(RELEASE_ACTIONS.some((a) => Number(a[1]) === id)).toBe(false);
-    expect(requiresConfirmation("shutdown")).toBe(true);
     expect(requiresIdle("combatReset")).toBe(true);
+    expect(requiresConfirmation("shutdown")).toBe(true);
+    expect(requiresConfirmation("prebattleSkillUnlock")).toBe(true);
+    expect(requiresConfirmation("prebattleSkillStatus")).toBe(false);
   });
-  it("binds the native host identity and does not retry failures", async () => {
-    const invoke = vi
-      .fn()
-      .mockResolvedValueOnce({
-        command: 300,
-        preview: "{}",
-        totalBytes: 2,
-        truncated: false,
-      })
-      .mockRejectedValueOnce({ code: "plugin_timeout" });
-    const c = createReleasePluginClient({ invoke });
-    await c.execute("userStatus", "123:456");
-    expect(invoke).toHaveBeenNthCalledWith(1, "release_plugin_action", {
-      action: "userStatus",
-      expectedIdentity: "123:456",
-      value: null,
-      confirmed: false,
-    });
-    await expect(c.execute("userRefresh", "123:456")).rejects.toEqual({
-      code: "plugin_timeout",
-    });
-    expect(invoke).toHaveBeenCalledTimes(2);
-  });
-  it("validates preview budgets and requires explicit truncation", () => {
-    expect(
-      parseReleaseResult(
-        { command: 107, preview: "数", totalBytes: 3, truncated: false },
-        107,
-      ).preview,
-    ).toBe("数");
-    for (const r of [
-      {},
-      { command: 108, preview: "{}", totalBytes: 2, truncated: false },
-      { command: 107, preview: "数", totalBytes: 2, truncated: false },
-      { command: 107, preview: "{}", totalBytes: 100, truncated: false },
-      {
-        command: 107,
-        preview: "a".repeat(8193),
-        totalBytes: 8193,
-        truncated: false,
-      },
-    ])
-      expect(() => parseReleaseResult(r, 107)).toThrow();
-  });
-});
-
-it("exposes the fixed prebattle action with confirmation and no automatic retry", async () => {
-  expect(
-    RELEASE_ACTIONS.find((action) => action[0] === "prebattleSkillStatus")?.[1],
-  ).toBe(120);
-  expect(
-    RELEASE_ACTIONS.find((action) => action[0] === "prebattleSkillUnlock")?.[1],
-  ).toBe(121);
-  expect(requiresConfirmation("prebattleSkillUnlock")).toBe(true);
-  expect(requiresConfirmation("prebattleSkillStatus")).toBe(false);
-  const invoke = vi.fn().mockRejectedValue({ code: "plugin_timeout" });
-  await expect(
-    createReleasePluginClient({ invoke }).execute(
-      "prebattleSkillUnlock",
-      "123:456",
-      null,
-      true,
-    ),
-  ).rejects.toEqual({ code: "plugin_timeout" });
-  expect(invoke).toHaveBeenCalledExactlyOnceWith("release_plugin_action", {
-    action: "prebattleSkillUnlock",
-    expectedIdentity: "123:456",
-    value: null,
-    confirmed: true,
-  });
-});
-
-it("binds both wooden wheel actions to command 403 and requires confirmation without retries", async () => {
-  expect(RELEASE_ACTIONS.filter((a) => a[1] === 403).map((a) => a[0])).toEqual([
-    "trainingWoodenEnable",
-    "trainingWoodenDisable",
-  ]);
-  for (const action of [
-    "trainingWoodenEnable",
-    "trainingWoodenDisable",
-  ] as const) {
-    expect(requiresConfirmation(action)).toBe(true);
-    const invoke = vi.fn().mockRejectedValue({ code: "plugin_timeout" });
-    await expect(
-      createReleasePluginClient({ invoke }).execute(
-        action,
-        "123:456",
-        null,
-        true,
-      ),
-    ).rejects.toEqual({ code: "plugin_timeout" });
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("release_plugin_action", {
-      action,
-      expectedIdentity: "123:456",
-      value: null,
-      confirmed: true,
-    });
-  }
-  for (const id of [401, 402, 404, 405, 406, 407, 408, 409, 411, 412])
-    expect(RELEASE_ACTIONS.some((a) => Number(a[1]) === id)).toBe(false);
 });

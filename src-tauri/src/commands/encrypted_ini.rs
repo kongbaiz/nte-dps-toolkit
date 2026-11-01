@@ -1,3 +1,4 @@
+use crate::contract::island::IslandTone;
 use nte_dps_tool::{
     core::encrypted_ini::{EncryptedIniError, EncryptedIniSaveOutcome},
     storage::i18n,
@@ -9,7 +10,7 @@ use crate::{
         CommandError,
         encrypted_ini::{
             EncryptedIniSnapshot, OpenEncryptedIniResult, SaveEncryptedIniRequest,
-            SaveEncryptedIniResult, parse_encrypted_ini_key, parse_generation,
+            SaveEncryptedIniResult, parse_generation,
         },
     },
     encrypted_ini_service::EncryptedIniServiceError,
@@ -73,7 +74,7 @@ pub(crate) async fn open_encrypted_ini(
             island::publish_notice_best_effort(
                 &app,
                 &notice_state,
-                "success",
+                IslandTone::Success,
                 "Encrypted INI opened",
                 Vec::new(),
             );
@@ -108,7 +109,7 @@ pub(crate) async fn reload_encrypted_ini(
     island::publish_notice_best_effort(
         &app,
         &notice_state,
-        "success",
+        IslandTone::Success,
         "Encrypted INI reloaded",
         Vec::new(),
     );
@@ -125,7 +126,7 @@ pub(crate) async fn save_encrypted_ini(
     console::validate_window(&window)?;
     let expected_generation =
         parse_generation(&request.expected_generation).ok_or_else(invalid_request_error)?;
-    let key = parse_encrypted_ini_key(&request.key).ok_or_else(invalid_request_error)?;
+    let key = request.key;
     let state = state.inner().clone();
     let notice_state = state.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -142,7 +143,7 @@ pub(crate) async fn save_encrypted_ini(
     island::publish_notice_best_effort(
         &app,
         &notice_state,
-        "success",
+        IslandTone::Success,
         if result.saved {
             "Encrypted INI saved"
         } else {
@@ -167,7 +168,7 @@ pub(crate) fn clear_encrypted_ini(
     island::publish_notice_best_effort(
         &app,
         state.inner(),
-        "success",
+        IslandTone::Success,
         "Encrypted INI editor cleared",
         Vec::new(),
     );

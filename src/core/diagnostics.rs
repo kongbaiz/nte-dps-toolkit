@@ -13,7 +13,9 @@ use crate::platform::network::{
 };
 use crate::storage::i18n::{self, LocaleLoadDiagnostic};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
 pub enum DiagnosticStatus {
     Passed,
     #[default]
@@ -22,14 +24,6 @@ pub enum DiagnosticStatus {
 }
 
 impl DiagnosticStatus {
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::Passed => "passed",
-            Self::Warning => "warning",
-            Self::Failed => "failed",
-        }
-    }
-
     pub const fn label_key(self) -> &'static str {
         match self {
             Self::Passed => "Passed",

@@ -15,7 +15,6 @@ use crate::{
     storage::config::{HudConfig, HudModule},
 };
 
-pub const HUD_SNAPSHOT_VERSION: u32 = 3;
 pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
 /// UTF-8 byte budget for a live/read-model character label. Imported hit names
 /// are untrusted and a single label must never be able to overflow a desktop
@@ -33,6 +32,7 @@ pub fn bounded_character_name(character_id: u32, candidate: &str) -> String {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum HudDataState {
     Empty,
@@ -41,6 +41,7 @@ pub enum HudDataState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum HudAbyssHalf {
     First,
@@ -56,33 +57,12 @@ impl From<AbyssHalf> for HudAbyssHalf {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HudModuleSnapshot {
-    Title,
-    Summary,
-    Status,
-    Characters,
-    Timeline,
-}
-
-impl From<HudModule> for HudModuleSnapshot {
-    fn from(value: HudModule) -> Self {
-        match value {
-            HudModule::Title => Self::Title,
-            HudModule::Summary => Self::Summary,
-            HudModule::Status => Self::Status,
-            HudModule::Characters => Self::Characters,
-            HudModule::Timeline => Self::Timeline,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudConfigSnapshot {
     pub width: u16,
-    pub module_order: Vec<HudModuleSnapshot>,
+    pub module_order: Vec<HudModule>,
     pub show_title: bool,
     pub show_team_dps: bool,
     pub show_duration: bool,
@@ -99,11 +79,7 @@ impl From<&HudConfig> for HudConfigSnapshot {
         let config = config.clone().sanitized();
         Self {
             width: config.width,
-            module_order: config
-                .module_order
-                .into_iter()
-                .map(HudModuleSnapshot::from)
-                .collect(),
+            module_order: config.module_order,
             show_title: config.show_title,
             show_team_dps: config.show_team_dps,
             show_duration: config.show_duration,
@@ -118,6 +94,7 @@ impl From<&HudConfig> for HudConfigSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudSummarySnapshot {
     pub team_dps: f64,
@@ -127,6 +104,7 @@ pub struct HudSummarySnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudCharacterSnapshot {
     pub character_id: u32,
@@ -141,6 +119,7 @@ pub struct HudCharacterSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudStatusSnapshot {
     pub abyss_detected: bool,
@@ -150,6 +129,7 @@ pub struct HudStatusSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudTimelineBucketSnapshot {
     pub start_seconds: f64,
@@ -160,6 +140,7 @@ pub struct HudTimelineBucketSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudTimelineSnapshot {
     pub bucket_seconds: f64,
@@ -169,9 +150,9 @@ pub struct HudTimelineSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudSnapshot {
-    pub version: u32,
     pub data_state: HudDataState,
     pub config: HudConfigSnapshot,
     pub summary: Option<HudSummarySnapshot>,
@@ -287,7 +268,6 @@ pub fn project_hud(
     };
 
     HudSnapshot {
-        version: HUD_SNAPSHOT_VERSION,
         data_state,
         config,
         summary,
@@ -863,7 +843,7 @@ mod tests {
         let projected = HudConfigSnapshot::from(&config);
 
         assert_eq!(projected.module_order.len(), HudModule::all().len());
-        assert_eq!(projected.module_order[0], HudModuleSnapshot::Characters);
+        assert_eq!(projected.module_order[0], HudModule::Characters);
     }
 
     #[test]

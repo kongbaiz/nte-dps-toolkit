@@ -13,10 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { Markdown } from "@/components/ui/markdown";
 import { t, tf } from "@/lib/i18n";
-import type {
-  AvailableUpdate,
-  UpdateSettings,
-} from "@/lib/tauri/settings-contract";
+import type { AvailableUpdateSnapshot } from "@/lib/tauri/generated/AvailableUpdateSnapshot";
+import type { UpdateSettingsSnapshot } from "@/lib/tauri/generated/UpdateSettingsSnapshot";
 import {
   formatByteCount,
   formatUpdateByteProgress,
@@ -26,7 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 
 interface UpdatePromptDialogProps {
-  updates: UpdateSettings;
+  updates: UpdateSettingsSnapshot;
   pending: boolean;
   error: string | null;
   onLater(): void;
@@ -144,7 +142,7 @@ export function UpdatePromptDialog({
   );
 }
 
-function ReleaseNotes({ update }: { update: AvailableUpdate }) {
+function ReleaseNotes({ update }: { update: AvailableUpdateSnapshot }) {
   return (
     <article className="rounded-xl border bg-muted/20 p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -169,8 +167,8 @@ function ReleaseNotes({ update }: { update: AvailableUpdate }) {
 }
 
 function preferredUpdate(
-  updates: readonly AvailableUpdate[],
-): AvailableUpdate | null {
+  updates: readonly AvailableUpdateSnapshot[],
+): AvailableUpdateSnapshot | null {
   return (
     updates.find((update) => update.component === "app") ?? updates[0] ?? null
   );

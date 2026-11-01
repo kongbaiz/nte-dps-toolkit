@@ -34,7 +34,7 @@
 **不是边界**（不得再校验）：
 
 - Rust 模块之间的调用；Rust 刚产出或刚持久化的数据。
-- Rust → Tauri → React 的 DTO。前端与 Rust 打包在同一个二进制里，不存在版本漂移。
+- Rust → Tauri → React 的 DTO。前端与 Rust 打包在同一个二进制里，不存在版本漂移。DTO 的 TS 类型由 ts-rs 生成到 `frontend/src/lib/tauri/generated/`，不手写镜像类型或 validator。
 - React → Tauri command 参数。用 serde 类型（含 `#[serde(rename_all)]` 枚举）直接反序列化，不手写 `parse_*`。
 - 已被上游类型或入口保证的值，例如 enum、非空、范围、已排序、“恰好一个 live row”。
 
@@ -104,7 +104,7 @@
 - **边框与装饰**：默认使用 `--ui-border-width`（0.5px），不写 `1px`/`border-2` 外框。禁止卡片左侧彩色竖条，包括 `w-[3px]` 绝对定位条、`border-l-2` 色条和 inset 阴影条纹。同一层级的浮层使用同一档阴影。
 - **文案**：不用 “·” 作分隔符（包括 Rust 侧生成给 UI 的文案）；不加眉题/uppercase overline；页面描述不复述标题。用户可见文案走 i18n，英文为 key，简中在 `res/languages/zh-CN.json`。删除文案时同时删除 key。
 - **动效**：时长与缓动只用 `lib/motion.ts` 和 CSS token 中的一套刻度，默认 `ease-out 250ms`；尊重减少动态效果偏好。装饰性动效不新增。
-- **库**：拖拽排序使用 dnd-kit，可调面板使用 react-resizable-panels，动画使用 Motion，跨组件共享客户端状态使用 Zustand。这些库目前尚未引入，首次引入按第 9 节确认。确认之前不扩写现有的手写实现（`use-hud-module-pointer-reorder.ts`、`use-layout-flip.ts` 等），也不新增第二份手写实现。
+- **库**：拖拽排序用 dnd-kit（`components/nte/hud-module-sortable.tsx`），动画用 Motion（`MotionConfig` 在 `WindowMotionBoundary` 中跟随减少动效设置），跨组件共享客户端状态用 Zustand（`lib/i18n.ts`、`lib/settings-presentation.ts`、`lib/character-avatar.ts`）。可调分栏用 react-resizable-panels，第一次真正用到时再加依赖。不新增手写的指针拖拽排序、FLIP 布局动画、数值插值或 `useSyncExternalStore` store。
 - **样式层**：不从祖先选择器覆盖组件内部（`[data-slot]`、`> div:first-child`、`textarea` 等）；`!important` 仅限透明窗口与减少动效这两个平台例外。
 - **无障碍**：图标按钮需要有 Tooltip 或 `aria-label`；Dialog、Sheet、Drawer 需要有可访问标题。
 
@@ -144,6 +144,7 @@
 | 前端 | `pnpm --dir frontend format:check`、`lint`、`typecheck`，以及相关的 `vitest` 文件 |
 | Rust 核心 | `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`，以及 `cargo test <filter>` |
 | Tauri adapter | 上一行命令加上 `--manifest-path src-tauri/Cargo.toml` |
+| 带 `#[derive(TS)]` 的 DTO | 删除 `frontend/src/lib/tauri/generated/` 后运行 `cargo test --manifest-path src-tauri/Cargo.toml export_bindings` 和 `cargo test --features tauri_frontend --lib export_bindings`，提交生成结果 |
 | 依赖或 feature | `pwsh scripts/verify_architecture.ps1`、`cargo check --no-default-features --features cli` |
 
 - 依靠编译器、类型、clippy 和行为测试来验证。不新增基于正则扫描源码的门禁脚本，也不为现有门禁脚本扩写规则。
@@ -161,7 +162,7 @@
 | 包解析、战斗模型 | `src/engine/`、`tests/` |
 | 状态归并、capture/history/replay | `src/core/reducer.rs`、`src/core/live_capture.rs`、`src/storage/history.rs` |
 | CLI 协议 | `docs/CLI_PROTOCOL_ZH.md`、`src/api/`、`src/cli/` |
-| Tauri 命令与 Channel | `src-tauri/src/state.rs`、`src-tauri/src/commands/`、`src-tauri/src/channels/`、`frontend/src/lib/tauri/` |
+| Tauri 命令与 Channel | `src-tauri/src/state.rs`、`src-tauri/src/commands/`、`src-tauri/src/channels/`、`frontend/src/lib/tauri/`（`generated/` 由 ts-rs 生成） |
 | 前端与 i18n | `frontend/README.md`、`frontend-guidelines.md`、`frontend/src/`、`res/languages/zh-CN.json` |
 | Windows、HUD、窗口 | `src/platform/`、`src-tauri/src/windows/` |
 | Mod ABI / IPC | `src/platform/mods_plugin.rs`；Loader 源码在私有 UETools-NTE 工作区 |

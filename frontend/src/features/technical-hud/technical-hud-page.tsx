@@ -21,10 +21,12 @@ import {
   ShieldCheck,
   Square,
 } from "lucide-react";
+import { motion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { ActionNotice } from "@/components/nte/action-notice";
 import { AnimatedNumber } from "@/components/nte/animated-number";
+import { HudModuleSortableList } from "@/components/nte/hud-module-sortable";
 import { useWindowMotion } from "@/components/nte/window-motion-context";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -36,6 +38,7 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useHudModuleSortable } from "@/hooks/use-hud-module-sortable";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import {
   Tooltip,
@@ -45,19 +48,15 @@ import {
 import { t, tf } from "@/lib/i18n";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { characterAccent } from "@/lib/character-color";
-import { useHudModulePointerReorder } from "@/hooks/use-hud-module-pointer-reorder";
-import { useLayoutFlip } from "@/hooks/use-layout-flip";
 import {
   showMainDpsFromHud,
   startHudWindowDragging,
 } from "@/lib/tauri/hud-window-client";
 import { cn } from "@/lib/utils";
-import type {
-  HudCharacterSnapshot,
-  HudModuleId,
-  HudSnapshot,
-  TechnicalSnapshot,
-} from "@/lib/tauri/technical-contract";
+import type { HudCharacterSnapshot } from "@/lib/tauri/generated/HudCharacterSnapshot";
+import type { HudModule } from "@/lib/tauri/generated/HudModule";
+import type { HudSnapshot } from "@/lib/tauri/generated/HudSnapshot";
+import type { TechnicalSnapshot } from "@/lib/tauri/generated/TechnicalSnapshot";
 
 import {
   captureAction,
@@ -67,10 +66,8 @@ import {
   hudCharacterName,
   hudDataTone,
   hudModuleConfiguredVisible,
-  hudModuleDropInsertAfter,
   hudModuleKeyboardMove,
   hudModuleLabelKey,
-  hudModulesInOrder,
   hudSurfaceTone,
   parseHudWidthDraft,
   type TechnicalPageState,
@@ -166,12 +163,12 @@ interface TechnicalContentProps {
   onPassthroughChange: (enabled: boolean) => Promise<void>;
   onAlwaysOnTopChange: (enabled: boolean) => Promise<void>;
   onHudModuleVisibilityChange: (
-    module: HudModuleId,
+    module: HudModule,
     visible: boolean,
   ) => Promise<void>;
   onHudModuleMove: (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => Promise<void>;
   onHudWidthChange: (width: number) => Promise<void>;
@@ -276,12 +273,12 @@ interface HudEditorRailProps {
   onPassthroughChange: (enabled: boolean) => Promise<void>;
   onAlwaysOnTopChange: (enabled: boolean) => Promise<void>;
   onHudModuleVisibilityChange: (
-    module: HudModuleId,
+    module: HudModule,
     visible: boolean,
   ) => Promise<void>;
   onHudModuleMove: (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => Promise<void>;
   onHudWidthChange: (width: number) => Promise<void>;
@@ -393,26 +390,19 @@ function HudModuleControls({
   onWidthChange,
 }: {
   hud: HudSnapshot;
-  onVisibilityChange: (module: HudModuleId, visible: boolean) => Promise<void>;
+  onVisibilityChange: (module: HudModule, visible: boolean) => Promise<void>;
   onMove: (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => Promise<void>;
   onWidthChange: (width: number) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [pendingModule, setPendingModule] = useState<HudModuleId | null>(null);
+  const [pendingModule, setPendingModule] = useState<HudModule | null>(null);
   const [movePending, setMovePending] = useState(false);
   const [widthPending, setWidthPending] = useState(false);
-  const [draggedModule, setDraggedModule] = useState<HudModuleId | null>(null);
-  const draggedModuleRef = useRef<HudModuleId | null>(null);
-  const moduleRows = useRef(new Map<HudModuleId, HTMLDivElement>());
-  const [dropTarget, setDropTarget] = useState<{
-    module: HudModuleId;
-    insertAfter: boolean;
-  } | null>(null);
-  const modules = hudModulesInOrder(hud.config);
+  const modules = hud.config.moduleOrder;
   const pending = pendingModule !== null || movePending || widthPending;
   useEffect(() => {
     if (!open) return;
@@ -423,7 +413,7 @@ function HudModuleControls({
     };
   }, [open]);
 
-  const setVisibility = async (module: HudModuleId, visible: boolean) => {
+  const setVisibility = async (module: HudModule, visible: boolean) => {
     setPendingModule(module);
     try {
       await onVisibilityChange(module, visible);
@@ -433,13 +423,10 @@ function HudModuleControls({
   };
 
   const moveModule = async (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => {
-    if (dragged === target) {
-      return;
-    }
     setMovePending(true);
     try {
       await onMove(dragged, target, insertAfter);
@@ -457,91 +444,10 @@ function HudModuleControls({
     }
   };
 
-  const resetDrag = () => {
-    draggedModuleRef.current = null;
-    setDraggedModule(null);
-    setDropTarget(null);
-  };
-
-  const startPointerDrag = (
-    event: PointerEvent<HTMLButtonElement>,
-    module: HudModuleId,
-  ) => {
-    if (pending || event.button !== 0 || !event.isPrimary) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    draggedModuleRef.current = module;
-    setDraggedModule(module);
-    setDropTarget(null);
-  };
-
-  const pointerDropTarget = (
-    clientX: number,
-    clientY: number,
-  ): typeof dropTarget => {
-    const dragged = draggedModuleRef.current;
-    if (dragged === null) {
-      return null;
-    }
-
-    for (const module of modules) {
-      const row = moduleRows.current.get(module);
-      if (module === dragged || row === undefined) {
-        continue;
-      }
-      const rect = row.getBoundingClientRect();
-      if (
-        clientX >= rect.left &&
-        clientX <= rect.right &&
-        clientY >= rect.top &&
-        clientY <= rect.bottom
-      ) {
-        return {
-          module,
-          insertAfter: hudModuleDropInsertAfter(clientY, rect.top, rect.height),
-        };
-      }
-    }
-    return null;
-  };
-
-  const movePointerDrag = (event: PointerEvent<HTMLButtonElement>) => {
-    if (draggedModuleRef.current === null) {
-      return;
-    }
-    event.preventDefault();
-    const target = pointerDropTarget(event.clientX, event.clientY);
-    setDropTarget((current) =>
-      current?.module === target?.module &&
-      current?.insertAfter === target?.insertAfter
-        ? current
-        : target,
-    );
-  };
-
-  const finishPointerDrag = (event: PointerEvent<HTMLButtonElement>) => {
-    const dragged = draggedModuleRef.current;
-    if (dragged === null) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    const target = pointerDropTarget(event.clientX, event.clientY);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    resetDrag();
-    if (target !== null && !pending) {
-      void moveModule(dragged, target.module, target.insertAfter);
-    }
-  };
-
   const moveWithKeyboard = (
     event: KeyboardEvent<HTMLButtonElement>,
-    module: HudModuleId,
+    order: readonly HudModule[],
+    module: HudModule,
   ) => {
     const direction =
       event.key === "ArrowUp"
@@ -552,7 +458,7 @@ function HudModuleControls({
     if (direction === null || pending) {
       return;
     }
-    const intent = hudModuleKeyboardMove(modules, module, direction);
+    const intent = hudModuleKeyboardMove(order, module, direction);
     if (intent === null) {
       return;
     }
@@ -595,85 +501,28 @@ function HudModuleControls({
                 {t("HUD modules")}
               </PopoverTitle>
               <div className="flex flex-col gap-1">
-                {modules.map((module) => {
-                  const visible = hudModuleConfiguredVisible(
-                    hud.config,
-                    module,
-                  );
-                  const label = t(hudModuleLabelKey(module));
-                  const isDropTarget = dropTarget?.module === module;
-                  return (
-                    <div
-                      key={module}
-                      ref={(row) => {
-                        if (row === null) {
-                          moduleRows.current.delete(module);
-                        } else {
-                          moduleRows.current.set(module, row);
-                        }
-                      }}
-                      className={cn(
-                        "relative flex h-6 items-center gap-1 rounded px-1 text-xs hover:bg-white/5",
-                        draggedModule === module && "opacity-45",
-                      )}
-                    >
-                      {isDropTarget ? (
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            "motion-drop-indicator pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-cyan-300",
-                            dropTarget.insertAfter ? "-bottom-0.5" : "-top-0.5",
-                          )}
-                        />
-                      ) : null}
-                      <button
-                        type="button"
-                        className={cn(
-                          "grid size-5 shrink-0 touch-none cursor-grab place-items-center rounded text-white/45 hover:bg-white/10 hover:text-white/85 active:cursor-grabbing disabled:cursor-default disabled:opacity-35",
-                          draggedModule === module && "cursor-grabbing",
-                        )}
+                <HudModuleSortableList
+                  modules={modules}
+                  disabled={pending}
+                  onMove={moveModule}
+                >
+                  {(order) =>
+                    order.map((module) => (
+                      <HudModuleControlRow
+                        key={module}
+                        module={module}
+                        visible={hudModuleConfiguredVisible(hud.config, module)}
                         disabled={pending}
-                        aria-label={`${t(
-                          "Drag to reorder; use Up and Down arrow keys to move",
-                        )}: ${label}`}
-                        title={t(
-                          "Drag to reorder; use Up and Down arrow keys to move",
-                        )}
-                        onPointerDown={(event) =>
-                          startPointerDrag(event, module)
+                        onKeyDown={(event) =>
+                          moveWithKeyboard(event, order, module)
                         }
-                        onPointerMove={movePointerDrag}
-                        onPointerUp={finishPointerDrag}
-                        onPointerCancel={resetDrag}
-                        onLostPointerCapture={() => {
-                          if (draggedModuleRef.current !== null) {
-                            resetDrag();
-                          }
-                        }}
-                        onKeyDown={(event) => moveWithKeyboard(event, module)}
-                      >
-                        <GripVertical className="size-3.5" aria-hidden="true" />
-                      </button>
-                      <label
-                        htmlFor={`hud-module-${module}`}
-                        className="min-w-0 flex-1 truncate"
-                      >
-                        {label}
-                      </label>
-                      <Switch
-                        id={`hud-module-${module}`}
-                        aria-label={t(
-                          visible ? "Hide module" : "Restore module",
-                        )}
-                        checked={visible}
-                        disabled={pending}
-                        onCheckedChange={(enabled) =>
-                          void setVisibility(module, enabled)
+                        onVisibilityChange={(visible) =>
+                          void setVisibility(module, visible)
                         }
                       />
-                    </div>
-                  );
-                })}
+                    ))
+                  }
+                </HudModuleSortableList>
               </div>
               <HudWidthControl
                 width={hud.config.width}
@@ -685,6 +534,64 @@ function HudModuleControls({
           </PopoverPositioner>
         </PopoverPortal>
       </Popover>
+    </div>
+  );
+}
+
+function HudModuleControlRow({
+  module,
+  visible,
+  disabled,
+  onKeyDown,
+  onVisibilityChange,
+}: {
+  module: HudModule;
+  visible: boolean;
+  disabled: boolean;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onVisibilityChange: (visible: boolean) => void;
+}) {
+  const sortable = useHudModuleSortable(module);
+  const label = t(hudModuleLabelKey(module));
+  return (
+    <div
+      ref={sortable.rowRef}
+      style={sortable.rowStyle}
+      className={cn(
+        "relative flex h-6 items-center gap-1 rounded px-1 text-xs hover:bg-white/5",
+        sortable.dragging && "z-10 bg-white/10",
+      )}
+    >
+      <button
+        ref={sortable.handleRef}
+        type="button"
+        className={cn(
+          "grid size-5 shrink-0 touch-none cursor-grab place-items-center rounded text-white/45 hover:bg-white/10 hover:text-white/85 active:cursor-grabbing disabled:cursor-default disabled:opacity-35",
+          sortable.dragging && "cursor-grabbing",
+        )}
+        disabled={disabled}
+        aria-label={`${t(
+          "Drag to reorder; use Up and Down arrow keys to move",
+        )}: ${label}`}
+        title={t("Drag to reorder; use Up and Down arrow keys to move")}
+        {...sortable.handleListeners}
+        onKeyDown={onKeyDown}
+      >
+        <GripVertical className="size-3.5" aria-hidden="true" />
+      </button>
+      <label
+        htmlFor={`hud-module-${module}`}
+        className="min-w-0 flex-1 truncate"
+      >
+        {label}
+      </label>
+      <Switch
+        id={`hud-module-${module}`}
+        aria-label={t(visible ? "Hide module" : "Restore module")}
+        checked={visible}
+        disabled={disabled}
+        onCheckedChange={onVisibilityChange}
+      />
     </div>
   );
 }
@@ -812,8 +719,8 @@ function HudProjection({
 }: {
   snapshot: TechnicalSnapshot;
   onModuleMove: (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => Promise<void>;
 }) {
@@ -823,8 +730,8 @@ function HudProjection({
   const moduleLayoutKey = modules.join("|");
   const [movePending, setMovePending] = useState(false);
   const moveModule = async (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => {
     setMovePending(true);
@@ -834,11 +741,6 @@ function HudProjection({
       setMovePending(false);
     }
   };
-  const reorder = useHudModulePointerReorder({
-    modules,
-    disabled: movePending,
-    onMove: moveModule,
-  });
 
   if (tone === "empty") {
     return (
@@ -864,44 +766,42 @@ function HudProjection({
     );
   }
 
+  const passthrough = snapshot.window.passthrough;
+  const contents = new Map<HudModule, ReactNode>();
+  for (const module of modules) {
+    const content = renderHudModule(hud, module, passthrough);
+    if (content !== null) contents.set(module, content);
+  }
   return (
     <div className="flex flex-col gap-1">
-      {modules.map((module) => {
-        const content = renderHudModule(
-          hud,
-          module,
-          snapshot.window.passthrough,
-        );
-        if (content === null) return null;
-        return (
-          <HudLayoutModule
-            key={module}
-            module={module}
-            layoutKey={moduleLayoutKey}
-          >
-            {snapshot.window.passthrough ? (
-              content
-            ) : (
-              <HudEditableModule
-                module={module}
-                modules={modules}
-                draggedModule={reorder.draggedModule}
-                dropTarget={reorder.dropTarget}
-                movePending={movePending}
-                onModuleRowChange={reorder.setModuleRow}
-                onPointerDragStart={reorder.startPointerDrag}
-                onPointerDragMove={reorder.movePointerDrag}
-                onPointerDragEnd={reorder.finishPointerDrag}
-                onPointerDragCancel={reorder.cancelPointerDrag}
-                onPointerCaptureLost={reorder.losePointerCapture}
-                onMove={moveModule}
-              >
-                {content}
-              </HudEditableModule>
-            )}
-          </HudLayoutModule>
-        );
-      })}
+      <HudModuleSortableList
+        modules={[...contents.keys()]}
+        disabled={movePending || passthrough}
+        onMove={moveModule}
+      >
+        {(order) =>
+          order.map((module) => (
+            <HudLayoutModule
+              key={module}
+              module={module}
+              layoutKey={moduleLayoutKey}
+            >
+              {passthrough ? (
+                contents.get(module)
+              ) : (
+                <HudEditableModule
+                  module={module}
+                  modules={order}
+                  movePending={movePending}
+                  onMove={moveModule}
+                >
+                  {contents.get(module)}
+                </HudEditableModule>
+              )}
+            </HudLayoutModule>
+          ))
+        }
+      </HudModuleSortableList>
     </div>
   );
 }
@@ -911,21 +811,27 @@ function HudLayoutModule({
   layoutKey,
   children,
 }: {
-  module: HudModuleId;
+  module: HudModule;
   layoutKey: string;
   children: ReactNode;
 }) {
-  const ref = useLayoutFlip<HTMLDivElement>(layoutKey);
+  // Rust's order is the dependency: a dropped drag is already in place, so only
+  // reorders that arrive from elsewhere (popover, keyboard, Settings) animate.
   return (
-    <div ref={ref} className="hud-layout-module" data-hud-module={module}>
+    <motion.div
+      layout="position"
+      layoutDependency={layoutKey}
+      className="hud-layout-module"
+      data-hud-module={module}
+    >
       {children}
-    </div>
+    </motion.div>
   );
 }
 
 function renderHudModule(
   hud: HudSnapshot,
-  module: HudModuleId,
+  module: HudModule,
   passthrough: boolean,
 ): ReactNode {
   switch (module) {
@@ -949,40 +855,21 @@ function renderHudModule(
 function HudEditableModule({
   module,
   modules,
-  draggedModule,
-  dropTarget,
   movePending,
-  onModuleRowChange,
-  onPointerDragStart,
-  onPointerDragMove,
-  onPointerDragEnd,
-  onPointerDragCancel,
-  onPointerCaptureLost,
   onMove,
   children,
 }: {
-  module: HudModuleId;
-  modules: HudModuleId[];
-  draggedModule: HudModuleId | null;
-  dropTarget: { module: HudModuleId; insertAfter: boolean } | null;
+  module: HudModule;
+  modules: readonly HudModule[];
   movePending: boolean;
-  onModuleRowChange: (module: HudModuleId, row: HTMLElement | null) => void;
-  onPointerDragStart: (
-    event: PointerEvent<HTMLElement>,
-    module: HudModuleId,
-  ) => void;
-  onPointerDragMove: (event: PointerEvent<HTMLElement>) => void;
-  onPointerDragEnd: (event: PointerEvent<HTMLElement>) => void;
-  onPointerDragCancel: () => void;
-  onPointerCaptureLost: () => void;
   onMove: (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => Promise<void>;
   children: ReactNode;
 }) {
-  const selectedTarget = dropTarget?.module === module ? dropTarget : null;
+  const sortable = useHudModuleSortable(module);
   const moveWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
     const direction =
       event.key === "ArrowUp"
@@ -999,34 +886,23 @@ function HudEditableModule({
 
   return (
     <section
-      ref={(row) => onModuleRowChange(module, row)}
+      ref={sortable.rowRef}
+      style={sortable.rowStyle}
       className={cn(
         "relative rounded-sm border border-dashed border-emerald-500/70",
-        draggedModule === module && "opacity-45",
+        sortable.dragging && "z-10",
       )}
     >
-      {selectedTarget ? (
-        <span
-          className={cn(
-            "motion-drop-indicator pointer-events-none absolute inset-x-0 z-20 h-0.5 bg-emerald-300",
-            selectedTarget.insertAfter ? "-bottom-px" : "-top-px",
-          )}
-          aria-hidden="true"
-        />
-      ) : null}
       <button
+        ref={sortable.handleRef}
         type="button"
         className={cn(
           "hud-text-halo flex h-5 w-full touch-none cursor-grab select-none items-center gap-1 bg-emerald-400/15 px-1.5 text-left text-xs font-medium text-emerald-100 active:cursor-grabbing",
-          draggedModule === module && "cursor-grabbing",
+          sortable.dragging && "cursor-grabbing",
         )}
         disabled={movePending}
         aria-label={tf("Drag {} to reorder", [t(hudModuleLabelKey(module))])}
-        onPointerDown={(event) => onPointerDragStart(event, module)}
-        onPointerMove={onPointerDragMove}
-        onPointerUp={onPointerDragEnd}
-        onPointerCancel={onPointerDragCancel}
-        onLostPointerCapture={onPointerCaptureLost}
+        {...sortable.handleListeners}
         onKeyDown={moveWithKeyboard}
       >
         <GripVertical className="size-3" aria-hidden="true" />

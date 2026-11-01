@@ -9,14 +9,15 @@ import { Check, Info, TriangleAlert, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
-import { t, tf, useTranslationRevision } from "@/lib/i18n";
+import { t, tf, useFrontendLanguage } from "@/lib/i18n";
 import { MOTION_DURATION, waitForMotion } from "@/lib/motion";
-import { islandClient, type IslandSnapshot } from "@/lib/tauri/island-client";
-import { parseIslandCommandError } from "@/lib/tauri/island-contract";
+import { toCommandError } from "@/lib/tauri/command-error";
+import type { IslandSnapshot } from "@/lib/tauri/generated/IslandSnapshot";
+import { islandClient } from "@/lib/tauri/island-client";
 import { cn } from "@/lib/utils";
 
 export function IslandPage() {
-  useTranslationRevision();
+  useFrontendLanguage();
   const [snapshot, setSnapshot] = useState<IslandSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exiting, setExiting] = useState(false);
@@ -45,7 +46,7 @@ export function IslandPage() {
         .catch((value) => {
           if (!lifecycle.current.mounted || ticket !== lifecycle.current.serial)
             return;
-          const error = parseIslandCommandError(value);
+          const error = toCommandError(value);
           setError(tf(error.messageKey, error.messageArguments));
         });
     };
@@ -54,7 +55,7 @@ export function IslandPage() {
       islandClient.subscribe(refresh),
       (value) => {
         if (!active) return;
-        const error = parseIslandCommandError(value);
+        const error = toCommandError(value);
         setError(tf(error.messageKey, error.messageArguments));
       },
     );
@@ -82,7 +83,7 @@ export function IslandPage() {
       } catch (value) {
         if (!lifecycle.current.mounted || ticket !== lifecycle.current.serial)
           return;
-        const commandError = parseIslandCommandError(value);
+        const commandError = toCommandError(value);
         setError(tf(commandError.messageKey, commandError.messageArguments));
         setExiting(false);
       } finally {
@@ -113,7 +114,7 @@ export function IslandPage() {
   const Icon =
     notice.tone === "success"
       ? Check
-      : notice.tone === "warning" || notice.tone === "error"
+      : notice.tone === "error"
         ? TriangleAlert
         : Info;
 
@@ -124,7 +125,6 @@ export function IslandPage() {
         className={cn(
           "motion-island pointer-events-auto flex h-full w-full items-center gap-3 rounded-full border border-white/10 bg-zinc-950/96 px-4 text-white shadow-2xl shadow-black/35 backdrop-blur-2xl",
           notice.tone === "error" && "text-red-300",
-          notice.tone === "warning" && "text-amber-300",
           notice.tone === "success" && "text-emerald-300",
           notice.tone === "info" && "text-sky-300",
         )}
@@ -167,7 +167,7 @@ export function IslandPage() {
                     ticket !== lifecycle.current.serial
                   )
                     return;
-                  const commandError = parseIslandCommandError(value);
+                  const commandError = toCommandError(value);
                   setError(
                     tf(commandError.messageKey, commandError.messageArguments),
                   );

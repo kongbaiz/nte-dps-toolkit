@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { InterfaceSettings } from "@/lib/tauri/settings-contract";
+import type { InterfaceSettingsSnapshot } from "@/lib/tauri/generated/InterfaceSettingsSnapshot";
 
 import { settingsPresentationEqual } from "./settings-presentation-model";
 
-const PRESENTATION: InterfaceSettings = {
+const PRESENTATION: InterfaceSettingsSnapshot = {
   language: "zh-CN",
   darkMode: false,
   themePreset: "zinc",

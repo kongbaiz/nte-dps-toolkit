@@ -16,10 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { t, tf } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import {
-  INITIAL_CHARACTER_REQUEST,
-  type UserCharacters,
-} from "@/lib/tauri/user-characters-client";
+import type { CharacterResponse } from "@/lib/tauri/generated/CharacterResponse";
+import { INITIAL_CHARACTER_REQUEST } from "@/lib/tauri/user-characters-client";
 import { useUserCharacters } from "./use-user-characters";
 import { CharacterSnapshotDetail } from "./character-build-sheet";
 import { panelImage } from "./character-build-model";
@@ -251,7 +249,7 @@ export function CharacterDataPage() {
     </section>
   );
 }
-function SnapshotStatus({ snapshot }: { snapshot: UserCharacters | null }) {
+function SnapshotStatus({ snapshot }: { snapshot: CharacterResponse | null }) {
   if (!snapshot) return t("No account snapshot loaded.");
   if (!snapshot.sdkCompatible) return t("The User plugin SDK is not ready.");
   if (snapshot.state === "failed")

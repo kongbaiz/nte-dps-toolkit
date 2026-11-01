@@ -1,18 +1,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
 
-interface DraggableWindow {
-  startDragging(): Promise<void>;
-}
+import { invokeCommand } from "@/lib/tauri/command-error";
 
-export function showMainDpsFromHud(): Promise<void> {
-  return invoke("show_main_dps_from_hud");
-}
+export const showMainDpsFromHud = () =>
+  invokeCommand<void>("show_main_dps_from_hud");
 
-type CurrentWindowProvider = () => DraggableWindow;
-
-export function startHudWindowDragging(
-  currentWindow: CurrentWindowProvider = getCurrentWindow,
-): Promise<void> {
-  return currentWindow().startDragging();
-}
+export const startHudWindowDragging = () => getCurrentWindow().startDragging();

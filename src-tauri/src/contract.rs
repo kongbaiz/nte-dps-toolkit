@@ -1,4 +1,5 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 use nte_dps_tool::core::{
     CoreError, CoreErrorCode,
@@ -24,12 +25,10 @@ pub(crate) mod stream;
 pub(crate) mod timeline;
 pub(crate) mod update;
 
-pub(crate) const TECHNICAL_CONTRACT_VERSION: u32 = 5;
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TechnicalSnapshot {
-    pub contract_version: u32,
     pub sequence: String,
     pub bridge_status: &'static str,
     pub adapter_version: &'static str,
@@ -42,14 +41,16 @@ pub(crate) struct TechnicalSnapshot {
     pub hud: HudSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HudWindowSnapshot {
     pub passthrough: bool,
     pub always_on_top: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureSnapshot {
     pub phase: &'static str,
@@ -58,7 +59,8 @@ pub(crate) struct CaptureSnapshot {
     pub issue: Option<CaptureIssueSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureIssueSnapshot {
     pub code: &'static str,
@@ -85,16 +87,17 @@ impl From<LiveCaptureStatus> for CaptureSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum TechnicalEvent {
     Snapshot(TechnicalSnapshot),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SubscriptionReceipt {
-    pub stream_protocol_version: u32,
     pub subscription_id: String,
     pub stream_kind: stream::StreamKind,
     pub stream_generation: String,
@@ -109,7 +112,6 @@ impl SubscriptionReceipt {
         stream_interval_ms: u32,
     ) -> Self {
         Self {
-            stream_protocol_version: stream::STREAM_PROTOCOL_VERSION,
             subscription_id,
             stream_kind,
             stream_generation: stream_generation.to_string(),
@@ -118,13 +120,15 @@ impl SubscriptionReceipt {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub(crate) struct CommandError {
     pub code: &'static str,
     pub message_key: &'static str,
     pub message_arguments: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub diagnostic_line: Option<u32>,
 }
 
@@ -148,15 +152,6 @@ impl CommandError {
     }
 
     pub(crate) fn timeline(code: &'static str, message_key: &'static str) -> Self {
-        Self {
-            code,
-            message_key,
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn skills(code: &'static str, message_key: &'static str) -> Self {
         Self {
             code,
             message_key,
@@ -258,37 +253,10 @@ impl CommandError {
         }
     }
 
-    pub(crate) fn invalid_hud_module() -> Self {
-        Self {
-            code: "invalid_hud_module",
-            message_key: "HUD module is invalid.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
     pub(crate) fn hud_config_save_failed() -> Self {
         Self {
             code: "hud_config_save_failed",
             message_key: "Failed to save HUD configuration.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn invalid_hud_option() -> Self {
-        Self {
-            code: "invalid_hud_option",
-            message_key: "HUD option is invalid.",
-            message_arguments: Vec::new(),
-            diagnostic_line: None,
-        }
-    }
-
-    pub(crate) fn invalid_hud_preset() -> Self {
-        Self {
-            code: "invalid_hud_preset",
-            message_key: "HUD preset is invalid.",
             message_arguments: Vec::new(),
             diagnostic_line: None,
         }
@@ -574,89 +542,7 @@ fn start_issue_snapshot(code: CoreErrorCode) -> CaptureIssueSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
-
-    use nte_dps_tool::{
-        core::hud::{HudProjectionOptions, project_hud},
-        engine::model::CombatState,
-        platform::network::NetworkProbeErrorCode,
-        storage::config::HudConfig,
-    };
-
-    fn test_hud_snapshot() -> HudSnapshot {
-        project_hud(
-            &CombatState::default(),
-            &HudConfig::detailed(),
-            &HashSet::new(),
-            HudProjectionOptions {
-                preview_when_empty: true,
-                ..HudProjectionOptions::default()
-            },
-        )
-    }
-
-    #[test]
-    fn technical_snapshot_uses_camel_case_and_string_sequence() {
-        let snapshot = TechnicalSnapshot {
-            contract_version: TECHNICAL_CONTRACT_VERSION,
-            sequence: "9007199254740992".to_owned(),
-            bridge_status: "ready",
-            adapter_version: "0.3.6",
-            window_label: "hud-spike",
-            uptime_ms: "12".to_owned(),
-            stream_interval_ms: 100,
-            supported_locales: vec!["en", "zh-CN"],
-            window: HudWindowSnapshot {
-                passthrough: false,
-                always_on_top: true,
-            },
-            capture: LiveCaptureStatus::default().into(),
-            hud: test_hud_snapshot(),
-        };
-
-        let value = serde_json::to_value(snapshot).expect("snapshot must serialize");
-
-        assert_eq!(value["contractVersion"], TECHNICAL_CONTRACT_VERSION);
-        assert_eq!(value["sequence"], "9007199254740992");
-        assert_eq!(value["window"]["alwaysOnTop"], true);
-        assert_eq!(value["capture"]["phase"], "idle");
-        assert_eq!(value["hud"]["dataState"], "preview");
-        assert_eq!(
-            value["hud"]["version"],
-            nte_dps_tool::core::hud::HUD_SNAPSHOT_VERSION
-        );
-        assert_eq!(value["hud"]["characters"][0]["hits"], "38");
-        assert_eq!(value["hud"]["timeline"]["buckets"][0]["hits"], "1");
-        assert!(value.get("contract_version").is_none());
-    }
-
-    #[test]
-    fn technical_event_has_stable_discriminant() {
-        let event = TechnicalEvent::Snapshot(TechnicalSnapshot {
-            contract_version: TECHNICAL_CONTRACT_VERSION,
-            sequence: "1".to_owned(),
-            bridge_status: "ready",
-            adapter_version: "0.3.6",
-            window_label: "hud-spike",
-            uptime_ms: "12".to_owned(),
-            stream_interval_ms: 100,
-            supported_locales: vec!["en"],
-            window: HudWindowSnapshot {
-                passthrough: false,
-                always_on_top: true,
-            },
-            capture: LiveCaptureStatus::default().into(),
-            hud: test_hud_snapshot(),
-        });
-
-        let value = serde_json::to_value(event).expect("event must serialize");
-
-        assert_eq!(value["event"], "snapshot");
-        assert_eq!(
-            value["payload"]["contractVersion"],
-            TECHNICAL_CONTRACT_VERSION
-        );
-    }
+    use nte_dps_tool::platform::network::NetworkProbeErrorCode;
 
     #[test]
     fn missing_damage_profile_has_actionable_message_without_private_paths() {

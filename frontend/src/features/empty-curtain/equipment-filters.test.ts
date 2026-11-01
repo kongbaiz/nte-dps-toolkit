@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { EmptyCurtainItem } from "@/lib/tauri/empty-curtain-contract";
+import type { EmptyCurtainItemSnapshot } from "@/lib/tauri/generated/EmptyCurtainItemSnapshot";
 
 import {
   activeEquipmentFilterCount,
@@ -14,7 +14,7 @@ function item(
   characterId: number | null,
   mainstat: string,
   substats: string[],
-): EmptyCurtainItem {
+): EmptyCurtainItemSnapshot {
   return {
     uid: { slot: Number(filterId), serial: 1 },
     itemId: filterId,

@@ -1,8 +1,8 @@
-import type { InterfaceSettings } from "@/lib/tauri/settings-contract";
+import type { InterfaceSettingsSnapshot } from "@/lib/tauri/generated/InterfaceSettingsSnapshot";
 
 export function settingsPresentationEqual(
-  left: InterfaceSettings,
-  right: InterfaceSettings,
+  left: InterfaceSettingsSnapshot,
+  right: InterfaceSettingsSnapshot,
 ): boolean {
   return (
     left.language === right.language &&

@@ -1,3 +1,4 @@
+use crate::contract::island::IslandTone;
 #[cfg(test)]
 use nte_dps_tool::platform::mods_plugin::ModsPluginGameRegion;
 use nte_dps_tool::storage::config::ModStudioLoadingMethod;
@@ -35,7 +36,7 @@ use nte_dps_tool::{
         packets::{
             PacketStreamRevision, PacketsProjection, project_packets_since, project_recent_packets,
         },
-        skills::{SkillsProjection, SkillsProjectionOptions, SkillsScope, project_skills},
+        skills::{SkillsProjection, SkillsProjectionOptions, project_skills},
         snapshot::{InventorySnapshot, inventory_snapshot},
         timeline::{
             TimelineProjection, TimelineProjectionOptions, TimelineScope, project_timeline,
@@ -85,7 +86,7 @@ use nte_dps_tool::core::history::prepare_history_archive;
 use crate::{
     character_data_service::{CharacterDataService, CharacterDataServiceError},
     contract::{
-        HudWindowSnapshot, TECHNICAL_CONTRACT_VERSION, TechnicalSnapshot,
+        HudWindowSnapshot, TechnicalSnapshot,
         main_dps_detail::MainDpsDetailSnapshot,
         settings::{CaptureDeviceSnapshot, SettingsSnapshot, UpdateSettingsSnapshot},
         timeline::{MAX_TIMELINE_BUCKETS, MAX_TIMELINE_CHARACTERS, MAX_TIMELINE_ROLES_PER_BUCKET},
@@ -677,7 +678,7 @@ pub(crate) struct MainDpsReadout {
 #[derive(Clone, Debug)]
 pub(crate) struct IslandNoticeState {
     pub(crate) id: String,
-    pub(crate) tone: &'static str,
+    pub(crate) tone: IslandTone,
     pub(crate) message_key: &'static str,
     pub(crate) message_arguments: Vec<String>,
     pub(crate) undo_token: Option<String>,
@@ -693,7 +694,7 @@ struct IslandNoticeRuntime {
 impl IslandNoticeRuntime {
     fn publish(
         &self,
-        tone: &'static str,
+        tone: IslandTone,
         message_key: &'static str,
         message_arguments: Vec<String>,
         undo_token: Option<String>,
@@ -701,7 +702,6 @@ impl IslandNoticeRuntime {
         // Ephemeral notification state is safe to reset after an interrupted
         // mutation. The replacement is the sole externally visible change.
         let (mut notice, _) = self.lock_discarding_poison();
-        let tone = if tone == "status" { "info" } else { tone };
         if let Some(current) = notice.as_ref()
             && Instant::now() < current.expires_at
             && current.tone == tone
@@ -1139,7 +1139,9 @@ fn history_archive_policy(config: &UiConfig) -> HistoryArchivePolicy {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum HudSettingOption {
     Title,
     TeamDps,
@@ -1152,7 +1154,9 @@ pub(crate) enum HudSettingOption {
     MiniTimeline,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum HudPreset {
     Minimal,
     Standard,
@@ -1493,7 +1497,6 @@ impl AppState {
             .collect();
 
         Ok(TechnicalSnapshot {
-            contract_version: TECHNICAL_CONTRACT_VERSION,
             sequence: sequence.to_string(),
             bridge_status: "ready",
             adapter_version: env!("CARGO_PKG_VERSION"),
@@ -1543,7 +1546,7 @@ impl AppState {
 
     pub(crate) fn publish_island_notice(
         &self,
-        tone: &'static str,
+        tone: IslandTone,
         message_key: &'static str,
         message_arguments: Vec<String>,
         undo_token: Option<String>,
@@ -4125,7 +4128,7 @@ impl AppState {
 
     pub(crate) fn skills_projection(
         &self,
-        scope: SkillsScope,
+        scope: TimelineScope,
     ) -> Result<SkillsProjection, CoreError> {
         let config = self.ui_config();
         let resources = self.0.live_capture.resources();
@@ -4552,7 +4555,8 @@ mod tests {
     use std::{fs, time::SystemTime};
 
     use super::*;
-    use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
+    use nte_dps_tool::core::hud::HudDataState;
+    use nte_dps_tool::storage::config::{HudModule, MainDpsAttribution, MainDpsMetric};
 
     #[test]
     fn stream_delivery_waits_for_exact_owner_generation_and_sequence_ack() {
@@ -4739,21 +4743,22 @@ mod tests {
                     .collect();
                 assert_eq!(assist.iter().map(|h| h.damage).sum::<f64>(), expected);
                 assert!(assist.iter().all(|h| h.char_id == 1042));
-                use nte_dps_tool::core::skills::{
-                    SkillsProjectionOptions, SkillsScope, project_skills,
+                use nte_dps_tool::core::{
+                    skills::{SkillsProjectionOptions, project_skills},
+                    timeline::TimelineScope,
                 };
                 let skills = project_skills(
                     &archived,
                     &HashMap::new(),
                     SkillsProjectionOptions {
-                        scope: SkillsScope::Whole,
+                        scope: TimelineScope::Whole,
                         language: nte_dps_tool::storage::i18n::Language::SimplifiedChinese,
                     },
                 );
                 let skills = crate::contract::skills::SkillsSnapshot::from_projection(
                     skills,
                     1,
-                    SkillsScope::Whole,
+                    TimelineScope::Whole,
                 );
                 for (effect, expected_name) in [
                     (6114, "失乐鸟·协同攻击"),
@@ -7633,7 +7638,10 @@ mod tests {
             .expect("finish update check");
         let snapshot = state.settings_snapshot();
         assert_eq!(snapshot.updates.status, "available");
-        assert_eq!(snapshot.updates.available[0].component, "app");
+        assert_eq!(
+            snapshot.updates.available[0].component,
+            UpdateComponent::App
+        );
 
         state
             .begin_update_download(UpdateComponent::App)
@@ -7669,7 +7677,7 @@ mod tests {
                 .prepared
                 .as_ref()
                 .map(|item| item.component),
-            Some("app")
+            Some(UpdateComponent::App)
         );
         assert!(snapshot.updates.install_enabled);
     }
@@ -7930,11 +7938,11 @@ mod tests {
         assert_eq!(
             snapshot.hud.module_order,
             [
-                HudModuleSnapshot::Timeline,
-                HudModuleSnapshot::Characters,
-                HudModuleSnapshot::Status,
-                HudModuleSnapshot::Summary,
-                HudModuleSnapshot::Title,
+                HudModule::Timeline,
+                HudModule::Characters,
+                HudModule::Status,
+                HudModule::Summary,
+                HudModule::Title,
             ]
         );
         assert!(snapshot.hud.show_mini_timeline);
@@ -8017,9 +8025,9 @@ mod tests {
         );
 
         let snapshot = state.settings_snapshot();
-        assert_eq!(snapshot.interface.language, "ja");
+        assert_eq!(snapshot.interface.language, Language::Japanese);
         assert!(snapshot.interface.dark_mode);
-        assert_eq!(snapshot.interface.theme_preset, "tactical");
+        assert_eq!(snapshot.interface.theme_preset, ThemePreset::Tactical);
         assert_eq!(snapshot.capture.bpf_filter, "udp port 30196");
         assert_eq!(
             snapshot.capture.manual_capture_device.as_deref(),
@@ -8043,10 +8051,16 @@ mod tests {
                 .map(|binding| binding.key.as_str()),
             Some("F8")
         );
-        assert_eq!(snapshot.main_dps.metrics, ["team-dps", "duration"]);
+        assert_eq!(
+            snapshot.main_dps.metrics,
+            [MainDpsMetric::TeamDps, MainDpsMetric::Duration]
+        );
         assert_eq!(
             snapshot.main_dps.attributions,
-            ["character", "max-hp-reduction"]
+            [
+                MainDpsAttribution::Character,
+                MainDpsAttribution::MaxHpReduction
+            ]
         );
 
         let saved: UiConfig =
@@ -8089,7 +8103,7 @@ mod tests {
         );
         assert_eq!(
             restored.settings_snapshot().main_dps.metrics,
-            ["team-dps", "duration"]
+            [MainDpsMetric::TeamDps, MainDpsMetric::Duration]
         );
         assert_eq!(
             restored.0.live_capture.history_archive_policy(),
@@ -8253,11 +8267,11 @@ mod tests {
                 .config
                 .module_order,
             [
-                HudModuleSnapshot::Summary,
-                HudModuleSnapshot::Status,
-                HudModuleSnapshot::Characters,
-                HudModuleSnapshot::Title,
-                HudModuleSnapshot::Timeline,
+                HudModule::Summary,
+                HudModule::Status,
+                HudModule::Characters,
+                HudModule::Title,
+                HudModule::Timeline,
             ]
         );
 
@@ -8659,8 +8673,10 @@ mod tests {
     #[test]
     fn stale_island_dismiss_keeps_the_newer_notice() {
         let state = AppState::default();
-        let stale_id = state.publish_island_notice("info", "First notice", Vec::new(), None);
-        let current_id = state.publish_island_notice("success", "Second notice", Vec::new(), None);
+        let stale_id =
+            state.publish_island_notice(IslandTone::Info, "First notice", Vec::new(), None);
+        let current_id =
+            state.publish_island_notice(IslandTone::Success, "Second notice", Vec::new(), None);
         let published_revision = state.0.island_notice.revision();
 
         assert!(!state.dismiss_island_notice(&stale_id));
@@ -8679,7 +8695,7 @@ mod tests {
     #[test]
     fn poisoned_island_notice_is_discarded_once_without_projecting_partial_data() {
         let state = AppState::default();
-        state.publish_island_notice("info", "Healthy notice", Vec::new(), None);
+        state.publish_island_notice(IslandTone::Info, "Healthy notice", Vec::new(), None);
         let initial_revision = state.0.island_notice.revision();
         let poison_state = state.clone();
         let _ = std::thread::spawn(move || {
@@ -8714,7 +8730,7 @@ mod tests {
     #[test]
     fn poisoned_island_dismiss_reports_the_visible_clear_once() {
         let state = AppState::default();
-        state.publish_island_notice("info", "Healthy notice", Vec::new(), None);
+        state.publish_island_notice(IslandTone::Info, "Healthy notice", Vec::new(), None);
         let initial_revision = state.0.island_notice.revision();
         let poison_state = state.clone();
         let _ = std::thread::spawn(move || {
@@ -8740,36 +8756,59 @@ mod tests {
         let state = AppState::default();
         let mut previous_stop: Option<String> = None;
         for _ in 0..3 {
-            let start =
-                state.publish_island_notice("status", "Starting live capture...", Vec::new(), None);
+            let start = state.publish_island_notice(
+                IslandTone::Info,
+                "Starting live capture...",
+                Vec::new(),
+                None,
+            );
             if let Some(previous) = previous_stop {
                 assert!(!state.dismiss_island_notice(&previous));
             }
             assert_eq!(state.island_notice().unwrap().id, start);
-            assert_eq!(state.island_notice().unwrap().tone, "info");
-            state.publish_island_notice("status", "Stopping live capture...", Vec::new(), None);
-            let stop = state.publish_island_notice("success", "Capture stopped", Vec::new(), None);
+            state.publish_island_notice(
+                IslandTone::Info,
+                "Stopping live capture...",
+                Vec::new(),
+                None,
+            );
+            let stop = state.publish_island_notice(
+                IslandTone::Success,
+                "Capture stopped",
+                Vec::new(),
+                None,
+            );
             assert_eq!(
-                state.publish_island_notice("success", "Capture stopped", Vec::new(), None),
+                state.publish_island_notice(
+                    IslandTone::Success,
+                    "Capture stopped",
+                    Vec::new(),
+                    None
+                ),
                 stop
             );
-            let wire =
-                serde_json::to_value(crate::contract::island::IslandSnapshot::from_state(&state))
-                    .unwrap();
-            assert_eq!(wire["notice"]["tone"], "success");
             previous_stop = Some(stop);
         }
     }
 
     #[test]
-    fn island_status_is_a_valid_info_tone_and_duplicate_does_not_restart_notice() {
+    fn duplicate_island_notice_does_not_restart_notice() {
         let runtime = IslandNoticeRuntime::default();
-        let id = runtime.publish("status", "Stopping live capture...", Vec::new(), None);
+        let id = runtime.publish(
+            IslandTone::Info,
+            "Stopping live capture...",
+            Vec::new(),
+            None,
+        );
         let first = runtime.current().unwrap();
-        assert_eq!(first.tone, "info");
         let revision = runtime.revision();
         assert_eq!(
-            runtime.publish("status", "Stopping live capture...", Vec::new(), None),
+            runtime.publish(
+                IslandTone::Info,
+                "Stopping live capture...",
+                Vec::new(),
+                None
+            ),
             id
         );
         let second = runtime.current().unwrap();
@@ -8781,7 +8820,8 @@ mod tests {
     fn island_notice_revision_tracks_only_publish_dismiss_and_expiry_changes() {
         let state = AppState::default();
         let initial_revision = state.0.island_notice.revision();
-        let notice_id = state.publish_island_notice("info", "Expiring notice", Vec::new(), None);
+        let notice_id =
+            state.publish_island_notice(IslandTone::Info, "Expiring notice", Vec::new(), None);
         assert_eq!(state.0.island_notice.revision(), initial_revision + 1);
 
         assert!(!state.dismiss_island_notice("stale-notice"));

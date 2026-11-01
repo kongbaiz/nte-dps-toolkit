@@ -9,9 +9,7 @@ use crate::{
         empty_curtain_runtime_error, poll_plugin_changes, snapshot_with_operation,
     },
     contract::{
-        CommandError, SubscriptionReceipt,
-        empty_curtain::EmptyCurtainEvent,
-        stream::{StreamDeliveryBody, StreamKind},
+        CommandError, SubscriptionReceipt, empty_curtain::EmptyCurtainEvent, stream::StreamKind,
     },
     state::AppState,
     windows::console,
@@ -21,7 +19,7 @@ pub(crate) const EMPTY_CURTAIN_STREAM_INTERVAL_MS: u32 = 500;
 #[tauri::command]
 pub(crate) fn subscribe_empty_curtain(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<EmptyCurtainEvent>>,
+    on_event: Channel<EmptyCurtainEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {

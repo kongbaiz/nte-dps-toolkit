@@ -12,12 +12,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 import { mainDpsDetailClient } from "@/lib/tauri/main-dps-detail-client";
-import type { MainDpsHit } from "@/lib/tauri/main-dps-detail-contract";
-import type {
-  HitSnapshot,
-  AttributeSnapshot,
-  EffectSnapshot,
-} from "@/lib/tauri/hit-snapshot-contract";
+import type { AttributeSnapshot } from "@/lib/tauri/generated/AttributeSnapshot";
+import type { EffectSnapshot } from "@/lib/tauri/generated/EffectSnapshot";
+import type { PluginHitSnapshot } from "@/lib/tauri/generated/PluginHitSnapshot";
+import type { MainDpsHitSnapshot } from "@/lib/tauri/generated/MainDpsHitSnapshot";
 import { criticalTranslationKey } from "./main-dps-detail-model";
 
 const ATTRIBUTE_LABELS: Record<string, string> = {
@@ -297,10 +295,10 @@ export function HitSnapshotDialog({
   row,
   onClose,
 }: {
-  row: MainDpsHit;
+  row: MainDpsHitSnapshot;
   onClose: () => void;
 }) {
-  const [snapshot, setSnapshot] = useState<HitSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<PluginHitSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState("roleAttributes");
   useEffect(() => {

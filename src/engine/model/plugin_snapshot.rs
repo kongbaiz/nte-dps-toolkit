@@ -16,55 +16,57 @@ pub const MAX_SNAPSHOT_BYTES: usize = 128 * 1024;
 pub const MAX_SESSION_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_SESSION_SNAPSHOTS: usize = 16_384;
 
-fn optional_id<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Id {
-        Number(u64),
-        Text(String),
+/// Native u64 identity or microsecond timestamp, kept as decimal text because it
+/// exceeds JavaScript's safe integer range.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+pub struct SnapshotId(String);
+impl<'de> Deserialize<'de> for SnapshotId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Id {
+            Number(u64),
+            Text(String),
+        }
+        let value = match Id::deserialize(d)? {
+            Id::Number(n) => n,
+            Id::Text(s) if s.bytes().all(|c| c.is_ascii_digit()) => s
+                .parse()
+                .map_err(|_| serde::de::Error::custom("invalid snapshot identity"))?,
+            Id::Text(_) => return Err(serde::de::Error::custom("invalid snapshot identity")),
+        };
+        Ok(Self(value.to_string()))
     }
-    Option::<Id>::deserialize(d)?
-        .map(|value| {
-            let text = match value {
-                Id::Number(n) => n.to_string(),
-                Id::Text(s) => s,
-            };
-            if text.is_empty()
-                || text.len() > 20
-                || !text.bytes().all(|c| c.is_ascii_digit())
-                || text.parse::<u64>().is_err()
-            {
-                return Err(serde::de::Error::custom("invalid snapshot identity"));
-            }
-            Ok(text)
-        })
-        .transpose()
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(untagged)]
 pub enum AttributeValue {
     Number(f64),
     Boolean(bool),
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 pub struct AttributeDatum {
     pub value: Option<AttributeValue>,
     pub status: String,
     pub source: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AttributeSnapshot {
     pub actor_index: i32,
     pub actor_serial: i32,
-    #[serde(default, deserialize_with = "optional_id")]
-    pub id: Option<String>,
-    #[serde(default, deserialize_with = "optional_id")]
-    pub generation: Option<String>,
-    #[serde(default, deserialize_with = "optional_id")]
-    pub sampled_unix_us: Option<String>,
-    #[serde(default, deserialize_with = "optional_id")]
-    pub finished_unix_us: Option<String>,
+    #[serde(default)]
+    pub id: Option<SnapshotId>,
+    #[serde(default)]
+    pub generation: Option<SnapshotId>,
+    #[serde(default)]
+    pub sampled_unix_us: Option<SnapshotId>,
+    #[serde(default)]
+    pub finished_unix_us: Option<SnapshotId>,
     #[serde(default)]
     pub actor_name: Option<String>,
     #[serde(default)]
@@ -75,6 +77,7 @@ pub struct AttributeSnapshot {
     pub values: Option<BTreeMap<String, AttributeDatum>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Effect {
     pub instance_key: String,
@@ -90,14 +93,15 @@ pub struct Effect {
     pub inhibited: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct EffectSnapshot {
     pub actor_index: i32,
     pub actor_serial: i32,
-    #[serde(default, deserialize_with = "optional_id")]
-    pub id: Option<String>,
-    #[serde(default, deserialize_with = "optional_id")]
-    pub observed_us: Option<String>,
+    #[serde(default)]
+    pub id: Option<SnapshotId>,
+    #[serde(default)]
+    pub observed_us: Option<SnapshotId>,
     #[serde(default)]
     pub complete: Option<bool>,
     #[serde(default)]
@@ -106,6 +110,7 @@ pub struct EffectSnapshot {
     pub effects: Option<Vec<Effect>>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct EffectCounts {
     pub positive: usize,
@@ -127,6 +132,7 @@ impl EffectSnapshot {
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HitSnapshotData {
     pub attacker_attributes: Option<AttributeSnapshot>,
@@ -231,6 +237,7 @@ impl HitSnapshotData {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginHitSnapshot {
     /// Process-local immutable-object identity. Re-importing the same native key

@@ -8,13 +8,12 @@ use nte_dps_tool::engine::{
 };
 use nte_dps_tool::storage::abyss_remote::LoadedAbyssDataset;
 use serde::Serialize;
+use ts_rs::TS;
 
-pub(crate) const ABYSS_VALUES_CONTRACT_VERSION: u32 = 3;
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssValuesSnapshot {
-    pub contract_version: u32,
     pub data_version: String,
     pub data_updated_at: String,
     pub data_stale: bool,
@@ -26,7 +25,8 @@ pub(crate) struct AbyssValuesSnapshot {
     pub current_team_available: AbyssCurrentTeamAvailabilitySnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssSeasonSnapshot {
     pub season: u32,
@@ -34,7 +34,8 @@ pub(crate) struct AbyssSeasonSnapshot {
     pub floors: Vec<AbyssFloorSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssFloorSnapshot {
     pub season: u32,
@@ -49,21 +50,24 @@ pub(crate) struct AbyssFloorSnapshot {
     pub monsters: Vec<AbyssMonsterSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssStarThresholdSnapshot {
     pub stars: u32,
     pub seconds: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssRecommendedElementsSnapshot {
     pub first_half: Vec<String>,
     pub second_half: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssMonsterSnapshot {
     pub pack_id: String,
@@ -80,28 +84,32 @@ pub(crate) struct AbyssMonsterSnapshot {
     pub raw_props: BTreeMap<String, f64>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssPredictionTeamsSnapshot {
     pub upper: Option<AbyssTeamSnapshot>,
     pub lower: Option<AbyssTeamSnapshot>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssCurrentTeamAvailabilitySnapshot {
     pub upper: bool,
     pub lower: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssTeamSnapshot {
     pub dps: f64,
     pub members: Vec<AbyssTeamMemberSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssTeamMemberSnapshot {
     pub id: u32,
@@ -134,7 +142,6 @@ impl AbyssValuesSnapshot {
             .map(AbyssFloor::monster_count)
             .sum();
         Self {
-            contract_version: ABYSS_VALUES_CONTRACT_VERSION,
             data_version,
             data_updated_at: updated_at,
             data_stale: stale,

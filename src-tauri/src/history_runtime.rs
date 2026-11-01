@@ -15,7 +15,7 @@ use crate::{
     contract::{
         CommandError,
         history::{HistoryEvent, HistorySnapshot},
-        stream::{MAX_STREAM_DELIVERY_BYTES, StreamDeliveryBody},
+        stream::MAX_STREAM_DELIVERY_BYTES,
     },
     state::{AppState, HistoryRuntimeError, StreamRegistration},
 };
@@ -40,7 +40,7 @@ pub(crate) struct HistoryRuntime {
 
 pub(crate) struct HistoryStreamRegistration {
     pub(crate) registration: StreamRegistration,
-    pub(crate) on_event: Channel<StreamDeliveryBody<HistoryEvent>>,
+    pub(crate) on_event: Channel<HistoryEvent>,
 }
 
 #[derive(Default)]
@@ -226,9 +226,7 @@ async fn run_history_stream(
             continue;
         }
 
-        let body = StreamDeliveryBody::new(vec![HistoryEvent::Snapshot(
-            projection.snapshot.as_ref().clone(),
-        )]);
+        let body = HistoryEvent::Snapshot(projection.snapshot.as_ref().clone());
         if serde_json::to_vec(&body)
             .map(|encoded| encoded.len() > MAX_STREAM_DELIVERY_BYTES)
             .unwrap_or(true)

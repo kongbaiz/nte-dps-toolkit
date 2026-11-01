@@ -1,0 +1,4 @@
+# ts-rs writes the TypeScript bindings for Tauri DTOs during `cargo test`.
+[env]
+TS_RS_EXPORT_DIR = { value = "frontend/src/lib/tauri/generated", relative = true }
+TS_RS_LARGE_INT = "number"

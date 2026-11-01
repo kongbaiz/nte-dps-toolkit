@@ -35,6 +35,7 @@ pub struct ModMarketCatalog {
 
 /// The signed catalog selects a fixed destination, never an arbitrary local path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum ComponentKind {
     #[default]

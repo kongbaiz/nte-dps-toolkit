@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { settingsFixture } from "../../../dev/fixtures";
 import { setFrontendLanguage } from "@/lib/i18n";
-import { parseSettingsSnapshot } from "@/lib/tauri/settings-contract";
 import {
   SettingsCatalog,
   type SettingsCatalogActions,
@@ -42,7 +41,7 @@ describe("settings task groups", () => {
             ))}
           </Tabs.List>
           <SettingsCatalog
-            snapshot={parseSettingsSnapshot(settingsFixture())}
+            snapshot={settingsFixture()}
             pendingAction={null}
             actions={actions}
             hud={<div>HUD controls</div>}
@@ -79,7 +78,7 @@ describe("settings task groups", () => {
   );
 
   it("keeps pending and unavailable actions disabled after regrouping", () => {
-    const snapshot = parseSettingsSnapshot(settingsFixture());
+    const snapshot = settingsFixture();
     snapshot.teamData.available = false;
     snapshot.captureFiles.count = 0;
     const html = renderToStaticMarkup(

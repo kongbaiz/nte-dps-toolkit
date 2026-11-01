@@ -5,10 +5,7 @@ use crate::{
         PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
         validate_subscription_id,
     },
-    contract::{
-        CommandError, SubscriptionReceipt, TechnicalEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
+    contract::{CommandError, SubscriptionReceipt, TechnicalEvent, stream::StreamKind},
     state::{AppState, TECHNICAL_STREAM_INTERVAL_MS},
     windows::hud,
 };
@@ -16,7 +13,7 @@ use crate::{
 #[tauri::command]
 pub(crate) fn subscribe_technical_state(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<TechnicalEvent>>,
+    on_event: Channel<TechnicalEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {

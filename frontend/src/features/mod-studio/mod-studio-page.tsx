@@ -18,12 +18,10 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { t, tf, useTranslationRevision } from "@/lib/i18n";
-import {
-  parseModStudioCommandError,
-  type ModStudioCommandError,
-} from "@/lib/tauri/mod-studio-contract";
-import { toolkitClient, type PluginPanel } from "@/lib/tauri/toolkit-client";
+import { t, tf, useFrontendLanguage } from "@/lib/i18n";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
+import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
+import { toolkitClient } from "@/lib/tauri/toolkit-client";
 import { HostControls } from "./host-controls";
 import { PluginControls } from "./plugin-controls";
 import { pluginControlGroup } from "./release-control-groups";
@@ -48,12 +46,12 @@ const ICONS = {
   training: Target,
 };
 export function ModStudioWorkspace() {
-  useTranslationRevision();
+  useFrontendLanguage();
   const [panel, setPanel] = useState<PluginPanel | null>(null);
   const [tab, setTab] = useState<"control" | "market">("control");
   const [selectedPage, setSelectedPage] = useState("host");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<ModStudioCommandError | null>(null);
+  const [error, setError] = useState<CommandError | null>(null);
   const alive = useRef(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const serial = useRef(0);
@@ -70,7 +68,6 @@ export function ModStudioWorkspace() {
           code: "plugin_panel_read_failed",
           messageKey: "Failed to read the plugin control panel.",
           messageArguments: [],
-          diagnosticLine: null,
         });
       }
     }
@@ -104,7 +101,7 @@ export function ModStudioWorkspace() {
       await action();
       if (alive.current) await refresh();
     } catch (e) {
-      if (alive.current) setError(parseModStudioCommandError(e));
+      if (alive.current) setError(toCommandError(e));
     } finally {
       busy.current = false;
       if (alive.current) setPending(false);

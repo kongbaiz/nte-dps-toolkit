@@ -2,11 +2,7 @@ use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
     channels::stream_runtime::{stream_registry_error, validate_subscription_id},
-    contract::{
-        CommandError, SubscriptionReceipt,
-        history::HistoryEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
+    contract::{CommandError, SubscriptionReceipt, history::HistoryEvent, stream::StreamKind},
     history_runtime::{
         HISTORY_STREAM_INTERVAL, HistoryRuntime, HistoryStreamRegistration,
         history_runtime_unavailable,
@@ -20,7 +16,7 @@ pub(crate) const HISTORY_STREAM_INTERVAL_MS: u32 = HISTORY_STREAM_INTERVAL.as_mi
 #[tauri::command]
 pub(crate) fn subscribe_history(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<HistoryEvent>>,
+    on_event: Channel<HistoryEvent>,
     state: State<'_, AppState>,
     runtime: State<'_, HistoryRuntime>,
     window: WebviewWindow,

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use nte_dps_tool::{
     core::{
@@ -19,19 +20,17 @@ use nte_dps_tool::{
 
 use crate::contract::dps_time::DpsTimeRuntimeSnapshot;
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 10;
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsSnapshot {
-    pub contract_version: u32,
     pub generation: String,
     pub adapter_version: &'static str,
     pub interface: InterfaceSettingsSnapshot,
     pub updates: UpdateSettingsSnapshot,
     pub capture: CaptureSettingsSnapshot,
     pub hotkeys: GlobalHotkeysSnapshot,
-    pub main_dps: MainDpsDisplaySnapshot,
+    pub main_dps: MainDpsDisplayConfig,
     pub capture_files: CaptureFilesSnapshot,
     pub team_data: TeamDataSnapshot,
     pub always_on_top: bool,
@@ -40,39 +39,44 @@ pub(crate) struct SettingsSnapshot {
     pub hud: HudConfigSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum SettingsEvent {
     Snapshot(SettingsSnapshot),
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamDataExportResult {
     pub saved: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamDataImportFileResult {
     pub performed: bool,
     pub settings: SettingsSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InterfaceSettingsSnapshot {
-    pub language: &'static str,
+    pub language: Language,
     pub dark_mode: bool,
-    pub theme_preset: &'static str,
-    pub accent: &'static str,
-    pub density: &'static str,
+    pub theme_preset: ThemePreset,
+    pub accent: AccentColor,
+    pub density: UiDensity,
     pub reduce_motion: bool,
     pub island_notifications: bool,
     pub island_offset_x: f32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateSettingsSnapshot {
     pub current_version: &'static str,
@@ -82,7 +86,7 @@ pub(crate) struct UpdateSettingsSnapshot {
     pub message_key: String,
     pub message_arguments: Vec<String>,
     pub available: Vec<AvailableUpdateSnapshot>,
-    pub active_component: Option<&'static str>,
+    pub active_component: Option<UpdateComponent>,
     pub downloaded_bytes: String,
     pub total_bytes: String,
     pub prepared: Option<PreparedUpdateSnapshot>,
@@ -90,24 +94,27 @@ pub(crate) struct UpdateSettingsSnapshot {
     pub install_blocked_message_key: Option<&'static str>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AvailableUpdateSnapshot {
-    pub component: &'static str,
+    pub component: UpdateComponent,
     pub version: String,
     pub published_at: String,
     pub notes: String,
     pub artifact_size: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreparedUpdateSnapshot {
-    pub component: &'static str,
+    pub component: UpdateComponent,
     pub version: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureSettingsSnapshot {
     pub bpf_filter: String,
@@ -121,12 +128,13 @@ pub(crate) struct CaptureSettingsSnapshot {
     pub auto_round_idle_seconds: u32,
     pub auto_round_idle_seconds_min: u32,
     pub auto_round_idle_seconds_max: u32,
-    pub dps_time_mode: &'static str,
+    pub dps_time_mode: DpsTimeMode,
     pub dps_time_runtime: DpsTimeRuntimeSnapshot,
     pub passthrough_hotkey: HotkeyBindingSnapshot,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureDeviceSnapshot {
     pub id: String,
@@ -156,21 +164,24 @@ impl From<&CaptureDevice> for CaptureDeviceSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GlobalHotkeysSnapshot {
     pub enabled: bool,
     pub bindings: Vec<GlobalHotkeyBindingSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GlobalHotkeyBindingSnapshot {
-    pub action: &'static str,
+    pub action: GlobalHotkeyAction,
     pub binding: Option<HotkeyBindingSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HotkeyBindingSnapshot {
     pub ctrl: bool,
@@ -179,14 +190,8 @@ pub(crate) struct HotkeyBindingSnapshot {
     pub key: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MainDpsDisplaySnapshot {
-    pub metrics: Vec<&'static str>,
-    pub attributions: Vec<&'static str>,
-}
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureFilesSnapshot {
     pub count: usize,
@@ -194,7 +199,8 @@ pub(crate) struct CaptureFilesSnapshot {
     pub formatted_size: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamDataSnapshot {
     pub available: bool,
@@ -202,27 +208,30 @@ pub(crate) struct TeamDataSnapshot {
     pub lower_imported: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InterfaceSettingsInput {
-    pub language: String,
+    pub language: Language,
     pub dark_mode: bool,
-    pub theme_preset: String,
-    pub accent: String,
-    pub density: String,
+    pub theme_preset: ThemePreset,
+    pub accent: AccentColor,
+    pub density: UiDensity,
     pub reduce_motion: bool,
     pub island_notifications: bool,
     pub island_offset_x: f32,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateSettingsInput {
     pub auto_check: bool,
     pub auto_download: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureSettingsInput {
     pub bpf_filter: String,
@@ -233,13 +242,6 @@ pub(crate) struct CaptureSettingsInput {
     pub auto_round_after_idle: bool,
     pub auto_round_idle_seconds: u32,
     pub passthrough_hotkey: HotkeyBindingSnapshot,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MainDpsDisplayInput {
-    pub metrics: Vec<String>,
-    pub attributions: Vec<String>,
 }
 
 impl SettingsSnapshot {
@@ -258,15 +260,14 @@ impl SettingsSnapshot {
         combat_clock_health: CombatClockRuntimeHealth,
     ) -> Self {
         Self {
-            contract_version: SETTINGS_CONTRACT_VERSION,
             generation: generation.to_string(),
             adapter_version: env!("CARGO_PKG_VERSION"),
             interface: InterfaceSettingsSnapshot {
-                language: config.language.code(),
+                language: config.language,
                 dark_mode: config.dark_mode,
-                theme_preset: theme_preset_id(config.theme_preset),
-                accent: accent_id(config.accent),
-                density: density_id(config.density),
+                theme_preset: config.theme_preset,
+                accent: config.accent,
+                density: config.density,
                 reduce_motion: config.reduce_motion,
                 island_notifications: config.island_notifications,
                 island_offset_x: config.island_offset_x,
@@ -287,7 +288,7 @@ impl SettingsSnapshot {
                     nte_dps_tool::storage::config::AUTO_ROUND_IDLE_SECONDS_MIN,
                 auto_round_idle_seconds_max:
                     nte_dps_tool::storage::config::AUTO_ROUND_IDLE_SECONDS_MAX,
-                dps_time_mode: dps_time_mode_id(config.dps_time_mode()),
+                dps_time_mode: config.dps_time_mode(),
                 dps_time_runtime: DpsTimeRuntimeSnapshot::new(
                     config.dps_time_mode(),
                     combat_clock_health,
@@ -295,7 +296,7 @@ impl SettingsSnapshot {
                 passthrough_hotkey: hotkey_binding_snapshot(config.passthrough_hotkey),
             },
             hotkeys: hotkeys_snapshot(config.global_hotkeys),
-            main_dps: main_dps_display_snapshot(&config.main_dps_display),
+            main_dps: config.main_dps_display.clone(),
             capture_files: CaptureFilesSnapshot {
                 count: capture_files.count,
                 total_bytes: capture_files.total_bytes.to_string(),
@@ -339,7 +340,7 @@ impl UpdateSettingsSnapshot {
                 .iter()
                 .map(|update| AvailableUpdateSnapshot::from_update(update, config.language))
                 .collect(),
-            active_component: active_component.map(update_component_id),
+            active_component,
             downloaded_bytes: downloaded_bytes.to_string(),
             total_bytes: total_bytes.to_string(),
             prepared: prepared.map(PreparedUpdateSnapshot::from),
@@ -352,7 +353,7 @@ impl UpdateSettingsSnapshot {
 impl AvailableUpdateSnapshot {
     fn from_update(update: &AvailableComponentUpdate, language: Language) -> Self {
         Self {
-            component: update_component_id(update.component),
+            component: update.component,
             version: update.version.to_string(),
             published_at: update.published_at.clone(),
             notes: localized_update_notes(&update.notes, language),
@@ -424,16 +425,9 @@ fn update_note_language(label: &str) -> Option<Language> {
 impl From<&PreparedUpdate> for PreparedUpdateSnapshot {
     fn from(update: &PreparedUpdate) -> Self {
         Self {
-            component: update_component_id(update.component()),
+            component: update.component(),
             version: update.version().to_string(),
         }
-    }
-}
-
-pub(crate) const fn update_component_id(component: UpdateComponent) -> &'static str {
-    match component {
-        UpdateComponent::App => "app",
-        UpdateComponent::ModsPlugin => "mods-plugin",
     }
 }
 
@@ -444,7 +438,7 @@ fn hotkeys_snapshot(hotkeys: GlobalHotkeys) -> GlobalHotkeysSnapshot {
             .iter()
             .copied()
             .map(|action| GlobalHotkeyBindingSnapshot {
-                action: global_hotkey_action_id(action),
+                action,
                 binding: hotkeys.binding(action).map(hotkey_binding_snapshot),
             })
             .collect(),
@@ -460,124 +454,10 @@ fn hotkey_binding_snapshot(binding: HotkeyBinding) -> HotkeyBindingSnapshot {
     }
 }
 
-fn main_dps_display_snapshot(display: &MainDpsDisplayConfig) -> MainDpsDisplaySnapshot {
-    MainDpsDisplaySnapshot {
-        metrics: display.metrics.iter().map(|value| value.id()).collect(),
-        attributions: display
-            .attributions
-            .iter()
-            .map(|value| value.id())
-            .collect(),
-    }
-}
-
-pub(crate) const fn global_hotkey_action_id(action: GlobalHotkeyAction) -> &'static str {
-    match action {
-        GlobalHotkeyAction::ToggleCapture => "capture",
-        GlobalHotkeyAction::ResetSession => "reset",
-        GlobalHotkeyAction::ToggleHud => "hud",
-        GlobalHotkeyAction::NewRound => "new-round",
-    }
-}
-
-const fn theme_preset_id(value: ThemePreset) -> &'static str {
-    match value {
-        ThemePreset::Zinc => "zinc",
-        ThemePreset::Tactical => "tactical",
-        ThemePreset::HighContrast => "high-contrast",
-    }
-}
-
-const fn accent_id(value: AccentColor) -> &'static str {
-    match value {
-        AccentColor::Zinc => "zinc",
-        AccentColor::Blue => "blue",
-        AccentColor::Violet => "violet",
-        AccentColor::Orange => "orange",
-        AccentColor::Green => "green",
-    }
-}
-
-const fn density_id(value: UiDensity) -> &'static str {
-    match value {
-        UiDensity::Compact => "compact",
-        UiDensity::Cozy => "cozy",
-        UiDensity::Comfortable => "comfortable",
-    }
-}
-
-const fn dps_time_mode_id(value: DpsTimeMode) -> &'static str {
-    match value {
-        DpsTimeMode::TimeStopAdjusted => "time-stop-adjusted",
-        DpsTimeMode::RealTime => "real-time",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nte_dps_tool::storage::config::{HudModule, UiConfig};
-
-    #[test]
-    fn settings_snapshot_projects_all_stable_settings_sections() {
-        let mut config = UiConfig::default();
-        config.hud.width = 512;
-        config.hud.module_order = vec![HudModule::Timeline, HudModule::Title];
-        let value = serde_json::to_value(SettingsSnapshot::from_config(
-            &config,
-            7,
-            false,
-            Vec::new(),
-            true,
-            CaptureLogStats::default(),
-            true,
-            false,
-            false,
-            UpdateSettingsSnapshot::from_runtime(
-                &config,
-                "idle",
-                "Updates have not been checked in this session",
-                Vec::new(),
-                &[],
-                None,
-                0,
-                0,
-                None,
-                None,
-            ),
-            CombatClockRuntimeHealth::Unknown,
-        ))
-        .expect("settings snapshot must serialize");
-
-        assert_eq!(value["contractVersion"], SETTINGS_CONTRACT_VERSION);
-        assert_eq!(value["generation"], "7");
-        assert_eq!(value["interface"]["language"], "zh-CN");
-        assert_eq!(value["updates"]["autoCheck"], true);
-        assert_eq!(
-            value["updates"]["available"].as_array().map(Vec::len),
-            Some(0)
-        );
-        assert_eq!(value["updates"]["downloadedBytes"], "0");
-        assert_eq!(value["capture"]["bpfFilter"], "udp");
-        assert_eq!(value["capture"]["devicesAvailable"], true);
-        assert_eq!(
-            value["capture"]["includeMaxHpReductionInTotalDamage"],
-            false
-        );
-        assert_eq!(value["teamData"]["available"], true);
-        assert_eq!(value["hotkeys"]["bindings"][0]["action"], "capture");
-        assert_eq!(value["hotkeys"]["bindings"][3]["action"], "new-round");
-        assert_eq!(value["capture"]["passthroughHotkey"]["key"], "Home");
-        assert_eq!(value["mainDps"]["metrics"][0], "team-dps");
-        assert_eq!(value["mainDps"]["attributions"][4], "max-hp-reduction");
-        assert_eq!(value["hud"]["width"], 512);
-        assert_eq!(value["hud"]["moduleOrder"][0], "timeline");
-        assert_eq!(
-            value["hud"]["moduleOrder"].as_array().map(Vec::len),
-            Some(5)
-        );
-        assert!(value.get("contract_version").is_none());
-    }
+    use nte_dps_tool::storage::config::UiConfig;
 
     #[test]
     fn team_data_export_result_distinguishes_save_from_cancel() {

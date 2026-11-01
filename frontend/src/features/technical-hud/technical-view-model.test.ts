@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { TechnicalSnapshot } from "@/lib/tauri/technical-contract";
+import type { TechnicalSnapshot } from "@/lib/tauri/generated/TechnicalSnapshot";
 
 import {
   acceptSnapshot,
@@ -11,10 +11,8 @@ import {
   hudCharacterName,
   hudDataTone,
   hudModuleConfiguredVisible,
-  hudModuleDropInsertAfter,
   hudModuleKeyboardMove,
   hudModuleLabelKey,
-  hudModulesInOrder,
   hudSurfaceTone,
   parseHudWidthDraft,
   type TechnicalPageState,
@@ -22,7 +20,6 @@ import {
 } from "./technical-view-model";
 
 const snapshot = (sequence: string): TechnicalSnapshot => ({
-  contractVersion: 5,
   sequence,
   bridgeStatus: "ready",
   adapterVersion: "0.3.6",
@@ -41,7 +38,6 @@ const snapshot = (sequence: string): TechnicalSnapshot => ({
     issue: null,
   },
   hud: {
-    version: 3,
     dataState: "empty",
     config: {
       width: 380,
@@ -185,25 +181,13 @@ describe("technical HUD projection", () => {
     expect(visibleHudModules(current.hud)).toEqual(["timeline", "summary"]);
   });
 
-  it("projects module controls from Rust order without copying defaults", () => {
+  it("projects module visibility from Rust config", () => {
     const current = snapshot("1");
-    current.hud.config.moduleOrder = [
-      "timeline",
-      "future_module",
-      "summary",
-      "timeline",
-      "characters",
-    ];
     current.hud.config.showMiniTimeline = false;
     current.hud.config.showTeamDps = false;
     current.hud.config.showDuration = false;
     current.hud.config.showTotalDamage = false;
 
-    expect(hudModulesInOrder(current.hud.config)).toEqual([
-      "timeline",
-      "summary",
-      "characters",
-    ]);
     expect(hudModuleConfiguredVisible(current.hud.config, "timeline")).toBe(
       false,
     );
@@ -213,7 +197,7 @@ describe("technical HUD projection", () => {
     expect(hudModuleLabelKey("characters")).toBe("Character Ranking");
   });
 
-  it("maps pointer and keyboard reordering to the existing Rust move semantics", () => {
+  it("maps keyboard reordering to the existing Rust move semantics", () => {
     const modules = [
       "title",
       "summary",
@@ -222,8 +206,6 @@ describe("technical HUD projection", () => {
       "timeline",
     ] as const;
 
-    expect(hudModuleDropInsertAfter(19, 10, 20)).toBe(false);
-    expect(hudModuleDropInsertAfter(20, 10, 20)).toBe(true);
     expect(hudModuleKeyboardMove([...modules], "status", "up")).toEqual({
       target: "summary",
       insertAfter: false,

@@ -1,34 +1,13 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import {
-  tauriInvokeTransport,
-  type InvokeTransport,
-} from "@/lib/tauri/stream-client";
+import { invokeCommand } from "@/lib/tauri/command-error";
 
-export interface DesktopWindowHandle {
-  startDragging(): Promise<void>;
-  minimize(): Promise<void>;
-  toggleMaximize(): Promise<void>;
-  isAlwaysOnTop(): Promise<boolean>;
-  close(): Promise<void>;
-}
-
-type WindowProvider = () => DesktopWindowHandle;
-
-export function createDesktopWindowClient(
-  currentWindow: WindowProvider = getCurrentWindow,
-  transport: InvokeTransport = tauriInvokeTransport,
-) {
-  return {
-    startDragging: () => currentWindow().startDragging(),
-    minimize: () => currentWindow().minimize(),
-    toggleMaximized: () => currentWindow().toggleMaximize(),
-    isAlwaysOnTop: () => currentWindow().isAlwaysOnTop(),
-    setAlwaysOnTop: async (enabled: boolean) => {
-      await transport.invoke("set_desktop_window_always_on_top", { enabled });
-    },
-    close: () => currentWindow().close(),
-  };
-}
-
-export const desktopWindowClient = createDesktopWindowClient();
+export const desktopWindowClient = {
+  startDragging: () => getCurrentWindow().startDragging(),
+  minimize: () => getCurrentWindow().minimize(),
+  toggleMaximized: () => getCurrentWindow().toggleMaximize(),
+  isAlwaysOnTop: () => getCurrentWindow().isAlwaysOnTop(),
+  setAlwaysOnTop: (enabled: boolean) =>
+    invokeCommand<void>("set_desktop_window_always_on_top", { enabled }),
+  close: () => getCurrentWindow().close(),
+};

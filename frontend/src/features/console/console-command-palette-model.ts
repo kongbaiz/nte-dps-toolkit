@@ -1,9 +1,7 @@
-import type {
-  AccentId,
-  DensityId,
-  LayoutProfileId,
-  ThemePresetId,
-} from "@/lib/tauri/settings-contract";
+import type { AccentColor } from "@/lib/tauri/generated/AccentColor";
+import type { LayoutProfile } from "@/lib/tauri/generated/LayoutProfile";
+import type { ThemePreset } from "@/lib/tauri/generated/ThemePreset";
+import type { UiDensity } from "@/lib/tauri/generated/UiDensity";
 
 import { CONSOLE_PAGE_IDS, type ConsolePageId } from "./console-navigation";
 
@@ -26,10 +24,10 @@ export type ConsoleCommandAction =
   | { kind: "import"; format: "json" | "pcapng" }
   | { kind: "export"; format: "json" | "pcapng" | "team" }
   | { kind: "save-history" }
-  | { kind: "layout"; profile: LayoutProfileId }
-  | { kind: "theme-preset"; value: ThemePresetId }
-  | { kind: "accent"; value: AccentId }
-  | { kind: "density"; value: DensityId }
+  | { kind: "layout"; profile: LayoutProfile }
+  | { kind: "theme-preset"; value: ThemePreset }
+  | { kind: "accent"; value: AccentColor }
+  | { kind: "density"; value: UiDensity }
   | { kind: "toggle-theme" }
   | { kind: "toggle-reduced-motion" }
   | { kind: "unavailable" };
@@ -244,11 +242,11 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
       action: { kind: "layout", profile },
     }),
   ),
-  ...(["zinc", "tactical", "high-contrast"] as const).map(
+  ...(["zinc", "tactical", "high_contrast"] as const).map(
     (value): ConsoleCommandDefinition => ({
       id: `theme.preset.${value.replace("-", "_")}`,
       titleKey:
-        value === "high-contrast"
+        value === "high_contrast"
           ? "Use High Contrast Theme"
           : `Use ${capitalized(value)} Theme`,
       categoryKey: "Appearance",

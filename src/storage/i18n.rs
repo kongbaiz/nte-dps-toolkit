@@ -29,6 +29,7 @@ const MAX_LOCALE_FIELD_BYTES: usize = 1024;
 /// Languages the UI can render. English is the key language; every other variant
 /// has a matching `res/languages/<code>.json`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 pub enum Language {
     #[serde(rename = "en")]
     English,

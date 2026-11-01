@@ -40,12 +40,10 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
-import type {
-  DiagnosticsCheckSnapshot,
-  DiagnosticsCommandError,
-  DiagnosticsQualitySnapshot,
-  DiagnosticsSnapshot,
-} from "@/lib/tauri/diagnostics-contract";
+import type { DiagnosticsCheckSnapshot } from "@/lib/tauri/generated/DiagnosticsCheckSnapshot";
+import type { DiagnosticsQualitySnapshot } from "@/lib/tauri/generated/DiagnosticsQualitySnapshot";
+import type { DiagnosticsSnapshot } from "@/lib/tauri/generated/DiagnosticsSnapshot";
+import { type CommandError } from "@/lib/tauri/command-error";
 import { formatByteCount } from "@/lib/update-presentation";
 import { cn } from "@/lib/utils";
 
@@ -620,7 +618,7 @@ function DiagnosticsLoadError({
   error,
   onRetry,
 }: {
-  error: DiagnosticsCommandError;
+  error: CommandError;
   onRetry: () => void;
 }) {
   return (
@@ -646,7 +644,7 @@ function DiagnosticsNotice({
   error,
   onDismiss,
 }: {
-  error: DiagnosticsCommandError;
+  error: CommandError;
   onDismiss: () => void;
 }) {
   return createPortal(

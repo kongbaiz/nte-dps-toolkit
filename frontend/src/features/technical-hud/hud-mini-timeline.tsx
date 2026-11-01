@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { t, tf } from "@/lib/i18n";
-import type { HudTimelineSnapshot } from "@/lib/tauri/technical-contract";
+import type { HudTimelineSnapshot } from "@/lib/tauri/generated/HudTimelineSnapshot";
 import { cn } from "@/lib/utils";
 
 import { formatHudDuration, formatHudNumber } from "./technical-view-model";

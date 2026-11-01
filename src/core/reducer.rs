@@ -1353,14 +1353,14 @@ mod tests {
         assert_eq!(
             apply_engine_event(
                 &mut state,
-                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::ProviderUnavailable),
+                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::DataUnavailable),
             ),
             CoreSignal::CombatClockHealthChanged
         );
         assert_eq!(
             apply_engine_event(
                 &mut state,
-                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::ProviderUnavailable),
+                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::DataUnavailable),
             ),
             CoreSignal::Unchanged
         );

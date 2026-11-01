@@ -9,7 +9,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
-import { toolkitClient, type PluginPanel } from "@/lib/tauri/toolkit-client";
+import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
+import { toolkitClient } from "@/lib/tauri/toolkit-client";
 
 export function HostLoadingControls({
   panel,

@@ -44,18 +44,16 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
-import type {
-  HistoryCharacter,
-  HistoryComparison,
-  HistoryHalf,
-  HistoryRecord,
-  HistorySkill,
-} from "@/lib/tauri/history-contract";
+import type { AbyssHalf } from "@/lib/tauri/generated/AbyssHalf";
+import type { HistoryAbyssHalfSnapshot } from "@/lib/tauri/generated/HistoryAbyssHalfSnapshot";
+import type { HistoryCharacterSnapshot } from "@/lib/tauri/generated/HistoryCharacterSnapshot";
+import type { HistoryComparisonSnapshot } from "@/lib/tauri/generated/HistoryComparisonSnapshot";
+import type { HistoryRecordSnapshot } from "@/lib/tauri/generated/HistoryRecordSnapshot";
+import type { HistorySkillSnapshot } from "@/lib/tauri/generated/HistorySkillSnapshot";
+import { toCommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 import { technicalClient } from "@/lib/tauri/technical-client";
-import { parseTechnicalCommandError } from "@/lib/tauri/technical-contract";
 import { diagnosticsClient } from "@/lib/tauri/diagnostics-client";
-import { diagnosticsError } from "@/lib/tauri/diagnostics-contract";
 
 import {
   adjacentHistoryRecordId,
@@ -139,7 +137,7 @@ export function HistoryPage() {
     try {
       await technicalClient.startCapture();
     } catch (error) {
-      setCaptureError(parseTechnicalCommandError(error).messageKey);
+      setCaptureError(toCommandError(error).messageKey);
     } finally {
       setCapturePending(false);
     }
@@ -152,7 +150,7 @@ export function HistoryPage() {
     try {
       await diagnosticsClient.importJson();
     } catch (error) {
-      setCaptureError(diagnosticsError(error).messageKey);
+      setCaptureError(toCommandError(error).messageKey);
     } finally {
       setCapturePending(false);
     }
@@ -484,7 +482,7 @@ function HistoryContextMenu({
 }: {
   busy: boolean;
   recordId: string;
-  records: HistoryRecord[];
+  records: HistoryRecordSnapshot[];
   onCompare: (recordId: string, adjacentId: string) => void;
   onDelete: (recordId: string) => void;
   onExport: (recordId: string) => void;
@@ -565,10 +563,10 @@ function RecordDetail({
   onPrediction,
 }: {
   busy: boolean;
-  record: HistoryRecord;
+  record: HistoryRecordSnapshot;
   onDelete: () => void;
   onExport: () => void;
-  onPrediction: (line: "upper" | "lower") => void;
+  onPrediction: (line: AbyssHalf) => void;
 }) {
   const summary = record.summary;
   return (
@@ -590,7 +588,7 @@ function RecordDetail({
                 disabled={busy}
                 size="sm"
                 variant="outline"
-                onClick={() => onPrediction("lower")}
+                onClick={() => onPrediction("second")}
               >
                 {t("Set as Lower Prediction")}
               </Button>
@@ -600,7 +598,7 @@ function RecordDetail({
                 disabled={busy}
                 size="sm"
                 variant="outline"
-                onClick={() => onPrediction("upper")}
+                onClick={() => onPrediction("first")}
               >
                 {t("Set as Upper Prediction")}
               </Button>
@@ -677,7 +675,7 @@ function RecordDetail({
   );
 }
 
-function HalfCard({ half }: { half: HistoryHalf }) {
+function HalfCard({ half }: { half: HistoryAbyssHalfSnapshot }) {
   return (
     <Card className="@container/half">
       <CardHeader>
@@ -713,10 +711,10 @@ function Breakdown({
   characterTitle = "Character",
   skillTitle = "Skill",
 }: {
-  characters: HistoryCharacter[];
+  characters: HistoryCharacterSnapshot[];
   hiddenCharacterCount?: number;
   hiddenSkillCount?: number;
-  skills: HistorySkill[];
+  skills: HistorySkillSnapshot[];
   embedded?: boolean;
   characterTitle?: string;
   skillTitle?: string;
@@ -766,7 +764,7 @@ function CharacterRows({
   rows,
 }: {
   title: string;
-  rows: HistoryCharacter[];
+  rows: HistoryCharacterSnapshot[];
 }) {
   return (
     <div className="min-w-0">
@@ -802,7 +800,11 @@ function CharacterRows({
   );
 }
 
-function CharacterAvatar({ character }: { character: HistoryCharacter }) {
+function CharacterAvatar({
+  character,
+}: {
+  character: HistoryCharacterSnapshot;
+}) {
   const avatarUrl = useCharacterAvatar(character.charId);
   const initial = character.name.trim().charAt(0) || "?";
   return (
@@ -886,9 +888,9 @@ function ComparePanel({
   onUseAdjacent,
 }: {
   busy: boolean;
-  comparison: HistoryComparison | null;
+  comparison: HistoryComparisonSnapshot | null;
   leftId: string;
-  records: HistoryRecord[];
+  records: HistoryRecordSnapshot[];
   rightId: string;
   onLeftChange: (value: string) => void;
   onRightChange: (value: string) => void;
@@ -941,7 +943,7 @@ function HistorySelect({
   label,
 }: {
   value: string;
-  records: HistoryRecord[];
+  records: HistoryRecordSnapshot[];
   onChange: (value: string) => void;
   label: string;
 }) {
@@ -966,7 +968,11 @@ function HistorySelect({
   );
 }
 
-function ComparisonResult({ comparison }: { comparison: HistoryComparison }) {
+function ComparisonResult({
+  comparison,
+}: {
+  comparison: HistoryComparisonSnapshot;
+}) {
   const warnings = historyComparisonWarningKeys(comparison);
   return (
     <div className="space-y-3 border-t pt-3">

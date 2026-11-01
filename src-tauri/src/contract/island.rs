@@ -1,24 +1,33 @@
 use std::time::Instant;
 
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::state::AppState;
 
-pub(crate) const ISLAND_CONTRACT_VERSION: u32 = 1;
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub(crate) enum IslandTone {
+    Info,
+    Success,
+    Error,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub(crate) struct IslandSnapshot {
-    pub contract_version: u32,
     pub enabled: bool,
     pub notice: Option<IslandNoticeSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub(crate) struct IslandNoticeSnapshot {
     pub id: String,
-    pub tone: &'static str,
+    pub tone: IslandTone,
     pub message_key: &'static str,
     pub message_arguments: Vec<String>,
     pub undo_available: bool,
@@ -43,10 +52,6 @@ impl IslandSnapshot {
                     .as_millis()
                     .min(u128::from(u64::MAX)) as u64,
             });
-        Self {
-            contract_version: ISLAND_CONTRACT_VERSION,
-            enabled,
-            notice,
-        }
+        Self { enabled, notice }
     }
 }

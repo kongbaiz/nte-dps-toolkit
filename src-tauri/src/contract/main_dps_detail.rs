@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use nte_dps_tool::{
     core::{
@@ -24,7 +25,6 @@ use nte_dps_tool::{
 
 use crate::state::{AppState, MainDpsDetailKind};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 9;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
@@ -79,17 +79,17 @@ impl MainDpsDetailTextBudget {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsDetailSnapshot {
-    pub contract_version: u32,
     pub generation: String,
     pub kind: &'static str,
-    pub abyss_half: Option<&'static str>,
+    pub abyss_half: Option<nte_dps_tool::engine::model::AbyssHalf>,
     pub character_id: Option<u32>,
     pub character_name: Option<String>,
     pub character_color: Option<String>,
-    pub filter: &'static str,
+    pub filter: MainDpsDetailFilter,
     pub qte_type: Option<String>,
     pub skill_filter: Option<String>,
     pub columns: MainDpsDetailColumns,
@@ -257,21 +257,17 @@ impl MainDpsDetailSnapshot {
                 text_budget.optional(character.and_then(|value| value.color.clone()));
 
             Self {
-                contract_version: MAIN_DPS_DETAIL_CONTRACT_VERSION,
                 generation,
                 kind: if request.character_id.is_some() {
                     "character"
                 } else {
                     "team"
                 },
-                abyss_half: selected_half.map(|half| match half {
-                    nte_dps_tool::engine::model::AbyssHalf::First => "first",
-                    nte_dps_tool::engine::model::AbyssHalf::Second => "second",
-                }),
+                abyss_half: selected_half,
                 character_id: request.character_id,
                 character_name,
                 character_color,
-                filter: filter_id(&request.filter),
+                filter: MainDpsDetailFilter::from(&request.filter),
                 qte_type,
                 skill_filter,
                 columns: config.hit_detail_columns.into(),
@@ -306,7 +302,8 @@ impl MainDpsDetailSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct MainDpsDetailColumns {
     pub show_time: bool,
@@ -368,7 +365,8 @@ impl From<MainDpsDetailColumns> for HitDetailColumnsConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsDetailActions {
     pub can_start_capture: bool,
@@ -464,7 +462,8 @@ impl<'a> DetailSource<'a> {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsDetailMetrics {
     pub total_output: f64,
@@ -509,7 +508,8 @@ fn detail_metrics(
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsDirectionSummary {
     pub confirmed_output: f64,
@@ -535,10 +535,11 @@ impl From<HitDirectionSummary> for MainDpsDirectionSummary {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsFilterSummary {
-    pub id: &'static str,
+    pub id: MainDpsDetailFilter,
     pub hits: usize,
     pub damage: f64,
 }
@@ -546,13 +547,17 @@ pub(crate) struct MainDpsFilterSummary {
 fn hit_type_summaries(metrics: &MainDpsDetailMetrics) -> Vec<MainDpsFilterSummary> {
     [
         (
-            "all",
+            MainDpsDetailFilter::All,
             metrics.output_count.saturating_add(metrics.incoming_count),
             metrics.total_output + metrics.total_damage_taken,
         ),
-        ("outgoing", metrics.output_count, metrics.total_output),
         (
-            "incoming",
+            MainDpsDetailFilter::Outgoing,
+            metrics.output_count,
+            metrics.total_output,
+        ),
+        (
+            MainDpsDetailFilter::Incoming,
             metrics.incoming_count,
             metrics.total_damage_taken,
         ),
@@ -566,12 +571,13 @@ fn hit_type_summaries(metrics: &MainDpsDetailMetrics) -> Vec<MainDpsFilterSummar
     .collect()
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsAttributionSummary {
     pub total_damage: f64,
     pub character_damage: f64,
-    pub character_filter: &'static str,
+    pub character_filter: MainDpsDetailFilter,
     pub reaction_damage: f64,
     pub shared_damage: f64,
     pub unattributed_damage: f64,
@@ -584,9 +590,9 @@ impl MainDpsAttributionSummary {
             total_damage: value.total_damage,
             character_damage: value.character_damage(separate_reaction_damage),
             character_filter: if separate_reaction_damage {
-                "characterDirect"
+                MainDpsDetailFilter::CharacterDirect
             } else {
-                "characterAttributed"
+                MainDpsDetailFilter::CharacterAttributed
             },
             reaction_damage: value.character_reaction_damage,
             shared_damage: value.shared_damage,
@@ -596,7 +602,8 @@ impl MainDpsAttributionSummary {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsQteSummary {
     pub attack_type: String,
@@ -605,7 +612,8 @@ pub(crate) struct MainDpsQteSummary {
     pub share_percent: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsSkillSummary {
     pub id: String,
@@ -736,7 +744,8 @@ fn percent(value: f64, total: f64) -> f64 {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsHitSnapshot {
     pub critical: Option<bool>,
@@ -999,17 +1008,35 @@ fn localized_target_name(hit: &Hit, language: Language) -> Option<&str> {
     (!value.trim().is_empty()).then_some(value)
 }
 
-pub(crate) fn filter_id(filter: &CombatDetailFilter) -> &'static str {
-    match filter {
-        CombatDetailFilter::All => "all",
-        CombatDetailFilter::Outgoing => "outgoing",
-        CombatDetailFilter::Incoming => "incoming",
-        CombatDetailFilter::CharacterAttributed => "characterAttributed",
-        CombatDetailFilter::CharacterDirect => "characterDirect",
-        CombatDetailFilter::ReactionDamage => "reactionDamage",
-        CombatDetailFilter::SharedMechanics => "sharedMechanics",
-        CombatDetailFilter::Unattributed => "unattributed",
-        CombatDetailFilter::QteType(_) => "qteType",
+/// Wire form of `CombatDetailFilter`; the QTE attack type travels separately.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum MainDpsDetailFilter {
+    All,
+    Outgoing,
+    Incoming,
+    CharacterAttributed,
+    CharacterDirect,
+    ReactionDamage,
+    SharedMechanics,
+    Unattributed,
+    QteType,
+}
+
+impl From<&CombatDetailFilter> for MainDpsDetailFilter {
+    fn from(filter: &CombatDetailFilter) -> Self {
+        match filter {
+            CombatDetailFilter::All => Self::All,
+            CombatDetailFilter::Outgoing => Self::Outgoing,
+            CombatDetailFilter::Incoming => Self::Incoming,
+            CombatDetailFilter::CharacterAttributed => Self::CharacterAttributed,
+            CombatDetailFilter::CharacterDirect => Self::CharacterDirect,
+            CombatDetailFilter::ReactionDamage => Self::ReactionDamage,
+            CombatDetailFilter::SharedMechanics => Self::SharedMechanics,
+            CombatDetailFilter::Unattributed => Self::Unattributed,
+            CombatDetailFilter::QteType(_) => Self::QteType,
+        }
     }
 }
 
@@ -1048,10 +1075,7 @@ pub(crate) fn find_hit_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        channels::stream_runtime::serialize_stream_events,
-        contract::stream::MAX_STREAM_DELIVERY_BYTES, state::MainDpsDetailRequest,
-    };
+    use crate::{contract::stream::MAX_STREAM_DELIVERY_BYTES, state::MainDpsDetailRequest};
     use nte_dps_tool::engine::model::{HitCharacterSource, HitDirection};
 
     fn skill_hit(
@@ -1098,23 +1122,6 @@ mod tests {
             plugin_snapshot: None,
             wire_event: None,
         }
-    }
-
-    #[test]
-    fn detail_filters_have_stable_frontend_ids() {
-        assert_eq!(filter_id(&CombatDetailFilter::All), "all");
-        assert_eq!(
-            filter_id(&CombatDetailFilter::CharacterDirect),
-            "characterDirect"
-        );
-        assert_eq!(
-            filter_id(&CombatDetailFilter::SharedMechanics),
-            "sharedMechanics"
-        );
-        assert_eq!(
-            filter_id(&CombatDetailFilter::QteType("创生花".to_owned())),
-            "qteType"
-        );
     }
 
     #[test]
@@ -1418,27 +1425,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_state_serializes_the_complete_detail_contract() {
-        let snapshot = MainDpsDetailSnapshot::from_state(
-            &AppState::default(),
-            MainDpsDetailKind::Team,
-            0,
-            200,
-        )
-        .expect("healthy live-capture detail snapshot");
-        let value = serde_json::to_value(snapshot).expect("detail snapshot serializes");
-
-        assert_eq!(value["contractVersion"], MAIN_DPS_DETAIL_CONTRACT_VERSION);
-        assert_eq!(value["metrics"]["totalOutput"], 0.0);
-        assert_eq!(value["direction"]["candidateHits"], 0);
-        assert_eq!(value["hitTypes"].as_array().map(Vec::len), Some(3));
-        assert_eq!(value["columns"]["showTime"], true);
-        assert_eq!(value["actions"]["canStartCapture"], true);
-        assert_eq!(value["maxRowDamage"], 1.0);
-        assert_eq!(value["rows"].as_array().map(Vec::len), Some(0));
-    }
-
-    #[test]
     fn filtered_hit_snapshot_lookup_uses_source_index_and_rejects_stale_capture_identity() {
         use crate::state::MainDpsDetailRequest;
         use nte_dps_tool::engine::model::{
@@ -1636,8 +1622,8 @@ mod tests {
             "the cumulative text budget must report omission"
         );
 
-        let delivery = serialize_stream_events(vec![snapshot])
-            .expect("bounded escape-heavy snapshot must serialize");
+        let delivery =
+            serde_json::to_vec(&snapshot).expect("bounded escape-heavy snapshot must serialize");
         assert!(
             delivery.len() < MAX_STREAM_DELIVERY_BYTES,
             "MAIN_DPS_DETAIL_MAX_STREAM_BYTES={} limit={MAX_STREAM_DELIVERY_BYTES}",

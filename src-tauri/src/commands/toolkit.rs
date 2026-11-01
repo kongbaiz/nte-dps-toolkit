@@ -14,31 +14,51 @@ use nte_dps_tool::{
 use serde::{Deserialize, Serialize};
 use std::{io::Read, path::PathBuf};
 use tauri::{State, WebviewWindow};
+use ts_rs::TS;
 
-const PLUGIN_PANEL_CONTRACT_VERSION: u32 = 5;
-
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PluginPanel {
-    contract_version: u32,
     connection_identity: Option<String>,
     collector_active: bool,
     capabilities: Vec<u32>,
     mode: DataMode,
     loading_method: ModStudioLoadingMethod,
-    connection: &'static str,
+    connection: PluginConnection,
     plugins: Vec<Plugin>,
     combat: Option<Combat>,
     operation: Option<PluginOperation>,
     components_ready: bool,
     game_directory: Option<String>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+enum PluginConnection {
+    NotRequested,
+    Connected,
+    Unavailable,
+    Busy,
+    Error,
+}
+#[derive(Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+enum PluginState {
+    Loaded,
+    Unloaded,
+    UnloadPending,
+    Failed,
+}
+#[derive(Serialize, Deserialize, TS)]
+#[ts(export)]
 pub(crate) struct Plugin {
     file: String,
-    state: String,
+    state: PluginState,
 }
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct Combat {
     generation: String,
@@ -50,7 +70,8 @@ struct Combat {
     inferred: f64,
     unknown: f64,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, TS)]
+#[ts(export)]
 pub(crate) struct PluginOperation {
     state: String,
     error: String,
@@ -144,7 +165,6 @@ fn validate_data_source_window(window: &WebviewWindow) -> Result<(), CommandErro
 fn snapshot(state: &AppState) -> PluginPanel {
     let mode = state.data_mode();
     let mut result = PluginPanel {
-        contract_version: PLUGIN_PANEL_CONTRACT_VERSION,
         game_directory: state.proxy_game_directory(),
         connection_identity: None,
         collector_active: matches!(
@@ -156,7 +176,7 @@ fn snapshot(state: &AppState) -> PluginPanel {
         capabilities: vec![],
         mode,
         loading_method: state.mod_studio_loading_method(),
-        connection: "notRequested",
+        connection: PluginConnection::NotRequested,
         plugins: vec![],
         combat: None,
         operation: None,
@@ -174,15 +194,7 @@ fn snapshot(state: &AppState) -> PluginPanel {
         let (c, capabilities) = client()?;
         let identity = c.identity();
         let plugins: Vec<Plugin> = c.json(3, 0, "", &|| false).map_err(error)?;
-        if plugins.len() > 64
-            || plugins.iter().any(|p| {
-                !valid_file(&p.file)
-                    || !matches!(
-                        p.state.as_str(),
-                        "loaded" | "unloaded" | "unload_pending" | "failed"
-                    )
-            })
-        {
+        if plugins.len() > 64 || plugins.iter().any(|p| !valid_file(&p.file)) {
             return Err(error(ToolkitError::InvalidProtocol));
         }
         let combat: Option<CombatStatus> = match c.json(100, 0, "", &|| false) {
@@ -211,7 +223,7 @@ fn snapshot(state: &AppState) -> PluginPanel {
         Ok((plugins, combat, op, capabilities, identity)) => {
             result.capabilities = capabilities;
             result.connection_identity = Some(identity);
-            result.connection = "connected";
+            result.connection = PluginConnection::Connected;
             result.plugins = plugins;
             result.operation = Some(op);
             result.combat = combat.map(|s| Combat {
@@ -227,9 +239,9 @@ fn snapshot(state: &AppState) -> PluginPanel {
         }
         Err(e) => {
             result.connection = match e.code {
-                "plugin_unavailable" => "unavailable",
-                "plugin_busy" => "busy",
-                _ => "error",
+                "plugin_unavailable" => PluginConnection::Unavailable,
+                "plugin_busy" => PluginConnection::Busy,
+                _ => PluginConnection::Error,
             }
         }
     }
@@ -276,11 +288,18 @@ pub(crate) async fn set_data_mode(
     .await
     .map_err(|_| error(ToolkitError::Failed))?
 }
+#[derive(Clone, Copy, Debug, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PluginControlAction {
+    Enable,
+    Disable,
+}
+
 #[tauri::command]
 pub(crate) async fn control_plugin(
-    action: String,
-    file: Option<String>,
-    value: Option<u32>,
+    action: PluginControlAction,
+    file: String,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
@@ -288,19 +307,12 @@ pub(crate) async fn control_plugin(
     if state.data_mode() != DataMode::Plugin {
         return Err(CommandError::mod_studio_risk_acknowledgement_required());
     }
-    let _ = value;
-    let file = file.unwrap_or_default();
-    let (command, argument) = match action.as_str() {
-        "enable" | "disable" if valid_file(&file) => (
-            match action.as_str() {
-                "enable" => 4,
-                "disable" => 5,
-                _ => 6,
-            },
-            0,
-        ),
-
-        _ => return Err(error(ToolkitError::Unsupported)),
+    if !valid_file(&file) {
+        return Err(error(ToolkitError::Unsupported));
+    }
+    let command = match action {
+        PluginControlAction::Enable => 4,
+        PluginControlAction::Disable => 5,
     };
     // Combat collector owns start/stop. Never unload it under an active stream.
     if matches!(
@@ -308,8 +320,7 @@ pub(crate) async fn control_plugin(
         nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
-    ) && command != 8
-    {
+    ) {
         return Err(error(ToolkitError::Busy));
     }
     let state = state.inner().clone();
@@ -320,21 +331,19 @@ pub(crate) async fn control_plugin(
         if state.data_mode() != DataMode::Plugin {
             return Err(unsupported());
         }
-        if command != 8
-            && matches!(
-                state.capture_phase(),
-                nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
-                    | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
-                    | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
-            )
-        {
+        if matches!(
+            state.capture_phase(),
+            nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
+        ) {
             return Err(error(ToolkitError::Busy));
         }
         let (c, capabilities) = client()?;
         if !capabilities.contains(&command) {
             return Err(unsupported());
         }
-        c.call(command, argument, &file, &|| false).map_err(error)?;
+        c.call(command, 0, &file, &|| false).map_err(error)?;
         Ok(())
     })
     .await
@@ -463,7 +472,8 @@ impl ReleaseAction {
         )
     }
 }
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReleaseResult {
     command: u32,
@@ -697,7 +707,8 @@ pub(crate) async fn uninstall_proxy_host(
     .map_err(|_| error(ToolkitError::Failed))?
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HostLaunchResult {
     panel: PluginPanel,

@@ -3,17 +3,18 @@ use nte_dps_tool::core::mod_market::{
     ModMarketCatalog, ModMarketError, ModMarketErrorCode, ModMarketItem, ModMarketLocalizations,
 };
 use serde::Serialize;
-pub(crate) const MOD_MARKET_CONTRACT_VERSION: u32 = 13;
-#[derive(Clone, Debug, Serialize)]
+use ts_rs::TS;
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModMarketCatalogSnapshot {
-    pub contract_version: u32,
     pub published_at: String,
     pub privacy_mode: &'static str,
     pub mods: Vec<ModMarketItemSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModMarketItemSnapshot {
     pub component: nte_dps_tool::core::mod_market::ComponentKind,
@@ -27,7 +28,8 @@ pub(crate) struct ModMarketItemSnapshot {
     pub local_state: ModMarketLocalStateSnapshot,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(
     tag = "status",
     rename_all = "camelCase",
@@ -45,7 +47,8 @@ pub(crate) enum ModMarketLocalStateSnapshot {
     },
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 pub(crate) struct ModMarketLocalizationsSnapshot {
     pub en: ModMarketLocalizedTextSnapshot,
     #[serde(rename = "zh-CN")]
@@ -53,7 +56,8 @@ pub(crate) struct ModMarketLocalizationsSnapshot {
     pub ja: ModMarketLocalizedTextSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModMarketLocalizedTextSnapshot {
     pub name: String,
@@ -85,7 +89,6 @@ impl ModMarketCatalogSnapshot {
         local_status: impl Fn(&ModMarketItem) -> ModMarketLocalStateSnapshot,
     ) -> Self {
         Self {
-            contract_version: MOD_MARKET_CONTRACT_VERSION,
             published_at: catalog.published_at,
             privacy_mode: "anonymous-read-only",
             mods: catalog

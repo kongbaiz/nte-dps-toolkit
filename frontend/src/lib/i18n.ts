@@ -1,14 +1,11 @@
-import { useSyncExternalStore } from "react";
+import { create } from "zustand";
 
 import japanese from "@res/languages/ja.json";
 import simplifiedChinese from "@res/languages/zh-CN.json";
 
-import type { SettingsLanguage } from "@/lib/tauri/settings-contract";
+import type { Language } from "@/lib/tauri/generated/Language";
 
-const dictionaries: Record<
-  Exclude<SettingsLanguage, "en">,
-  Record<string, string>
-> = {
+const dictionaries: Record<Exclude<Language, "en">, Record<string, string>> = {
   ja: {
     ...japanese,
     "Follow-up": "追撃",
@@ -18,11 +15,11 @@ const dictionaries: Record<
     "Follow-up": "追击",
   },
 };
-let language: SettingsLanguage = "zh-CN";
-let revision = 0;
-const listeners = new Set<() => void>();
+/** The frontend language; components that render `t` output subscribe to it. */
+export const useFrontendLanguage = create<Language>(() => "zh-CN");
 
 export function t(key: string): string {
+  const language = useFrontendLanguage.getState();
   return language === "en" ? key : (dictionaries[language][key] ?? key);
 }
 
@@ -48,26 +45,6 @@ export function formatTemplate(
   }, template);
 }
 
-export function setFrontendLanguage(next: SettingsLanguage): void {
-  if (language === next) {
-    return;
-  }
-  language = next;
-  revision += 1;
-  listeners.forEach((listener) => listener());
-}
-
-export function currentFrontendLanguage(): SettingsLanguage {
-  return language;
-}
-
-export function useTranslationRevision(): number {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => revision,
-    () => revision,
-  );
+export function setFrontendLanguage(next: Language): void {
+  useFrontendLanguage.setState(next, true);
 }

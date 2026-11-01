@@ -7,23 +7,15 @@ use crate::{
     storage::i18n::Language,
 };
 
-use super::timeline::{character_color, character_name, finite_non_negative};
+use super::timeline::{TimelineScope, character_color, character_name, finite_non_negative};
 
 pub const MAX_PROJECTED_SKILL_CHARACTERS: usize = 64;
 pub const MAX_PROJECTED_SKILL_ROWS: usize = 4_096;
 pub const MAX_PROJECTED_UNMAPPED_EFFECTS: usize = 512;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SkillsScope {
-    #[default]
-    Whole,
-    First,
-    Second,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct SkillsProjectionOptions {
-    pub scope: SkillsScope,
+    pub scope: TimelineScope,
     pub language: Language,
 }
 
@@ -86,9 +78,9 @@ pub fn project_skills(
     options: SkillsProjectionOptions,
 ) -> SkillsProjection {
     let breakdown = match options.scope {
-        SkillsScope::Whole => state.skill_breakdown(None),
-        SkillsScope::First => state.abyss.half(AbyssHalf::First).skill_breakdown(),
-        SkillsScope::Second => state.abyss.half(AbyssHalf::Second).skill_breakdown(),
+        TimelineScope::Whole => state.skill_breakdown(None),
+        TimelineScope::First => state.abyss.half(AbyssHalf::First).skill_breakdown(),
+        TimelineScope::Second => state.abyss.half(AbyssHalf::Second).skill_breakdown(),
     };
     let mut summaries = HashMap::<u32, (String, f64, usize)>::new();
     for row in &breakdown.rows {
@@ -347,7 +339,7 @@ mod tests {
             &state,
             &characters,
             SkillsProjectionOptions {
-                scope: SkillsScope::Whole,
+                scope: TimelineScope::Whole,
                 language: Language::SimplifiedChinese,
             },
         );
@@ -403,7 +395,7 @@ mod tests {
             &state,
             &HashMap::new(),
             SkillsProjectionOptions {
-                scope: SkillsScope::Whole,
+                scope: TimelineScope::Whole,
                 language: Language::English,
             },
         );

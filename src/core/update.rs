@@ -108,7 +108,9 @@ struct UpdateArtifact {
     sha256: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(rename_all = "kebab-case")]
 pub enum UpdateComponent {
     App,
     ModsPlugin,

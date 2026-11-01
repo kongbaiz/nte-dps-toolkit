@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { SkillsSnapshot } from "@/lib/tauri/skills-contract";
+import type { SkillsSnapshot } from "@/lib/tauri/generated/SkillsSnapshot";
 
 import {
   buildSkillCharacterSummaries,
@@ -10,7 +10,6 @@ import {
 } from "./skills-ui-model";
 
 const SNAPSHOT: SkillsSnapshot = {
-  contractVersion: 1,
   generation: "1",
   scope: "all",
   hasData: true,

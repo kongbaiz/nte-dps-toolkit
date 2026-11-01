@@ -1,20 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  modStudioClient,
-  type ModStudioClient,
-} from "@/lib/tauri/mod-studio-client";
-import {
-  parseModStudioCommandError,
-  type ModMarketCatalogSnapshot,
-} from "@/lib/tauri/mod-studio-contract";
+import { modStudioClient } from "@/lib/tauri/mod-studio-client";
+import type { ModMarketCatalogSnapshot } from "@/lib/tauri/generated/ModMarketCatalogSnapshot";
+import { toCommandError } from "@/lib/tauri/command-error";
 
 export type ModMarketState =
   | { status: "loading" }
   | { status: "ready"; catalog: ModMarketCatalogSnapshot }
   | {
       status: "error";
-      error: ReturnType<typeof parseModStudioCommandError>;
+      error: ReturnType<typeof toCommandError>;
     };
 
 export type ModMarketInstallState =
@@ -23,13 +18,10 @@ export type ModMarketInstallState =
   | { status: "installed" }
   | {
       status: "error";
-      error: ReturnType<typeof parseModStudioCommandError>;
+      error: ReturnType<typeof toCommandError>;
     };
 
-export function useModMarket(
-  onInstalled: () => void | Promise<void>,
-  client: ModStudioClient = modStudioClient,
-) {
+export function useModMarket(onInstalled: () => void | Promise<void>) {
   const request = useRef(0);
   const installing = useRef(new Set<string>());
   const [state, setState] = useState<ModMarketState>({ status: "loading" });
@@ -41,7 +33,7 @@ export function useModMarket(
     const activeRequest = ++request.current;
     setState({ status: "loading" });
     try {
-      const catalog = await client.getMarketCatalog();
+      const catalog = await modStudioClient.getMarketCatalog();
       if (activeRequest === request.current) {
         setState({ status: "ready", catalog });
       }
@@ -49,11 +41,11 @@ export function useModMarket(
       if (activeRequest === request.current) {
         setState({
           status: "error",
-          error: parseModStudioCommandError(error),
+          error: toCommandError(error),
         });
       }
     }
-  }, [client]);
+  }, []);
 
   const install = useCallback(
     async (id: string) => {
@@ -66,7 +58,7 @@ export function useModMarket(
         [id]: { status: "installing" },
       }));
       try {
-        await client.installMarketItem(id);
+        await modStudioClient.installMarketItem(id);
         setInstallStates((current) => ({
           ...current,
           [id]: { status: "installed" },
@@ -77,14 +69,14 @@ export function useModMarket(
           ...current,
           [id]: {
             status: "error",
-            error: parseModStudioCommandError(error),
+            error: toCommandError(error),
           },
         }));
       } finally {
         installing.current.delete(id);
       }
     },
-    [client, onInstalled, refresh],
+    [onInstalled, refresh],
   );
 
   useEffect(() => {

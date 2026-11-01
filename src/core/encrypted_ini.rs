@@ -17,7 +17,11 @@ pub enum EncryptedIniError {
     WriteFailed,
 }
 
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, Default, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
 pub enum EncryptedIniKey {
     #[default]
     Global,

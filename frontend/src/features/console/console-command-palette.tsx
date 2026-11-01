@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { t, useTranslationRevision } from "@/lib/i18n";
+import { t, useFrontendLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 import {
@@ -30,14 +30,14 @@ export function ConsoleCommandPalette({
   onOpenChange(open: boolean): void;
   onExecute(action: ConsoleCommandAction): Promise<void> | void;
 }) {
-  const translationRevision = useTranslationRevision();
+  const language = useFrontendLanguage();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const filtered = useMemo(() => {
-    void translationRevision;
+    void language;
     return filterConsoleCommands(CONSOLE_COMMANDS, query, t);
-  }, [query, translationRevision]);
+  }, [language, query]);
 
   useEffect(() => {
     if (!open) return;

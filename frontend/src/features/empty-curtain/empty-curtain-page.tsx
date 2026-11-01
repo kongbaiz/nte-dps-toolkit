@@ -40,15 +40,15 @@ import {
 import { resolveCharacterAvatar } from "@/lib/character-avatar";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
-import type { ManageItemInput } from "@/lib/tauri/empty-curtain-client";
 import {
   itemUidKey,
-  type EmptyCurtainCharacter,
-  type EmptyCurtainCommandError,
-  type EmptyCurtainItem,
-  type EmptyCurtainPlacement,
-  type ItemUid,
-} from "@/lib/tauri/empty-curtain-contract";
+  type ManageItemInput,
+} from "@/lib/tauri/empty-curtain-client";
+import type { EmptyCurtainCharacterSnapshot } from "@/lib/tauri/generated/EmptyCurtainCharacterSnapshot";
+import type { EmptyCurtainItemSnapshot } from "@/lib/tauri/generated/EmptyCurtainItemSnapshot";
+import type { EmptyCurtainPlacementSnapshot } from "@/lib/tauri/generated/EmptyCurtainPlacementSnapshot";
+import type { ItemUidSnapshot } from "@/lib/tauri/generated/ItemUidSnapshot";
+import { type CommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 
 import { EquipmentCanvasGrid } from "./equipment-canvas-grid";
@@ -69,7 +69,7 @@ const equipmentImages = import.meta.glob<string>(
 const imageByFileName = new Map(
   Object.entries(equipmentImages).map(([path, url]) => [fileName(path), url]),
 );
-const EMPTY_ITEMS: EmptyCurtainItem[] = [];
+const EMPTY_ITEMS: EmptyCurtainItemSnapshot[] = [];
 
 const QUALITY_OPTIONS: Array<{
   id: KnownEquipmentQuality;
@@ -334,13 +334,13 @@ function CharacterEquipmentDialog({
   onAction,
   onDone,
 }: {
-  characters: EmptyCurtainCharacter[];
-  items: EmptyCurtainItem[];
+  characters: EmptyCurtainCharacterSnapshot[];
+  items: EmptyCurtainItemSnapshot[];
   pending: boolean;
   readOnly: boolean;
   onImport: () => void;
-  onExport: (uid: ItemUid) => void;
-  onAction: (uid: ItemUid, action: "unequip-all" | "one-click") => void;
+  onExport: (uid: ItemUidSnapshot) => void;
+  onAction: (uid: ItemUidSnapshot, action: "unequip-all" | "one-click") => void;
   onDone: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -471,8 +471,8 @@ function FilterDialog({
   onChange,
   onDone,
 }: {
-  items: EmptyCurtainItem[];
-  characters: EmptyCurtainCharacter[];
+  items: EmptyCurtainItemSnapshot[];
+  characters: EmptyCurtainCharacterSnapshot[];
   filters: EquipmentFilters;
   onChange: (filters: EquipmentFilters) => void;
   onDone: () => void;
@@ -552,8 +552,8 @@ function FilterPanel({
   filters,
   onChange,
 }: {
-  items: EmptyCurtainItem[];
-  characters: EmptyCurtainCharacter[];
+  items: EmptyCurtainItemSnapshot[];
+  characters: EmptyCurtainCharacterSnapshot[];
   filters: EquipmentFilters;
   onChange: (filters: EquipmentFilters) => void;
 }) {
@@ -727,7 +727,7 @@ function EquipmentFilterGroup({
   onToggle,
 }: {
   label: string;
-  items: EmptyCurtainItem[];
+  items: EmptyCurtainItemSnapshot[];
   selected: string[];
   controls?: React.ReactNode;
   emptyLabel?: string;
@@ -850,19 +850,21 @@ function EquipmentDetailsDialog({
   onManage,
   onDone,
 }: {
-  item: EmptyCurtainItem;
-  characters: EmptyCurtainCharacter[];
+  item: EmptyCurtainItemSnapshot;
+  characters: EmptyCurtainCharacterSnapshot[];
   pending: boolean;
   loadPositions: (
-    item: ItemUid,
-    character: ItemUid,
-  ) => Promise<EmptyCurtainPlacement[]>;
+    item: ItemUidSnapshot,
+    character: ItemUidSnapshot,
+  ) => Promise<EmptyCurtainPlacementSnapshot[]>;
   onManage: (input: ManageItemInput) => void;
   onDone: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [targetKey, setTargetKey] = useState("");
-  const [positions, setPositions] = useState<EmptyCurtainPlacement[]>([]);
+  const [positions, setPositions] = useState<EmptyCurtainPlacementSnapshot[]>(
+    [],
+  );
   const [positionKey, setPositionKey] = useState("");
   const target = characters.find(
     (character) => itemUidKey(character.uid) === targetKey,
@@ -1151,7 +1153,7 @@ function EquipmentDetailsDialog({
   );
 }
 
-function SetBadge({ item }: { item: EmptyCurtainItem }) {
+function SetBadge({ item }: { item: EmptyCurtainItemSnapshot }) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -1180,7 +1182,7 @@ function EquipmentImage({
   item,
   className,
 }: {
-  item: EmptyCurtainItem;
+  item: EmptyCurtainItemSnapshot;
   className?: string;
 }) {
   const imageUrl = equipmentImageUrl(item);
@@ -1203,7 +1205,7 @@ function EquipmentImage({
   );
 }
 
-function equipmentImageUrl(item: EmptyCurtainItem): string | null {
+function equipmentImageUrl(item: EmptyCurtainItemSnapshot): string | null {
   return item.icon ? (imageByFileName.get(fileName(item.icon)) ?? null) : null;
 }
 
@@ -1239,7 +1241,7 @@ function FloatingNotice({
   error,
   onClose,
 }: {
-  error: EmptyCurtainCommandError;
+  error: CommandError;
   onClose: () => void;
 }) {
   return createPortal(
@@ -1287,7 +1289,7 @@ function LoadError({
   error,
   onRetry,
 }: {
-  error: EmptyCurtainCommandError;
+  error: CommandError;
   onRetry: () => void;
 }) {
   return (

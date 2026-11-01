@@ -1,13 +1,8 @@
 // Synthetic, development-only evidence. Never used as live capture data.
-import {
-  MAIN_DPS_DETAIL_CONTRACT_VERSION,
-  type MainDpsDetailSnapshot,
-} from "@/lib/tauri/main-dps-detail-contract";
+import type { MainDpsDetailSnapshot } from "@/lib/tauri/generated/MainDpsDetailSnapshot";
 import { DEFAULT_DETAIL_COLUMNS } from "@/features/main-dps/main-dps-detail-model";
-import type {
-  HitSnapshot,
-  AttributeSnapshot,
-} from "@/lib/tauri/hit-snapshot-contract";
+import type { AttributeSnapshot } from "@/lib/tauri/generated/AttributeSnapshot";
+import type { PluginHitSnapshot } from "@/lib/tauri/generated/PluginHitSnapshot";
 const attributes: AttributeSnapshot = {
   id: "9007199254740993",
   generation: "1",
@@ -47,7 +42,7 @@ const attributes: AttributeSnapshot = {
     },
   },
 };
-export const hitSnapshotFixture: HitSnapshot = {
+export const hitSnapshotFixture: PluginHitSnapshot = {
   key: "preview-capture:1",
   critical: true,
   criticalSource: "native_prediction",
@@ -117,7 +112,6 @@ export const hitSnapshotFixture: HitSnapshot = {
   },
 };
 export const hitDetailsFixture: MainDpsDetailSnapshot = {
-  contractVersion: MAIN_DPS_DETAIL_CONTRACT_VERSION,
   generation: "1",
   kind: "character",
   abyssHalf: null,

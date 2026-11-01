@@ -1,21 +1,20 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 use nte_dps_tool::core::{
     live_capture::LiveCapturePhase,
     packets::{PACKETS_DISPLAY_LIMIT, PacketsProjection},
 };
 
-pub(crate) const PACKETS_CONTRACT_VERSION: u32 = 2;
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PacketsSnapshot {
-    pub contract_version: u32,
     pub generation: String,
     pub session_generation: String,
     pub packet_generation: String,
     pub first_display_sequence: String,
-    pub capture_phase: &'static str,
+    pub capture_phase: LiveCapturePhase,
     pub event_count: usize,
     pub observed_packet_count: String,
     pub packets_with_hits: String,
@@ -34,12 +33,11 @@ impl PacketsSnapshot {
         capture_phase: LiveCapturePhase,
     ) -> Self {
         Self {
-            contract_version: PACKETS_CONTRACT_VERSION,
             generation: projection.generation.to_string(),
             session_generation: projection.session_generation.to_string(),
             packet_generation: projection.packet_generation.to_string(),
             first_display_sequence: projection.first_display_sequence.to_string(),
-            capture_phase: capture_phase_code(capture_phase),
+            capture_phase,
             event_count: projection.event_count,
             observed_packet_count: projection.observed_packet_count.to_string(),
             packets_with_hits: projection.packets_with_hits.to_string(),
@@ -71,7 +69,8 @@ impl PacketsSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PacketSnapshot {
     pub sequence: String,
@@ -88,22 +87,12 @@ pub(crate) struct PacketSnapshot {
     pub omitted_declared_id_count: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum PacketsEvent {
     Snapshot(PacketsSnapshot),
     Append(PacketsSnapshot),
-}
-
-const fn capture_phase_code(phase: LiveCapturePhase) -> &'static str {
-    match phase {
-        LiveCapturePhase::Idle => "idle",
-        LiveCapturePhase::Starting => "starting",
-        LiveCapturePhase::Running => "running",
-        LiveCapturePhase::Stopping => "stopping",
-        LiveCapturePhase::Stopped => "stopped",
-        LiveCapturePhase::Failed => "failed",
-    }
 }
 
 #[cfg(test)]
@@ -117,10 +106,7 @@ mod tests {
         engine::model::{CombatState, PacketDebug},
     };
 
-    use crate::{
-        channels::stream_runtime::serialize_stream_events,
-        contract::stream::MAX_STREAM_DELIVERY_BYTES,
-    };
+    use crate::contract::stream::MAX_STREAM_DELIVERY_BYTES;
 
     #[test]
     fn packet_contract_uses_decimal_strings_and_omits_raw_payload_fields() {
@@ -201,9 +187,9 @@ mod tests {
         assert_eq!(projection.truncated_packet_count, PACKETS_DISPLAY_LIMIT);
         let snapshot = PacketsSnapshot::from_projection(projection, LiveCapturePhase::Running);
 
-        let replacement = serialize_stream_events(vec![PacketsEvent::Snapshot(snapshot.clone())])
+        let replacement = serde_json::to_vec(&PacketsEvent::Snapshot(snapshot.clone()))
             .expect("maximal replacement packet delivery stays serializable");
-        let append = serialize_stream_events(vec![PacketsEvent::Append(snapshot)])
+        let append = serde_json::to_vec(&PacketsEvent::Append(snapshot))
             .expect("maximal append packet delivery stays serializable");
         eprintln!(
             "PACKETS_MAX_STREAM_BYTES replacement={} append={} limit={}",

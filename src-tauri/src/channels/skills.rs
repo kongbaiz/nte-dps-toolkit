@@ -1,3 +1,4 @@
+use nte_dps_tool::core::timeline::TimelineScope;
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
@@ -5,12 +6,8 @@ use crate::{
         PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
         validate_subscription_id,
     },
-    commands::skills::{parse_scope, snapshot},
-    contract::{
-        CommandError, SubscriptionReceipt,
-        skills::SkillsEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
+    commands::skills::snapshot,
+    contract::{CommandError, SubscriptionReceipt, skills::SkillsEvent, stream::StreamKind},
     state::AppState,
     windows::console,
 };
@@ -19,14 +16,13 @@ pub(crate) const SKILLS_STREAM_INTERVAL_MS: u32 = 100;
 #[tauri::command]
 pub(crate) fn subscribe_skills(
     subscription_id: String,
-    scope: String,
-    on_event: Channel<StreamDeliveryBody<SkillsEvent>>,
+    scope: TimelineScope,
+    on_event: Channel<SkillsEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    let scope = parse_scope(&scope)?;
     state
         .main_dps_stream_revision()
         .map_err(CommandError::from_core)?;

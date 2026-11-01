@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { MainDpsDetailSnapshot } from "@/lib/tauri/main-dps-detail-contract";
+import type { MainDpsDetailSnapshot } from "@/lib/tauri/generated/MainDpsDetailSnapshot";
 
 import {
   DEFAULT_DETAIL_COLUMNS,
@@ -73,7 +73,6 @@ describe("main DPS detail model", () => {
 
 function fakeSnapshot(ids: string[], totalHits: number): MainDpsDetailSnapshot {
   return {
-    contractVersion: 4,
     generation: "1",
     kind: "team",
     abyssHalf: null,

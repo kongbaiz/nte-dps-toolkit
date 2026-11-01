@@ -1,4 +1,7 @@
-import { tauriInvokeTransport, type InvokeTransport } from "./stream-client";
+import { invokeCommand } from "@/lib/tauri/command-error";
+import type { ReleaseResult } from "@/lib/tauri/generated/ReleaseResult";
+
+export type { ReleaseResult };
 
 export const RELEASE_ACTIONS = [
   ["hostStatus", 2, "Host status"],
@@ -54,37 +57,6 @@ export function parseHudOptions(result: ReleaseResult): number {
     throw new TypeError("invalid HUD options");
   return value.options;
 }
-export interface ReleaseResult {
-  command: number;
-  preview: string;
-  totalBytes: number;
-  truncated: boolean;
-}
-export function parseReleaseResult(v: unknown, command: number): ReleaseResult {
-  if (typeof v !== "object" || v === null)
-    throw new TypeError("invalid release result");
-  const r = v as Record<string, unknown>;
-  if (
-    r.command !== command ||
-    typeof r.preview !== "string" ||
-    new TextEncoder().encode(r.preview).length > 8192 ||
-    typeof r.totalBytes !== "number" ||
-    !Number.isSafeInteger(r.totalBytes) ||
-    r.totalBytes < 0 ||
-    r.totalBytes > 33554432 ||
-    typeof r.truncated !== "boolean"
-  )
-    throw new TypeError("invalid release result");
-  const length = new TextEncoder().encode(r.preview).length;
-  if (length > r.totalBytes || r.truncated !== length < r.totalBytes)
-    throw new TypeError("inconsistent release preview");
-  return {
-    command,
-    preview: r.preview,
-    totalBytes: r.totalBytes,
-    truncated: r.truncated,
-  };
-}
 export function requiresIdle(a: ReleaseAction) {
   return ["combatReset", "combatStopExport", "shutdown"].includes(a);
 }
@@ -100,28 +72,17 @@ export function requiresConfirmation(a: ReleaseAction) {
     "trainingWoodenDisable",
   ].includes(a);
 }
-export function createReleasePluginClient(
-  transport: InvokeTransport = tauriInvokeTransport,
-) {
-  return {
-    async execute(
-      action: ReleaseAction,
-      expectedIdentity: string,
-      value: number | null = null,
-      confirmed = false,
-    ) {
-      const descriptor = RELEASE_ACTIONS.find((a) => a[0] === action);
-      if (!descriptor) throw new TypeError("unknown release action");
-      return parseReleaseResult(
-        await transport.invoke("release_plugin_action", {
-          action,
-          expectedIdentity,
-          value,
-          confirmed,
-        }),
-        descriptor[1],
-      );
-    },
-  };
-}
-export const releasePluginClient = createReleasePluginClient();
+export const releasePluginClient = {
+  execute: (
+    action: ReleaseAction,
+    expectedIdentity: string,
+    value: number | null = null,
+    confirmed = false,
+  ) =>
+    invokeCommand<ReleaseResult>("release_plugin_action", {
+      action,
+      expectedIdentity,
+      value,
+      confirmed,
+    }),
+};

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::Serialize;
+use ts_rs::TS;
 
 use nte_dps_tool::{
     engine::model::{
@@ -18,13 +19,12 @@ use nte_dps_tool::{
     },
 };
 
-pub(crate) const HISTORY_CONTRACT_VERSION: u32 = 2;
 const DISPLAY_ROW_LIMIT: usize = 6;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistorySnapshot {
-    pub contract_version: u32,
     pub revision: String,
     pub max_import_bytes: String,
     pub skipped_files: u32,
@@ -35,7 +35,6 @@ impl HistorySnapshot {
     pub(crate) fn from_load(value: HistoryLoadResult, revision: u64) -> Self {
         let value = bounded_history_load(value);
         Self {
-            contract_version: HISTORY_CONTRACT_VERSION,
             revision: revision.to_string(),
             max_import_bytes: MAX_HISTORY_IMPORT_BYTES.to_string(),
             skipped_files: value.skipped_files.min(u32::MAX as usize) as u32,
@@ -82,13 +81,15 @@ fn bounded_history_load(mut value: HistoryLoadResult) -> HistoryLoadResult {
     value
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum HistoryEvent {
     Snapshot(HistorySnapshot),
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryDeleteSnapshot {
     pub history: HistorySnapshot,
@@ -96,7 +97,8 @@ pub(crate) struct HistoryDeleteSnapshot {
     pub undo_expires_ms: u32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryImportFileSnapshot {
     pub performed: bool,
@@ -104,13 +106,15 @@ pub(crate) struct HistoryImportFileSnapshot {
     pub history: HistorySnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryFileActionSnapshot {
     pub performed: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryRecordSnapshot {
     pub id: String,
@@ -138,7 +142,8 @@ impl From<&HistoryRecord> for HistoryRecordSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistorySummarySnapshot {
     pub duration_seconds: f64,
@@ -181,7 +186,7 @@ impl From<&CombatSessionSummary> for HistorySummarySnapshot {
             abyss: HistoryAbyssSnapshot {
                 detected: summary.abyss.detected,
                 floor: summary.abyss.floor,
-                active_half: summary.abyss.active_half.map(abyss_half_code),
+                active_half: summary.abyss.active_half,
                 success: summary.abyss.success,
                 first_half: summary
                     .abyss
@@ -207,7 +212,8 @@ impl From<&CombatSessionSummary> for HistorySummarySnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryCharacterSnapshot {
     pub char_id: u32,
@@ -235,7 +241,8 @@ impl From<&CombatSessionCharacterSummary> for HistoryCharacterSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistorySkillSnapshot {
     pub char_id: u32,
@@ -263,21 +270,23 @@ impl From<&CombatSessionSkillSummary> for HistorySkillSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryAbyssSnapshot {
     pub detected: bool,
     pub floor: Option<u32>,
-    pub active_half: Option<&'static str>,
+    pub active_half: Option<AbyssHalf>,
     pub success: bool,
     pub first_half: Option<HistoryAbyssHalfSnapshot>,
     pub second_half: Option<HistoryAbyssHalfSnapshot>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryAbyssHalfSnapshot {
-    pub half: &'static str,
+    pub half: AbyssHalf,
     pub duration_seconds: f64,
     pub total_damage: f64,
     pub total_dps: f64,
@@ -290,7 +299,7 @@ pub(crate) struct HistoryAbyssHalfSnapshot {
 impl From<&CombatSessionAbyssHalfSummary> for HistoryAbyssHalfSnapshot {
     fn from(summary: &CombatSessionAbyssHalfSummary) -> Self {
         Self {
-            half: abyss_half_code(summary.half),
+            half: summary.half,
             duration_seconds: summary.duration_seconds,
             total_damage: summary.total_damage,
             total_dps: summary.total_dps,
@@ -312,7 +321,8 @@ impl From<&CombatSessionAbyssHalfSummary> for HistoryAbyssHalfSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryQualitySnapshot {
     pub source: &'static str,
@@ -322,7 +332,8 @@ pub(crate) struct HistoryQualitySnapshot {
     pub unknown_character_hits: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryComparisonSnapshot {
     pub left_id: String,
@@ -366,7 +377,8 @@ impl HistoryComparisonSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryCharacterDeltaSnapshot {
     pub char_id: u32,
@@ -407,7 +419,8 @@ impl HistoryCharacterDeltaSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistorySkillDeltaSnapshot {
     pub name: String,
@@ -442,18 +455,12 @@ impl HistorySkillDeltaSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryExportSnapshot {
     pub file_name: String,
     pub json: String,
-}
-
-fn abyss_half_code(half: AbyssHalf) -> &'static str {
-    match half {
-        AbyssHalf::First => "first",
-        AbyssHalf::Second => "second",
-    }
 }
 
 fn capture_source_code(source: CaptureQualitySource) -> &'static str {
@@ -578,10 +585,7 @@ fn history_party_label(record: &HistoryRecord) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        channels::stream_runtime::serialize_stream_events,
-        contract::stream::MAX_STREAM_DELIVERY_BYTES,
-    };
+    use crate::contract::stream::MAX_STREAM_DELIVERY_BYTES;
     use nte_dps_tool::engine::model::{CombatSessionAbyssSummary, DpsTimeBasis};
 
     #[test]
@@ -635,7 +639,6 @@ mod tests {
             performed: true,
             imported_record_id: Some("record-1".to_owned()),
             history: HistorySnapshot {
-                contract_version: HISTORY_CONTRACT_VERSION,
                 revision: "1".to_owned(),
                 max_import_bytes: MAX_HISTORY_IMPORT_BYTES.to_string(),
                 skipped_files: 0,
@@ -706,7 +709,7 @@ mod tests {
             u64::MAX,
         );
 
-        let delivery = serialize_stream_events(vec![HistoryEvent::Snapshot(snapshot)])
+        let delivery = serde_json::to_vec(&HistoryEvent::Snapshot(snapshot))
             .expect("bounded History stream must serialize");
 
         assert!(delivery.len() < MAX_STREAM_DELIVERY_BYTES);

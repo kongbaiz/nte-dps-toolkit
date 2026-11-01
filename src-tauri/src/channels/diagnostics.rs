@@ -7,9 +7,7 @@ use crate::{
     },
     commands::diagnostics::snapshot,
     contract::{
-        CommandError, SubscriptionReceipt,
-        diagnostics::DiagnosticsEvent,
-        stream::{StreamDeliveryBody, StreamKind},
+        CommandError, SubscriptionReceipt, diagnostics::DiagnosticsEvent, stream::StreamKind,
     },
     state::AppState,
     windows::console,
@@ -19,7 +17,7 @@ pub(crate) const DIAGNOSTICS_STREAM_INTERVAL_MS: u32 = 500;
 #[tauri::command]
 pub(crate) fn subscribe_diagnostics(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<DiagnosticsEvent>>,
+    on_event: Channel<DiagnosticsEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {

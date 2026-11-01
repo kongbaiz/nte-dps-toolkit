@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  diagnosticsClient,
-  type DiagnosticsClient,
-} from "@/lib/tauri/diagnostics-client";
-import {
-  diagnosticsError,
-  type DiagnosticsCommandError,
-  type DiagnosticsSnapshot,
-} from "@/lib/tauri/diagnostics-contract";
+import { diagnosticsClient } from "@/lib/tauri/diagnostics-client";
+import type { DiagnosticsSnapshot } from "@/lib/tauri/generated/DiagnosticsSnapshot";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
 import { diagnosticsSnapshotIsAtLeast } from "./diagnostics-model";
 
@@ -17,17 +11,15 @@ export type DiagnosticsAction =
 
 export type DiagnosticsPageState =
   | { status: "loading" }
-  | { status: "error"; error: DiagnosticsCommandError }
+  | { status: "error"; error: CommandError }
   | { status: "ready"; snapshot: DiagnosticsSnapshot };
 
-export function useDiagnostics(client: DiagnosticsClient = diagnosticsClient) {
+export function useDiagnostics() {
   const [state, setState] = useState<DiagnosticsPageState>({
     status: "loading",
   });
-  const [streamError, setStreamError] =
-    useState<DiagnosticsCommandError | null>(null);
-  const [actionError, setActionError] =
-    useState<DiagnosticsCommandError | null>(null);
+  const [streamError, setStreamError] = useState<CommandError | null>(null);
+  const [actionError, setActionError] = useState<CommandError | null>(null);
   const [pendingAction, setPendingAction] = useState<DiagnosticsAction | null>(
     null,
   );
@@ -60,7 +52,7 @@ export function useDiagnostics(client: DiagnosticsClient = diagnosticsClient) {
       setState({ status: "loading" });
     }
     setStreamError(null);
-    void client
+    void diagnosticsClient
       .getSnapshot()
       .then((snapshot) => {
         if (
@@ -77,7 +69,7 @@ export function useDiagnostics(client: DiagnosticsClient = diagnosticsClient) {
           mounted.current &&
           generation === requestGeneration.current
         ) {
-          const parsed = diagnosticsError(error);
+          const parsed = toCommandError(error);
           if (snapshotRef.current === null) {
             setState({ status: "error", error: parsed });
           } else {
@@ -85,7 +77,7 @@ export function useDiagnostics(client: DiagnosticsClient = diagnosticsClient) {
           }
         }
       });
-    const unsubscribe = client.subscribe(
+    const unsubscribe = diagnosticsClient.subscribe(
       (snapshot) => {
         if (active && mounted.current) {
           setStreamError(null);
@@ -100,7 +92,7 @@ export function useDiagnostics(client: DiagnosticsClient = diagnosticsClient) {
       active = false;
       void unsubscribe();
     };
-  }, [client, publishSnapshot, reloadKey]);
+  }, [publishSnapshot, reloadKey]);
 
   const perform = useCallback(
     async (action: DiagnosticsAction): Promise<boolean> => {
@@ -108,26 +100,26 @@ export function useDiagnostics(client: DiagnosticsClient = diagnosticsClient) {
       setActionError(null);
       try {
         if (action === "run") {
-          const snapshot = await client.run();
+          const snapshot = await diagnosticsClient.run();
           publishSnapshot(snapshot);
           return true;
         }
         const result = await {
-          "import-pcapng": client.importPcapng,
-          "import-json": client.importJson,
-          "export-json": client.exportJson,
-          "export-pcapng": client.exportPcapng,
+          "import-pcapng": diagnosticsClient.importPcapng,
+          "import-json": diagnosticsClient.importJson,
+          "export-json": diagnosticsClient.exportJson,
+          "export-pcapng": diagnosticsClient.exportPcapng,
         }[action]();
         publishSnapshot(result.snapshot);
         return result.performed;
       } catch (error) {
-        if (mounted.current) setActionError(diagnosticsError(error));
+        if (mounted.current) setActionError(toCommandError(error));
         return false;
       } finally {
         if (mounted.current) setPendingAction(null);
       }
     },
-    [client, publishSnapshot],
+    [publishSnapshot],
   );
 
   return {

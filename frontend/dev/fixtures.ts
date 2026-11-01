@@ -1,12 +1,15 @@
 // Synthetic browser preview data. No game data or native operations.
-import type { ModMarketCatalogSnapshot } from "@/lib/tauri/mod-studio-contract";
-import { SETTINGS_CONTRACT_VERSION } from "@/lib/tauri/settings-contract";
-import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
-import { PACKETS_CONTRACT_VERSION } from "@/lib/tauri/packets-contract";
+import type { DiagnosticsSnapshot } from "@/lib/tauri/generated/DiagnosticsSnapshot";
+import type { EmptyCurtainSnapshot } from "@/lib/tauri/generated/EmptyCurtainSnapshot";
+import type { EncryptedIniSnapshot } from "@/lib/tauri/generated/EncryptedIniSnapshot";
+import type { HistorySnapshot } from "@/lib/tauri/generated/HistorySnapshot";
+import type { ModMarketCatalogSnapshot } from "@/lib/tauri/generated/ModMarketCatalogSnapshot";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
+import type { SettingsSnapshot } from "@/lib/tauri/generated/SettingsSnapshot";
+import type { SkillsSnapshot } from "@/lib/tauri/generated/SkillsSnapshot";
 
-export function settingsFixture(): Record<string, unknown> {
+export function settingsFixture(): SettingsSnapshot {
   return {
-    contractVersion: SETTINGS_CONTRACT_VERSION,
     generation: "7",
     adapterVersion: "0.3.6",
     interface: {
@@ -46,10 +49,10 @@ export function settingsFixture(): Record<string, unknown> {
       autoRoundIdleSeconds: 30,
       autoRoundIdleSecondsMin: 5,
       autoRoundIdleSecondsMax: 600,
-      dpsTimeMode: "real-time",
+      dpsTimeMode: "real_time",
       dpsTimeRuntime: {
-        configuredMode: "real-time",
-        effectiveMode: "real-time",
+        configuredMode: "real_time",
+        effectiveMode: "real_time",
         combatClockHealth: "unknown",
         degraded: false,
         warningMessageKey: null,
@@ -65,7 +68,7 @@ export function settingsFixture(): Record<string, unknown> {
       enabled: true,
       bindings: [
         {
-          action: "capture",
+          action: "toggle_capture",
           binding: {
             ctrl: true,
             alt: false,
@@ -74,7 +77,7 @@ export function settingsFixture(): Record<string, unknown> {
           },
         },
         {
-          action: "reset",
+          action: "reset_session",
           binding: {
             ctrl: true,
             alt: false,
@@ -83,7 +86,7 @@ export function settingsFixture(): Record<string, unknown> {
           },
         },
         {
-          action: "hud",
+          action: "toggle_hud",
           binding: {
             ctrl: true,
             alt: false,
@@ -92,19 +95,19 @@ export function settingsFixture(): Record<string, unknown> {
           },
         },
         {
-          action: "new-round",
+          action: "new_round",
           binding: null,
         },
       ],
     },
     mainDps: {
-      metrics: ["team-dps", "total-damage", "total-damage-taken", "duration"],
+      metrics: ["team_dps", "total_damage", "total_damage_taken", "duration"],
       attributions: [
         "character",
         "reaction",
         "shared",
         "unattributed",
-        "max-hp-reduction",
+        "max_hp_reduction",
       ],
     },
     captureFiles: { count: 0, totalBytes: "0", formattedSize: "0 B" },
@@ -118,7 +121,7 @@ export function settingsFixture(): Record<string, unknown> {
     hudWidthMax: 3840,
     hud: {
       width: 380,
-      moduleOrder: [...HUD_MODULE_IDS],
+      moduleOrder: ["title", "summary", "status", "characters", "timeline"],
       showTitle: false,
       showTeamDps: true,
       showDuration: true,
@@ -132,9 +135,8 @@ export function settingsFixture(): Record<string, unknown> {
   };
 }
 
-export function historyFixture() {
+export function historyFixture(): HistorySnapshot {
   return {
-    contractVersion: 2,
     revision: "7",
     maxImportBytes: "134217728",
     skippedFiles: 0,
@@ -202,8 +204,7 @@ export function historyFixture() {
   };
 }
 
-export const skillsFixture = {
-  contractVersion: 1,
+export const skillsFixture: SkillsSnapshot = {
   generation: "9007199254740992",
   scope: "all",
   hasData: true,
@@ -246,8 +247,7 @@ export const skillsFixture = {
   },
 };
 
-export const packetsFixture = {
-  contractVersion: PACKETS_CONTRACT_VERSION,
+export const packetsFixture: PacketsSnapshot = {
   generation: "9007199254740993",
   sessionGeneration: "2",
   packetGeneration: "8",
@@ -280,8 +280,7 @@ export const packetsFixture = {
   ],
 };
 
-export const diagnosticsFixture = {
-  contractVersion: 3,
+export const diagnosticsFixture: DiagnosticsSnapshot = {
   captureGeneration: "9007199254740993",
   qualityGeneration: "9007199254740994",
   reportGeneration: "2",
@@ -359,8 +358,7 @@ export const diagnosticsFixture = {
   },
 };
 
-export const equipmentFixture = {
-  contractVersion: 3,
+export const equipmentFixture: EmptyCurtainSnapshot = {
   canOperate: true,
   generation: "9007199254740992",
   observedAtUnixMs: "1785542400000",
@@ -407,8 +405,7 @@ export const equipmentFixture = {
   },
 };
 
-export const iniFixture = {
-  contractVersion: 1,
+export const iniFixture: EncryptedIniSnapshot = {
   generation: "9",
   opened: true,
   displayPath: "Engine.ini",
@@ -420,7 +417,6 @@ export const iniFixture = {
 };
 
 export const marketFixture: ModMarketCatalogSnapshot = {
-  contractVersion: 13,
   publishedAt: "2026-09-27T00:00:00Z",
   privacyMode: "anonymous-read-only",
   mods: (

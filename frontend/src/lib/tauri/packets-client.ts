@@ -1,61 +1,19 @@
-import {
-  packetsError,
-  parsePacketsEvent,
-  parsePacketsSnapshot,
-  type PacketsCommandError,
-  type PacketsEvent,
-  type PacketsSnapshot,
-} from "@/lib/tauri/packets-contract";
-import { TechnicalContractError } from "@/lib/tauri/technical-contract";
-import {
-  subscribeStream,
-  tauriStreamTransport,
-  type StreamTransport,
-} from "@/lib/tauri/stream-client";
+import { invokeCommand, type CommandError } from "@/lib/tauri/command-error";
+import type { PacketsEvent } from "@/lib/tauri/generated/PacketsEvent";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
+import { subscribeStream } from "@/lib/tauri/stream-client";
 
-const COMMANDS = {
-  getSnapshot: "get_packets_snapshot",
-  subscribe: "subscribe_packets",
-  unsubscribe: "unsubscribe_packets",
-} as const;
-
-export interface PacketsClient {
-  getSnapshot(): Promise<PacketsSnapshot>;
-  subscribe(
+export const packetsClient = {
+  getSnapshot: () => invokeCommand<PacketsSnapshot>("get_packets_snapshot"),
+  subscribe: (
     onEvent: (event: PacketsEvent) => void,
-    onError: (error: PacketsCommandError) => void,
-  ): () => Promise<void>;
-}
-
-export function createPacketsClient(
-  transport: StreamTransport = tauriStreamTransport,
-  createSubscriptionId: () => string = () => crypto.randomUUID(),
-): PacketsClient {
-  return {
-    getSnapshot: async () => {
-      try {
-        return parsePacketsSnapshot(
-          await transport.invoke(COMMANDS.getSnapshot),
-        );
-      } catch (error) {
-        if (error instanceof TechnicalContractError) throw error;
-        throw packetsError(error);
-      }
-    },
-    subscribe: (onEvent, onError) => {
-      const subscriptionId = createSubscriptionId();
-      return subscribeStream({
-        transport,
-        streamKind: "packets",
-        subscriptionId,
-        subscribeCommand: COMMANDS.subscribe,
-        unsubscribeCommand: COMMANDS.unsubscribe,
-        parseEvent: parsePacketsEvent,
-        onEvent,
-        onError: (error) => onError(packetsError(error)),
-      });
-    },
-  };
-}
-
-export const packetsClient = createPacketsClient();
+    onError: (error: CommandError) => void,
+  ) =>
+    subscribeStream<PacketsEvent>({
+      streamKind: "packets",
+      subscribeCommand: "subscribe_packets",
+      unsubscribeCommand: "unsubscribe_packets",
+      onEvent,
+      onError,
+    }),
+};

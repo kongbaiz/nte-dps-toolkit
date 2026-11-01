@@ -1,5 +1,6 @@
 import { Tabs } from "@base-ui/react/tabs";
 import { Input } from "@/components/ui/form-controls";
+import { HudModuleSortableList } from "@/components/nte/hud-module-sortable";
 import {
   PageHeader,
   PageTitle,
@@ -38,14 +39,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { useHudModulePointerReorder } from "@/hooks/use-hud-module-pointer-reorder";
+import { useHudModuleSortable } from "@/hooks/use-hud-module-sortable";
 import { t, tf } from "@/lib/i18n";
-import {
-  isHudModuleId,
-  type SettingsCommandError,
-  type SettingsSnapshot,
-} from "@/lib/tauri/settings-contract";
-import type { HudModuleId } from "@/lib/tauri/technical-contract";
+import type { HudModule } from "@/lib/tauri/generated/HudModule";
+import type { SettingsSnapshot } from "@/lib/tauri/generated/SettingsSnapshot";
+import { type CommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 
 import {
@@ -61,7 +59,7 @@ import { useSettings } from "./use-settings";
 
 const SETTINGS_SECTIONS = ["Interface", "HUD", "Capture and data"] as const;
 
-const MODULE_LABEL_KEYS: Record<HudModuleId, string> = {
+const MODULE_LABEL_KEYS: Record<HudModule, string> = {
   title: "Title",
   summary: "Summary",
   status: "Status",
@@ -145,16 +143,13 @@ function SettingsReady({
   snapshot: SettingsSnapshot;
   pendingAction: string | null;
   onMoveModule: (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => Promise<void>;
   onOpenEditor: () => Promise<void>;
   onSetAlwaysOnTop: (enabled: boolean) => Promise<void>;
-  onSetModuleVisibility: (
-    module: HudModuleId,
-    visible: boolean,
-  ) => Promise<void>;
+  onSetModuleVisibility: (module: HudModule, visible: boolean) => Promise<void>;
   onSetWidth: (width: number) => Promise<void>;
 }) {
   const windowPending = settingsSectionPending(pendingAction, "hud-window");
@@ -343,23 +338,17 @@ function HudModuleOrderSection({
   snapshot: SettingsSnapshot;
   disabled: boolean;
   onMoveModule: (
-    dragged: HudModuleId,
-    target: HudModuleId,
+    dragged: HudModule,
+    target: HudModule,
     insertAfter: boolean,
   ) => Promise<void>;
-  onSetModuleVisibility: (
-    module: HudModuleId,
-    visible: boolean,
-  ) => Promise<void>;
+  onSetModuleVisibility: (module: HudModule, visible: boolean) => Promise<void>;
 }) {
-  const order = snapshot.hud.moduleOrder.filter(isHudModuleId);
-  const reorder = useHudModulePointerReorder({
-    modules: order,
-    disabled,
-    onMove: onMoveModule,
-  });
-
-  const moveAdjacent = (module: HudModuleId, direction: "up" | "down") => {
+  const moveAdjacent = (
+    order: readonly HudModule[],
+    module: HudModule,
+    direction: "up" | "down",
+  ) => {
     const move = adjacentHudModuleMove(order, module, direction);
     if (move !== null) {
       void onMoveModule(move.dragged, move.target, move.insertAfter);
@@ -377,84 +366,30 @@ function HudModuleOrderSection({
         </p>
       </div>
       <div className="mt-3 flex flex-col overflow-hidden rounded-md border">
-        {order.map((module, index) => {
-          const visible = hudModuleVisible(snapshot.hud, module);
-          const selectedTarget =
-            reorder.dropTarget?.module === module ? reorder.dropTarget : null;
-          return (
-            <div
-              ref={(row) => reorder.setModuleRow(module, row)}
-              className={cn(
-                "relative flex min-h-10 items-center gap-2 px-2 py-1.5 transition-colors",
-                index + 1 < order.length && "border-b",
-                reorder.draggedModule === module && "bg-muted opacity-45",
-              )}
-              key={module}
-            >
-              {selectedTarget ? (
-                <span
-                  className={cn(
-                    "pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-primary",
-                    selectedTarget.insertAfter ? "-bottom-px" : "-top-px",
-                  )}
-                  aria-hidden="true"
-                />
-              ) : null}
-              <button
-                type="button"
-                className={cn(
-                  "grid size-6 shrink-0 touch-none cursor-grab place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-default disabled:opacity-40",
-                  reorder.draggedModule === module && "cursor-grabbing",
-                )}
+        <HudModuleSortableList
+          modules={snapshot.hud.moduleOrder}
+          disabled={disabled}
+          onMove={onMoveModule}
+        >
+          {(order) =>
+            order.map((module, index) => (
+              <HudModuleOrderRow
+                key={module}
+                module={module}
+                first={index === 0}
+                last={index + 1 === order.length}
+                visible={hudModuleVisible(snapshot.hud, module)}
                 disabled={disabled}
-                aria-label={tf("Drag {} to reorder", [
-                  t(MODULE_LABEL_KEYS[module]),
-                ])}
-                onPointerDown={(event) =>
-                  reorder.startPointerDrag(event, module)
+                onMoveAdjacent={(direction) =>
+                  moveAdjacent(order, module, direction)
                 }
-                onPointerMove={reorder.movePointerDrag}
-                onPointerUp={reorder.finishPointerDrag}
-                onPointerCancel={reorder.cancelPointerDrag}
-                onLostPointerCapture={reorder.losePointerCapture}
-              >
-                <GripVertical className="size-4" aria-hidden="true" />
-              </button>
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {t(MODULE_LABEL_KEYS[module])}
-              </span>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                disabled={disabled || index === 0}
-                aria-label={tf("Move {0} up", [t(MODULE_LABEL_KEYS[module])])}
-                onClick={() => moveAdjacent(module, "up")}
-              >
-                <ArrowUp aria-hidden="true" />
-              </Button>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                disabled={disabled || index + 1 === order.length}
-                aria-label={tf("Move {0} down", [t(MODULE_LABEL_KEYS[module])])}
-                onClick={() => moveAdjacent(module, "down")}
-              >
-                <ArrowDown aria-hidden="true" />
-              </Button>
-              <Switch
-                size="sm"
-                checked={visible}
-                disabled={disabled}
-                aria-label={tf("{0} visibility", [
-                  t(MODULE_LABEL_KEYS[module]),
-                ])}
-                onCheckedChange={(checked) =>
-                  void onSetModuleVisibility(module, checked)
+                onSetVisibility={(visible) =>
+                  void onSetModuleVisibility(module, visible)
                 }
               />
-            </div>
-          );
-        })}
+            ))
+          }
+        </HudModuleSortableList>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
         {t(
@@ -462,6 +397,78 @@ function HudModuleOrderSection({
         )}
       </p>
     </section>
+  );
+}
+
+function HudModuleOrderRow({
+  module,
+  first,
+  last,
+  visible,
+  disabled,
+  onMoveAdjacent,
+  onSetVisibility,
+}: {
+  module: HudModule;
+  first: boolean;
+  last: boolean;
+  visible: boolean;
+  disabled: boolean;
+  onMoveAdjacent: (direction: "up" | "down") => void;
+  onSetVisibility: (visible: boolean) => void;
+}) {
+  const sortable = useHudModuleSortable(module);
+  const label = t(MODULE_LABEL_KEYS[module]);
+  return (
+    <div
+      ref={sortable.rowRef}
+      style={sortable.rowStyle}
+      className={cn(
+        "relative flex min-h-10 items-center gap-2 px-2 py-1.5",
+        !last && "border-b",
+        sortable.dragging && "z-10 bg-muted",
+      )}
+    >
+      <button
+        ref={sortable.handleRef}
+        type="button"
+        className={cn(
+          "grid size-6 shrink-0 touch-none cursor-grab place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-default disabled:opacity-40",
+          sortable.dragging && "cursor-grabbing",
+        )}
+        disabled={disabled}
+        aria-label={tf("Drag {} to reorder", [label])}
+        {...sortable.handleListeners}
+      >
+        <GripVertical className="size-4" aria-hidden="true" />
+      </button>
+      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        disabled={disabled || first}
+        aria-label={tf("Move {0} up", [label])}
+        onClick={() => onMoveAdjacent("up")}
+      >
+        <ArrowUp aria-hidden="true" />
+      </Button>
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        disabled={disabled || last}
+        aria-label={tf("Move {0} down", [label])}
+        onClick={() => onMoveAdjacent("down")}
+      >
+        <ArrowDown aria-hidden="true" />
+      </Button>
+      <Switch
+        size="sm"
+        checked={visible}
+        disabled={disabled}
+        aria-label={tf("{0} visibility", [label])}
+        onCheckedChange={onSetVisibility}
+      />
+    </div>
   );
 }
 
@@ -484,7 +491,7 @@ function SettingsError({
   error,
   onRetry,
 }: {
-  error: SettingsCommandError;
+  error: CommandError;
   onRetry: () => void | Promise<void>;
 }) {
   return (
@@ -507,7 +514,7 @@ function MutationError({
   error,
   onDismiss,
 }: {
-  error: SettingsCommandError;
+  error: CommandError;
   onDismiss: () => void;
 }) {
   return createPortal(

@@ -1,25 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { shouldAcceptDecimalVersion } from "@/lib/decimal-string";
-import { skillsClient, type SkillsClient } from "@/lib/tauri/skills-client";
-import {
-  skillsError,
-  type SkillsCommandError,
-  type SkillsScope,
-  type SkillsSnapshot,
-} from "@/lib/tauri/skills-contract";
+import { skillsClient } from "@/lib/tauri/skills-client";
+import type { SkillsSnapshot } from "@/lib/tauri/generated/SkillsSnapshot";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
 export type SkillsPageState =
   | { status: "loading" }
-  | { status: "error"; error: SkillsCommandError }
+  | { status: "error"; error: CommandError }
   | { status: "ready"; snapshot: SkillsSnapshot };
 
-export function useSkills(client: SkillsClient = skillsClient) {
-  const [scope, setScope] = useState<SkillsScope>("all");
+export function useSkills() {
+  const [scope, setScope] = useState<TimelineScope>("all");
   const [state, setState] = useState<SkillsPageState>({ status: "loading" });
-  const [streamError, setStreamError] = useState<SkillsCommandError | null>(
-    null,
-  );
+  const [streamError, setStreamError] = useState<CommandError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
@@ -38,7 +33,7 @@ export function useSkills(client: SkillsClient = skillsClient) {
     const generation = ++requestGeneration.current;
     setState({ status: "loading" });
     setStreamError(null);
-    void client
+    void skillsClient
       .getSnapshot(scope)
       .then((snapshot) => {
         if (
@@ -62,10 +57,10 @@ export function useSkills(client: SkillsClient = skillsClient) {
           generation === requestGeneration.current &&
           !streamSnapshotReceived
         ) {
-          setState({ status: "error", error: skillsError(error) });
+          setState({ status: "error", error: toCommandError(error) });
         }
       });
-    const unsubscribe = client.subscribe(
+    const unsubscribe = skillsClient.subscribe(
       scope,
       (snapshot) => {
         if (
@@ -91,7 +86,7 @@ export function useSkills(client: SkillsClient = skillsClient) {
       active = false;
       void unsubscribe();
     };
-  }, [client, reloadKey, scope]);
+  }, [reloadKey, scope]);
 
   const retry = useCallback(() => {
     setState({ status: "loading" });

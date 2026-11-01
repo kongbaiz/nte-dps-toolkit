@@ -42,14 +42,12 @@ import {
 } from "@/components/ui/tooltip";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
-import type {
-  SkillsCharacter,
-  SkillsCommandError,
-  SkillsDiagnostics,
-  SkillsRow,
-  SkillsScope,
-  SkillsSnapshot,
-} from "@/lib/tauri/skills-contract";
+import type { SkillsCharacterSnapshot } from "@/lib/tauri/generated/SkillsCharacterSnapshot";
+import type { SkillsDiagnosticsSnapshot } from "@/lib/tauri/generated/SkillsDiagnosticsSnapshot";
+import type { SkillsRowSnapshot } from "@/lib/tauri/generated/SkillsRowSnapshot";
+import type { SkillsSnapshot } from "@/lib/tauri/generated/SkillsSnapshot";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
+import { type CommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 
 import {
@@ -65,7 +63,7 @@ import {
 } from "./skills-ui-model";
 import { useSkills } from "./use-skills";
 
-const SCOPES: Array<{ id: SkillsScope; labelKey: string }> = [
+const SCOPES: Array<{ id: TimelineScope; labelKey: string }> = [
   { id: "all", labelKey: "Whole Battle" },
   { id: "upper", labelKey: "First Half" },
   { id: "lower", labelKey: "Second Half" },
@@ -380,7 +378,7 @@ function SkillsLoadError({
   error,
   onRetry,
 }: {
-  error: SkillsCommandError;
+  error: CommandError;
   onRetry: () => void;
 }) {
   return (
@@ -404,7 +402,7 @@ function SkillsStreamError({
   error,
   onDismiss,
 }: {
-  error: SkillsCommandError;
+  error: CommandError;
   onDismiss: () => void;
 }) {
   return createPortal(
@@ -497,8 +495,8 @@ function SkillRow({
   character,
   totalDamage,
 }: {
-  row: SkillsRow;
-  character: SkillsCharacter;
+  row: SkillsRowSnapshot;
+  character: SkillsCharacterSnapshot;
   totalDamage: number;
 }) {
   const share = skillDamageShare(row.damage, totalDamage);
@@ -586,7 +584,7 @@ function SkillDetail({
 function UnmappedGameplayEffect({
   effect,
 }: {
-  effect: SkillsDiagnostics["unmappedGameplayEffects"][number];
+  effect: SkillsDiagnosticsSnapshot["unmappedGameplayEffects"][number];
 }) {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">(
     "idle",
@@ -705,9 +703,9 @@ function Diagnostic({ label, value }: { label: string; value: string }) {
 }
 
 function characterFor(
-  row: SkillsRow,
-  characters: ReadonlyMap<number, SkillsCharacter>,
-): SkillsCharacter {
+  row: SkillsRowSnapshot,
+  characters: ReadonlyMap<number, SkillsCharacterSnapshot>,
+): SkillsCharacterSnapshot {
   return (
     characters.get(row.characterId) ?? {
       id: row.characterId,

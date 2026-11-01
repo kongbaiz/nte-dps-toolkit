@@ -1,3 +1,4 @@
+use crate::contract::island::IslandTone;
 use std::fs;
 
 use nte_dps_tool::{core::live_capture::LiveCapturePhase, storage::paths::capture_log_dir};
@@ -11,8 +12,10 @@ use crate::{
     windows::{console, hud, main_dps},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConsoleControlAction {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ConsoleControlAction {
     ToggleCapture,
     ResetSession,
     ToggleHud,
@@ -25,13 +28,13 @@ enum ConsoleControlAction {
 
 #[tauri::command]
 pub(crate) async fn execute_console_control(
-    action: String,
+    action: ConsoleControlAction,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
     console::validate_window(&window)?;
-    match parse_action(&action)? {
+    match action {
         ConsoleControlAction::ToggleCapture => toggle_capture(&state),
         ConsoleControlAction::ResetSession => {
             state
@@ -57,7 +60,7 @@ pub(crate) async fn execute_console_control(
                 .set_main_selected_round_id(None)
                 .map_err(super::main_dps::presentation_error)?;
             state.publish_island_notice(
-                "success",
+                IslandTone::Success,
                 if undo_token.is_some() {
                     "Session reset · use Undo within 5 seconds"
                 } else {
@@ -80,20 +83,6 @@ pub(crate) async fn execute_console_control(
         ConsoleControlAction::TogglePin => toggle_pin(&state, &window),
         ConsoleControlAction::OpenTeamDetails => super::main_dps::open_team_details(&app, &state),
         ConsoleControlAction::OpenCaptureLogs => open_capture_logs().await,
-    }
-}
-
-fn parse_action(action: &str) -> Result<ConsoleControlAction, CommandError> {
-    match action {
-        "toggle-capture" => Ok(ConsoleControlAction::ToggleCapture),
-        "reset-session" => Ok(ConsoleControlAction::ResetSession),
-        "toggle-hud" => Ok(ConsoleControlAction::ToggleHud),
-        "toggle-passthrough" => Ok(ConsoleControlAction::TogglePassthrough),
-        "toggle-processing" => Ok(ConsoleControlAction::ToggleProcessing),
-        "toggle-pin" => Ok(ConsoleControlAction::TogglePin),
-        "open-team-details" => Ok(ConsoleControlAction::OpenTeamDetails),
-        "open-capture-logs" => Ok(ConsoleControlAction::OpenCaptureLogs),
-        _ => Err(CommandError::invalid_settings_input()),
     }
 }
 
@@ -174,22 +163,4 @@ async fn open_capture_logs() -> Result<(), CommandError> {
         log::error!("open capture log directory failed: {error}");
         CommandError::window_operation_failed()
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn console_control_actions_are_bounded_to_stable_ids() {
-        assert_eq!(
-            parse_action("toggle-capture").expect("capture action"),
-            ConsoleControlAction::ToggleCapture
-        );
-        assert_eq!(
-            parse_action("open-capture-logs").expect("logs action"),
-            ConsoleControlAction::OpenCaptureLogs
-        );
-        assert!(parse_action("../toggle-capture").is_err());
-    }
 }
