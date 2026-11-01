@@ -409,7 +409,7 @@ function AbyssFloorContent({
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2.5">
       <div className="flex min-h-9 flex-wrap items-center justify-between gap-2">
-        <h2 className="font-heading text-base font-medium">
+        <h2 className="font-heading text-sm font-medium">
           {floor.seasonName || tf("Season {}", [String(floor.season)])} /{" "}
           {floor.name || tf("Floor {}", [String(floor.floor)])}
         </h2>
@@ -797,7 +797,7 @@ function AbyssMonsterDetail({ monster }: { monster: AbyssMonsterSnapshot }) {
       <div className="grid grid-cols-[72px_1fr_72px] items-center">
         <MonsterPortrait monster={monster} url={image} className="size-14" />
         <div className="min-w-0 text-center">
-          <h3 className="truncate text-lg font-medium">{monster.name}</h3>
+          <h3 className="truncate text-xl font-medium">{monster.name}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {monster.half === 0
               ? t("Ascending Line")

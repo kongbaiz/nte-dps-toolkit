@@ -207,7 +207,7 @@ pub(crate) async fn reset_hud_session(
     state.publish_island_notice(
         IslandTone::Success,
         if undo_token.is_some() {
-            "Session reset · use Undo within 5 seconds"
+            "Session reset. Use Undo within 5 seconds."
         } else {
             "Stats reset"
         },

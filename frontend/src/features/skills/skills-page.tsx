@@ -2,6 +2,7 @@ import {
   PageHeader,
   PageTitle,
   PageDescription,
+  PageScrollArea,
 } from "@/components/nte/page-layout";
 import {
   AlertTriangle,
@@ -124,7 +125,7 @@ export function SkillsPage() {
         </div>
       </PageHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 min-[900px]:p-4">
+      <PageScrollArea>
         <div className="mx-auto flex min-h-full w-full max-w-[1700px] flex-col gap-3.5">
           {state.status === "loading" ? <SkillsLoading /> : null}
           {state.status === "error" ? (
@@ -139,7 +140,7 @@ export function SkillsPage() {
             />
           ) : null}
         </div>
-      </div>
+      </PageScrollArea>
     </section>
   );
 }
@@ -176,18 +177,16 @@ function SkillsReady({
 
   return (
     <>
-      <div className="skills-metrics grid grid-cols-2 gap-3 min-[880px]:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 min-[880px]:grid-cols-4">
         <Metric
           icon={BarChart3}
           label="Attributed Damage"
           value={number(visibleMetrics.damage)}
-          prominent
         />
         <Metric
           icon={ListChecks}
           label="Skill Entries"
           value={String(visibleMetrics.entries)}
-          prominent
         />
         <Metric
           icon={AlertTriangle}
@@ -258,7 +257,7 @@ function SkillsReady({
           <div className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-border/60 pb-3">
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground">{t("Skill")}</p>
-              <h2 className="truncate text-base font-semibold">
+              <h2 className="truncate text-sm font-semibold">
                 {selectedCharacter?.name ?? t("Whole Team")}
               </h2>
             </div>
@@ -656,17 +655,15 @@ function Metric({
   icon: Icon,
   label,
   value,
-  prominent = false,
   warning = false,
 }: {
   icon: LucideIcon;
   label: string;
   value: string;
-  prominent?: boolean;
   warning?: boolean;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-3 border-border/60 px-3 py-3">
+    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-3">
       <span
         className={cn(
           "flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground",
@@ -682,7 +679,6 @@ function Metric({
         <span
           className={cn(
             "block truncate font-mono text-sm font-semibold",
-            prominent && "text-base",
             warning && "text-warning",
           )}
         >

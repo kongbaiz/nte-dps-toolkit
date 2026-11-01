@@ -767,6 +767,7 @@ pub(crate) struct MainDpsHitSnapshot {
     pub skill: String,
     pub damage_type: String,
     pub type_label: String,
+    pub type_detail: Option<String>,
     pub reaction_text_key: Option<u8>,
     pub damage_digit_key: Option<String>,
     pub follow_up_damage_digit_key: Option<String>,
@@ -838,6 +839,7 @@ impl MainDpsHitSnapshot {
         };
         let skill_id = text_budget.text(skill, "-");
         let skill = text_budget.text(skill_id.clone(), "-");
+        let (type_label, type_detail) = hit_type_display_text(hit, language);
         Self {
             critical: hit.plugin_snapshot.as_ref().and_then(|s| s.critical),
             snapshot_key: text_budget.optional(hit.plugin_snapshot.as_ref().map(|s| s.reference())),
@@ -871,7 +873,8 @@ impl MainDpsHitSnapshot {
                     .to_owned(),
                 "-",
             ),
-            type_label: text_budget.text(hit_type_display_text(hit, language), "-"),
+            type_label: text_budget.text(type_label, "-"),
+            type_detail: text_budget.optional(type_detail),
             reaction_text_key: reaction_text_key_for_hit(hit),
             damage_digit_key: text_budget
                 .optional(damage_digit_key_for_hit(hit, characters).map(str::to_owned)),
@@ -896,17 +899,19 @@ impl MainDpsHitSnapshot {
     }
 }
 
-fn hit_type_display_text(hit: &Hit, language: Language) -> String {
-    match hit.direction {
-        HitDirection::Incoming => return i18n::t_for(language, "Incoming"),
-        HitDirection::Unknown => return i18n::t_for(language, "Candidate Output"),
-        HitDirection::Outgoing => {}
-    }
-    if hit.attack_type.as_deref() == Some("恶意") {
-        return i18n::t_for(language, "Malice Damage");
-    }
-    if is_target_hp_residual(hit) {
-        return i18n::t_for(language, "Target HP Residual");
+/// Returns the hit category and, when the hit names a distinct skill, that skill.
+fn hit_type_display_text(hit: &Hit, language: Language) -> (String, Option<String>) {
+    let fixed = match hit.direction {
+        HitDirection::Incoming => Some("Incoming"),
+        HitDirection::Unknown => Some("Candidate Output"),
+        HitDirection::Outgoing if hit.attack_type.as_deref() == Some("恶意") => {
+            Some("Malice Damage")
+        }
+        HitDirection::Outgoing if is_target_hp_residual(hit) => Some("Target HP Residual"),
+        HitDirection::Outgoing => None,
+    };
+    if let Some(key) = fixed {
+        return (i18n::t_for(language, key), None);
     }
     let attack_type = hit
         .attack_type
@@ -939,11 +944,11 @@ fn hit_type_display_text(hit: &Hit, language: Language) -> String {
     .flatten();
     match (attack_type.as_deref(), name.as_deref()) {
         (Some(kind), Some(name)) if hit.attack_type.as_deref() != Some(name) && kind != name => {
-            format!("{kind}·{name}")
+            (kind.to_owned(), Some(name.to_owned()))
         }
-        (Some(kind), _) => kind.to_owned(),
-        (None, Some(name)) => name.to_owned(),
-        (None, None) => i18n::t_for(language, "Unmapped Skill"),
+        (Some(kind), _) => (kind.to_owned(), None),
+        (None, Some(name)) => (name.to_owned(), None),
+        (None, None) => (i18n::t_for(language, "Unmapped Skill"), None),
     }
 }
 
@@ -954,11 +959,7 @@ fn translate_attack_type(value: &str, language: Language) -> String {
     if let Some(reaction) = value.strip_prefix("环合·")
         && let Some(key) = nte_dps_tool::core::skills::skill_label_translation_key(reaction)
     {
-        return format!(
-            "{} · {}",
-            i18n::t_for(language, "Esper Cycle"),
-            i18n::t_for(language, key)
-        );
+        return i18n::tf_for(language, "Esper Cycle: {}", &[&i18n::t_for(language, key)]);
     }
     value.to_owned()
 }
@@ -1264,7 +1265,7 @@ mod tests {
         );
         assert_eq!(
             hit_type_display_text(&hit, Language::Japanese),
-            "未帰属の対象HP差分"
+            ("未帰属の対象HP差分".to_owned(), None)
         );
 
         let snapshot = MainDpsHitSnapshot::from_hit(
@@ -1291,11 +1292,11 @@ mod tests {
         assert_eq!(hit_skill_name_ref(&h), "恶意");
         assert_eq!(
             hit_type_display_text(&h, Language::SimplifiedChinese),
-            "恶意"
+            ("恶意".to_owned(), None)
         );
         assert_eq!(
             hit_type_display_text(&h, Language::English),
-            "Malice Damage"
+            ("Malice Damage".to_owned(), None)
         );
         assert_eq!(damage_digit_key_for_hit(&h, &HashMap::new()), Some("heiyu"));
     }
@@ -1308,7 +1309,7 @@ mod tests {
         parry.gameplay_effect_name = Some("GE_Parry_Damage".to_owned());
         assert_eq!(
             hit_type_display_text(&parry, Language::SimplifiedChinese),
-            "格挡反击·承轨反击"
+            ("格挡反击".to_owned(), Some("承轨反击".to_owned()))
         );
 
         let mut evade = skill_hit(100.0, Some("GA_Lacrimosa_ExtremEvadeAtk"), None, "闪避反击");
@@ -1316,13 +1317,16 @@ mod tests {
             Some("GE_Player_Lacrimosa_PerfectEvadeAttack_Damage".to_owned());
         assert_eq!(
             hit_type_display_text(&evade, Language::SimplifiedChinese),
-            "闪避反击·极限反击：fff休止符"
+            (
+                "闪避反击".to_owned(),
+                Some("极限反击：fff休止符".to_owned())
+            )
         );
 
         let unknown = skill_hit(100.0, Some("GA_Unknown_Counter"), None, "闪避反击");
         assert_eq!(
             hit_type_display_text(&unknown, Language::SimplifiedChinese),
-            "闪避反击"
+            ("闪避反击".to_owned(), None)
         );
     }
 

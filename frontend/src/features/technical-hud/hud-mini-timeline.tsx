@@ -180,7 +180,7 @@ export function HudMiniTimeline({
           />
           <div
             role="tooltip"
-            className="pointer-events-none absolute bottom-1 z-10 -translate-x-1/2 rounded-sm bg-black/85 px-1.5 py-1 text-xs leading-3 text-foreground shadow-sm ring-1 ring-foreground/15"
+            className="pointer-events-none absolute bottom-1 z-10 -translate-x-1/2 rounded-sm bg-background/90 px-1.5 py-1 text-xs leading-3 text-foreground shadow-sm ring-1 ring-foreground/15"
             style={{ left: tooltipLeft }}
           >
             <p className="whitespace-nowrap text-foreground/70">

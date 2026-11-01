@@ -180,6 +180,7 @@ export const hitDetailsFixture: MainDpsDetailSnapshot = {
     skill: "示例攻击",
     damageType: "普通攻击",
     typeLabel: "示例攻击",
+    typeDetail: null,
     reactionTextKey: null,
     damageDigitKey: null,
     followUpDamageDigitKey: null,

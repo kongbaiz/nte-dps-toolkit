@@ -373,7 +373,7 @@ function CharacterEquipmentDialog({
           <div className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
             <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur">
               <div>
-                <DialogTitle className="text-base font-semibold">
+                <DialogTitle className="text-sm font-semibold">
                   {t("Character Equipment")}
                 </DialogTitle>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -487,7 +487,7 @@ function FilterDialog({
           <div className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
             <header className="flex shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur">
               <div>
-                <DialogTitle className="text-base font-semibold">
+                <DialogTitle className="text-sm font-semibold">
                   {t("Filter Console Equipment")}
                 </DialogTitle>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -899,7 +899,7 @@ function EquipmentDetailsDialog({
               <EquipmentImage item={item} className="size-14 rounded-lg" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <DialogTitle className="min-w-0 flex-1 truncate text-base font-semibold">
+                  <DialogTitle className="min-w-0 flex-1 truncate text-sm font-semibold">
                     {item.name}
                   </DialogTitle>
                   {item.locked ? (
@@ -977,7 +977,7 @@ function EquipmentDetailsDialog({
               </dl>
               {item.stats.some((stat) => !stat.main) ? (
                 <section className="border-t px-4 py-3">
-                  <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">
                     {t("Secondary Stats")}
                   </p>
                   <div className="space-y-1">

@@ -260,7 +260,7 @@ export function ConsolePage() {
         }}
         status={
           <button
-            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted hover:text-foreground active:scale-[0.97]"
+            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-(--motion-duration-fast) ease-(--motion-ease-standard) hover:bg-muted hover:text-foreground active:scale-[0.97]"
             onClick={() => setCommandPaletteOpen(true)}
             title={`${t("Command palette")} / Ctrl+K`}
             type="button"
@@ -442,9 +442,9 @@ export function ConsolePage() {
           }}
         >
           <AlertDialogPortal>
-            <AlertDialogBackdrop className="z-[80] bg-black/45" />
+            <AlertDialogBackdrop className="z-[80]" />
             <AlertDialogPopup className="ui-motion-dialog top-1/2 left-1/2 z-[81] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-background p-5 shadow-2xl">
-              <AlertDialogTitle className="text-base">
+              <AlertDialogTitle className="text-sm">
                 {t("Confirm Import")}
               </AlertDialogTitle>
               <AlertDialogDescription className="mt-2">

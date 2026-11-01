@@ -2,6 +2,7 @@ import {
   PageHeader,
   PageTitle,
   PageDescription,
+  PageScrollArea,
 } from "@/components/nte/page-layout";
 import {
   Activity,
@@ -122,8 +123,8 @@ export function TimelinePage() {
         </div>
       </PageHeader>
 
-      <div className="timeline-scrollport min-h-0 flex-1 overflow-y-auto p-3 min-[900px]:p-4">
-        <div className="timeline-content flex min-h-full w-full flex-col gap-3.5">
+      <PageScrollArea className="overscroll-contain">
+        <div className="flex min-h-full w-full flex-col gap-3.5 [@media(max-height:800px)]:gap-2.5">
           {mutationError && state.status !== "error" && (
             <Alert variant="destructive">
               <AlertTitle>{t("Timeline update failed")}</AlertTitle>
@@ -351,7 +352,7 @@ export function TimelinePage() {
             </>
           )}
         </div>
-      </div>
+      </PageScrollArea>
     </section>
   );
 }

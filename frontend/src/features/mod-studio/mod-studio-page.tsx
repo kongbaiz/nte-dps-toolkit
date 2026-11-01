@@ -2,6 +2,7 @@ import {
   PageHeader,
   PageTitle,
   PageDescription,
+  PageScrollArea,
 } from "@/components/nte/page-layout";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -170,12 +171,12 @@ export function ModStudioWorkspace() {
         </div>
       </PageHeader>
       {tab === "market" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto" ref={contentRef}>
-          <div className="mx-auto w-full max-w-7xl space-y-5 p-5">
+        <PageScrollArea ref={contentRef}>
+          <div className="mx-auto w-full max-w-7xl space-y-5">
             {errorBanner}
             <ModMarketPanel market={market} />
           </div>
-        </div>
+        </PageScrollArea>
       ) : panel === null ? (
         <div className="space-y-4 p-5">
           {errorBanner}
@@ -229,7 +230,7 @@ export function ModStudioWorkspace() {
                         role="img"
                         aria-label={t(PLUGIN_STATE[plugin.state])}
                         title={t(PLUGIN_STATE[plugin.state])}
-                        className={`ml-auto size-1.5 shrink-0 rounded-full ${plugin.state === "loaded" ? "bg-[var(--console-success)]" : plugin.state === "failed" ? "bg-destructive" : "bg-muted-foreground"}`}
+                        className={`ml-auto size-1.5 shrink-0 rounded-full ${plugin.state === "loaded" ? "bg-success" : plugin.state === "failed" ? "bg-destructive" : "bg-muted-foreground"}`}
                       />
                     </span>
                   </button>
@@ -247,12 +248,12 @@ export function ModStudioWorkspace() {
             )}
           </nav>
 
-          <div
-            className="@container/detail min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+          <PageScrollArea
+            className="@container/detail"
             ref={contentRef}
             data-testid="plugin-workspace-scroll"
           >
-            <div className="mx-auto w-full max-w-6xl space-y-4 p-5">
+            <div className="mx-auto w-full max-w-6xl space-y-4">
               {errorBanner}
               <div key={`${activePage}:${panel.connectionIdentity}`}>
                 {selectedPlugin ? (
@@ -278,7 +279,7 @@ export function ModStudioWorkspace() {
                 )}
               </div>
             </div>
-          </div>
+          </PageScrollArea>
         </div>
       )}
     </section>

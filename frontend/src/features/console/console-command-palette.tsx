@@ -68,7 +68,7 @@ export function ConsoleCommandPalette({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPortal>
-        <DialogBackdrop className="bg-black/45" />
+        <DialogBackdrop />
         <DialogPopup
           className="ui-motion-dialog top-[clamp(1rem,12vh,4.5rem)] left-1/2 flex max-h-[min(32rem,calc(100vh-2rem))] w-[calc(100vw-1.5rem)] max-w-xl -translate-x-1/2 flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-2xl"
           initialFocus={inputRef}
@@ -129,7 +129,7 @@ export function ConsoleCommandPalette({
                       aria-disabled={disabled}
                       aria-selected={index === selected}
                       className={cn(
-                        "flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-[color,background-color,transform] duration-150 ease-out active:scale-[0.99]",
+                        "flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-[color,background-color,transform] duration-(--motion-duration-fast) ease-(--motion-ease-standard) active:scale-[0.99]",
                         rowClasses.row,
                       )}
                       key={command.id}

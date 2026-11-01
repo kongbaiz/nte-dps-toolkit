@@ -498,7 +498,7 @@ function HudModuleControls({
               aria-label={t("HUD modules")}
               className="motion-popover w-48 rounded-md border-0 bg-background/90 p-2 text-foreground shadow-lg ring-1 ring-foreground/15"
             >
-              <PopoverTitle className="mb-1.5 text-xs font-semibold tracking-wide text-info/80">
+              <PopoverTitle className="mb-1.5 text-xs font-semibold text-info/80">
                 {t("HUD modules")}
               </PopoverTitle>
               <div className="flex flex-col gap-1">

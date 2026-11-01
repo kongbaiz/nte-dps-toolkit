@@ -154,8 +154,7 @@ impl From<&CaptureDevice> for CaptureDeviceSnapshot {
             device.description.clone()
         };
         if !addresses.is_empty() {
-            label.push_str(" · ");
-            label.push_str(&addresses.join(", "));
+            label = format!("{label} ({})", addresses.join(", "));
         }
         Self {
             id: device.name.clone(),

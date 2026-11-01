@@ -1,5 +1,11 @@
 import { HitSnapshotDialog } from "./hit-snapshot-dialog";
-import { ChevronDown, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import {
+  ChevronDown,
+  LoaderCircle,
+  RefreshCw,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
@@ -195,8 +201,8 @@ export function MainDpsDetailPage() {
 
       {snapshot === null ? (
         <div className="grid min-h-0 flex-1 place-items-center">
-          <div
-            className="size-7 animate-spin rounded-full border-2 border-muted border-t-foreground"
+          <LoaderCircle
+            className="size-7 animate-spin text-muted-foreground"
             aria-label={t("Loading")}
           />
         </div>
@@ -432,7 +438,7 @@ function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
                 </span>
               </span>
               <span
-                className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted text-lg font-semibold"
+                className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted text-xl font-semibold"
                 style={{
                   backgroundColor: snapshot.characterColor ?? undefined,
                 }}
@@ -473,7 +479,7 @@ function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
           >
             <strong
               className={cn(
-                "block truncate font-mono text-lg font-medium tabular-nums",
+                "block truncate font-mono text-xl font-medium tabular-nums",
                 danger && "text-destructive",
               )}
             >
@@ -849,11 +855,6 @@ function HitRow({
   const targetPortrait = row.targetMonsterId
     ? monsterImageUrl(row.targetMonsterId)
     : null;
-  const typeSeparator = row.typeLabel.indexOf("·");
-  const typeCategory =
-    typeSeparator < 0 ? row.typeLabel : row.typeLabel.slice(0, typeSeparator);
-  const typeDetail =
-    typeSeparator < 0 ? null : row.typeLabel.slice(typeSeparator + 1);
   const hpCompression = maxHpCompression(
     row.targetMaxHp ?? 0,
     row.maxHpReduction ?? 0,
@@ -917,15 +918,15 @@ function HitRow({
             <span
               className="main-dps-hit-type"
               data-direction={row.direction}
-              title={`${row.typeLabel}\n${row.skill}\n${row.damageType}`}
+              title={`${row.typeLabel} ${row.typeDetail ?? ""}\n${row.skill}\n${row.damageType}`}
             >
               <span className="main-dps-hit-type-marker" aria-hidden="true" />
               {row.reactionTextKey === null ? (
                 <span className="flex min-w-0 items-center text-xs">
-                  <span className="truncate font-medium">{typeCategory}</span>
-                  {typeDetail && (
+                  <span className="truncate font-medium">{row.typeLabel}</span>
+                  {row.typeDetail && (
                     <span className="main-dps-hit-type-detail shrink-0">
-                      {typeDetail}
+                      {row.typeDetail}
                     </span>
                   )}
                 </span>
@@ -1143,7 +1144,7 @@ function DamageDigits({
       <span
         className={cn(
           "font-mono font-semibold tabular-nums text-info",
-          compact ? "text-xs" : "text-lg",
+          compact ? "text-xs" : "text-xl",
         )}
       >
         {formatMainMetric(value)}

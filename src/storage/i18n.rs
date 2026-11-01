@@ -307,6 +307,11 @@ pub fn tf(key: &str, args: &[&str]) -> String {
     format_template(&template, args)
 }
 
+/// [`tf`] for an explicit language, like [`t_for`].
+pub fn tf_for(language: Language, key: &str, args: &[&str]) -> String {
+    format_template(&t_for(language, key), args)
+}
+
 fn format_template(template: &str, args: &[&str]) -> String {
     let mut message = template.to_owned();
     for (index, argument) in args.iter().enumerate() {

@@ -82,7 +82,7 @@ export function HostControls({
               className="flex items-center gap-2 text-xs font-medium"
             >
               <span
-                className={`size-2 rounded-full ${connected ? "bg-[var(--console-success)]" : "bg-muted-foreground"}`}
+                className={`size-2 rounded-full ${connected ? "bg-success" : "bg-muted-foreground"}`}
               />
               {t(CONNECTION[panel.connection])}
             </span>

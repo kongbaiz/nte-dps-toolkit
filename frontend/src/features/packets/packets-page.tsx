@@ -213,7 +213,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
       className="group px-3 py-1.5 open:bg-muted/20 min-[640px]:px-5"
       style={{ contentVisibility: "auto", containIntrinsicSize: "64px" }}
     >
-      <summary className="packet-summary flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/45 [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/45 max-[760px]:flex-wrap [&::-webkit-details-marker]:hidden">
         <ChevronRight
           className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
           aria-hidden="true"
@@ -223,7 +223,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
         </time>
         <DirectionBadge direction={packet.direction} />
         <span
-          className="min-w-[180px] flex-1 truncate font-mono text-xs"
+          className="min-w-[180px] flex-1 truncate font-mono text-xs max-[760px]:order-1 max-[760px]:ps-6"
           title={`${packet.source} -> ${packet.destination}`}
         >
           {packet.source} <span className="text-muted-foreground">→</span>{" "}
@@ -233,7 +233,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
           {packet.payloadLen.toLocaleString()} B
         </span>
         <span
-          className="hidden max-w-[220px] shrink-0 truncate font-mono text-xs text-muted-foreground min-[1040px]:inline"
+          className="hidden max-w-[220px] shrink-0 truncate font-mono text-xs text-muted-foreground max-[760px]:order-1 max-[760px]:ps-6 min-[1040px]:inline"
           title={ids}
         >
           ids=[{ids}]

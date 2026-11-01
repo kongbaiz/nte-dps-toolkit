@@ -177,7 +177,7 @@ fn dispatch_global_action(app: &AppHandle, state: &AppState, action: GlobalHotke
                 state.publish_island_notice(
                     IslandTone::Success,
                     if undo_token.is_some() {
-                        "Session reset · use Undo within 5 seconds"
+                        "Session reset. Use Undo within 5 seconds."
                     } else {
                         "Stats reset"
                     },

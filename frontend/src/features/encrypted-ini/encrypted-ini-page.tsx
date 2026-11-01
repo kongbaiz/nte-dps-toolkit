@@ -290,7 +290,7 @@ export function EncryptedIniPage() {
           <textarea
             ref={textareaRef}
             aria-label={t("Decrypted INI plaintext")}
-            className="size-full resize-none overflow-auto bg-transparent p-4 font-mono text-sm leading-6 outline-none select-text placeholder:text-muted-foreground/70 focus:ring-3 focus:ring-inset focus:ring-ring/20"
+            className="size-full resize-none overflow-auto bg-transparent p-4 font-mono text-sm leading-6 outline-none select-text [tab-size:4] placeholder:text-muted-foreground/70 focus:ring-3 focus:ring-inset focus:ring-ring/20"
             placeholder={t(
               "After opening an encrypted INI, the decrypted plaintext appears here.",
             )}
@@ -407,7 +407,7 @@ function EncryptedIniConfirmation({
       }}
     >
       <AlertDialogPortal>
-        <AlertDialogBackdrop className="z-[110] bg-black/15 backdrop-blur-[1px]" />
+        <AlertDialogBackdrop className="z-[110]" />
         <AlertDialogPopup className="top-4 left-1/2 z-[111] grid w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 grid-cols-[0_1fr] gap-y-0.5 rounded-lg border bg-background px-4 py-3 text-sm shadow-xl has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-[>svg]:gap-x-3">
           <TriangleAlert aria-hidden="true" />
           <AlertDialogTitle className="col-start-2 text-sm">

@@ -13,6 +13,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  LoaderCircle,
 } from "lucide-react";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
@@ -349,8 +350,8 @@ export function MainDpsPage() {
   if (snapshot === null) {
     return (
       <div className="main-dps-root motion-route-loading grid place-items-center">
-        <div
-          className="size-8 animate-spin rounded-full border-2 border-muted border-t-foreground"
+        <LoaderCircle
+          className="size-8 animate-spin text-muted-foreground"
           aria-label={t("Loading")}
         />
       </div>
@@ -417,7 +418,7 @@ export function MainDpsPage() {
         {!presentation.islandNotifications && resetUndoToken !== null && (
           <ActionNotice
             status="success"
-            message={t("Session reset / use Undo within 5 seconds")}
+            message={t("Session reset. Use Undo within 5 seconds.")}
             actionLabel={t("Undo")}
             onAction={() => {
               const token = resetUndoToken;
@@ -452,9 +453,9 @@ export function MainDpsPage() {
           }}
         >
           <AlertDialogPortal>
-            <AlertDialogBackdrop className="z-[70] bg-black/45" />
+            <AlertDialogBackdrop className="z-[70]" />
             <AlertDialogPopup className="top-1/2 left-1/2 z-[71] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-background p-5 shadow-2xl">
-              <AlertDialogTitle className="text-base">
+              <AlertDialogTitle className="text-sm">
                 {t(
                   confirmation.kind === "start"
                     ? "Confirm Start"
@@ -572,7 +573,7 @@ export function MainDpsPage() {
       <main className="main-dps-content">
         {!abyssCollapsed && (
           <section className="main-dps-toolbar flex flex-wrap items-center justify-between gap-1.5">
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 [@media(max-height:560px)]:flex-none">
               <Button
                 size="sm"
                 onClick={() =>
@@ -658,7 +659,7 @@ export function MainDpsPage() {
                 {t("Console")}
               </Button>
             </div>
-            <div className="relative flex gap-1.5">
+            <div className="relative flex gap-1.5 [@media(max-height:560px)]:flex-none">
               <Button
                 size="sm"
                 variant={snapshot.passthrough ? "default" : "outline"}
@@ -899,7 +900,7 @@ export function MainDpsPage() {
 
             <section className="main-dps-team-section flex min-h-0 flex-1 flex-col gap-2">
               <div className="flex min-w-0 items-center gap-3">
-                <h1 className="text-base font-medium">{t("Team")}</h1>
+                <h1 className="text-sm font-medium">{t("Team")}</h1>
                 <span className="main-dps-team-hint min-w-0 flex-1 truncate text-xs text-muted-foreground">
                   {t(
                     "Click a character to view details; right-click to copy data or hide the character",
@@ -1079,8 +1080,8 @@ function ReplayImportLoading() {
       aria-busy="true"
     >
       <div className="flex w-[min(22rem,90%)] flex-col items-center rounded-xl border bg-card px-6 py-10 text-center shadow-sm">
-        <span
-          className="size-8 animate-spin rounded-full border-2 border-muted border-t-foreground"
+        <LoaderCircle
+          className="size-8 animate-spin text-muted-foreground"
           aria-hidden="true"
         />
         <strong className="mt-4 text-sm font-medium">
@@ -1358,8 +1359,8 @@ function EmptyCombat({
 
   return (
     <div className="m-auto flex w-full max-w-[26rem] flex-col gap-3 rounded-xl border bg-card p-5">
-      <h2 className="text-base">{t("Ready for your next combat")}</h2>
-      <ol className="space-y-2.5 text-base">
+      <h2 className="text-sm">{t("Ready for your next combat")}</h2>
+      <ol className="space-y-2.5 text-sm">
         <li className="flex items-center gap-3">
           <span
             className={cn(

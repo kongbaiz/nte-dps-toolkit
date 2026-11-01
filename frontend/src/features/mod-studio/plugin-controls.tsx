@@ -68,7 +68,7 @@ export function PluginControls({
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+              <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
               <Badge variant="outline">{t(PLUGIN_STATE[plugin.state])}</Badge>
             </div>
           </div>

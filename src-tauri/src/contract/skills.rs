@@ -141,7 +141,7 @@ fn localized_label(label: &str) -> String {
     if let Some(reaction) = label.strip_prefix("环合·")
         && let Some(key) = skill_label_translation_key(reaction)
     {
-        return format!("{} · {}", i18n::t("Esper Cycle"), i18n::t(key));
+        return i18n::tf("Esper Cycle: {}", &[&i18n::t(key)]);
     }
     label.to_owned()
 }
@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(localized_label("E技能"), i18n::t("Skill"));
         assert_eq!(
             localized_label("环合·创生"),
-            format!("{} · {}", i18n::t("Esper Cycle"), i18n::t("Blossom"))
+            i18n::tf("Esper Cycle: {}", &[&i18n::t("Blossom")])
         );
         assert_eq!(localized_label("Custom"), "Custom");
     }

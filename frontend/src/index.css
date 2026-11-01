@@ -222,7 +222,8 @@
   isolation: isolate;
   transform-origin: center top;
   will-change: opacity, transform, border-radius;
-  animation: ui-island-enter 440ms var(--motion-ease-emphasized) both;
+  animation: ui-island-enter var(--motion-duration-slow)
+    var(--motion-ease-emphasized) both;
 }
 
 html[data-window-route="notification-island"]
@@ -231,12 +232,13 @@ html[data-window-route="notification-island"]
 }
 
 html[data-window-route="notification-island"] .motion-skeleton {
-  background: rgb(9 9 11 / 96%);
+  background: color-mix(in oklab, var(--background) 96%, transparent);
 }
 
 .motion-island[data-exiting="true"] {
   pointer-events: none;
-  animation: ui-island-exit 220ms var(--motion-ease-standard) both;
+  animation: ui-island-exit var(--motion-duration-base)
+    var(--motion-ease-standard) both;
 }
 
 .motion-island::after {
@@ -253,12 +255,13 @@ html[data-window-route="notification-island"] .motion-skeleton {
 }
 
 .motion-island-icon {
-  animation: ui-island-icon-enter 420ms var(--motion-ease-emphasized) both;
+  animation: ui-island-icon-enter var(--motion-duration-slow)
+    var(--motion-ease-emphasized) both;
 }
 
 .motion-island-content {
-  animation: ui-island-content-enter 360ms 70ms var(--motion-ease-emphasized)
-    both;
+  animation: ui-island-content-enter var(--motion-duration-slow)
+    var(--motion-ease-emphasized) both;
 }
 
 .motion-bar {
@@ -347,7 +350,8 @@ html[data-window-route="notification-island"] .motion-skeleton {
 }
 
 .max-hp-compression-effect[data-active="true"] {
-  animation: ui-max-hp-compression-enter 260ms var(--motion-ease-standard) both;
+  animation: ui-max-hp-compression-enter var(--motion-duration-slow)
+    var(--motion-ease-standard) both;
 }
 
 .max-hp-compression-effect[data-compact="true"] {
@@ -362,7 +366,8 @@ html[data-window-route="notification-island"] .motion-skeleton {
 }
 
 .max-hp-compression-effect[data-active="true"] .max-hp-compression-icon {
-  animation: ui-max-hp-compression-icon 360ms var(--motion-ease-emphasized) both;
+  animation: ui-max-hp-compression-icon var(--motion-duration-slow)
+    var(--motion-ease-emphasized) both;
 }
 
 .max-hp-compression-percent {
@@ -381,7 +386,8 @@ html[data-window-route="notification-island"] .motion-skeleton {
     color-mix(in oklab, oklch(0.68 0.16 300) 14%, transparent),
     transparent
   );
-  animation: ui-max-hp-compression-cut 360ms var(--motion-ease-standard) both;
+  animation: ui-max-hp-compression-cut var(--motion-duration-slow)
+    var(--motion-ease-standard) both;
 }
 
 .motion-list-item {
@@ -689,15 +695,6 @@ html[data-window-route="notification-island"] .motion-skeleton {
   }
 }
 
-.timeline-scrollport {
-  scrollbar-gutter: stable;
-  overscroll-behavior: contain;
-}
-
-.timeline-content {
-  box-sizing: border-box;
-}
-
 .timeline-panel {
   position: relative;
   border: var(--ui-border-width) solid var(--border);
@@ -713,10 +710,6 @@ html[data-window-route="notification-island"] .motion-skeleton {
 }
 
 @media (max-height: 800px) {
-  .timeline-content {
-    gap: 0.625rem;
-  }
-
   .timeline-chart-shell {
     min-height: 14rem;
   }
@@ -734,7 +727,8 @@ html[data-window-route="notification-island"] .motion-skeleton {
 }
 
 .timeline-tooltip {
-  animation: timeline-tooltip-in 140ms ease-out both;
+  animation: timeline-tooltip-in var(--motion-duration-fast)
+    var(--motion-ease-standard) both;
 }
 
 .timeline-marker-label {
@@ -965,27 +959,12 @@ html[data-window-route="notification-island"] .motion-skeleton {
       scrollbar-width: none;
     }
 
-    .main-dps-toolbar > div {
-      flex: none;
-      flex-wrap: nowrap;
-    }
-
     .main-dps-metric {
       display: flex;
       align-items: baseline;
       justify-content: center;
       gap: 0.25rem;
       padding-block: 0.125rem;
-    }
-
-    .main-dps-metric > div:first-child {
-      font-size: var(--ui-font-body);
-      line-height: 1.25rem;
-    }
-
-    .main-dps-metric > div:last-child {
-      font-size: var(--ui-font-caption);
-      line-height: 1rem;
     }
 
     .main-dps-team-hint {

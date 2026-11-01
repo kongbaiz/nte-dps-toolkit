@@ -382,7 +382,7 @@ export function HitSnapshotDialog({
                 )}
               </DialogDescription>
               <p className="mt-3 text-sm">
-                {row.characterName} / {row.typeLabel} /{" "}
+                {row.characterName} / {row.typeLabel} {row.typeDetail} /{" "}
                 {new Date(row.timestamp * 1000).toLocaleTimeString()} /{" "}
                 {row.damage.toLocaleString()} / {t("Critical hit")}:{" "}
                 {t(criticalTranslationKey(row.critical))}
