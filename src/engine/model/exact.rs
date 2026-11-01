@@ -472,7 +472,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -481,7 +480,6 @@ mod tests {
         s.apply_exact_projection(initial.clone()).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -542,7 +540,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -559,7 +556,6 @@ mod tests {
         s.apply_exact_projection(extra.clone()).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -636,7 +632,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -644,7 +639,6 @@ mod tests {
         s.apply_exact_projection(hp_projection(false)).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -827,7 +821,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -836,7 +829,6 @@ mod tests {
         s.apply_exact_projection(p.clone()).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -860,7 +852,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -902,7 +893,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: None,
             floor: Some(11),
             half: AbyssHalf::Second,
             allow_late_backfill: false,

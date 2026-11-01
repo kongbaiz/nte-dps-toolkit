@@ -756,7 +756,6 @@ mod tests {
         duplicate.char_known = false;
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -764,7 +763,6 @@ mod tests {
         state.push_hit(duplicate.clone());
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 2.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -802,7 +800,6 @@ mod tests {
         state.push_hit(test_hit(2.0, 200.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.5,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: true,

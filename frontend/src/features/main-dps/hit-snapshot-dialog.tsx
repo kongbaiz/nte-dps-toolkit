@@ -178,12 +178,12 @@ export function EffectSnapshotView({
         {snapshot.observedUs ?? t("Unknown value")}
       </p>
       {snapshot.complete === false && (
-        <p role="status" className="text-sm text-amber-600">
+        <p role="status" className="text-sm text-warning">
           {t("Partial snapshot: only the observed entries are listed.")}
         </p>
       )}
       {snapshot.complete === null && (
-        <p role="status" className="text-sm text-amber-600">
+        <p role="status" className="text-sm text-warning">
           {t("Snapshot completeness is unknown.")}
         </p>
       )}
@@ -243,7 +243,7 @@ export function EffectSnapshotView({
                       </div>
                     </details>
                     {e.inhibited && (
-                      <span className="text-xs text-amber-600">
+                      <span className="text-xs text-warning">
                         {t("Inhibited")}
                       </span>
                     )}

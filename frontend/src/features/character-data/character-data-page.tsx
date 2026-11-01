@@ -14,6 +14,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import { t, tf } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { CharacterResponse } from "@/lib/tauri/generated/CharacterResponse";
@@ -129,8 +130,8 @@ export function CharacterDataPage() {
                 read(0, null, search);
               }}
             >
-              <input
-                className="h-9 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm"
+              <Input
+                className="h-9 flex-1"
                 aria-label={t("Search characters")}
                 placeholder={t("ID / name")}
                 maxLength={128}

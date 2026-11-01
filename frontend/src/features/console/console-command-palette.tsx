@@ -9,6 +9,7 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/form-controls";
 
 import { t, useFrontendLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -78,10 +79,10 @@ export function ConsoleCommandPalette({
               className="size-4 text-muted-foreground"
               aria-hidden="true"
             />
-            <input
+            <Input
               ref={inputRef}
               aria-label={t("Search commands")}
-              className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground select-text"
+              className="h-9 flex-1 border-0 bg-transparent px-0 select-text focus-visible:shadow-none"
               placeholder={t("Search commands")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}

@@ -198,7 +198,6 @@ pub fn run() {
             commands::empty_curtain::manage_empty_curtain_item,
             commands::history::compare_history_records,
             commands::history::delete_history_record,
-            commands::history::export_history_record_json,
             commands::history::export_history_record_file,
             commands::history::get_history_snapshot,
             commands::history::import_history_record_file,

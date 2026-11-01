@@ -41,6 +41,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
+import { characterAccent } from "@/lib/character-color";
 import { t, tf } from "@/lib/i18n";
 import type { SkillsCharacterSnapshot } from "@/lib/tauri/generated/SkillsCharacterSnapshot";
 import type { SkillsDiagnosticsSnapshot } from "@/lib/tauri/generated/SkillsDiagnosticsSnapshot";
@@ -99,7 +100,7 @@ export function SkillsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <PageTitle>{t("Skills")}</PageTitle>
             <Badge variant="outline" className="gap-1.5">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span className="size-1.5 rounded-full bg-success" />
               {t("Live")}
             </Badge>
           </div>
@@ -289,7 +290,7 @@ function SkillsReady({
           <details className="mt-3 border-t border-border/70 pt-2">
             <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-2 py-2 text-sm font-medium hover:bg-muted/55">
               <AlertTriangle
-                className="size-4 text-amber-600 dark:text-amber-400"
+                className="size-4 text-warning"
                 aria-hidden="true"
               />
               {t("Pending Mapping Diagnostics")}
@@ -624,8 +625,7 @@ function UnmappedGameplayEffect({
               aria-label={t(statusLabel)}
               className={cn(
                 "ml-1 size-7 rounded-l-none",
-                copyStatus === "copied" &&
-                  "text-emerald-700 dark:text-emerald-400",
+                copyStatus === "copied" && "text-success",
                 copyStatus === "error" && "text-destructive",
               )}
               size="icon-xs"
@@ -670,7 +670,7 @@ function Metric({
       <span
         className={cn(
           "flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground",
-          warning && "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+          warning && "bg-warning/10 text-warning",
         )}
       >
         <Icon className="size-4" aria-hidden="true" />
@@ -683,7 +683,7 @@ function Metric({
           className={cn(
             "block truncate font-mono text-sm font-semibold",
             prominent && "text-base",
-            warning && "text-amber-700 dark:text-amber-400",
+            warning && "text-warning",
           )}
         >
           {value}
@@ -710,7 +710,7 @@ function characterFor(
     characters.get(row.characterId) ?? {
       id: row.characterId,
       name: row.characterName,
-      color: "#737373",
+      color: characterAccent(row.characterId, null),
       damage: row.damage,
       entries: 1,
     }

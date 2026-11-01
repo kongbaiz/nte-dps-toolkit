@@ -3,7 +3,6 @@ import type { AbyssHalf } from "@/lib/tauri/generated/AbyssHalf";
 import type { HistoryComparisonSnapshot } from "@/lib/tauri/generated/HistoryComparisonSnapshot";
 import type { HistoryDeleteSnapshot } from "@/lib/tauri/generated/HistoryDeleteSnapshot";
 import type { HistoryEvent } from "@/lib/tauri/generated/HistoryEvent";
-import type { HistoryExportSnapshot } from "@/lib/tauri/generated/HistoryExportSnapshot";
 import type { HistoryFileActionSnapshot } from "@/lib/tauri/generated/HistoryFileActionSnapshot";
 import type { HistoryImportFileSnapshot } from "@/lib/tauri/generated/HistoryImportFileSnapshot";
 import type { HistorySnapshot } from "@/lib/tauri/generated/HistorySnapshot";
@@ -24,10 +23,6 @@ export const historyClient = {
   restoreDeleted: (undoToken: string) =>
     invokeCommand<HistorySnapshot>("restore_deleted_history_record", {
       undoToken,
-    }),
-  exportRecord: (recordId: string) =>
-    invokeCommand<HistoryExportSnapshot>("export_history_record_json", {
-      recordId,
     }),
   exportRecordFile: (recordId: string) =>
     invokeCommand<HistoryFileActionSnapshot>("export_history_record_file", {

@@ -18,6 +18,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/form-controls";
 import {
   Card,
   CardAction,
@@ -950,8 +951,7 @@ function HistorySelect({
   return (
     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
       {t(label)}
-      <select
-        className="h-9 rounded-md border bg-background px-2 text-sm text-foreground"
+      <NativeSelect
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
@@ -963,7 +963,7 @@ function HistorySelect({
               : record.displayTime}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </label>
   );
 }

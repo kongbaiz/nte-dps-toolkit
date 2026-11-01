@@ -21,6 +21,7 @@ import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
 import {
@@ -224,7 +225,7 @@ function AbyssValuesReady({
           <p
             className={cn(
               "truncate text-xs text-muted-foreground",
-              snapshot.dataStale && "text-amber-600 dark:text-amber-400",
+              snapshot.dataStale && "text-warning",
             )}
             title={snapshot.dataVersion}
           >
@@ -426,8 +427,8 @@ function AbyssFloorContent({
               className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
             />
-            <input
-              className="h-8 w-full rounded-md border bg-background pr-2 pl-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            <Input
+              className="h-8 pr-2 pl-8"
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
               placeholder={t("Search monster / ID")}
@@ -623,8 +624,8 @@ function AbyssLineSection({
               </span>
             )}
             <span className="text-muted-foreground">{t("Target")}</span>
-            <input
-              className="h-7 w-[68px] rounded-md border bg-background px-2 text-right tabular-nums outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+            <Input
+              className="h-7 w-[68px] px-2 text-right tabular-nums"
               type="number"
               min={1}
               max={maxSeconds ?? 600}

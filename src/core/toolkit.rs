@@ -362,7 +362,6 @@ impl ReportCursor {
                 0 => AbyssEvent::Exit { timestamp },
                 1 | 2 => AbyssEvent::Stage {
                     timestamp,
-                    cycle: None,
                     floor: None,
                     half: if transition.to == 1 {
                         AbyssHalf::First

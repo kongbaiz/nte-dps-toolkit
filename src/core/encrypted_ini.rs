@@ -227,17 +227,6 @@ fn decrypt_encrypted_ini_line(line: &str) -> Result<Option<(EncryptedIniKey, Str
     Ok(None)
 }
 
-#[cfg(test)]
-pub fn encrypt_encrypted_ini_text(text: &str, key: EncryptedIniKey) -> Result<String, String> {
-    let mut output = String::new();
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let encrypted = encrypt_aes256_ecb(&pkcs7_pad(line.as_bytes()), key.key())?;
-        output.push_str(&BASE64.encode(encrypted));
-        output.push('\n');
-    }
-    Ok(output)
-}
-
 pub fn encrypt_encrypted_ini_records(
     text: &str,
     key: EncryptedIniKey,
@@ -305,8 +294,7 @@ fn decrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn encrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
+fn encrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     if !data.len().is_multiple_of(16) {
         return Err("AES 明文长度不是 16 字节块的整数倍".to_owned());
     }
@@ -318,8 +306,7 @@ pub fn encrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String
     Ok(output)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn pkcs7_pad(data: &[u8]) -> Vec<u8> {
+fn pkcs7_pad(data: &[u8]) -> Vec<u8> {
     let padding = 16 - data.len() % 16;
     let mut output = Vec::with_capacity(data.len() + padding);
     output.extend_from_slice(data);
@@ -347,6 +334,15 @@ fn pkcs7_unpad(data: &[u8]) -> Result<&[u8], String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    pub fn encrypt_encrypted_ini_text(text: &str, key: EncryptedIniKey) -> Result<String, String> {
+        let mut output = String::new();
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            let encrypted = encrypt_aes256_ecb(&pkcs7_pad(line.as_bytes()), key.key())?;
+            output.push_str(&BASE64.encode(encrypted));
+            output.push('\n');
+        }
+        Ok(output)
+    }
 
     fn test_path(name: &str) -> std::path::PathBuf {
         let directory =

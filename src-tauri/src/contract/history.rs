@@ -455,14 +455,6 @@ impl HistorySkillDeltaSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct HistoryExportSnapshot {
-    pub file_name: String,
-    pub json: String,
-}
-
 fn capture_source_code(source: CaptureQualitySource) -> &'static str {
     match source {
         CaptureQualitySource::Live => "live",

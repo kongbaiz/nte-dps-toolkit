@@ -1957,7 +1957,6 @@
   "Disabled calibration reports unexplained server HP residuals without changing DPS totals": "校正が無効な場合、説明できないサーバー HP 残差を報告しますが、DPS 合計は変更しません",
   "Confirm the Mod risk warning before starting the game runtime.": "ゲーム Mod ランタイムを開始する前に、Mod のリスク警告を確認してください。",
   "History record could not be loaded.": "履歴記録を読み込めませんでした。",
-  "This History record is too large for inline export; use Export File.": "この履歴記録はインライン出力には大きすぎます。「ファイルへ出力」を使用してください。",
   "Character actions": "キャラクター操作",
   "Live capture state is unavailable": "ライブキャプチャ状態を利用できません。",
   "Presentation state is unavailable": "表示状態を利用できません。",

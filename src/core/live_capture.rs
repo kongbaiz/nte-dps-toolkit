@@ -1751,24 +1751,6 @@ fn next_engine_input(
 }
 
 #[cfg(test)]
-fn next_engine_event(
-    reliable_receiver: &Receiver<EngineEvent>,
-    debug_receiver: &Receiver<EngineEvent>,
-    defer_debug: bool,
-) -> Result<EngineEvent, RecvError> {
-    let (_control_sender, control_receiver) = bounded(1);
-    match next_engine_input(
-        reliable_receiver,
-        debug_receiver,
-        &control_receiver,
-        defer_debug,
-    )? {
-        EngineLoopInput::Event(event) => Ok(event),
-        EngineLoopInput::Control(_) => Err(RecvError),
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use std::{
         panic::{AssertUnwindSafe, catch_unwind},
@@ -1776,6 +1758,23 @@ mod tests {
     };
 
     use super::*;
+    fn next_engine_event(
+        reliable_receiver: &Receiver<EngineEvent>,
+        debug_receiver: &Receiver<EngineEvent>,
+        defer_debug: bool,
+    ) -> Result<EngineEvent, RecvError> {
+        let (_control_sender, control_receiver) = bounded(1);
+        match next_engine_input(
+            reliable_receiver,
+            debug_receiver,
+            &control_receiver,
+            defer_debug,
+        )? {
+            EngineLoopInput::Event(event) => Ok(event),
+            EngineLoopInput::Control(_) => Err(RecvError),
+        }
+    }
+
     use crate::core::packets::PacketStreamRevision;
     use crate::engine::model::{
         AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, Hit, HitCharacterSource, HitDirection,
@@ -2543,7 +2542,6 @@ mod tests {
                     &service,
                     EngineEvent::Abyss(AbyssEvent::Stage {
                         timestamp: 2.0,
-                        cycle: None,
                         floor: Some(11),
                         half: AbyssHalf::First,
                         allow_late_backfill: false,
@@ -2658,7 +2656,6 @@ mod tests {
         let stage = |timestamp, half| {
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp,
-                cycle: None,
                 floor: Some(11),
                 half,
                 allow_late_backfill: false,
@@ -2775,7 +2772,6 @@ mod tests {
             let mut state = service.0.state.lock().expect("live capture state lock");
             state.apply_abyss_event(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2804,7 +2800,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2815,7 +2810,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 3.0,
-                cycle: None,
                 floor: Some(13),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2840,7 +2834,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2876,7 +2869,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2921,7 +2913,6 @@ mod tests {
             let mut state = service.0.state.lock().expect("live capture state lock");
             state.apply_abyss_event(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::Second,
                 allow_late_backfill: false,
@@ -2948,7 +2939,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2978,7 +2968,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2997,7 +2986,6 @@ mod tests {
                 &service,
                 EngineEvent::Abyss(AbyssEvent::Stage {
                     timestamp: (round + 1) as f64 + 0.5,
-                    cycle: None,
                     floor: Some(12),
                     half: crate::engine::model::AbyssHalf::First,
                     allow_late_backfill: false,
@@ -3025,7 +3013,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3056,7 +3043,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3081,7 +3067,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 12.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3098,7 +3083,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 20.0,
-                cycle: None,
                 floor: Some(13),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3272,7 +3256,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3782,7 +3765,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,

@@ -298,7 +298,7 @@ export function TimelineChart({
                         ? "-translate-x-full"
                         : "-translate-x-1/2",
                     marker.kind === "clear"
-                      ? "border-emerald-500/35 bg-emerald-500/10 text-success"
+                      ? "border-success/35 bg-success/10 text-success"
                       : "border-border bg-background text-muted-foreground",
                   )}
                   style={{
@@ -320,7 +320,7 @@ export function TimelineChart({
               return (
                 <span
                   key={`${interval.start}-${interval.end}-${index}`}
-                  className="pointer-events-none absolute z-[3] -translate-x-1/2 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-mono text-xs text-amber-700 dark:text-amber-300"
+                  className="pointer-events-none absolute z-[3] -translate-x-1/2 rounded-full border border-warning/25 bg-warning/10 px-1.5 py-0.5 font-mono text-xs text-warning"
                   style={{
                     left: left + width / 2,
                     top: model.plot.top + 7,
@@ -540,12 +540,10 @@ function drawChart(
   const { plot } = model;
   context.clearRect(0, 0, context.canvas.width, context.canvas.height);
   const styles = getComputedStyle(context.canvas);
-  const border = styles.getPropertyValue("--border").trim() || "#d4d4d8";
-  const muted =
-    styles.getPropertyValue("--muted-foreground").trim() || "#71717a";
-  const foreground =
-    styles.getPropertyValue("--foreground").trim() || "#18181b";
-  const warning = "#f59e0b";
+  const border = styles.getPropertyValue("--border").trim();
+  const muted = styles.getPropertyValue("--muted-foreground").trim();
+  const foreground = styles.getPropertyValue("--foreground").trim();
+  const warning = styles.getPropertyValue("--console-warning").trim();
 
   context.save();
   context.lineWidth = 1;
@@ -617,10 +615,10 @@ function drawChart(
     const x = timelineTimeToX(model, marker.offset);
     const markerColor =
       marker.kind === "clear"
-        ? "#22c55e"
+        ? styles.getPropertyValue("--console-success").trim()
         : marker.kind === "exit"
-          ? "#ef4444"
-          : styles.getPropertyValue("--primary").trim() || "#18181b";
+          ? styles.getPropertyValue("--destructive").trim()
+          : styles.getPropertyValue("--primary").trim();
     context.strokeStyle = color(markerColor, 0.85);
     context.setLineDash([4, 4]);
     context.beginPath();

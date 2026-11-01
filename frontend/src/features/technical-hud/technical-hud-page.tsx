@@ -24,6 +24,7 @@ import {
 import { motion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import { ActionNotice } from "@/components/nte/action-notice";
 import { AnimatedNumber } from "@/components/nte/animated-number";
 import { HudModuleSortableList } from "@/components/nte/hud-module-sortable";
@@ -192,9 +193,9 @@ function TechnicalContent({
 }: TechnicalContentProps) {
   if (state.status === "loading") {
     return (
-      <p className="motion-route-loading hud-text-halo flex items-center gap-2 text-sm text-white/80">
+      <p className="motion-route-loading hud-text-halo flex items-center gap-2 text-sm text-foreground/80">
         <span className="animate-pulse">
-          <Radio className="size-4 text-cyan-200" aria-hidden="true" />
+          <Radio className="size-4 text-info" aria-hidden="true" />
         </span>
         {t("Waiting for Rust bridge...")}
       </p>
@@ -204,14 +205,14 @@ function TechnicalContent({
   if (state.status === "error") {
     return (
       <div className="flex items-center gap-2">
-        <ShieldCheck className="size-4 text-amber-200" aria-hidden="true" />
-        <p className="hud-text-halo max-w-64 text-xs text-amber-100">
+        <ShieldCheck className="size-4 text-warning" aria-hidden="true" />
+        <p className="hud-text-halo max-w-64 text-xs text-warning">
           {tf(state.error.messageKey, state.error.messageArguments)}
         </p>
         <Button
           variant="ghost"
           size="sm"
-          className="text-white/80 hover:bg-white/10 hover:text-white"
+          className="text-foreground/80 hover:bg-foreground/10 hover:text-foreground"
           onClick={() => void onRetry()}
         >
           <RefreshCw data-icon="inline-start" aria-hidden="true" />
@@ -247,7 +248,7 @@ function TechnicalContent({
       ) : null}
 
       {snapshot.capture.issue === null ? null : (
-        <p role="alert" className="hud-text-halo text-xs text-amber-200">
+        <p role="alert" className="hud-text-halo text-xs text-warning">
           {tf(
             snapshot.capture.issue.messageKey,
             snapshot.capture.issue.messageArguments,
@@ -256,7 +257,7 @@ function TechnicalContent({
       )}
 
       {dragFailed ? (
-        <p role="alert" className="hud-text-halo text-xs text-amber-200">
+        <p role="alert" className="hud-text-halo text-xs text-warning">
           {t("HUD window operation failed.")}
         </p>
       ) : null}
@@ -303,16 +304,16 @@ function HudEditorRail({
   return (
     <div className="flex min-w-0 items-center gap-1">
       <div
-        className="hud-text-halo flex min-w-0 flex-1 cursor-grab items-center gap-1.5 py-1 text-xs font-semibold text-white select-none active:cursor-grabbing"
+        className="hud-text-halo flex min-w-0 flex-1 cursor-grab items-center gap-1.5 py-1 text-xs font-semibold text-foreground select-none active:cursor-grabbing"
         onPointerDown={onDragPointerDown}
         title={t("Drag this line to move the window.")}
       >
         <GripHorizontal
-          className="size-3.5 shrink-0 text-cyan-200"
+          className="size-3.5 shrink-0 text-info"
           aria-hidden="true"
         />
         <span className="truncate">NTE DPS</span>
-        <span className="hidden truncate text-xs font-normal text-cyan-100/70 min-[350px]:inline">
+        <span className="hidden truncate text-xs font-normal text-info/70 min-[350px]:inline">
           {snapshot.hud.dataState === "preview"
             ? `${t("Preview only")} / `
             : ""}
@@ -339,7 +340,7 @@ function HudEditorRail({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="text-white/75 hover:bg-white/10 hover:text-white"
+              className="text-foreground/75 hover:bg-foreground/10 hover:text-foreground"
               aria-label={t("Main Window")}
               onClick={() => void transitionToWindow(showMainDpsFromHud)}
             />
@@ -356,7 +357,7 @@ function HudEditorRail({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="text-white/75 hover:bg-white/10 hover:text-white"
+              className="text-foreground/75 hover:bg-foreground/10 hover:text-foreground"
               aria-label={t("Reset")}
               onClick={() => void onReset()}
             />
@@ -478,8 +479,8 @@ function HudModuleControls({
                     variant="ghost"
                     size="icon-xs"
                     className={cn(
-                      "text-white/75 hover:bg-white/10 hover:text-white",
-                      open && "bg-white/10 text-cyan-100",
+                      "text-foreground/75 hover:bg-foreground/10 hover:text-foreground",
+                      open && "bg-foreground/10 text-info",
                     )}
                     aria-label={t("HUD modules")}
                   >
@@ -495,9 +496,9 @@ function HudModuleControls({
           <PopoverPositioner align="end" className="z-30" side="bottom">
             <PopoverPopup
               aria-label={t("HUD modules")}
-              className="motion-popover w-48 rounded-md border-0 bg-slate-950/90 p-2 text-white shadow-lg ring-1 ring-white/15"
+              className="motion-popover w-48 rounded-md border-0 bg-background/90 p-2 text-foreground shadow-lg ring-1 ring-foreground/15"
             >
-              <PopoverTitle className="mb-1.5 text-xs font-semibold tracking-wide text-cyan-100/80">
+              <PopoverTitle className="mb-1.5 text-xs font-semibold tracking-wide text-info/80">
                 {t("HUD modules")}
               </PopoverTitle>
               <div className="flex flex-col gap-1">
@@ -558,15 +559,15 @@ function HudModuleControlRow({
       ref={sortable.rowRef}
       style={sortable.rowStyle}
       className={cn(
-        "relative flex h-6 items-center gap-1 rounded px-1 text-xs hover:bg-white/5",
-        sortable.dragging && "z-10 bg-white/10",
+        "relative flex h-6 items-center gap-1 rounded px-1 text-xs hover:bg-foreground/5",
+        sortable.dragging && "z-10 bg-foreground/10",
       )}
     >
       <button
         ref={sortable.handleRef}
         type="button"
         className={cn(
-          "grid size-5 shrink-0 touch-none cursor-grab place-items-center rounded text-white/45 hover:bg-white/10 hover:text-white/85 active:cursor-grabbing disabled:cursor-default disabled:opacity-35",
+          "grid size-5 shrink-0 touch-none cursor-grab place-items-center rounded text-foreground/45 hover:bg-foreground/10 hover:text-foreground/85 active:cursor-grabbing disabled:cursor-default disabled:opacity-35",
           sortable.dragging && "cursor-grabbing",
         )}
         disabled={disabled}
@@ -630,19 +631,19 @@ function HudWidthControl({
   };
 
   return (
-    <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2 text-xs">
-      <label htmlFor="hud-width" className="shrink-0 text-cyan-100/80">
+    <div className="mt-2 flex items-center justify-between gap-2 border-t border-foreground/10 pt-2 text-xs">
+      <label htmlFor="hud-width" className="shrink-0 text-info/80">
         {t("HUD Width")}
       </label>
       <div className="flex items-center gap-1">
-        <input
+        <Input
           id="hud-width"
           type="number"
           inputMode="numeric"
           step={4}
           value={draft}
           disabled={disabled}
-          className="h-6 w-16 rounded border border-white/15 bg-white/5 px-1.5 text-right font-mono text-xs text-white outline-none select-text focus:border-cyan-300/70 disabled:opacity-45"
+          className="h-6 w-16 border-foreground/15 bg-foreground/5 px-1.5 text-right font-mono text-xs text-foreground select-text"
           aria-label={t("HUD Width")}
           onChange={(event) => setDraft(event.currentTarget.value)}
           onFocus={(event) => event.currentTarget.select()}
@@ -657,7 +658,7 @@ function HudWidthControl({
             }
           }}
         />
-        <span className="text-white/50">px</span>
+        <span className="text-foreground/50">px</span>
       </div>
     </div>
   );
@@ -691,7 +692,7 @@ function HudCaptureControl({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="text-white/75 hover:bg-white/10 hover:text-white"
+            className="text-foreground/75 hover:bg-foreground/10 hover:text-foreground"
             aria-label={label}
             disabled={action === "pending"}
             onClick={() => void (action === "start" ? onStart() : onStop())}
@@ -744,7 +745,7 @@ function HudProjection({
 
   if (tone === "empty") {
     return (
-      <p className="hud-text-halo py-4 text-center text-xs text-white/65">
+      <p className="hud-text-halo py-4 text-center text-xs text-foreground/65">
         {t("Waiting for damage data")}
       </p>
     );
@@ -752,7 +753,7 @@ function HudProjection({
 
   if (tone === "unknown") {
     return (
-      <p className="hud-text-halo py-4 text-center text-xs text-amber-200">
+      <p className="hud-text-halo py-4 text-center text-xs text-warning">
         {tf("Unknown status: {0}", [hud.dataState])}
       </p>
     );
@@ -760,7 +761,7 @@ function HudProjection({
 
   if (hud.summary === null) {
     return (
-      <p className="hud-text-halo py-4 text-center text-xs text-white/65">
+      <p className="hud-text-halo py-4 text-center text-xs text-foreground/65">
         {t("Waiting for damage data")}
       </p>
     );
@@ -889,7 +890,7 @@ function HudEditableModule({
       ref={sortable.rowRef}
       style={sortable.rowStyle}
       className={cn(
-        "relative rounded-sm border border-dashed border-emerald-500/70",
+        "relative rounded-sm border border-dashed border-success/70",
         sortable.dragging && "z-10",
       )}
     >
@@ -897,7 +898,7 @@ function HudEditableModule({
         ref={sortable.handleRef}
         type="button"
         className={cn(
-          "hud-text-halo flex h-5 w-full touch-none cursor-grab select-none items-center gap-1 bg-emerald-400/15 px-1.5 text-left text-xs font-medium text-emerald-100 active:cursor-grabbing",
+          "hud-text-halo flex h-5 w-full touch-none cursor-grab select-none items-center gap-1 bg-success/15 px-1.5 text-left text-xs font-medium text-success active:cursor-grabbing",
           sortable.dragging && "cursor-grabbing",
         )}
         disabled={movePending}
@@ -915,7 +916,7 @@ function HudEditableModule({
 
 function HudTitle() {
   return (
-    <p className="hud-text-halo text-sm font-semibold tracking-wide text-white">
+    <p className="hud-text-halo text-sm font-semibold tracking-wide text-foreground">
       NTE DPS
     </p>
   );
@@ -936,7 +937,7 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
       <div className="min-w-0">
         {hud.config.showTeamDps ? (
           <>
-            <p className="hud-text-halo text-xs text-white/60">
+            <p className="hud-text-halo text-xs text-foreground/60">
               {t("Team DPS")}
               {hud.config.showDuration ? (
                 <>
@@ -948,7 +949,7 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
                 </>
               ) : null}
             </p>
-            <p className="hud-text-halo truncate font-mono text-2xl leading-8 font-semibold text-cyan-200">
+            <p className="hud-text-halo truncate font-mono text-2xl leading-8 font-semibold text-info">
               <AnimatedNumber
                 value={summary.teamDps}
                 format={formatHudNumber}
@@ -966,10 +967,10 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
 
       {showRight ? (
         <div className="min-w-0 text-right">
-          <p className="hud-text-halo text-xs text-white/60">
+          <p className="hud-text-halo text-xs text-foreground/60">
             {summaryLabel(hud)}
           </p>
-          <p className="hud-text-halo truncate font-mono text-sm leading-8 text-white/90">
+          <p className="hud-text-halo truncate font-mono text-sm leading-8 text-foreground/90">
             <HudSummaryValue hud={hud} />
           </p>
         </div>
@@ -977,7 +978,7 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
 
       {hud.config.showCharacterRows ? (
         <div
-          className="absolute inset-x-0 bottom-0 flex h-0.5 overflow-hidden rounded-full bg-white/10"
+          className="absolute inset-x-0 bottom-0 flex h-0.5 overflow-hidden rounded-full bg-foreground/10"
           aria-hidden="true"
         >
           {hud.characters.map((character, index) => (
@@ -1007,8 +1008,8 @@ function HudMetric({
 }) {
   return (
     <>
-      <p className="hud-text-halo text-xs text-white/60">{label}</p>
-      <p className="hud-text-halo font-mono text-sm leading-8 text-white/90">
+      <p className="hud-text-halo text-xs text-foreground/60">{label}</p>
+      <p className="hud-text-halo font-mono text-sm leading-8 text-foreground/90">
         <AnimatedNumber value={value} format={format} />
       </p>
     </>
@@ -1031,11 +1032,11 @@ function HudStatus({
 
   return (
     <div className="flex h-5 items-center justify-between text-xs">
-      <p className="hud-text-halo truncate text-white/85">
+      <p className="hud-text-halo truncate text-foreground/85">
         {hud.config.showAbyssHalf && hud.status.abyssDetected ? half : ""}
       </p>
       {hud.config.showPassthroughState ? (
-        <p className="hud-text-halo text-white/60">
+        <p className="hud-text-halo text-foreground/60">
           {t(passthrough ? "Passthrough" : "Edit")}
         </p>
       ) : null}
@@ -1090,7 +1091,7 @@ function HudCharacterRow({
           aria-hidden="true"
         />
         <span
-          className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border border-white/30 text-xs font-semibold text-white"
+          className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border border-foreground/30 text-xs font-semibold text-foreground"
           style={{ backgroundColor: color }}
           title={name}
         >
@@ -1105,13 +1106,13 @@ function HudCharacterRow({
             />
           ) : null}
         </span>
-        <span className="hud-text-halo truncate text-xs text-white">
+        <span className="hud-text-halo truncate text-xs text-foreground">
           {name}
         </span>
       </div>
 
       <div
-        className="h-1.5 overflow-hidden rounded-full bg-white/10 ring-1 ring-black/60"
+        className="h-1.5 overflow-hidden rounded-full bg-foreground/10 ring-1 ring-black/60"
         aria-label={`${name} ${character.damageSharePercent.toFixed(1)}%`}
       >
         <div
@@ -1123,7 +1124,7 @@ function HudCharacterRow({
         />
       </div>
 
-      <span className="hud-text-halo text-right font-mono text-xs text-white/90">
+      <span className="hud-text-halo text-right font-mono text-xs text-foreground/90">
         <AnimatedNumber value={character.dps} format={formatHudNumber} />
       </span>
       <span className="hud-text-halo text-right text-xs" style={{ color }}>
@@ -1152,8 +1153,8 @@ function HudToggle({ icon, label, pressed, onPressedChange }: HudToggleProps) {
             variant="ghost"
             size="icon-xs"
             className={cn(
-              "text-white/75 hover:bg-white/10 hover:text-white",
-              pressed && "bg-cyan-300/20 text-cyan-100",
+              "text-foreground/75 hover:bg-foreground/10 hover:text-foreground",
+              pressed && "bg-info/20 text-info",
             )}
             aria-label={label}
             aria-pressed={pressed}

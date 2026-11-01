@@ -275,7 +275,8 @@ html[data-window-route="notification-island"] .motion-skeleton {
   align-items: center;
   justify-content: center;
   padding: 0.3rem 1.5rem;
-  border: 1px solid color-mix(in oklab, var(--primary) 18%, var(--border));
+  border: var(--ui-border-width) solid
+    color-mix(in oklab, var(--primary) 18%, var(--border));
   border-radius: 0.5rem;
   background: color-mix(in oklab, var(--primary) 5%, var(--background));
   box-shadow:
@@ -335,7 +336,8 @@ html[data-window-route="notification-island"] .motion-skeleton {
   min-width: 0;
   align-items: center;
   gap: 0.25rem;
-  border: 1px solid color-mix(in oklab, oklch(0.62 0.18 300) 26%, var(--border));
+  border: var(--ui-border-width) solid
+    color-mix(in oklab, oklch(0.62 0.18 300) 26%, var(--border));
   border-radius: 0.375rem;
   background: color-mix(in oklab, oklch(0.68 0.16 300) 7%, var(--background));
   box-shadow: inset 2px 0
@@ -364,14 +366,15 @@ html[data-window-route="notification-island"] .motion-skeleton {
 }
 
 .max-hp-compression-percent {
-  border-left: 1px solid color-mix(in oklab, currentColor 28%, transparent);
+  border-left: var(--ui-border-width) solid
+    color-mix(in oklab, currentColor 28%, transparent);
   padding-left: 0.3rem;
   font-weight: 700;
 }
 
 .max-hp-compression-cut {
   z-index: 0;
-  border-left: 1px solid
+  border-left: var(--ui-border-width) solid
     color-mix(in oklab, oklch(0.62 0.18 300) 44%, transparent);
   background: linear-gradient(
     to left,
@@ -726,7 +729,8 @@ html[data-window-route="notification-island"] .motion-skeleton {
 
 .timeline-hover-lens {
   background: color-mix(in oklab, var(--muted) 35%, transparent);
-  border-inline: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+  border-inline: var(--ui-border-width) solid
+    color-mix(in oklab, var(--border) 55%, transparent);
 }
 
 .timeline-tooltip {

@@ -15,8 +15,6 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
-#[cfg(test)]
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
@@ -25,8 +23,6 @@ use pcap_file::pcapng::blocks::enhanced_packet::EnhancedPacketBlock;
 use pcap_file::pcapng::blocks::interface_description::{
     InterfaceDescriptionBlock, InterfaceDescriptionOption,
 };
-#[cfg(test)]
-use pcap_file::pcapng::blocks::unknown::UnknownBlock;
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use pcap_file::{DataLink, PcapError};
 use serde::{
@@ -811,15 +807,6 @@ pub enum PacketEmissionMode {
 }
 
 impl CaptureHandle {
-    #[cfg(test)]
-    pub(crate) fn from_test_thread(stop: Arc<AtomicBool>, thread: thread::JoinHandle<()>) -> Self {
-        Self {
-            stop,
-            thread: Some(thread),
-            raw_capture: RawCaptureBuffer::new(None),
-        }
-    }
-
     pub fn raw_capture(&self) -> RawCaptureBuffer {
         self.raw_capture.clone()
     }
@@ -1101,20 +1088,6 @@ impl RawCaptureWriter {
     }
 }
 
-#[cfg(test)]
-fn encode_combat_clock_block(
-    transition: &CombatClockTransitionSnapshot,
-) -> [u8; NTE_COMBAT_CLOCK_BLOCK_SIZE] {
-    let mut payload = [0_u8; NTE_COMBAT_CLOCK_BLOCK_SIZE];
-    payload[0..8].copy_from_slice(NTE_COMBAT_CLOCK_BLOCK_MAGIC);
-    payload[8..16].copy_from_slice(&transition.sequence.to_le_bytes());
-    payload[16..24].copy_from_slice(&transition.timestamp_100ns.to_le_bytes());
-    payload[24..28].copy_from_slice(&transition.pause_type_mask.to_le_bytes());
-    payload[28..32].copy_from_slice(&transition.reserved_value.to_le_bytes());
-    payload[32..36].copy_from_slice(&transition.state_flags.to_le_bytes());
-    payload
-}
-
 fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapshot> {
     if value.len() != NTE_COMBAT_CLOCK_BLOCK_SIZE
         || &value[0..8] != NTE_COMBAT_CLOCK_BLOCK_MAGIC
@@ -1146,36 +1119,6 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
         reserved_value,
         state_flags,
     })
-}
-
-#[cfg(test)]
-fn encode_mod_script_block(event: &ModScriptEvent) -> Option<[u8; NTE_MOD_SCRIPT_BLOCK_SIZE]> {
-    if !valid_mod_script_block_identifier(&event.mod_id)
-        || !valid_mod_script_block_identifier(&event.name)
-        || event.values.len() > NTE_MOD_SCRIPT_VALUE_CAPACITY
-        || event.timestamp_100ns < FILETIME_UNIX_EPOCH_100NS
-    {
-        return None;
-    }
-    let mut payload = [0_u8; NTE_MOD_SCRIPT_BLOCK_SIZE];
-    payload[0..8].copy_from_slice(NTE_MOD_SCRIPT_BLOCK_MAGIC);
-    payload[8..16].copy_from_slice(&event.sequence.to_le_bytes());
-    payload[16..24].copy_from_slice(&event.timestamp_100ns.to_le_bytes());
-    payload[24] = match event.phase {
-        ModScriptEventPhase::Event => 0,
-        ModScriptEventPhase::Preprocess => 1,
-        ModScriptEventPhase::Postprocess => 2,
-    };
-    payload[25] = event.values.len() as u8;
-    payload[26] = event.mod_id.len() as u8;
-    payload[27] = event.name.len() as u8;
-    for (index, value) in event.values.iter().enumerate() {
-        let start = 32 + index * 8;
-        payload[start..start + 8].copy_from_slice(&value.to_le_bytes());
-    }
-    payload[56..56 + event.mod_id.len()].copy_from_slice(event.mod_id.as_bytes());
-    payload[88..88 + event.name.len()].copy_from_slice(event.name.as_bytes());
-    Some(payload)
 }
 
 fn decode_mod_script_block(value: &[u8]) -> Option<ModScriptEvent> {
@@ -1243,16 +1186,6 @@ fn valid_mod_script_block_identifier(value: &str) -> bool {
 fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
     let timestamp_ticks = timestamp_100ns.checked_sub(FILETIME_UNIX_EPOCH_100NS)?;
     Some(timestamp_ticks as f64 / FILETIME_TICKS_PER_SECOND as f64)
-}
-
-#[cfg(test)]
-fn current_filetime_100ns() -> u64 {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time must be after the Unix epoch");
-    FILETIME_UNIX_EPOCH_100NS
-        + elapsed.as_secs() * FILETIME_TICKS_PER_SECOND
-        + u64::from(elapsed.subsec_nanos()) / 100
 }
 
 #[derive(Default)]
@@ -2306,10 +2239,9 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
             explicit_stage = Some(stage);
         }
     }
-    if let Some((cycle, floor, half)) = explicit_stage {
+    if let Some((_, floor, half)) = explicit_stage {
         events.push(AbyssEvent::Stage {
             timestamp,
-            cycle: Some(cycle),
             floor: Some(floor),
             half,
             allow_late_backfill: false,
@@ -2322,7 +2254,6 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
         if first ^ second {
             events.push(AbyssEvent::Stage {
                 timestamp,
-                cycle: None,
                 floor: None,
                 half: if first {
                     AbyssHalf::First
@@ -2461,11 +2392,6 @@ impl ServerDamageCalibrationTracker {
             self.pending_max_hp_reduction_hits
                 .retain(|pending| pending.target_handle != Some(oldest));
         }
-    }
-
-    #[cfg(test)]
-    fn observe_hit(&mut self, hit: &Hit) {
-        let _ = self.observe_hit_with_semantics(hit, false, 0);
     }
 
     fn observe_hit_with_semantics(
@@ -2683,31 +2609,6 @@ impl ServerDamageCalibrationTracker {
         let expected_scaled_hp = hp_after_direct_damage * next_max_hp / previous_max_hp;
         let scaled_error = (expected_scaled_hp - current_hp).abs();
         (ordinary_error > 0.5 && scaled_error <= 0.5).then_some((reduction, next_max_hp))
-    }
-
-    #[cfg(test)]
-    fn observe_server_damage_settlement(
-        &mut self,
-        timestamp: f64,
-        settlement: &ParsedServerDamageSettlement,
-    ) -> (
-        Option<HitDamageCorrection>,
-        Option<UnattributedServerDamage>,
-    ) {
-        let (mut corrections, mut unattributed) =
-            self.observe_server_damage_settlements(timestamp, std::slice::from_ref(settlement));
-        (corrections.pop(), unattributed.pop())
-    }
-
-    #[cfg(test)]
-    fn observe_server_damage_settlements(
-        &mut self,
-        timestamp: f64,
-        settlements: &[ParsedServerDamageSettlement],
-    ) -> (Vec<HitDamageCorrection>, Vec<UnattributedServerDamage>) {
-        let observation =
-            self.observe_server_damage_settlements_with_sources(timestamp, settlements);
-        (observation.corrections, observation.unattributed)
     }
 
     fn observe_server_damage_settlements_with_sources(
@@ -2982,15 +2883,6 @@ impl ServerDamageCalibrationTracker {
 
     fn take_residual_hits(&mut self) -> Vec<Hit> {
         std::mem::take(&mut self.residual_hits)
-    }
-
-    #[cfg(test)]
-    fn observe_boss_hp(
-        &mut self,
-        timestamp: f64,
-        update: &crate::engine::parser::ParsedBossHpUpdate,
-    ) -> Option<HitDamageCorrection> {
-        self.observe_boss_hp_detailed(timestamp, update).0
     }
 
     fn observe_boss_hp_detailed(
@@ -3859,11 +3751,6 @@ impl FrameDedup {
         self.verification.clear();
         self.retained_verification_bytes = 0;
     }
-
-    #[cfg(test)]
-    fn retained_verification_bytes(&self) -> usize {
-        self.retained_verification_bytes
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -4340,8 +4227,6 @@ struct PacketDecoder {
     pending_targetless_hits: VecDeque<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     target_snapshots: HashMap<String, HitTargetSnapshot>,
-    #[allow(dead_code)] // Legacy fixtures only; production inventory uses RPC boundaries.
-    empty_curtain: EmptyCurtainDecoder,
     exact_inventory: super::inventory::InventoryDecoder,
     frame_dedup: FrameDedup,
     gameplay_effect_fragments: GameplayEffectFragmentTracker,
@@ -4459,22 +4344,12 @@ impl PacketDecoder {
             pending_targetless_hits: VecDeque::new(),
             recent_confirmed_hits: Vec::new(),
             target_snapshots: HashMap::new(),
-            exact_inventory: super::inventory::InventoryDecoder::new(Arc::new(
-                equipment_catalog.clone(),
-            )),
-            empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
+            exact_inventory: super::inventory::InventoryDecoder::new(Arc::new(equipment_catalog)),
             frame_dedup: FrameDedup::default(),
             gameplay_effect_fragments: GameplayEffectFragmentTracker::default(),
             bool_enum_gameplay_effect_fragments: BoolEnumGameplayEffectFragmentTracker::default(),
             bunch_connections: BunchConnectionTracker::default(),
             resource_warnings,
-        }
-    }
-    #[cfg(test)]
-    fn with_server_damage_calibration(use_server_damage_calibration: bool) -> Self {
-        Self {
-            use_server_damage_calibration,
-            ..Self::default()
         }
     }
 }
@@ -5067,25 +4942,6 @@ impl PacketDecoder {
         )
     }
 
-    #[cfg(test)]
-    fn reconcile_server_damage_settlements(
-        &mut self,
-        timestamp: f64,
-        settlements: &[ParsedServerDamageSettlement],
-    ) -> (
-        Vec<HitDamageCorrection>,
-        Vec<UnattributedServerDamage>,
-        Vec<Hit>,
-    ) {
-        let reconciliation =
-            self.reconcile_server_damage_settlements_with_sources(timestamp, settlements);
-        (
-            reconciliation.corrections,
-            reconciliation.unattributed,
-            reconciliation.residual_hits,
-        )
-    }
-
     fn reconcile_server_damage_settlements_with_sources(
         &mut self,
         timestamp: f64,
@@ -5117,29 +4973,6 @@ impl PacketDecoder {
             residual_hits,
             sources: observation.sources,
         }
-    }
-
-    #[cfg(test)]
-    fn reconcile_current_packet_server_damage_settlements<'a>(
-        &mut self,
-        timestamp: f64,
-        settlements: &[ParsedServerDamageSettlement],
-        hits: impl IntoIterator<Item = &'a Hit>,
-    ) -> (
-        Vec<HitDamageCorrection>,
-        Vec<UnattributedServerDamage>,
-        Vec<Hit>,
-    ) {
-        let reconciliation = self.reconcile_current_packet_server_damage_settlements_with_sources(
-            timestamp,
-            settlements,
-            hits,
-        );
-        (
-            reconciliation.corrections,
-            reconciliation.unattributed,
-            reconciliation.residual_hits,
-        )
     }
 
     fn reconcile_current_packet_server_damage_settlements_with_sources<'a>(
@@ -6078,29 +5911,6 @@ fn set_hit_character(hit: &mut Hit, new_char_id: u32, characters: &HashMap<u32, 
 }
 
 impl PacketDecoder {
-    #[cfg(test)]
-    fn process_ethernet_frame(
-        &mut self,
-        packet: &[u8],
-        frame_timestamp: FrameTimestamp,
-        local_ip: Option<Ipv4Addr>,
-        include_incoming: bool,
-        characters: &HashMap<u32, CharacterInfo>,
-        sender: &EngineEventSink,
-    ) {
-        self.process_capture_frame(
-            CapturedPacket {
-                link_type: CaptureLinkType::Ethernet,
-                data: packet,
-                timestamp: frame_timestamp,
-            },
-            local_ip,
-            include_incoming,
-            characters,
-            sender,
-        );
-    }
-
     fn flush_inventory(&mut self, sender: &EngineEventSink) {
         match self.exact_inventory.finish() {
             Ok(Some(update)) => {
@@ -7570,7 +7380,6 @@ impl CaptureExportPlan {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 enum CaptureTimeStopEvent {
     GamePauseStarted {
@@ -7592,24 +7401,10 @@ enum CaptureTimeStopEvent {
         end_timestamp: f64,
         pause_type_mask: u32,
     },
-    GameTimerSample {
-        timestamp: f64,
-        remaining_seconds: i32,
-    },
-    UltraAnimation {
-        timestamp: f64,
-        char_id: u32,
-        ability_id: serde::de::IgnoredAny,
-        duration_seconds: f64,
-    },
-    ExtraStart {
-        timestamp: f64,
-        reason: serde::de::IgnoredAny,
-    },
-    ExtraEnd {
-        timestamp: f64,
-        reason: serde::de::IgnoredAny,
-    },
+    GameTimerSample(serde::de::IgnoredAny),
+    UltraAnimation(serde::de::IgnoredAny),
+    ExtraStart(serde::de::IgnoredAny),
+    ExtraEnd(serde::de::IgnoredAny),
 }
 
 fn deserialize_time_stop_events<'de, D>(deserializer: D) -> Result<Vec<TimeStopEvent>, D::Error>
@@ -7671,10 +7466,10 @@ where
                     pause_type_mask,
                 });
             }
-            CaptureTimeStopEvent::GameTimerSample { .. }
-            | CaptureTimeStopEvent::UltraAnimation { .. }
-            | CaptureTimeStopEvent::ExtraStart { .. }
-            | CaptureTimeStopEvent::ExtraEnd { .. } => {}
+            CaptureTimeStopEvent::GameTimerSample(_)
+            | CaptureTimeStopEvent::UltraAnimation(_)
+            | CaptureTimeStopEvent::ExtraStart(_)
+            | CaptureTimeStopEvent::ExtraEnd(_) => {}
         }
     }
     Ok(events)
@@ -9328,7 +9123,176 @@ mod tests {
 
     use super::*;
 
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crossbeam_channel::unbounded;
+    use pcap_file::pcapng::blocks::unknown::UnknownBlock;
+    impl CaptureHandle {
+        pub(crate) fn from_test_thread(
+            stop: Arc<AtomicBool>,
+            thread: thread::JoinHandle<()>,
+        ) -> Self {
+            Self {
+                stop,
+                thread: Some(thread),
+                raw_capture: RawCaptureBuffer::new(None),
+            }
+        }
+    }
+
+    impl ServerDamageCalibrationTracker {
+        fn observe_hit(&mut self, hit: &Hit) {
+            let _ = self.observe_hit_with_semantics(hit, false, 0);
+        }
+        fn observe_server_damage_settlement(
+            &mut self,
+            timestamp: f64,
+            settlement: &ParsedServerDamageSettlement,
+        ) -> (
+            Option<HitDamageCorrection>,
+            Option<UnattributedServerDamage>,
+        ) {
+            let (mut corrections, mut unattributed) =
+                self.observe_server_damage_settlements(timestamp, std::slice::from_ref(settlement));
+            (corrections.pop(), unattributed.pop())
+        }
+        fn observe_server_damage_settlements(
+            &mut self,
+            timestamp: f64,
+            settlements: &[ParsedServerDamageSettlement],
+        ) -> (Vec<HitDamageCorrection>, Vec<UnattributedServerDamage>) {
+            let observation =
+                self.observe_server_damage_settlements_with_sources(timestamp, settlements);
+            (observation.corrections, observation.unattributed)
+        }
+        fn observe_boss_hp(
+            &mut self,
+            timestamp: f64,
+            update: &crate::engine::parser::ParsedBossHpUpdate,
+        ) -> Option<HitDamageCorrection> {
+            self.observe_boss_hp_detailed(timestamp, update).0
+        }
+    }
+
+    impl PacketDecoder {
+        fn with_server_damage_calibration(use_server_damage_calibration: bool) -> Self {
+            Self {
+                use_server_damage_calibration,
+                ..Self::default()
+            }
+        }
+        fn reconcile_server_damage_settlements(
+            &mut self,
+            timestamp: f64,
+            settlements: &[ParsedServerDamageSettlement],
+        ) -> (
+            Vec<HitDamageCorrection>,
+            Vec<UnattributedServerDamage>,
+            Vec<Hit>,
+        ) {
+            let reconciliation =
+                self.reconcile_server_damage_settlements_with_sources(timestamp, settlements);
+            (
+                reconciliation.corrections,
+                reconciliation.unattributed,
+                reconciliation.residual_hits,
+            )
+        }
+        fn reconcile_current_packet_server_damage_settlements<'a>(
+            &mut self,
+            timestamp: f64,
+            settlements: &[ParsedServerDamageSettlement],
+            hits: impl IntoIterator<Item = &'a Hit>,
+        ) -> (
+            Vec<HitDamageCorrection>,
+            Vec<UnattributedServerDamage>,
+            Vec<Hit>,
+        ) {
+            let reconciliation = self
+                .reconcile_current_packet_server_damage_settlements_with_sources(
+                    timestamp,
+                    settlements,
+                    hits,
+                );
+            (
+                reconciliation.corrections,
+                reconciliation.unattributed,
+                reconciliation.residual_hits,
+            )
+        }
+        fn process_ethernet_frame(
+            &mut self,
+            packet: &[u8],
+            frame_timestamp: FrameTimestamp,
+            local_ip: Option<Ipv4Addr>,
+            include_incoming: bool,
+            characters: &HashMap<u32, CharacterInfo>,
+            sender: &EngineEventSink,
+        ) {
+            self.process_capture_frame(
+                CapturedPacket {
+                    link_type: CaptureLinkType::Ethernet,
+                    data: packet,
+                    timestamp: frame_timestamp,
+                },
+                local_ip,
+                include_incoming,
+                characters,
+                sender,
+            );
+        }
+    }
+
+    fn encode_combat_clock_block(
+        transition: &CombatClockTransitionSnapshot,
+    ) -> [u8; NTE_COMBAT_CLOCK_BLOCK_SIZE] {
+        let mut payload = [0_u8; NTE_COMBAT_CLOCK_BLOCK_SIZE];
+        payload[0..8].copy_from_slice(NTE_COMBAT_CLOCK_BLOCK_MAGIC);
+        payload[8..16].copy_from_slice(&transition.sequence.to_le_bytes());
+        payload[16..24].copy_from_slice(&transition.timestamp_100ns.to_le_bytes());
+        payload[24..28].copy_from_slice(&transition.pause_type_mask.to_le_bytes());
+        payload[28..32].copy_from_slice(&transition.reserved_value.to_le_bytes());
+        payload[32..36].copy_from_slice(&transition.state_flags.to_le_bytes());
+        payload
+    }
+
+    fn encode_mod_script_block(event: &ModScriptEvent) -> Option<[u8; NTE_MOD_SCRIPT_BLOCK_SIZE]> {
+        if !valid_mod_script_block_identifier(&event.mod_id)
+            || !valid_mod_script_block_identifier(&event.name)
+            || event.values.len() > NTE_MOD_SCRIPT_VALUE_CAPACITY
+            || event.timestamp_100ns < FILETIME_UNIX_EPOCH_100NS
+        {
+            return None;
+        }
+        let mut payload = [0_u8; NTE_MOD_SCRIPT_BLOCK_SIZE];
+        payload[0..8].copy_from_slice(NTE_MOD_SCRIPT_BLOCK_MAGIC);
+        payload[8..16].copy_from_slice(&event.sequence.to_le_bytes());
+        payload[16..24].copy_from_slice(&event.timestamp_100ns.to_le_bytes());
+        payload[24] = match event.phase {
+            ModScriptEventPhase::Event => 0,
+            ModScriptEventPhase::Preprocess => 1,
+            ModScriptEventPhase::Postprocess => 2,
+        };
+        payload[25] = event.values.len() as u8;
+        payload[26] = event.mod_id.len() as u8;
+        payload[27] = event.name.len() as u8;
+        for (index, value) in event.values.iter().enumerate() {
+            let start = 32 + index * 8;
+            payload[start..start + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        payload[56..56 + event.mod_id.len()].copy_from_slice(event.mod_id.as_bytes());
+        payload[88..88 + event.name.len()].copy_from_slice(event.name.as_bytes());
+        Some(payload)
+    }
+
+    fn current_filetime_100ns() -> u64 {
+        let elapsed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time must be after the Unix epoch");
+        FILETIME_UNIX_EPOCH_100NS
+            + elapsed.as_secs() * FILETIME_TICKS_PER_SECOND
+            + u64::from(elapsed.subsec_nanos()) / 100
+    }
 
     use crate::engine::parser::{
         CHARACTER_DATA_PATH, ParsedEmptyCurtainModulePlacement, load_characters,
@@ -13379,13 +13343,13 @@ mod tests {
 
         assert!(!dedup.is_duplicate_with_fingerprint(b"123456", Some(10.0), 1));
         assert!(!dedup.is_duplicate_with_fingerprint(b"abcdef", Some(10.000_01), 2,));
-        assert!(dedup.retained_verification_bytes() <= 8);
+        assert!(dedup.retained_verification_bytes <= 8);
         assert_eq!(dedup.recent.len(), 2);
         assert!(
             !dedup.is_duplicate_with_fingerprint(b"123456", Some(10.000_02), 1),
             "an evicted verification body must cause a safe false negative, not hash-only dedup"
         );
-        assert!(dedup.retained_verification_bytes() <= 8);
+        assert!(dedup.retained_verification_bytes <= 8);
     }
 
     #[test]
@@ -13468,7 +13432,6 @@ mod tests {
             events[0],
             AbyssEvent::Stage {
                 timestamp: 30.0,
-                cycle: None,
                 floor: None,
                 half: AbyssHalf::Second,
                 allow_late_backfill: true,
@@ -13493,7 +13456,6 @@ mod tests {
             events[1],
             AbyssEvent::Stage {
                 timestamp: 40.0,
-                cycle: None,
                 floor: None,
                 half: AbyssHalf::First,
                 allow_late_backfill: false,

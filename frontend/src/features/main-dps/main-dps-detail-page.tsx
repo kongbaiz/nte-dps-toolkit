@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { MaxHpCompressionEffect } from "@/components/nte/max-hp-compression-effect";
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/form-controls";
 import {
   Popover,
   PopoverPopup,
@@ -228,8 +229,8 @@ export function MainDpsDetailPage() {
                       {t("Specific Move")}
                     </span>
                     <label className="relative min-w-52 flex-1 sm:max-w-80">
-                      <select
-                        className="h-8 w-full appearance-none rounded-lg border bg-background px-3 pr-8 text-sm"
+                      <NativeSelect
+                        className="h-8 appearance-none pr-8"
                         value={snapshot.skillFilter ?? ""}
                         disabled={pending}
                         onChange={(event) =>
@@ -247,7 +248,7 @@ export function MainDpsDetailPage() {
                             {skill.hits} {t("hits")}
                           </option>
                         ))}
-                      </select>
+                      </NativeSelect>
                       <ChevronDown className="pointer-events-none absolute right-2 top-2 size-4" />
                     </label>
                   </>
@@ -969,7 +970,7 @@ function HitRow({
           <span
             className={
               row.critical === true
-                ? "font-semibold text-amber-600"
+                ? "font-semibold text-warning"
                 : row.critical === null
                   ? "text-muted-foreground"
                   : ""
@@ -988,9 +989,9 @@ function HitRow({
                 className={cn(
                   "absolute inset-y-1 left-1 rounded-md",
                   hpPercent > 50
-                    ? "bg-emerald-600/15"
+                    ? "bg-success/15"
                     : hpPercent > 20
-                      ? "bg-amber-500/20"
+                      ? "bg-warning/20"
                       : "bg-destructive/20",
                 )}
                 style={{ width: `calc(${hpPercentOfPreviousMax}% - 0.5rem)` }}
@@ -1141,7 +1142,7 @@ function DamageDigits({
     return (
       <span
         className={cn(
-          "font-mono font-semibold tabular-nums text-cyan-950 dark:text-cyan-100",
+          "font-mono font-semibold tabular-nums text-info",
           compact ? "text-xs" : "text-lg",
         )}
       >

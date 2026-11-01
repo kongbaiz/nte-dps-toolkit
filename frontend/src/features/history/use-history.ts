@@ -4,7 +4,6 @@ import { shouldAcceptDecimalVersion } from "@/lib/decimal-string";
 import { historyClient } from "@/lib/tauri/history-client";
 import type { AbyssHalf } from "@/lib/tauri/generated/AbyssHalf";
 import type { HistoryComparisonSnapshot } from "@/lib/tauri/generated/HistoryComparisonSnapshot";
-import type { HistoryExportSnapshot } from "@/lib/tauri/generated/HistoryExportSnapshot";
 import type { HistorySnapshot } from "@/lib/tauri/generated/HistorySnapshot";
 import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
@@ -164,25 +163,6 @@ export function useHistory() {
     }
   }, []);
 
-  const exportRecord = useCallback(
-    async (recordId: string): Promise<HistoryExportSnapshot | null> => {
-      if (operationPending.current) return null;
-      operationPending.current = true;
-      setPendingAction("export");
-      setMutationError(null);
-      try {
-        return await historyClient.exportRecord(recordId);
-      } catch (error) {
-        if (mounted.current) setMutationError(toCommandError(error));
-        return null;
-      } finally {
-        operationPending.current = false;
-        if (mounted.current) setPendingAction(null);
-      }
-    },
-    [],
-  );
-
   const importFile = useCallback(async () => {
     if (operationPending.current) return;
     operationPending.current = true;
@@ -310,7 +290,6 @@ export function useHistory() {
       }
     },
     compare,
-    exportRecord,
     exportRecordFile,
   };
 }

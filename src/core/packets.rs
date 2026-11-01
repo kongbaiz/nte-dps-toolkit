@@ -248,27 +248,25 @@ const fn json_escaped_char_bytes(character: char) -> usize {
 }
 
 #[cfg(test)]
-fn projected_escaped_text_bytes(projection: &PacketsProjection) -> usize {
-    projection
-        .packets
-        .iter()
-        .flat_map(|packet| {
-            [
-                packet.source.as_str(),
-                packet.destination.as_str(),
-                packet.direction.as_str(),
-                packet.note.as_str(),
-                packet.decoded_text.as_str(),
-            ]
-        })
-        .flat_map(str::chars)
-        .map(json_escaped_char_bytes)
-        .sum()
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    fn projected_escaped_text_bytes(projection: &PacketsProjection) -> usize {
+        projection
+            .packets
+            .iter()
+            .flat_map(|packet| {
+                [
+                    packet.source.as_str(),
+                    packet.destination.as_str(),
+                    packet.direction.as_str(),
+                    packet.note.as_str(),
+                    packet.decoded_text.as_str(),
+                ]
+            })
+            .flat_map(str::chars)
+            .map(json_escaped_char_bytes)
+            .sum()
+    }
 
     fn packet(index: usize) -> PacketDebug {
         PacketDebug {

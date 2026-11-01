@@ -1,11 +1,9 @@
 use crate::contract::island::IslandTone;
-use std::io::{self, Write};
 
 use nte_dps_tool::engine::model::AbyssHalf;
 use nte_dps_tool::storage::history::{
-    HistoryDeleteTombstone, HistoryRecord, HistoryRecordExportError, HistoryRecordLoadError,
-    MAX_HISTORY_IMPORT_BYTES, compare_records, export_prepared_history_record_to_path,
-    import_record, import_record_json, load_history_record_by_id_with_max_detail_bytes,
+    HistoryDeleteTombstone, HistoryRecord, HistoryRecordExportError, MAX_HISTORY_IMPORT_BYTES,
+    compare_records, export_prepared_history_record_to_path, import_record, import_record_json,
     load_history_summaries, prepare_history_record_export, restore_tombstoned_record, save_summary,
     save_summary_with_details, tombstone_record,
 };
@@ -16,8 +14,8 @@ use crate::{
     contract::{
         CommandError,
         history::{
-            HistoryComparisonSnapshot, HistoryDeleteSnapshot, HistoryExportSnapshot,
-            HistoryFileActionSnapshot, HistoryImportFileSnapshot, HistorySnapshot,
+            HistoryComparisonSnapshot, HistoryDeleteSnapshot, HistoryFileActionSnapshot,
+            HistoryImportFileSnapshot, HistorySnapshot,
         },
     },
     file_dialog::{self, DialogOutcome},
@@ -26,8 +24,6 @@ use crate::{
     team_import_service::TeamImportError,
     windows::{console, island},
 };
-
-const MAX_HISTORY_INLINE_EXPORT_BYTES: usize = 8 * 1024 * 1024;
 
 #[tauri::command]
 pub(crate) async fn get_history_snapshot(
@@ -260,18 +256,6 @@ pub(crate) async fn restore_deleted_history_record(
 }
 
 #[tauri::command]
-pub(crate) async fn export_history_record_json(
-    record_id: String,
-    _state: State<'_, AppState>,
-    window: WebviewWindow,
-) -> Result<HistoryExportSnapshot, CommandError> {
-    console::validate_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || prepare_history_export(&record_id))
-        .await
-        .map_err(history_task_failed)?
-}
-
-#[tauri::command]
 pub(crate) async fn export_history_record_file(
     record_id: String,
     state: State<'_, AppState>,
@@ -458,55 +442,6 @@ fn history_export_file_name(state: &AppState, record_id: &str) -> Result<String,
     ))
 }
 
-fn prepare_history_export(record_id: &str) -> Result<HistoryExportSnapshot, CommandError> {
-    let record = match load_history_record_by_id_with_max_detail_bytes(
-        record_id,
-        MAX_HISTORY_INLINE_EXPORT_BYTES as u64,
-    ) {
-        Ok(Some(record)) => record,
-        Ok(None) | Err(HistoryRecordLoadError::InvalidId) => {
-            return Err(history_record_not_found());
-        }
-        Err(
-            HistoryRecordLoadError::DetailsTooLarge { .. }
-            | HistoryRecordLoadError::DetailHitsTooLarge { .. },
-        ) => {
-            return Err(history_inline_export_too_large());
-        }
-        Err(HistoryRecordLoadError::LoadFailed) => {
-            return Err(CommandError::history(
-                "history_record_load_failed",
-                "History record could not be loaded.",
-            ));
-        }
-    };
-    let mut writer = BoundedHistoryExportWriter::new(MAX_HISTORY_INLINE_EXPORT_BYTES);
-    serde_json::to_writer_pretty(&mut writer, &record).map_err(|error| {
-        log::warn!("serialize History record failed: {error}");
-        history_inline_export_too_large()
-    })?;
-    writer
-        .write_all(b"\n")
-        .map_err(|_| history_inline_export_too_large())?;
-    let json = String::from_utf8(writer.into_inner()).map_err(|_| {
-        CommandError::history(
-            "history_export_failed",
-            "History record could not be exported.",
-        )
-    })?;
-    Ok(HistoryExportSnapshot {
-        file_name: format!("nte_history_{}_{}.json", record.file_timestamp(), record.id),
-        json,
-    })
-}
-
-fn history_inline_export_too_large() -> CommandError {
-    CommandError::history(
-        "history_inline_export_too_large",
-        "This History record is too large for inline export; use Export File.",
-    )
-}
-
 fn history_file_export_error(error: HistoryRecordExportError) -> CommandError {
     log::warn!("History file export failed: {error}");
     match error {
@@ -525,42 +460,6 @@ fn history_file_export_error(error: HistoryRecordExportError) -> CommandError {
             "history_export_failed",
             "History record could not be exported.",
         ),
-    }
-}
-
-struct BoundedHistoryExportWriter {
-    bytes: Vec<u8>,
-    max_bytes: usize,
-}
-
-impl BoundedHistoryExportWriter {
-    fn new(max_bytes: usize) -> Self {
-        Self {
-            bytes: Vec::with_capacity(max_bytes.min(64 * 1024)),
-            max_bytes,
-        }
-    }
-
-    fn into_inner(self) -> Vec<u8> {
-        self.bytes
-    }
-}
-
-impl Write for BoundedHistoryExportWriter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let remaining = self.max_bytes.saturating_sub(self.bytes.len());
-        if bytes.len() > remaining {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "inline History export exceeds its byte budget",
-            ));
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }
 
@@ -657,29 +556,6 @@ mod tests {
             .expect("tombstone History command fixture")
             .expect("History command fixture exists");
         (directory, tombstone)
-    }
-
-    #[test]
-    fn inline_export_writer_rejects_overflow_without_partial_append() {
-        let mut writer = BoundedHistoryExportWriter::new(4);
-        writer.write_all(b"1234").expect("exact budget");
-        assert!(writer.write_all(b"5").is_err());
-        assert_eq!(writer.into_inner(), b"1234");
-    }
-
-    #[test]
-    fn interactive_hit_budget_maps_to_stable_inline_export_error() {
-        let error = match (HistoryRecordLoadError::DetailHitsTooLarge {
-            count: u64::MAX,
-            limit: 1,
-        }) {
-            HistoryRecordLoadError::DetailsTooLarge { .. }
-            | HistoryRecordLoadError::DetailHitsTooLarge { .. } => {
-                history_inline_export_too_large()
-            }
-            _ => unreachable!("typed load fixture"),
-        };
-        assert_eq!(error.code, "history_inline_export_too_large");
     }
 
     #[test]

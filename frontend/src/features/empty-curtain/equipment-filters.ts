@@ -2,6 +2,12 @@ import type { EmptyCurtainItemSnapshot } from "@/lib/tauri/generated/EmptyCurtai
 
 export type KnownEquipmentQuality = "blue" | "purple" | "orange";
 
+export const EQUIPMENT_QUALITY_COLORS: Record<KnownEquipmentQuality, string> = {
+  blue: "#0ea5e9",
+  purple: "#8b5cf6",
+  orange: "#f59e0b",
+};
+
 export interface EquipmentFilters {
   filterIds: string[];
   qualities: KnownEquipmentQuality[];

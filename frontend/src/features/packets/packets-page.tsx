@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import {
   Empty,
   EmptyDescription,
@@ -119,8 +120,8 @@ export function PacketsPage() {
             aria-hidden="true"
           />
           <span className="sr-only">{t("Search")}</span>
-          <input
-            className="h-9 w-full rounded-lg border bg-background pr-3 pl-9 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/25"
+          <Input
+            className="pl-9"
             placeholder={t("IP / ID / protocol name")}
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
@@ -173,7 +174,7 @@ function CaptureBadge({ phase }: { phase: LiveCapturePhase }) {
       <span
         className={cn(
           "size-1.5 rounded-full",
-          active ? "bg-emerald-500" : "bg-muted-foreground/55",
+          active ? "bg-success" : "bg-muted-foreground/55",
           phase === "failed" && "bg-destructive",
         )}
       />
@@ -246,9 +247,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
       </summary>
       <div className="mr-2 mb-2 ml-8 border-l pl-4">
         {packet.note ? (
-          <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">
-            {packet.note}
-          </p>
+          <p className="mb-2 text-xs text-warning">{packet.note}</p>
         ) : null}
         <div className="mb-1.5 text-xs font-medium text-primary">
           {t("Auto Parse")}

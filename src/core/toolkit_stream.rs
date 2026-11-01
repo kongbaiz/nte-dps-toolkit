@@ -701,7 +701,6 @@ impl Cursor {
                             };
                             AbyssEvent::Stage {
                                 timestamp,
-                                cycle: None,
                                 floor,
                                 half,
                                 allow_late_backfill: false,

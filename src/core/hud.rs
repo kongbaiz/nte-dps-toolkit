@@ -963,7 +963,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,

@@ -123,10 +123,10 @@ export function IslandPage() {
       <section
         key={notice.id}
         className={cn(
-          "motion-island pointer-events-auto flex h-full w-full items-center gap-3 rounded-full border border-white/10 bg-zinc-950/96 px-4 text-white shadow-2xl shadow-black/35 backdrop-blur-2xl",
-          notice.tone === "error" && "text-red-300",
-          notice.tone === "success" && "text-emerald-300",
-          notice.tone === "info" && "text-sky-300",
+          "motion-island pointer-events-auto flex h-full w-full items-center gap-3 rounded-full border border-foreground/10 bg-background/96 px-4 text-foreground shadow-2xl shadow-black/35 backdrop-blur-2xl",
+          notice.tone === "error" && "text-destructive",
+          notice.tone === "success" && "text-success",
+          notice.tone === "info" && "text-info",
         )}
         data-tone={notice.tone}
         data-exiting={exiting}
@@ -138,22 +138,24 @@ export function IslandPage() {
           } as CSSProperties
         }
       >
-        <span className="motion-island-icon grid size-8 shrink-0 place-items-center rounded-full bg-white/8">
+        <span className="motion-island-icon grid size-8 shrink-0 place-items-center rounded-full bg-foreground/8">
           <Icon className="size-5" aria-hidden="true" />
         </span>
-        <span className="motion-island-content min-w-0 flex-1 text-white">
+        <span className="motion-island-content min-w-0 flex-1 text-foreground">
           <span className="block truncate text-sm font-medium">
             {tf(notice.messageKey, notice.messageArguments)}
           </span>
           {error !== null ? (
-            <span className="block truncate text-xs text-red-300">{error}</span>
+            <span className="block truncate text-xs text-destructive">
+              {error}
+            </span>
           ) : null}
         </span>
         {notice.undoAvailable ? (
           <Button
             size="sm"
             variant="outline"
-            className="border-white/15 bg-white/8 text-white hover:bg-white/15 hover:text-white"
+            className="border-foreground/15 bg-foreground/8 text-foreground hover:bg-foreground/15 hover:text-foreground"
             disabled={undoPending || exiting}
             onClick={() => {
               setUndoPending(true);
@@ -180,7 +182,7 @@ export function IslandPage() {
         ) : null}
         <button
           aria-label={t("Close")}
-          className="rounded-full p-1 text-white/65 transition-[color,background-color,transform] hover:bg-white/10 hover:text-white active:scale-90"
+          className="rounded-full p-1 text-foreground/65 transition-[color,background-color,transform] hover:bg-foreground/10 hover:text-foreground active:scale-90"
           disabled={exiting}
           onClick={() => void dismissWithMotion(notice.id)}
         >

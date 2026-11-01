@@ -1960,7 +1960,6 @@
   "Disabled calibration reports unexplained server HP residuals without changing DPS totals": "校准已关闭：会提示未识别的伤害，但不会修改 DPS",
   "Confirm the Mod risk warning before starting the game runtime.": "启动游戏 Mod 运行时前，请先确认 Mod 风险提示。",
   "History record could not be loaded.": "无法加载该历史记录。",
-  "This History record is too large for inline export; use Export File.": "该历史记录太大，无法直接导出，请使用“导出文件”。",
   "Character actions": "角色操作",
   "Live capture state is unavailable": "暂时无法读取抓包信息，请重试。",
   "Presentation state is unavailable": "界面数据暂时不可用，请重试。",

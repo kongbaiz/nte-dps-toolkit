@@ -18,12 +18,20 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBackdrop,
+  DialogPopup,
+  DialogPortal,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input, NativeSelect } from "@/components/ui/form-controls";
 import {
   Empty,
   EmptyDescription,
@@ -54,6 +62,7 @@ import { cn } from "@/lib/utils";
 import { EquipmentCanvasGrid } from "./equipment-canvas-grid";
 import {
   activeEquipmentFilterCount,
+  EQUIPMENT_QUALITY_COLORS,
   emptyEquipmentFilters,
   filterEquipmentItems,
   matchesEquipmentSearch,
@@ -74,11 +83,10 @@ const EMPTY_ITEMS: EmptyCurtainItemSnapshot[] = [];
 const QUALITY_OPTIONS: Array<{
   id: KnownEquipmentQuality;
   label: string;
-  dotClassName: string;
 }> = [
-  { id: "blue", label: "Blue", dotClassName: "bg-sky-500" },
-  { id: "purple", label: "Purple", dotClassName: "bg-violet-500" },
-  { id: "orange", label: "Orange", dotClassName: "bg-amber-500" },
+  { id: "blue", label: "Blue" },
+  { id: "purple", label: "Purple" },
+  { id: "orange", label: "Orange" },
 ];
 
 export function EmptyCurtainPage() {
@@ -343,7 +351,6 @@ function CharacterEquipmentDialog({
   onAction: (uid: ItemUidSnapshot, action: "unequip-all" | "one-click") => void;
   onDone: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const equippedCountByCharacter = useMemo(() => {
     const counts = new Map<string, number>();
     for (const item of items) {
@@ -353,114 +360,104 @@ function CharacterEquipmentDialog({
     }
     return counts;
   }, [items]);
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    return () => {
-      if (dialog?.open) dialog.close();
-    };
-  }, []);
   return (
-    <dialog
-      ref={dialogRef}
-      aria-labelledby="empty-curtain-character-equipment-title"
-      className="m-auto max-h-[calc(100dvh-3rem)] w-[min(1120px,calc(100vw-2rem))] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-2xl outline-none backdrop:bg-background/60 backdrop:backdrop-blur-sm"
-      onCancel={(event) => {
-        event.preventDefault();
-        onDone();
-      }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onDone();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onDone();
       }}
     >
-      <div className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
-        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur">
-          <div>
-            <h2
-              id="empty-curtain-character-equipment-title"
-              className="text-base font-semibold"
-            >
-              {t("Character Equipment")}
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {tf("{} characters", [String(characters.length)])}
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pending || readOnly}
-              title={t(
-                "Import a character Console loadout JSON and switch equipment through the plugin",
-              )}
-              onClick={onImport}
-            >
-              <Upload aria-hidden="true" />
-              {t("Import Loadout")}
-            </Button>
-            <Button size="sm" onClick={onDone}>
-              <Check aria-hidden="true" />
-              {t("Done")}
-            </Button>
-          </div>
-        </header>
-        <div className="min-h-0 overflow-y-auto p-4">
-          <div className="grid gap-2 min-[760px]:grid-cols-2 min-[1280px]:grid-cols-3">
-            {characters.map((character) => {
-              const equipped =
-                equippedCountByCharacter.get(itemUidKey(character.uid)) ?? 0;
-              return (
-                <div
-                  key={itemUidKey(character.uid)}
-                  className="flex min-w-0 items-center gap-3 rounded-lg border bg-muted/20 p-2.5"
+      <DialogPortal>
+        <DialogBackdrop />
+        <DialogPopup className="top-1/2 left-1/2 max-h-[calc(100dvh-3rem)] w-[min(1120px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border bg-background text-foreground shadow-xl">
+          <div className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
+            <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur">
+              <div>
+                <DialogTitle className="text-base font-semibold">
+                  {t("Character Equipment")}
+                </DialogTitle>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {tf("{} characters", [String(characters.length)])}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pending || readOnly}
+                  title={t(
+                    "Import a character Console loadout JSON and switch equipment through the plugin",
+                  )}
+                  onClick={onImport}
                 >
-                  <CharacterAvatar characterId={character.characterId} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {character.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {tf("{} equipped items", [String(equipped)])}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={pending || readOnly}
-                      onClick={() => onAction(character.uid, "one-click")}
+                  <Upload aria-hidden="true" />
+                  {t("Import Loadout")}
+                </Button>
+                <Button size="sm" onClick={onDone}>
+                  <Check aria-hidden="true" />
+                  {t("Done")}
+                </Button>
+              </div>
+            </header>
+            <div className="min-h-0 overflow-y-auto p-4">
+              <div className="grid gap-2 min-[760px]:grid-cols-2 min-[1280px]:grid-cols-3">
+                {characters.map((character) => {
+                  const equipped =
+                    equippedCountByCharacter.get(itemUidKey(character.uid)) ??
+                    0;
+                  return (
+                    <div
+                      key={itemUidKey(character.uid)}
+                      className="flex min-w-0 items-center gap-3 rounded-lg border bg-muted/20 p-2.5"
                     >
-                      {t("One-click Equip")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={pending || readOnly || equipped === 0}
-                      onClick={() => onAction(character.uid, "unequip-all")}
-                    >
-                      {t("Unequip All")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t("Export Loadout")}
-                      title={t(
-                        "Save this character's equipped Console loadout as JSON",
-                      )}
-                      disabled={pending || equipped === 0}
-                      onClick={() => onExport(character.uid)}
-                    >
-                      <Download aria-hidden="true" />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
+                      <CharacterAvatar characterId={character.characterId} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {character.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {tf("{} equipped items", [String(equipped)])}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={pending || readOnly}
+                          onClick={() => onAction(character.uid, "one-click")}
+                        >
+                          {t("One-click Equip")}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={pending || readOnly || equipped === 0}
+                          onClick={() => onAction(character.uid, "unequip-all")}
+                        >
+                          {t("Unequip All")}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t("Export Loadout")}
+                          title={t(
+                            "Save this character's equipped Console loadout as JSON",
+                          )}
+                          disabled={pending || equipped === 0}
+                          onClick={() => onExport(character.uid)}
+                        >
+                          <Download aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    </dialog>
+        </DialogPopup>
+      </DialogPortal>
+    </Dialog>
   );
 }
 
@@ -477,72 +474,59 @@ function FilterDialog({
   onChange: (filters: EquipmentFilters) => void;
   onDone: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    return () => {
-      if (dialog?.open) dialog.close();
-    };
-  }, []);
-
   return (
-    <dialog
-      ref={dialogRef}
-      aria-labelledby="empty-curtain-filter-title"
-      className="m-auto max-h-[calc(100dvh-3rem)] w-[min(1120px,calc(100vw-2rem))] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-2xl outline-none backdrop:bg-background/60 backdrop:backdrop-blur-sm"
-      onCancel={(event) => {
-        event.preventDefault();
-        onDone();
-      }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onDone();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onDone();
       }}
     >
-      <div className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur">
-          <div>
-            <h2
-              id="empty-curtain-filter-title"
-              className="text-base font-semibold"
-            >
-              {t("Filter Console Equipment")}
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {activeEquipmentFilterCount(filters) > 0
-                ? tf("{} filters active", [
-                    String(activeEquipmentFilterCount(filters)),
-                  ])
-                : t("Choose one or more conditions")}
-            </p>
+      <DialogPortal>
+        <DialogBackdrop />
+        <DialogPopup className="top-1/2 left-1/2 max-h-[calc(100dvh-3rem)] w-[min(1120px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border bg-background text-foreground shadow-xl">
+          <div className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
+            <header className="flex shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur">
+              <div>
+                <DialogTitle className="text-base font-semibold">
+                  {t("Filter Console Equipment")}
+                </DialogTitle>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {activeEquipmentFilterCount(filters) > 0
+                    ? tf("{} filters active", [
+                        String(activeEquipmentFilterCount(filters)),
+                      ])
+                    : t("Choose one or more conditions")}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {activeEquipmentFilterCount(filters) > 0 ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onChange(emptyEquipmentFilters())}
+                  >
+                    <RotateCcw aria-hidden="true" />
+                    {t("Clear Filters")}
+                  </Button>
+                ) : null}
+                <Button size="sm" onClick={onDone}>
+                  <Check aria-hidden="true" />
+                  {t("Done")}
+                </Button>
+              </div>
+            </header>
+            <div className="min-h-0 overflow-y-auto p-4">
+              <FilterPanel
+                items={items}
+                characters={characters}
+                filters={filters}
+                onChange={onChange}
+              />
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            {activeEquipmentFilterCount(filters) > 0 ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onChange(emptyEquipmentFilters())}
-              >
-                <RotateCcw aria-hidden="true" />
-                {t("Clear Filters")}
-              </Button>
-            ) : null}
-            <Button size="sm" onClick={onDone}>
-              <Check aria-hidden="true" />
-              {t("Done")}
-            </Button>
-          </div>
-        </header>
-        <div className="min-h-0 overflow-y-auto p-4">
-          <FilterPanel
-            items={items}
-            characters={characters}
-            filters={filters}
-            onChange={onChange}
-          />
-        </div>
-      </div>
-    </dialog>
+        </DialogPopup>
+      </DialogPortal>
+    </Dialog>
   );
 }
 
@@ -670,7 +654,10 @@ function FilterPanel({
               })
             }
           >
-            <span className={cn("size-2 rounded-full", quality.dotClassName)} />
+            <span
+              className="size-2 rounded-full"
+              style={{ backgroundColor: EQUIPMENT_QUALITY_COLORS[quality.id] }}
+            />
             {t(quality.label)}
           </FilterChoice>
         ))}
@@ -796,13 +783,13 @@ function FilterSearch({
         className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
         aria-hidden="true"
       />
-      <input
+      <Input
         type="search"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={t(label)}
         aria-label={t(label)}
-        className="h-8 w-full rounded-md border bg-background pr-2 pl-8 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="h-8 pr-2 pl-8"
       />
     </label>
   );
@@ -860,7 +847,6 @@ function EquipmentDetailsDialog({
   onManage: (input: ManageItemInput) => void;
   onDone: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [targetKey, setTargetKey] = useState("");
   const [positions, setPositions] = useState<EmptyCurtainPlacementSnapshot[]>(
     [],
@@ -872,13 +858,6 @@ function EquipmentDetailsDialog({
   const equippedCharacter = characters.find(
     (character) => character.characterId === item.equippedCharacterId,
   );
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (dialog && !dialog.open) dialog.showModal();
-    return () => {
-      if (dialog?.open) dialog.close();
-    };
-  }, []);
   const selectCharacter = (key: string) => {
     setTargetKey(key);
     setPositions([]);
@@ -906,250 +885,251 @@ function EquipmentDetailsDialog({
     });
   };
   return (
-    <dialog
-      ref={dialogRef}
-      aria-labelledby="empty-curtain-item-title"
-      className="m-auto max-h-[calc(100dvh-3rem)] w-[min(34rem,calc(100vw-2rem))] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-2xl outline-none backdrop:bg-background/60 backdrop:backdrop-blur-sm"
-      onCancel={(event) => {
-        event.preventDefault();
-        onDone();
-      }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onDone();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onDone();
       }}
     >
-      <article className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
-        <header className="flex shrink-0 items-center gap-3 border-b bg-muted/35 px-4 py-3">
-          <EquipmentImage item={item} className="size-14 rounded-lg" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <h2
-                id="empty-curtain-item-title"
-                className="min-w-0 flex-1 truncate text-base font-semibold"
-              >
-                {item.name}
-              </h2>
-              {item.locked ? (
-                <LockKeyhole
-                  className="size-4 shrink-0 text-muted-foreground"
-                  aria-label={t("Lock")}
-                />
-              ) : null}
-              {item.discarded ? (
-                <Trash2
-                  className="size-4 shrink-0 text-destructive"
-                  aria-label={t("Discarded")}
-                />
-              ) : null}
-            </div>
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              <span className="font-mono text-xs text-muted-foreground">
-                {item.maxLevel
-                  ? tf("Lv.{}/{}", [String(item.level), String(item.maxLevel)])
-                  : tf("Lv.{}", [String(item.level)])}
-              </span>
-              {item.setName ? <SetBadge item={item} /> : null}
-            </div>
-          </div>
-          {item.equippedCharacterId !== null ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    className="relative shrink-0 rounded-full ring-2 ring-background"
-                    tabIndex={0}
-                  >
-                    <CharacterAvatar characterId={item.equippedCharacterId} />
-                    <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-card bg-emerald-500" />
-                  </span>
-                }
-              />
-              <TooltipContent>
-                {t("Equipped")} /{" "}
-                {equippedCharacter?.name ?? t("Unknown Character")}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("Close")}
-            onClick={onDone}
-          >
-            <X aria-hidden="true" />
-          </Button>
-        </header>
-        <div className="min-h-0 overflow-y-auto">
-          <dl className="divide-y divide-border/55 px-4">
-            {item.stats
-              .filter((stat) => stat.main)
-              .map((stat, index) => (
-                <div
-                  key={`${stat.property}-${index}`}
-                  className="flex min-w-0 items-center justify-between gap-3 py-2.5 text-sm"
-                >
-                  <dt className="truncate font-medium text-foreground">
-                    {stat.label}
-                  </dt>
-                  <dd className="shrink-0 font-mono font-medium">
-                    {formatStat(stat.value, stat.percent)}
-                  </dd>
+      <DialogPortal>
+        <DialogBackdrop />
+        <DialogPopup className="top-1/2 left-1/2 max-h-[calc(100dvh-3rem)] w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border bg-background text-foreground shadow-xl">
+          <article className="flex max-h-[calc(100dvh-3rem)] min-h-0 flex-col">
+            <header className="flex shrink-0 items-center gap-3 border-b bg-muted/35 px-4 py-3">
+              <EquipmentImage item={item} className="size-14 rounded-lg" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <DialogTitle className="min-w-0 flex-1 truncate text-base font-semibold">
+                    {item.name}
+                  </DialogTitle>
+                  {item.locked ? (
+                    <LockKeyhole
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-label={t("Lock")}
+                    />
+                  ) : null}
+                  {item.discarded ? (
+                    <Trash2
+                      className="size-4 shrink-0 text-destructive"
+                      aria-label={t("Discarded")}
+                    />
+                  ) : null}
                 </div>
-              ))}
-          </dl>
-          {item.stats.some((stat) => !stat.main) ? (
-            <section className="border-t px-4 py-3">
-              <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {t("Secondary Stats")}
-              </p>
-              <div className="space-y-1">
+                <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {item.maxLevel
+                      ? tf("Lv.{}/{}", [
+                          String(item.level),
+                          String(item.maxLevel),
+                        ])
+                      : tf("Lv.{}", [String(item.level)])}
+                  </span>
+                  {item.setName ? <SetBadge item={item} /> : null}
+                </div>
+              </div>
+              {item.equippedCharacterId !== null ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="relative shrink-0 rounded-full ring-2 ring-background"
+                        tabIndex={0}
+                      >
+                        <CharacterAvatar
+                          characterId={item.equippedCharacterId}
+                        />
+                        <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-card bg-success" />
+                      </span>
+                    }
+                  />
+                  <TooltipContent>
+                    {t("Equipped")} /{" "}
+                    {equippedCharacter?.name ?? t("Unknown Character")}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("Close")}
+                onClick={onDone}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </header>
+            <div className="min-h-0 overflow-y-auto">
+              <dl className="divide-y divide-border/55 px-4">
                 {item.stats
-                  .filter((stat) => !stat.main)
+                  .filter((stat) => stat.main)
                   .map((stat, index) => (
                     <div
                       key={`${stat.property}-${index}`}
-                      className={cn(
-                        "flex min-w-0 items-center gap-2 px-2 py-1.5 text-xs",
-                        !stat.unlocked &&
-                          "rounded-lg border border-dashed bg-muted/45 text-muted-foreground",
-                      )}
+                      className="flex min-w-0 items-center justify-between gap-3 py-2.5 text-sm"
                     >
-                      <span className="min-w-0 flex-1 truncate">
+                      <dt className="truncate font-medium text-foreground">
                         {stat.label}
-                      </span>
-                      <span
-                        className={cn(
-                          "shrink-0 font-mono font-medium",
-                          !stat.unlocked && "opacity-60",
-                        )}
-                      >
+                      </dt>
+                      <dd className="shrink-0 font-mono font-medium">
                         {formatStat(stat.value, stat.percent)}
-                      </span>
-                      {!stat.unlocked ? (
-                        <>
-                          <span
-                            className="flex size-5 shrink-0 items-center justify-center rounded-full border bg-background/70"
-                            aria-label={t("Locked")}
-                          >
-                            <LockKeyhole
-                              className="size-3"
-                              aria-hidden="true"
-                            />
-                          </span>
-                          {stat.unlockLevel !== null ? (
-                            <Badge
-                              variant="outline"
-                              className="h-5 min-w-9 justify-center px-1.5 font-mono text-xs"
-                              title={tf("Unlocks at level {}", [
-                                String(stat.unlockLevel),
-                              ])}
-                            >
-                              +{stat.unlockLevel}
-                            </Badge>
-                          ) : null}
-                        </>
-                      ) : null}
+                      </dd>
                     </div>
                   ))}
-              </div>
-            </section>
-          ) : null}
-          <section className="space-y-3 border-t bg-muted/20 px-4 py-3">
-            <div className="flex flex-wrap gap-1.5">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() =>
-                  onManage({
-                    item: item.uid,
-                    action: item.locked ? "unlock" : "lock",
-                  })
-                }
-              >
-                {t(item.locked ? "Unlock" : "Lock")}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() =>
-                  onManage({
-                    item: item.uid,
-                    action: item.discarded ? "restore" : "discard",
-                  })
-                }
-              >
-                {t(item.discarded ? "Restore" : "Discard")}
-              </Button>
-              {item.equippedCharacterUid ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={pending}
-                  onClick={() =>
-                    onManage({ item: item.uid, action: "unequip" })
-                  }
-                >
-                  {t("Unequip")}
-                </Button>
+              </dl>
+              {item.stats.some((stat) => !stat.main) ? (
+                <section className="border-t px-4 py-3">
+                  <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                    {t("Secondary Stats")}
+                  </p>
+                  <div className="space-y-1">
+                    {item.stats
+                      .filter((stat) => !stat.main)
+                      .map((stat, index) => (
+                        <div
+                          key={`${stat.property}-${index}`}
+                          className={cn(
+                            "flex min-w-0 items-center gap-2 px-2 py-1.5 text-xs",
+                            !stat.unlocked &&
+                              "rounded-lg border border-dashed bg-muted/45 text-muted-foreground",
+                          )}
+                        >
+                          <span className="min-w-0 flex-1 truncate">
+                            {stat.label}
+                          </span>
+                          <span
+                            className={cn(
+                              "shrink-0 font-mono font-medium",
+                              !stat.unlocked && "opacity-60",
+                            )}
+                          >
+                            {formatStat(stat.value, stat.percent)}
+                          </span>
+                          {!stat.unlocked ? (
+                            <>
+                              <span
+                                className="flex size-5 shrink-0 items-center justify-center rounded-full border bg-background/70"
+                                aria-label={t("Locked")}
+                              >
+                                <LockKeyhole
+                                  className="size-3"
+                                  aria-hidden="true"
+                                />
+                              </span>
+                              {stat.unlockLevel !== null ? (
+                                <Badge
+                                  variant="outline"
+                                  className="h-5 min-w-9 justify-center px-1.5 font-mono text-xs"
+                                  title={tf("Unlocks at level {}", [
+                                    String(stat.unlockLevel),
+                                  ])}
+                                >
+                                  +{stat.unlockLevel}
+                                </Badge>
+                              ) : null}
+                            </>
+                          ) : null}
+                        </div>
+                      ))}
+                  </div>
+                </section>
               ) : null}
-            </div>
-            {characters.length > 0 && item.kind ? (
-              <div className="grid gap-2 min-[480px]:grid-cols-[minmax(0,1fr)_auto_auto]">
-                <select
-                  className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs"
-                  disabled={pending}
-                  value={targetKey}
-                  onChange={(event) => selectCharacter(event.target.value)}
-                >
-                  <option value="">{t("Choose Character")}</option>
-                  {characters.map((character) => (
-                    <option
-                      key={itemUidKey(character.uid)}
-                      value={itemUidKey(character.uid)}
-                    >
-                      {character.name}
-                    </option>
-                  ))}
-                </select>
-                {item.kind === "module" && target ? (
-                  <select
-                    className="h-8 min-w-24 rounded-md border bg-background px-2 text-xs"
+              <section className="space-y-3 border-t bg-muted/20 px-4 py-3">
+                <div className="flex flex-wrap gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={pending}
-                    value={positionKey}
-                    onChange={(event) => setPositionKey(event.target.value)}
+                    onClick={() =>
+                      onManage({
+                        item: item.uid,
+                        action: item.locked ? "unlock" : "lock",
+                      })
+                    }
                   >
-                    {positions.map((position) => (
-                      <option
-                        key={`${position.row}:${position.column}`}
-                        value={`${position.row}:${position.column}`}
+                    {t(item.locked ? "Unlock" : "Lock")}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pending}
+                    onClick={() =>
+                      onManage({
+                        item: item.uid,
+                        action: item.discarded ? "restore" : "discard",
+                      })
+                    }
+                  >
+                    {t(item.discarded ? "Restore" : "Discard")}
+                  </Button>
+                  {item.equippedCharacterUid ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() =>
+                        onManage({ item: item.uid, action: "unequip" })
+                      }
+                    >
+                      {t("Unequip")}
+                    </Button>
+                  ) : null}
+                </div>
+                {characters.length > 0 && item.kind ? (
+                  <div className="grid gap-2 min-[480px]:grid-cols-[minmax(0,1fr)_auto_auto]">
+                    <NativeSelect
+                      className="h-8 px-2 text-xs"
+                      disabled={pending}
+                      value={targetKey}
+                      onChange={(event) => selectCharacter(event.target.value)}
+                    >
+                      <option value="">{t("Choose Character")}</option>
+                      {characters.map((character) => (
+                        <option
+                          key={itemUidKey(character.uid)}
+                          value={itemUidKey(character.uid)}
+                        >
+                          {character.name}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                    {item.kind === "module" && target ? (
+                      <NativeSelect
+                        className="h-8 min-w-24 px-2 text-xs"
+                        disabled={pending}
+                        value={positionKey}
+                        onChange={(event) => setPositionKey(event.target.value)}
                       >
-                        {tf("Row {}, Column {}", [
-                          String(position.row),
-                          String(position.column),
-                        ])}
-                      </option>
-                    ))}
-                  </select>
+                        {positions.map((position) => (
+                          <option
+                            key={`${position.row}:${position.column}`}
+                            value={`${position.row}:${position.column}`}
+                          >
+                            {tf("Row {}, Column {}", [
+                              String(position.row),
+                              String(position.column),
+                            ])}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      disabled={
+                        pending ||
+                        !target ||
+                        (item.kind === "module" && !positionKey)
+                      }
+                      onClick={equip}
+                    >
+                      {t("Equip")}
+                    </Button>
+                  </div>
                 ) : null}
-                <Button
-                  size="sm"
-                  disabled={
-                    pending ||
-                    !target ||
-                    (item.kind === "module" && !positionKey)
-                  }
-                  onClick={equip}
-                >
-                  {t("Equip")}
-                </Button>
-              </div>
-            ) : null}
-          </section>
-        </div>
-      </article>
-    </dialog>
+              </section>
+            </div>
+          </article>
+        </DialogPopup>
+      </DialogPortal>
+    </Dialog>
   );
 }
 

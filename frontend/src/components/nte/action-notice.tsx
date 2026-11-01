@@ -34,7 +34,7 @@ export function ActionNotice({
       className={cn(
         "motion-action-notice flex items-center gap-2 rounded-xl border bg-background/95 shadow-lg backdrop-blur",
         compact ? "px-2.5 py-1.5 text-xs" : "px-4 py-2.5 text-sm",
-        status === "success" && "border-emerald-500/35",
+        status === "success" && "border-success/35",
         status === "error" && "border-destructive/35",
       )}
       data-status={status}
@@ -50,7 +50,7 @@ export function ActionNotice({
         <Icon
           className={cn(
             compact ? "size-3.5" : "size-4",
-            status === "success" && "text-emerald-600",
+            status === "success" && "text-success",
             status === "error" && "text-destructive",
           )}
           aria-hidden="true"

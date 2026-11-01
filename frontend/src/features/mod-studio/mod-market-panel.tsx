@@ -13,6 +13,7 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import {
   Empty,
   EmptyDescription,
@@ -105,8 +106,8 @@ export function ModMarketPanel({
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden="true"
           />
-          <input
-            className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm"
+          <Input
+            className="pl-9"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t(searchLabel)}

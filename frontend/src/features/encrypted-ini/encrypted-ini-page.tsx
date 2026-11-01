@@ -37,10 +37,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input, NativeSelect } from "@/components/ui/form-controls";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
 import type { EncryptedIniKey } from "@/lib/tauri/generated/EncryptedIniKey";
-import { cn } from "@/lib/utils";
 
 import {
   encryptedIniCenteredScrollOffset,
@@ -52,9 +52,6 @@ import {
 import { type EncryptedIniNotice, useEncryptedIni } from "./use-encrypted-ini";
 
 type PendingAction = "reload" | "clear";
-
-const CONTROL_CLASS =
-  "h-9 rounded-lg border bg-background px-3 text-sm outline-none transition-shadow focus:border-ring focus:ring-3 focus:ring-ring/25 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
 
 export function EncryptedIniPage() {
   const model = useEncryptedIni();
@@ -211,8 +208,8 @@ export function EncryptedIniPage() {
           <div className="flex items-center gap-2 max-[540px]:flex-wrap">
             <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <span>{t("Save Key")}</span>
-              <select
-                className={cn(CONTROL_CLASS, "w-36")}
+              <NativeSelect
+                className="w-36"
                 value={key}
                 onChange={(event) =>
                   setKey(event.target.value as EncryptedIniKey)
@@ -220,7 +217,7 @@ export function EncryptedIniPage() {
               >
                 <option value="global">{t("Global key")}</option>
                 <option value="china">{t("China key")}</option>
-              </select>
+              </NativeSelect>
             </label>
             <Button
               aria-label={t("Reload")}
@@ -249,9 +246,9 @@ export function EncryptedIniPage() {
               aria-hidden="true"
               className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
             />
-            <input
+            <Input
               aria-label={t("Search")}
-              className={cn(CONTROL_CLASS, "w-full pl-9")}
+              className="pl-9"
               placeholder={t("Enter a config name or value")}
               value={search}
               onChange={(event) => setSearch(event.target.value)}

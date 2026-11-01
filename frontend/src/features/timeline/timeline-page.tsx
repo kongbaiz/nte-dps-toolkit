@@ -98,7 +98,7 @@ export function TimelinePage() {
           <div className="flex flex-wrap items-center gap-2">
             <PageTitle>{t("Timeline")}</PageTitle>
             <Badge variant="outline" className="gap-1.5">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span className="size-1.5 rounded-full bg-success" />
               {t("Live")}
             </Badge>
           </div>

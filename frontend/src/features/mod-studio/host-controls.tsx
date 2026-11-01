@@ -91,10 +91,7 @@ export function HostControls({
             {!connected && (
               <HostLoadingControls panel={panel} pending={pending} run={run} />
             )}
-            <p
-              id="host-load-guidance"
-              className="border-l-2 border-primary pl-3 text-sm leading-relaxed"
-            >
+            <p id="host-load-guidance" className="text-sm leading-relaxed">
               {t(guidance)}
             </p>
             <div className="flex flex-wrap items-center justify-end gap-2">

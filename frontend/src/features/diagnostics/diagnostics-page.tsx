@@ -222,7 +222,7 @@ function CaptureBadge({ snapshot }: { snapshot: DiagnosticsSnapshot }) {
       <span
         className={cn(
           "size-1.5 rounded-full",
-          active ? "bg-emerald-500" : "bg-muted-foreground/60",
+          active ? "bg-success" : "bg-muted-foreground/60",
         )}
         aria-hidden="true"
       />
@@ -397,7 +397,7 @@ function ReportSection({ snapshot }: { snapshot: DiagnosticsSnapshot }) {
             <span className="text-destructive">
               {tf("{0} failed", [report.failedCount.toLocaleString()])}
             </span>
-            <span className="text-amber-700 dark:text-amber-300">
+            <span className="text-warning">
               {tf("{0} warnings", [report.warningCount.toLocaleString()])}
             </span>
             <span className="text-muted-foreground">
@@ -442,9 +442,9 @@ function DiagnosticCheckRow({ check }: { check: DiagnosticsCheckSnapshot }) {
         className={cn(
           "mt-0.5 size-4",
           check.status === "passed"
-            ? "text-emerald-600"
+            ? "text-success"
             : check.status === "warning"
-              ? "text-amber-600"
+              ? "text-warning"
               : "text-destructive",
         )}
         aria-hidden="true"

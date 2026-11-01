@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Check,
   ChevronLeft,
@@ -23,6 +30,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/form-controls";
 import {
   Dialog,
   DialogBackdrop,
@@ -269,71 +277,74 @@ export function MainDpsPage() {
     );
   }, []);
 
-  useEffect(() => {
-    return cleanupAsyncRegistration(
-      mainDpsClient.subscribeReplayDrops((path) => {
-        if (snapshot === null) return;
-        if (snapshot.actions.importReplayRequiresConfirmation) {
-          setConfirmation({ kind: "drop", path });
-          return;
-        }
-        void effect("import-drop", async () => {
-          const result = await mainDpsClient.importReplayPath(path);
-          apply(result.snapshot);
-        });
-      }),
-    );
-  }, [apply, effect, snapshot]);
+  const importDroppedReplay = useEffectEvent((path: string) => {
+    if (snapshot === null) return;
+    if (snapshot.actions.importReplayRequiresConfirmation) {
+      setConfirmation({ kind: "drop", path });
+      return;
+    }
+    void effect("import-drop", async () => {
+      const result = await mainDpsClient.importReplayPath(path);
+      apply(result.snapshot);
+    });
+  });
 
   useEffect(() => {
+    return cleanupAsyncRegistration(
+      mainDpsClient.subscribeReplayDrops((path) => importDroppedReplay(path)),
+    );
+  }, []);
+
+  const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (snapshot === null) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target;
-      const editable =
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement && target.isContentEditable);
-      if (event.repeat || editable || event.altKey || event.shiftKey) return;
-      if (event.ctrlKey && event.key.toLocaleLowerCase() === "z") {
-        if (resetUndoToken === null) return;
-        event.preventDefault();
-        const token = resetUndoToken;
-        setResetUndoToken(null);
-        void mutate("undo-reset", () => mainDpsClient.undoReset(token));
-      } else if (event.ctrlKey && event.key.toLocaleLowerCase() === "o") {
-        event.preventDefault();
-        if (snapshot.actions.importReplayRequiresConfirmation)
-          setConfirmation({ kind: "import", replayKind: "pcapng" });
-        else
-          void effect("import-pcapng", async () => {
-            const result = await mainDpsClient.importReplay("pcapng");
-            apply(result.snapshot);
-          });
-      } else if (event.ctrlKey && event.key.toLocaleLowerCase() === "k") {
-        event.preventDefault();
-        void effect("command-palette", () =>
-          mainDpsClient.openConsoleShortcut("palette"),
-        );
-      } else if (!event.ctrlKey && event.key === "F12") {
-        event.preventDefault();
-        void effect("packets", () =>
-          mainDpsClient.openConsoleShortcut("packets"),
-        );
-      } else if (
-        !event.ctrlKey &&
-        event.key === "Tab" &&
-        snapshot.readout.abyss.detected
-      ) {
-        event.preventDefault();
-        const next =
-          snapshot.readout.abyss.half === "first" ? "second" : "first";
-        void mutate("abyss-half", () => mainDpsClient.selectAbyssHalf(next));
-      }
-    };
+    const target = event.target;
+    const editable =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      (target instanceof HTMLElement && target.isContentEditable);
+    if (event.repeat || editable || event.altKey || event.shiftKey) return;
+    if (event.ctrlKey && event.key.toLocaleLowerCase() === "z") {
+      if (resetUndoToken === null) return;
+      event.preventDefault();
+      const token = resetUndoToken;
+      setResetUndoToken(null);
+      void mutate("undo-reset", () => mainDpsClient.undoReset(token));
+    } else if (event.ctrlKey && event.key.toLocaleLowerCase() === "o") {
+      event.preventDefault();
+      if (snapshot.actions.importReplayRequiresConfirmation)
+        setConfirmation({ kind: "import", replayKind: "pcapng" });
+      else
+        void effect("import-pcapng", async () => {
+          const result = await mainDpsClient.importReplay("pcapng");
+          apply(result.snapshot);
+        });
+    } else if (event.ctrlKey && event.key.toLocaleLowerCase() === "k") {
+      event.preventDefault();
+      void effect("command-palette", () =>
+        mainDpsClient.openConsoleShortcut("palette"),
+      );
+    } else if (!event.ctrlKey && event.key === "F12") {
+      event.preventDefault();
+      void effect("packets", () =>
+        mainDpsClient.openConsoleShortcut("packets"),
+      );
+    } else if (
+      !event.ctrlKey &&
+      event.key === "Tab" &&
+      snapshot.readout.abyss.detected
+    ) {
+      event.preventDefault();
+      const next = snapshot.readout.abyss.half === "first" ? "second" : "first";
+      void mutate("abyss-half", () => mainDpsClient.selectAbyssHalf(next));
+    }
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => handleShortcut(event);
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [apply, effect, mutate, resetUndoToken, snapshot]);
+  }, []);
 
   if (snapshot === null) {
     return (
@@ -522,9 +533,9 @@ export function MainDpsPage() {
             className={cn(
               "size-2 rounded-full",
               mainCaptureStatusTone(snapshot.capture.phase) === "active" &&
-                "bg-emerald-600",
+                "bg-success",
               mainCaptureStatusTone(snapshot.capture.phase) === "transition" &&
-                "bg-amber-500",
+                "bg-warning",
               mainCaptureStatusTone(snapshot.capture.phase) === "error" &&
                 "bg-destructive",
               mainCaptureStatusTone(snapshot.capture.phase) === "idle" &&
@@ -551,7 +562,7 @@ export function MainDpsPage() {
         snapshot.hasLiveSessionData) &&
       snapshot.dpsTime.warningMessageKey ? (
         <div
-          className="border-b border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300"
+          className="border-b border-warning/25 bg-warning/10 px-3 py-1.5 text-xs text-warning"
           role="status"
         >
           {t(snapshot.dpsTime.warningMessageKey)}
@@ -770,8 +781,8 @@ export function MainDpsPage() {
               >
                 <ChevronLeft />
               </Button>
-              <select
-                className="h-7 min-w-0 rounded-lg border bg-background px-2 text-sm"
+              <NativeSelect
+                className="h-7 w-auto px-2"
                 value={snapshot.selectedRoundId ?? ""}
                 onChange={(event) =>
                   void mutate("round", () =>
@@ -784,7 +795,7 @@ export function MainDpsPage() {
                     {roundLabel(round)}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
               <Button
                 size="icon-sm"
                 variant="outline"
@@ -844,7 +855,7 @@ export function MainDpsPage() {
                 {snapshot.readout.abyss.success && (
                   <>
                     <span className="h-5 w-px bg-border" aria-hidden="true" />
-                    <span className="text-sm font-medium text-emerald-600">
+                    <span className="text-sm font-medium text-success">
                       {t("Challenge Cleared")}
                     </span>
                   </>
@@ -1166,10 +1177,6 @@ function CharacterRow({
       onClick={onClick}
       onContextMenu={onContext}
     >
-      <span
-        className="absolute inset-y-0 left-0 w-[3px] rounded-l-lg bg-[var(--main-dps-character-accent)]"
-        aria-hidden="true"
-      />
       <span className="main-dps-character-attribute grid size-5 place-items-center text-xs font-medium text-[var(--main-dps-character-accent)]">
         {attribute === null ? (
           `#${index + 1}`
@@ -1357,7 +1364,7 @@ function EmptyCombat({
           <span
             className={cn(
               "grid size-6 place-items-center",
-              gameDetected ? "text-emerald-600" : "text-muted-foreground",
+              gameDetected ? "text-success" : "text-muted-foreground",
             )}
           >
             {gameDetected ? <Check className="size-5" /> : "1"}
@@ -1372,7 +1379,7 @@ function EmptyCombat({
           <span
             className={cn(
               "grid size-6 place-items-center",
-              captureRunning ? "text-emerald-600" : "text-muted-foreground",
+              captureRunning ? "text-success" : "text-muted-foreground",
             )}
           >
             {captureRunning ? <Check className="size-5" /> : "2"}
@@ -1550,7 +1557,7 @@ function OnboardingOverlay({
                   {onboarding.passthroughHotkeyLabel}
                 </kbd>
                 {!onboarding.passthroughHotkeyReady ? (
-                  <p className="text-amber-600">
+                  <p className="text-warning">
                     {t(
                       "The recovery hotkey is not currently available; keep the Console open before enabling passthrough.",
                     )}

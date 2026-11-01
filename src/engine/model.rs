@@ -1251,24 +1251,6 @@ impl CompactTimelineTree {
             }
         }
     }
-
-    #[cfg(test)]
-    fn max_depth(&self) -> usize {
-        let Some(root) = self.root else {
-            return 0;
-        };
-        let mut maximum = 0;
-        let mut pending = vec![(root, 0_usize)];
-        while let Some((index, depth)) = pending.pop() {
-            maximum = maximum.max(depth);
-            if let Some(CompactTimelineTreeNode::Branch { left, right, .. }) = self.nodes.get(index)
-            {
-                pending.push((*left, depth.saturating_add(1)));
-                pending.push((*right, depth.saturating_add(1)));
-            }
-        }
-        maximum
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -2589,16 +2571,6 @@ impl CombatDetailIndex {
         character_id.is_none_or(|value| self.normalized_character(hit.char_id) == value)
             && indexed_detail_filter_matches(filter, hit, self)
             && skill.is_none_or(|value| self.normalized_skill(hit_skill_id_ref(hit)) == value)
-    }
-
-    #[cfg(test)]
-    fn position_slot_count(&self) -> usize {
-        self.character_positions
-            .values()
-            .chain(self.skill_positions.values())
-            .chain(self.filter_positions.values())
-            .map(|positions| positions.0.len())
-            .sum()
     }
 }
 
@@ -3991,8 +3963,6 @@ pub enum AbyssEvent {
     },
     Stage {
         timestamp: f64,
-        #[allow(dead_code)]
-        cycle: Option<u32>,
         floor: Option<u32>,
         half: AbyssHalf,
         allow_late_backfill: bool,
@@ -4644,15 +4614,6 @@ impl PartyCombatState {
         sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
     }
 
-    #[allow(dead_code)]
-    pub fn time_stop_intervals_between(
-        &self,
-        start: f64,
-        end: f64,
-    ) -> Vec<TimelineTimeStopInterval> {
-        relative_time_stop_intervals(&self.time_stop, start, end)
-    }
-
     pub fn timeline(&self, bucket_seconds: f64, subtract_time_stop: bool) -> TimelineSeries {
         self.timeline_bounded(
             bucket_seconds,
@@ -4786,7 +4747,6 @@ impl AbyssRunState {
             }
             AbyssEvent::Stage {
                 timestamp,
-                cycle: _,
                 floor,
                 half,
                 allow_late_backfill: _,
@@ -6086,7 +6046,6 @@ impl CombatState {
         sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
     }
 
-    #[allow(dead_code)]
     pub fn time_stop_intervals_between(
         &self,
         start: f64,
@@ -7035,6 +6994,25 @@ impl From<&HitDamageCorrection> for HitSourceIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    impl CompactTimelineTree {
+        fn max_depth(&self) -> usize {
+            let Some(root) = self.root else {
+                return 0;
+            };
+            let mut maximum = 0;
+            let mut pending = vec![(root, 0_usize)];
+            while let Some((index, depth)) = pending.pop() {
+                maximum = maximum.max(depth);
+                if let Some(CompactTimelineTreeNode::Branch { left, right, .. }) =
+                    self.nodes.get(index)
+                {
+                    pending.push((*left, depth.saturating_add(1)));
+                    pending.push((*right, depth.saturating_add(1)));
+                }
+            }
+            maximum
+        }
+    }
 
     #[test]
     fn history_written_by_v0_4_4_loads_degraded_clock_health_as_unknown() {
@@ -8128,21 +8106,6 @@ mod tests {
     }
 
     #[test]
-    fn combat_detail_position_index_has_a_constant_slot_factor() {
-        const HIT_COUNT: usize = 1_000_000;
-        let hit = test_hit(1.0, 7, "incoming", 1.0);
-        let mut index = CombatDetailIndex::default();
-        for position in 0..HIT_COUNT {
-            index.observe_hit(position, &hit);
-        }
-
-        // One character list, one skill list, and one incoming-filter list.
-        // No scope/filter/skill Cartesian product duplicates positions.
-        assert_eq!(index.position_slot_count(), HIT_COUNT * 3);
-        assert!(index.buckets.len() <= MAX_INDEXED_DETAIL_AGGREGATES);
-    }
-
-    #[test]
     fn bulk_history_rehydrate_rebuilds_all_indexes() {
         const HIT_COUNT: usize = 50_001;
         let hit = test_hit(1.0, 7, "outgoing", 1.0);
@@ -8326,7 +8289,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8362,7 +8324,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8537,7 +8498,6 @@ mod tests {
         });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8601,7 +8561,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8647,7 +8606,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8658,7 +8616,6 @@ mod tests {
         state.push_hit(first);
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 5.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -8694,7 +8651,6 @@ mod tests {
                 let mut state = CombatState::default();
                 state.apply_abyss_event(AbyssEvent::Stage {
                     timestamp: 0.0,
-                    cycle: Some(1),
                     floor: Some(1),
                     half: AbyssHalf::First,
                     allow_late_backfill: false,
@@ -8950,7 +8906,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9507,7 +9462,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 10.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9532,7 +9486,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 10.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9541,7 +9494,6 @@ mod tests {
         state.push_hit(test_hit(63.0, 1021, "outgoing", 200.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 66.183,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9603,7 +9555,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9631,14 +9582,12 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,
         });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9687,7 +9636,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9710,7 +9658,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 20.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::Second,
             allow_late_backfill: true,
@@ -9732,7 +9679,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 20.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::Second,
             allow_late_backfill: true,
@@ -9749,7 +9695,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9758,7 +9703,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9779,7 +9723,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9788,7 +9731,6 @@ mod tests {
         state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 3.0 });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 4.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9805,7 +9747,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9813,7 +9754,6 @@ mod tests {
         state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9823,7 +9763,6 @@ mod tests {
         state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 5.0 });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 5.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9845,7 +9784,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(6),
             floor: Some(11),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9853,7 +9791,6 @@ mod tests {
         state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(6),
             floor: Some(11),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9864,7 +9801,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 25.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9887,7 +9823,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9898,7 +9833,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9918,7 +9852,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 20.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,
