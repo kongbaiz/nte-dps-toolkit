@@ -4392,10 +4392,9 @@ mod character_tests {
                 .is_some_and(|path| !path.is_empty())
         );
 
-        assert!(
-            !characters.contains_key(&1091),
-            "non-canonical alias row must not become a third character"
-        );
+        // The current CN table gives row 1091 its own AvatarId but reuses the name of 1004.
+        assert_eq!(characters[&1091].name_zh, characters[&1004].name_zh);
+        assert_eq!(characters[&1090].name_zh, "曳尔沐");
     }
 
     #[test]

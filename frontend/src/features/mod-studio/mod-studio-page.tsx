@@ -25,16 +25,10 @@ import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import { toolkitClient } from "@/lib/tauri/toolkit-client";
 import { HostControls } from "./host-controls";
 import { PluginControls } from "./plugin-controls";
-import { pluginControlGroup } from "./release-control-groups";
+import { PLUGIN_STATE, pluginControlGroup } from "./release-control-groups";
 import { useModMarket } from "./use-mod-market";
 import { hasModMarketUpdate } from "./mod-market-model";
 import { ModMarketPanel } from "./mod-market-panel";
-const PLUGIN_STATE = {
-  loaded: "Loaded",
-  unloaded: "Disabled",
-  unload_pending: "Unloading",
-  failed: "Load failed",
-} as const;
 const PLUGIN_NAMES: Record<string, string> = {
   "nte_plugincombat.dll": "Combat plugin",
   "nte_pluginuser.dll": "Account plugin",

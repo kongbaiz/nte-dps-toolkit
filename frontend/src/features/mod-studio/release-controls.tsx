@@ -37,8 +37,6 @@ const ACTION_VERBS: Partial<Record<ReleaseAction, string>> = {
   userCancel: "Cancel",
   networkFlush: "Flush",
   frameRateRefresh: "Refresh",
-  trainingWoodenEnable: "Enable",
-  trainingWoodenDisable: "Disable",
 };
 
 export function ReleaseControls({
@@ -102,7 +100,11 @@ export function ReleaseControls({
   const connected = panel.mode === "plugin" && panel.connection === "connected";
   const actionButton = (action: ReleaseAction, advanced = false) => {
     const descriptor = RELEASE_ACTIONS.find((a) => a[0] === action);
-    if (!descriptor) return null;
+    if (
+      !descriptor ||
+      (connected && loaded && !panel.capabilities.includes(descriptor[1]))
+    )
+      return null;
     const [, command, label] = descriptor;
     const supported = panel.capabilities.includes(command) && loaded;
     const disabled =
@@ -111,37 +113,11 @@ export function ReleaseControls({
       !supported ||
       (requiresIdle(action) && panel.collectorActive);
     if (action === "trainingWoodenDisable") return null;
-    if (action === "trainingWoodenEnable")
-      return (
-        <div
-          key={action}
-          className="flex min-h-12 flex-wrap items-center justify-between gap-3 px-5 py-3"
-        >
-          <span className="text-sm">{t("Wooden dummy wheel")}</span>
-          <div className="flex shrink-0 gap-1">
-            {(["trainingWoodenEnable", "trainingWoodenDisable"] as const).map(
-              (command) => (
-                <Button
-                  key={command}
-                  size="sm"
-                  variant="outline"
-                  disabled={disabled}
-                  aria-label={t(
-                    command === "trainingWoodenEnable"
-                      ? "Enable wooden dummy wheel"
-                      : "Disable wooden dummy wheel",
-                  )}
-                  onClick={() => setConfirmation(command)}
-                >
-                  {t(command === "trainingWoodenEnable" ? "Enable" : "Disable")}
-                </Button>
-              ),
-            )}
-          </div>
-        </div>
-      );
+    const wheel = action === "trainingWoodenEnable";
     if (
+      wheel ||
       [
+        "trainingHideUid",
         "networkEnable",
         "traceEnable",
         "frameRateConfigure",
@@ -153,7 +129,9 @@ export function ReleaseControls({
           key={action}
           className="flex min-h-12 flex-wrap items-center justify-between gap-3 px-5 py-3"
         >
-          <span className="text-sm">{t(label)}</span>
+          <span className="text-sm">
+            {t(wheel ? "Wooden dummy wheel" : label)}
+          </span>
           <div className="flex shrink-0 gap-1">
             {[true, false].map((enabled) => (
               <Button
@@ -161,8 +139,24 @@ export function ReleaseControls({
                 size="sm"
                 variant="outline"
                 disabled={disabled}
-                aria-label={`${t(label)}: ${t(enabled ? "Enable" : "Disable")}`}
-                onClick={() => invoke(action, enabled ? 1 : 0)}
+                aria-label={
+                  wheel
+                    ? t(
+                        enabled
+                          ? "Enable wooden dummy wheel"
+                          : "Disable wooden dummy wheel",
+                      )
+                    : `${t(label)}: ${t(enabled ? "Enable" : "Disable")}`
+                }
+                onClick={() =>
+                  wheel
+                    ? setConfirmation(
+                        enabled
+                          ? "trainingWoodenEnable"
+                          : "trainingWoodenDisable",
+                      )
+                    : invoke(action, enabled ? 1 : 0)
+                }
               >
                 {t(enabled ? "Enable" : "Disable")}
               </Button>
@@ -265,23 +259,7 @@ export function ReleaseControls({
           </div>
         )}
       </div>
-      {result && (
-        <details open className="border-t bg-muted/20 px-5 py-4">
-          <summary className="cursor-pointer text-sm font-medium">
-            {t("Native response")}{" "}
-            <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
-              {result.totalBytes} B
-              {result.truncated ? ` / ${t("Preview truncated")}` : ""}
-            </span>
-          </summary>
-          <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background p-3 text-xs">
-            {result.preview}
-          </pre>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {t("Preview only. Export the full snapshot when needed.")}
-          </p>
-        </details>
-      )}
+      {result && <NativeResponse result={result} />}
       <AlertDialog
         open={confirmation !== null}
         onOpenChange={(open) => {
@@ -323,5 +301,25 @@ export function ReleaseControls({
         </AlertDialogPortal>
       </AlertDialog>
     </Card>
+  );
+}
+
+function NativeResponse({ result }: { result: ReleaseResult }) {
+  return (
+    <details open className="border-t bg-muted/20 px-5 py-4">
+      <summary className="cursor-pointer text-sm font-medium">
+        {t("Native response")}{" "}
+        <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
+          {result.totalBytes} B
+          {result.truncated ? ` / ${t("Preview truncated")}` : ""}
+        </span>
+      </summary>
+      <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background p-3 text-xs">
+        {result.preview}
+      </pre>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t("Preview only. Export the full snapshot when needed.")}
+      </p>
+    </details>
   );
 }

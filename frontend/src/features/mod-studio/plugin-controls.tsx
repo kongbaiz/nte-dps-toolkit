@@ -12,15 +12,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { t } from "@/lib/i18n";
 import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import { toolkitClient } from "@/lib/tauri/toolkit-client";
+import { TrainingEnemyControls } from "./training-enemy-controls";
 import { GameHudControls } from "./game-hud-controls";
 import { ReleaseControls } from "./release-controls";
-import { pluginControlGroup } from "./release-control-groups";
-const PLUGIN_STATE = {
-  loaded: "Loaded",
-  unloaded: "Disabled",
-  unload_pending: "Unloading",
-  failed: "Load failed",
-} as const;
+import { PLUGIN_STATE, pluginControlGroup } from "./release-control-groups";
 export function PluginControls({
   panel,
   plugin,
@@ -46,11 +41,16 @@ export function PluginControls({
           ? Target
           : Puzzle;
   const loaded = plugin.state === "loaded";
+  const resident = loaded || plugin.state === "faulted";
   const busy =
     pending ||
     panel.collectorActive ||
     panel.combat?.capturing === true ||
-    plugin.state === "unload_pending" ||
+    ["unload_pending", "blocked", "release_pending", "validated"].includes(
+      plugin.state,
+    ) ||
+    panel.operation?.state === "queued" ||
+    panel.operation?.state === "pending" ||
     panel.connection !== "connected" ||
     panel.mode !== "plugin";
   return (
@@ -76,19 +76,20 @@ export function PluginControls({
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
-            variant={loaded ? "outline" : "default"}
-            disabled={busy || !panel.capabilities.includes(loaded ? 5 : 4)}
+            variant={resident ? "outline" : "default"}
+            disabled={busy || !panel.capabilities.includes(resident ? 5 : 4)}
             onClick={() =>
               void run(() =>
                 toolkitClient.control(
-                  loaded ? "disable" : "enable",
+                  resident ? "disable" : "enable",
                   plugin.file,
+                  panel.connectionIdentity!,
                 ),
               )
             }
           >
             <Power />
-            {t(loaded ? "Unload plugin" : "Load plugin")}
+            {t(resident ? "Unload plugin" : "Load plugin")}
           </Button>
         </div>
         {panel.collectorActive && (
@@ -96,7 +97,7 @@ export function PluginControls({
             {t("Stop collection before changing plugin lifecycle state.")}
           </p>
         )}
-        {panel.operation?.state && (
+        {panel.operation?.state && panel.operation.state !== "idle" && (
           <p className="w-full text-xs text-muted-foreground">
             {t("Plugin operation")}: {panel.operation.state}
             {panel.operation.error && ` / ${t(panel.operation.error)}`}
@@ -110,6 +111,19 @@ export function PluginControls({
         {group?.id === "combat" && (
           <GameHudControls panel={panel} pending={pending} run={run} />
         )}
+        {group?.id === "training" &&
+          loaded &&
+          panel.connection === "connected" &&
+          panel.mode === "plugin" &&
+          panel.connectionIdentity &&
+          panel.capabilities.includes(415) && (
+            <TrainingEnemyControls
+              identity={panel.connectionIdentity}
+              writable={panel.capabilities.includes(416)}
+              pending={pending}
+              run={run}
+            />
+          )}
         {group ? (
           <ReleaseControls
             panel={panel}

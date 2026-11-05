@@ -2384,6 +2384,578 @@
         }
       ]
     },
+    "GA_Elyms_Melee": {
+      "name_zh": "即时故障",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>即时故障</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>即刻生效的奢望。</>\r\n曳尔沐的连接存在<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>的区别，信号强度为<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>时，曳尔沐操控「旧梦终端」，进行至多五段连续攻击，造成<Guang>光属性异能伤害</>。\r\n曳尔沐释放「普通攻击：即时故障」最后一段后，可在一定时间内直接激活「变轨技能：不连续的存在」。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>时进行最多<NumGreen>5</>段连续攻击，造成<Guang>光属性异能伤害</>。曳尔沐释放「普通攻击：即时故障」最后一段后，可在一定时间内直接激活「变轨技能：不连续的存在」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>错频故障</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>历久弥新的遗憾。</>\r\n信号强度为<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>时，曳尔沐操控「旧梦终端」，进行至多三段连续攻击，造成<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>状态下，曳尔沐释放「普通攻击：错频故障」最后一段后，可在一定时间内直接激活「变轨技能：对你说再见」。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>时进行最多<NumGreen>3</>段连续攻击，造成<Guang>光属性异能伤害</>。<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>状态下，曳尔沐释放「普通攻击：错频故障」最后一段后，可在一定时间内直接激活「变轨技能：对你说再见」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>干扰故障</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>还是有些模糊呢……</>\r\n曳尔沐处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态时，在「普通攻击：即时故障」中长按普通攻击，可触发「普通攻击：干扰故障」，造成<Guang>光属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>时，在「普通攻击：即时故障」中长按普攻，触发分支攻击，造成<Guang>光属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>记忆锚点</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>让我们……重新回忆一次……</>\r\n任意<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>下，曳尔沐均可通过瞄准键使用「瞄准攻击：记忆锚点」，造成<Guang>光属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "任意<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>下均可按瞄准键发动瞄准攻击，造成<Guang>光属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>坠落梦</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>又一次在梦中坠落。</>\r\n曳尔沐滞空时点按普攻，落地后造成<NumGreen>1</>次范围性的<Guang>光属性异能伤害</>，伤害随下落高度升高而提升，最高提升<NumGreen>1</>倍。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "滞空时点按普攻，落地造成范围性<Guang>光属性异能伤害</>，伤害随下落高度提升，最高提升<NumGreen>1</>倍。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>好的！握手！</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>敬个礼！握握手！你是我的好朋友！</>\r\n曳尔沐触发极限闪避后点击普攻发动反击，造成<Guang>光属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "极限闪避后点击普攻发动反击，造成<Guang>光属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>观察笔记#■■■</>\r\n<Italic>研究对象：即时通讯</>\r\n\r\n<Italic>由人类「想要即时得到回应」的欲望催生。若发信者输入「想要倾诉的话」，便能从另一个发信者处得到回应。</>\r\n<Italic>该类连接稳定性差，接收方所面向的对象为发信者的数字化身，能否得到回应却取决于对应的人类本体。</>\r\n<Italic>针对被试#■■■的实验表明，即时性的短接故障将数字化身与本体分离，显著提高了双方的满意度。</>\r\n<Italic>该研究仍在持续进行。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Elyms_Passive1": {
+      "name_zh": "中继节点",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<TextHLT>「盈蓄」强化</>：当前驻场角色获得终结能量时，全队角色的<Guang>光属性异能伤害</>提高<NumGreen>3.75%</>，持续<NumGreen>30</>秒，最多叠加<NumGreen>8</>层，重复触发刷新持续时间。\r\n<TextHLT>「延滞」强化</>：队伍中任意角色对目标施加「延滞」时，曳尔沐会在<NumGreen>7.5</>秒后对该目标追加一次「延滞」。该效果每<NumGreen>7</>秒至多触发一次，且通过该效果施加的「延滞」不会再次触发该效果。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<TextHLT>「盈蓄」强化</>：当前驻场角色获得终结能量时，全队角色的<Guang>光属性异能伤害</>提高<NumGreen>3.75%</>，持续<NumGreen>30</>秒，最多叠加<NumGreen>8</>层，重复触发刷新持续时间。\r\n<TextHLT>「延滞」强化</>：队伍中任意角色对目标施加「延滞」时，曳尔沐会在<NumGreen>7.5</>秒后对该目标追加一次「延滞」。该效果每<NumGreen>7</>秒至多触发一次，且通过该效果施加的「延滞」不会再次触发该效果。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「信号连接不够强力！让我来放大功率！」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Elyms_Passive2": {
+      "name_zh": "保底机制",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "曳尔沐的暴击伤害提高<NumGreen>10%</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "曳尔沐的暴击伤害提高<NumGreen>10%</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「大战之前，当然要补满状态啦！」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Elyms_Passive3": {
+      "name_zh": "在吗在吗",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "若曳尔沐处于待机状态，有一定概率触发「在吗在吗」。曳尔沐会主动向你打招呼，送上准备好的小礼物，每天一份哦~！",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "若曳尔沐处于待机状态，有一定概率触发「在吗在吗」。曳尔沐会主动向你打招呼，送上准备好的小礼物，每天一份哦~！",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「你去哪了？」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Elyms_QTE": {
+      "name_zh": "我在",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>在线状态！</>曳尔沐操控「旧梦终端」，造成<Guang>光属性异能伤害</>。\r\n曳尔沐在场时，释放「援护技：我在」后，若处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态，则增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>状态；同时检索一定范围内的目标数量，自动切换「极轨终结：一如昨日光景」的对单/对群形态。\r\n「信号强度」从<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>时，获得增益效果<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun2\">「错视幻觉」</>，持续一定时间。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Guang>光属性异能伤害</>。曳尔沐在场时，释放「援护技：我在」后，若处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态，则增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>状态，并获得<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun2\">「错视幻觉」</>；同时检索目标，切换「极轨终结：一如昨日光景」的对单/对群形态。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「想起我了吗？我一直都在。」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Elyms_Skill": {
+      "name_zh": "沉入电子梦",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>离去的人们</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>亦如将要到来之人。</>\r\n曳尔沐操控「旧梦终端」对范围目标造成<Guang>光属性异能伤害</>。\r\n若处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态，则可在释放该技能后一定时间内直接激活「变轨技能：不连续的存在」。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成范围性<Guang>光属性异能伤害</>。<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态时，释放「变轨技能：离去的人们」后，可在一定时间内直接激活「变轨技能：不连续的存在」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>不连续的存在</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>绵延是过去的持续进展，它逐步地侵蚀着未来。</>\r\n曳尔沐对范围目标造成<Guang>光属性异能伤害</>。释放「变轨技能：不连续的存在」后，若处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态，则增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>状态。同时自动检索一定范围内的目标数量，依此切换「极轨终结：一如昨日光景」的对群/对单形态。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>时，获得增益效果<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun2\">「错视幻觉」</>，持续一定时间。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成范围性<Guang>光属性异能伤害</>。释放「变轨技能：不连续的存在」后，若处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态，则增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>状态，并获得<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun2\">「错视幻觉」</>；同时检索目标，切换「极轨终结：一如昨日光景」的对单/对群形态。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>对你说再见</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>未知的世界如盛夏蜃景，连你也是遥远的幻影。</>\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>状态下，曳尔沐释放「普通攻击：错频故障」最后一段后，可在一定时间内直接激活「变轨技能：对你说再见」。\r\n曳尔沐对范围目标造成<Guang>光属性异能伤害</>。释放时消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun2\">「错视幻觉」</>，并依据消耗层数提高本次技能的伤害倍率。\r\n释放后，若处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>状态，则增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>状态；同时检索一定范围内的目标数量，自动切换「极轨终结：一如昨日光景」的对单/对群形态。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>状态下，曳尔沐释放「普通攻击：错频故障」最后一段后，可在一定时间内直接激活「变轨技能：对你说再见」。造成范围性<Guang>光属性异能伤害</>。释放时消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun2\">「错视幻觉」</>，并依据消耗层数提高本次技能的伤害倍率；释放「变轨技能：对你说再见」后，若处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>状态，则增强至<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>状态；同时检索目标，切换「极轨终结：一如昨日光景」的对单/对群形态。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>没有乐队，然而……我们可以听到乐声。</>\r\n<Italic>根本没有乐队！一切都是……录音。</>\r\n<Italic>根本没有&^%$#@!@#$%^&*&^%$#@!@#$%^&*&^%$#@!@#$%^&*&^%$#，一切都是</>\r\n<Italic>■■■■■■■■■■■■■■■■■■■■■■■</>\r\n\r\n<Italic>寂静……</>\r\n<Italic>寂静？</>\r\n<Italic>寂静。</>\r\n<Italic>我的朋友。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Elyms_UltraSkill": {
+      "name_zh": "一如昨日光景",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>我们每天度过的日常，其实也许是奇迹的延续。</>\r\n<Italic>你，又会在昨日光景中看到谁的掠影？</>\r\n\r\n曳尔沐的「极轨终结：一如昨日光景」存在对单/对群两种形态。\r\n处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>状态时，「极轨终结：一如昨日光景」默认为对群形态；\r\n处于<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>状态时，「极轨终结：一如昨日光景」会依据「变轨技能：不连续的存在」、「变轨技能：对你说再见」以及曳尔沐在场时释放的「援护技：我在」的目标检索结果，自动切换对应的对单/对群形态。\r\n「极轨终结：一如昨日光景」的伤害倍率依据释放时的<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>确定。释放「极轨终结：一如昨日光景」或脱战后，<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>重置为<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>。\r\n\r\n释放「极轨终结：一如昨日光景」后，全队角色获得基于曳尔沐自身基础攻击力的攻击提升，同时全队角色造成的追加攻击伤害提升，持续一定时间。\r\n同时曳尔沐获得增益状态<TextHLT>「后台连线」</>，状态持续期间，若曳尔沐处于后台，则会自动触发协同攻击<TextHLT>「追忆」</>。\r\n协同攻击<TextHLT>「追忆」</>的对单/对群形态与此前释放的「极轨终结：一如昨日光景」相同，其伤害倍率依据该次「极轨终结：一如昨日光景」释放时的<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>确定。\r\n<TextHLT>「追忆」</>造成的伤害视为追加攻击伤害。\r\n<TextHLT>「追忆」</>释放次数达到上限后，<TextHLT>「后台连线」</>状态结束。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>时释放对群形态的「极轨终结：一如昨日光景」；<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「中等信号」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「强信号」</>时按「变轨技能：不连续的存在」、「变轨技能：对你说再见」或曳尔沐在场时释放的「援护技：我在」的检索结果选择形态。「极轨终结：一如昨日光景」的伤害倍率依据释放时的<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>确定。释放「极轨终结：一如昨日光景」或脱战后，<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>重置为<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「弱信号」</>。曳尔沐对目标造成<Guang>光属性异能伤害</>。释放「极轨终结：一如昨日光景」后，提升全队角色的攻击力和造成的追加攻击伤害。曳尔沐获得<TextHLT>「后台连线」</>，状态持续期间，若曳尔沐处于后台，则自动触发协同攻击<TextHLT>「追忆」</>。协同攻击<TextHLT>「追忆」</>的对单/对群形态与此前释放的「极轨终结：一如昨日光景」相同，其伤害倍率依据该次「极轨终结：一如昨日光景」释放时的<hot textstyle=\"TextEXPL\" param=\"nouns&Elyms_propNoun1\">「信号强度」</>确定。<TextHLT>「追忆」</>释放次数达到上限后，<TextHLT>「后台连线」</>状态结束。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>再平凡不过的一天，一起打开还没通关的游戏，一起消磨时间，被无关紧要的小事逗笑，去常吃的小店，在路上告别，约定下一次再见。</>\r\n<Italic>重复发生的日常，一如昨日光景。</>\r\n\r\n<Italic>一切都未曾改变，一切都不会改变，只要这样就好……</>\r\n<Italic>肯定请按1，肯定请按2，肯定请按3，肯定请按4，肯定请按5，肯定请按6，肯定请按7，肯定请按8，肯定请按9，肯定请按0，肯定请按#。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Elyms_UltraSkillB": {
+      "name_zh": "众声轮唱",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Exe_Melee": {
+      "name_zh": "物理层侵入",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>普通攻击：物理层侵入</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "还原，直接的手段，效率更高。Exe操控「Y之手」，进行至多<NumGreen>5</>段的连续攻击，造成<An>暗属性异能伤害</>。最后一段可以消耗10点「帧数」导出1个「数字残像」。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "进行至多<NumGreen>5</>段攻击，造成<An>暗属性异能伤害</>。最后一段消耗10点「帧数」导出1个「数字残像」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>普通攻击：垂直侵入</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "渗透，获取root权限，垂直击穿。Exe滞空时点按普通攻击，落地时造成<NumGreen>1</>次<An>暗属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "滞空时点按普攻，造成<An>暗属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>普通攻击：纵深侵入</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "攻击，识别到多层防御，速通。「普通攻击：特种格斗术」中，长按普通攻击触发「普通攻击：纵深侵入」，对目标造成<An>暗属性异能伤害</>。若处于极轨终结的「方程构建」状态，「普通攻击：纵深侵入」会锁定血量最低的非BOSS目标，目标血量低于15%则直接斩杀，并延长「方程构建」持续时间X秒。。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "普攻中长按普攻，造成<An>暗属性异能伤害</>。若处于极轨终结的「方程构建」状态，「普通攻击：纵深侵入」会锁定血量最低的非BOSS目标，目标血量低于15%则直接斩杀，并延长「方程构建」持续时间X秒。。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "极限反击：零延迟响应",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "无敌帧，时间窗重叠，操作无误，计分。触发极限闪避后使用「普通攻击：物理层侵入」触发，Exe操控「Y之手」，造成<NumGreen>1</>次<An>暗属性异能伤害</>，额外扣除一定倾陷值并获取「帧数」。可消耗10个「帧数」导出1个「数字残像」。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "触发极限闪避后使用普攻触发，造成<NumGreen>1</>次<An>暗属性异能伤害</>，额外扣除一定倾陷值并获取「帧数」。可消耗10个「帧数」导出1个「数字残像」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「工作日志\r\n7:15-13:15：工单处理，接报15起网络犯罪，复杂度低，已解决\r\n13:16-23:16：检索网络通缉者，发现目标，已锁定目标位置，协助外勤完成抓获\r\n23:17-23:20：休息\r\n23:21-7:21：自主作业，发现系统隐患31处，已完成修复\r\n7:22-13:22：工单处理，接报23起网络犯罪，复杂度低，已解决\r\n13:23-：【占位】」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Exe_Passive_1": {
+      "name_zh": "额外得分",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<TextHLT>「黯星」强化</>：Exe触发黯星时，若此时Exe的「评分」等级低于SS，则直接升至SS。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「具备连携效果，效率提高，计入额外得分。」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Exe_Passive_2": {
+      "name_zh": "临时超频",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「数字残像」的攻击每次造成伤害时，减少变轨技能X秒冷却，当前冷却时间低于X秒时不再触发；\r\n队伍的召唤物造成伤害时，Exe获得X%增伤，每位触发者最多提供X层，总层数最高为X层，该增益效果持续至本次战斗结束。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「内存、CPU、电压，手动超频完成，速战速决。」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Exe_Passive_3": {
+      "name_zh": "量化算法",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「帧数」:单位时间内的行动效率需要提高。\r\nExe的攻击命中目标时，可捕获短暂的时间优势，获取「帧数」累积。\r\n「评分」:战斗无非是一项处理数字的工作。\r\nExe使用「评分」系统量化自己的工作表现，用以优化效率。\r\n「评分」数值会在战斗中随着Exe的战斗行为累积，攻击命中，释放变轨技能、极轨终结、援护技，或触发极限闪避、极限反击、承轨反击等都可以提升评分。\r\n队伍每次触发异能环合时，额外给Exe增加「评分」\r\n「评分」初始分为B-A-S-SS-SSS 五个等级，每个等级评分积满提升至下一级。等级越高，「帧数」的累积效率越高。\r\n「评分」数值在不提高时，会随时间自然回落；Exe受击会大额降低评分。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「硬件配置升级，工作流优化，整体性能提升。测试用例更新，可行性验证启动，预期目标：未更改。」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Exe_QTE": {
+      "name_zh": "远程控制",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "Exe激活远程控制，操控数据流缠绕目标，入场时激活数据流产生冲击，造成<NumGreen>1</>次<An>暗属性异能伤害</>，可消耗10个「帧数」导出1个「数字残像」。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<NumGreen>1</>次<An>暗属性异能伤害</>，可消耗10个「帧数」导出1个「数字残像」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「权限接管，我来处理。」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Exe_Skill": {
+      "name_zh": "数据穿透",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "localhost会话已建立，防火墙穿透成功，正在检索对象……\r\n目标对象已终止，重定向中……\r\nExe操控「Y之手」，造成多段<An>暗属性异能伤害</>，根据当前持有的「帧数」导出「数字残像」，导出上限为5。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成多段<An>暗属性异能伤害</>并根据当前持有的「帧数」导出「数字残像」，导出上限为5。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>变轨技能：天降赤锋</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「——出发！速通！计时开始！\r\n——……\r\nERROR：系统找不到指定的文件。」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Exe_UltraSkill": {
+      "name_zh": "失配拓扑",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "错误：目标地址为空。\r\n//退出秘密基地，返回现实。\r\nreturn NULL;\r\nExe使用数字化的方式重构现实，进入「方程构建」状态，操控「Y之手」发起多段攻击，对范围内目标造成高额<An>暗属性异能伤害</>，并根据当前持有的「帧数」，导出多个「数字残像」。\r\n「方程构建」状态持续X秒，状态期间Exe所有攻击均可消耗「帧数」导出「数字残像」。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "进入「方程构建」状态后造成高额<An>暗属性异能伤害</>，并根据当前持有的「帧数」，导出多个「数字残像」。\r\n「方程构建」状态持续X秒，状态期间Exe所有攻击均可消耗「帧数」导出「数字残像」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「与■■■的连接中断，正在重新建立连接……\r\n重连超时，是否继续尝试？」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
     "GA_Fadia_Evade": {
       "name_zh": "",
       "name_en": "",
@@ -5397,6 +5969,436 @@
           "title_en": "",
           "title_ja": "",
           "description_zh": "<Italic>「一个称职的帮派老大，会在恰当的时候给自己的小弟一点表现空间。打不过？……咳咳，你是在质疑我的拳头吗？」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nimo_Melee": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nimo_Passive1": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nimo_Passive2": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nimo_QTE": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nimo_Skill": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nimo_UltraSkill": {
+      "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nitsa_Melee": {
+      "name_zh": "恶灵CQC",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵CQC",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「普通攻击：恶灵CQC」，灵可进行至多5段的连续攻击，造成<Ling>灵属性异能伤害</>。每段攻击将积攒「谐频」点数。\r\n「谐频」将在使用「变轨技能：瞬息全频振」时消耗，并强化其触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>，积攒「谐频」点数。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵大巴掌！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：恶灵CQC」释放期间，长按普通攻击触发，灵可双掌拍击当前目标，造成<Ling>灵属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：恶灵CQC」释放期间长按普通攻击，造成<Ling>灵属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵式登场！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "灵可滞空时点按普通攻击，落地后造成1次范围性的<Ling>灵属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵闪击战！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "灵可处于后台时，每隔8秒，将会派出小贞偷袭目标，进行一次攻击并施加<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "灵可处于后台时，定期给敌人施加<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "极限反击：挨打必须还「手」！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "触发极限闪避后使用「普通攻击：恶灵CQC」触发，灵可冲向目标造成4次范围性的<Ling>灵属性异能伤害</>并积攒「谐频」点数。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>，积攒「谐频」点数。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「小贞小贞，我有一个想法……用你的手打出欧拉拳套一样的拳击！快到全是残影的那种！」</>\r\n<Italic>「……那是图个啥？全力一拳撂倒不是更高效吗？」</>\r\n<Italic>「你不懂！这是格斗的艺术！」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nitsa_QTE": {
+      "name_zh": "变奏和弦",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>变奏和弦</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "明音凛重扫琴弦，对目标造成<NumGreen>1</>次<Xiang>相属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "对目标造成<Xiang>相属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>真正优秀的吉他，总是能够在最完美的时机切入。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nitsa_Skill": {
+      "name_zh": "瞬息全频振",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「变轨技能：瞬息全频振」，灵可激发异能，用幽灵能量体轰击目标，造成最多4段<Ling>灵属性异能伤害</>，并呼唤小贞或一名队友发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>；此时，将出现可选择发起攻击者的轮盘，可通过点按选择一名队友或者小贞，来释放该角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应的属性伤害。该次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>将获得伤害增益，且会消耗此前积攒的「谐频」点数，转化为额外的伤害增益。\r\n在点选队友、发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的这段时间内，将有短暂的暂停计时效果。\r\n队友不可行动或未编入队伍时，小贞会替代轮盘中队友的位置，每额外有一个小贞，选择小贞触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>额外获得一次伤害增益。\r\n若在“设置-系统功能”中开启自动释放技能，默认选择队伍第一个角色释放<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "点按发动，造成<Ling>灵属性异能伤害</>，选择并发动小贞或一名同队角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应属性异能伤害，并消耗已有「谐频」点数，增幅此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的伤害。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「瞧好了！这就是我们热血沸腾的组合技——」</>\r\n<Italic>「……话说小鬼，刚刚那个人我们真的认识吗？」</>\r\n<Italic>「我没看清楚是谁——但总之接上了！」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "1",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Nitsa_UltraSkill": {
+      "name_zh": "音障爆鸣",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「极轨终结：音障爆鸣」第一段时，明音凛对目标范围内的敌人造成多次高额<Xiang>相属性异能伤害</>，并进入持续<NumGreen>20</>秒的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态，期间明音凛的抗打断能力提升。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>持续4秒后，可随时再次点按极轨终结，释放第二段并提前结束<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态，对目标范围内的敌人造成<NumGreen>1</>次高额<Xiang>相属性异能伤害</>。第二段需手动释放，不会在状态结束时自动触发。状态结束时仍未释放，第二段将失效。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态独立于<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>和<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>，不会移除或替代当前生效的效果。\r\n明音凛处于脱离战斗状态时，每秒获得<NumGreen>3</>点终结能量。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "释放极轨终结第一段，对目标范围内的敌人造成高额<Xiang>相属性异能伤害</>，并进入<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态，期间明音凛的抗打断能力提升。\r\n状态持续4秒后，可随时再次点按极轨终结释放第二段并提前结束<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneCadenza\">「华彩连段」</>状态，再次对目标范围内的敌人造成高额<Xiang>相属性异能伤害</>。第二段需手动释放，不会在状态结束时自动触发。状态结束时仍未释放，第二段将失效。\r\n该状态不会移除或替代当前生效的<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneHarmonicMark\">「泛音列」</>或<hot textstyle=\"TextEXPL\" param=\"nouns&AkaneSoundField\">「音域」</>效果。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「这才是真正的音乐啊！」台下的粉丝泪流满面地如是说道。</>",
           "description_en": "",
           "description_ja": "",
           "short_description_zh": "",

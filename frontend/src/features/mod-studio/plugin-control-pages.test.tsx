@@ -290,6 +290,19 @@ describe("user-focused plugin controls", () => {
       expect(html).toContain("Plugin details");
     },
   );
+  it("offers the enemy editor only for a loaded Training provider advertising the catalog", () => {
+    for (const [capabilities, available] of [
+      [[400, 403], false],
+      [[400, 413, 415, 416], true],
+    ] as const) {
+      const html = renderPlugin("NTE_PluginTraining.dll", {
+        ...panel,
+        capabilities: [...capabilities],
+      });
+      expect(html.includes("Refresh enemy list")).toBe(available);
+      expect(html.includes("Hide in-game UID")).toBe(available);
+    }
+  });
   it("combines the wooden wheel commands without inventing an enabled state", () => {
     const html = renderPlugin("NTE_PluginTraining.dll");
     expect(html).toContain("Wooden dummy wheel");

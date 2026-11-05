@@ -29,6 +29,7 @@ export const RELEASE_ACTIONS = [
   ["frameRateRefresh", 124, "Refresh frame rate unlock"],
   ["quickUltimateStatus", 125, "Quick ultimate status"],
   ["quickUltimateConfigure", 126, "Quick ultimate"],
+  ["trainingHideUid", 413, "Hide in-game UID"],
   ["trainingStatus", 400, "Training status"],
   ["trainingWoodenEnable", 403, "Enable wooden dummy wheel"],
   ["trainingWoodenDisable", 403, "Disable wooden dummy wheel"],

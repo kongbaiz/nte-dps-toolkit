@@ -918,7 +918,9 @@ pub(super) fn run(
             .map_err(|_| ToolkitError::Cancelled)?;
         let host = ToolkitClient::open(pid)?;
         let relay = router.register(host.identity())?;
-        host.describe()?;
+        if !host.describe()?.commands.contains(&100) {
+            return Err(ToolkitError::Unsupported);
+        }
         let pipe = CapturePipe::open(&host)?;
         let hello = request(&pipe, "hello", "hello", json!({"protocolVersion":1}), &stop)?;
         if hello["protocolVersion"] != 1 || hello["gamePid"] != pid || hello["ready"] != true {

@@ -12,7 +12,6 @@ import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 const FEATURES = [
   [1, "Skill cooldown HUD"],
   [2, "Enemy bars HUD"],
-  [4, "Skill ready cue"],
   [8, "HUD health values"],
   [16, "HUD unbalance values"],
 ] as const;
@@ -119,7 +118,9 @@ export function GameHudControls({
           aria-label={t("In-game enhanced HUD")}
           checked={options !== null && options !== 0}
           disabled={disabled}
-          onCheckedChange={(on) => configure(on ? 31 : 0)}
+          onCheckedChange={(on) =>
+            configure(on ? FEATURES.reduce((mask, [bit]) => mask | bit, 0) : 0)
+          }
         />
       </CardHeader>
       <CardContent className="border-t p-0">

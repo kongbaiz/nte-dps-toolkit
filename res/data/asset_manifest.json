@@ -1,20 +1,20 @@
 {
-  "generated_at": "2026-10-15T19:41:05.139199+00:00",
+  "generated_at": "2026-11-05T19:25:54.930516+00:00",
   "assets_root_name": "NTE_Assets",
   "paths_redacted": true,
-  "assets_git_revision": "af566a3ad9b33706e6bc7cb62ee1196a722317cf",
+  "assets_git_revision": "9540a3e797b87003fa0ac6be50853527a3c0f3f1",
   "inputs": {
     "characters": {
       "path": "CN/HT/Content/DataTable/Character/DT_Character.json",
-      "sha256": "5b4e2236cd37dfd1abcb3cd77af328449a565691a8e370ceb1ee1bca6ef8f108"
+      "sha256": "41124547dde4539bd0c0a0773cbc0e56ba36ae74161f0331a6a8ab0c0aecc7da"
     },
     "gameplay_effect_mapping": {
       "path": "CN/HT/Content/DataTable/Skill/DT_GameplayEffectMappingData.json",
-      "sha256": "fc062dc04fcd23678a16ba0527cd7f43d5fe23cdeb2f056e9306c7f8461bfded"
+      "sha256": "cd419ea0d0670a8deb9292956b5894737bfc0d646df2f4a2516dabfb331db180"
     },
     "skill_damage": {
       "path": "CN/HT/Content/DataTable/Skill/DT_SkillDamageData.json",
-      "sha256": "fb2857d26f7d92d023850cf6c390393322d21624ff961f8ac3e0a2c687cc2a74"
+      "sha256": "ebfcf5cf07edaa0e7909428673c7362bdd26a6d118a4d51104c0fe0f5deffbe1"
     },
     "wooden_damage_descriptions": {
       "path": "CN/HT/Content/DataTable/Skill/Wooden/DT_WoodenStructData.json",
@@ -22,7 +22,7 @@
     },
     "ability_tips": {
       "path": "CN/HT/Content/DataTable/Skill/DT_GameplayAbilityTipsData.json",
-      "sha256": "c6cab4bcf2c025a11b00a0da80ebd9c8d3c98fe4fd2c01be6c6acef065052baa"
+      "sha256": "36972592ea11b0aded82d96744c182e2a9bf38394b6021c164a19d16dec2c5d7"
     },
     "abyss_monster_static": {
       "path": "CN/HT/Content/DataTable/Monster/DT_MonsterStaticData_Abyss.json",
@@ -30,11 +30,11 @@
     },
     "abyss_monster_pack": {
       "path": "CN/HT/Content/DataTable/PackData/DT_MonsterPackData.json",
-      "sha256": "c54c9b5eba345198ed49761eb234e50a1ed7136390d96fa0aaf560bc241a2e19"
+      "sha256": "caee59c38037476aa13f80d43d76cfd3ae632bcfbd9d1396e90bbff2e4abb8a4"
     },
     "abyss_combat_award_quest": {
       "path": "CN/HT/Content/DataTable/SimpleQuest/DT_CombatAwardQuest.json",
-      "sha256": "2fe34ce15a30d6ce42ffa4b741dc74f8c2380311586929f25466abeb8e76c7a2"
+      "sha256": "c3422efb09b093ca372bd4cfb3ddb08f1d0d4fc1839adc864a85b090862482c2"
     },
     "reaction_data": {
       "path": "CN/HT/Content/DataTable/Reaction/DT_ReactionData.json",
@@ -42,7 +42,7 @@
     },
     "reaction_detail": {
       "path": "CN/HT/Content/DataTable/Reaction/DT_ReactionDetailUIData.json",
-      "sha256": "93a1d99b9a547c460236ad43998fbd2350592cab34eaa075c367567ee15d5168"
+      "sha256": "7733e62dd3c3b4b75c13e25185a22bd1337599dc026033dc39d23e663141dcd2"
     },
     "reaction_damage": {
       "path": "CN/HT/Content/DataTable/Reaction/DT_ReactionDamageData.json",
@@ -54,19 +54,19 @@
     },
     "reaction_extensions": {
       "path": "CN/HT/Content/DataTable/Reaction/DT_ReactionExtendDataTable.json",
-      "sha256": "4fef5bb63626d4d8b9cb811b962be59d05868c7747b4924180564cbe5f4c0f48"
+      "sha256": "8c4d377ab8c20ab9151b9547b50d3ff60968d4905b86ced55fa060b7d503afd5"
     },
     "abyss_clone_levels": {
       "path": "CN/HT/Content/DataAssets/DataAssetSet/Abyss/AbyssCloneLevelDataTable.json",
-      "sha256": "6d653261b746925aa00b5be647e06516177f9840e1b7e460646744e5c2add101"
+      "sha256": "9b300ecd5798a95e9f3bf37d19c1d71ca8d7ae159931438968fa32553c7e70a4"
     },
     "abyss_monster_pools": {
       "path": "CN/HT/Content/DataAssets/DataAssetSet/Abyss/DT_AbyssMonsterPool.json",
-      "sha256": "f9ffb741c0f10f21a202b94beb6fc04b4538757752f515dbf9b0378ebdb16b93"
+      "sha256": "7508b80c9cf6b062b29d6a8eda17bff20d27214de05c3ff8641d5b32c7f5870b"
     },
     "zh_cn_localization": {
-      "path": "Localization/Game/zh-CN/game.json",
-      "sha256": "90fa6e72ab550529fada6f4397c95fa9b2c8d4f69155a9f89eae6d9f1fd352db"
+      "path": "CN/HT/Content/Localization/Game/zh-CN/game.json",
+      "sha256": "950e58b783d6229489f6563344cccc34644654efe173b4707f67ef9bd1678cca"
     }
   },
   "outputs": {
@@ -86,5 +86,6 @@
     "abyss_floor_monster_summary": "data/abyss/abyss_floor_monster_summary.json",
     "abyss_season_names": "data/abyss/season_names_zh_cn.json",
     "coverage_report": "data/asset_report.json"
-  }
+  },
+  "assets_git_dirty": true
 }

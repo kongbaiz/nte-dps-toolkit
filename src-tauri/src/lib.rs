@@ -165,6 +165,7 @@ pub fn run() {
             commands::toolkit::set_data_mode,
             commands::toolkit::control_plugin,
             commands::toolkit::release_plugin_action,
+            commands::training::training_enemies,
             commands::toolkit::set_host_loading_method,
             commands::toolkit::select_host_game_directory,
             commands::toolkit::clear_host_game_directory,

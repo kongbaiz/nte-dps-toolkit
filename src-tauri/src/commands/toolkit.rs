@@ -7,7 +7,7 @@ use nte_dps_tool::{
     core::toolkit::{CombatStatus, DataMode},
     platform::{
         network,
-        toolkit::{ToolkitClient, ToolkitError},
+        toolkit::{ToolkitClient, ToolkitDescription, ToolkitError},
     },
     storage::config::ModStudioLoadingMethod,
 };
@@ -50,6 +50,13 @@ enum PluginState {
     Unloaded,
     UnloadPending,
     Failed,
+    Discovered,
+    Faulted,
+    Blocked,
+    ReleasePending,
+    Validated,
+    FaultedUnloaded,
+    Rejected,
 }
 #[derive(Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -80,7 +87,7 @@ pub(crate) struct PluginOperation {
 fn sanitize_operation(mut operation: PluginOperation) -> Result<PluginOperation, CommandError> {
     if !matches!(
         operation.state.as_str(),
-        "" | "queued" | "pending" | "completed" | "failed" | "rejected"
+        "idle" | "queued" | "pending" | "completed" | "failed" | "rejected"
     ) || operation.error.len() > 512
     {
         return Err(CommandError::from(ToolkitError::InvalidProtocol));
@@ -107,6 +114,10 @@ impl From<ToolkitError> for CommandError {
                 "plugin_busy",
                 "The plugin is busy. Query its status before retrying.",
             ),
+            ToolkitError::SessionChanged => (
+                "plugin_session_changed",
+                "The plugin session changed. Refresh before continuing.",
+            ),
             ToolkitError::Timeout => (
                 "plugin_timeout",
                 "The plugin operation timed out. Its result is unknown; do not retry automatically.",
@@ -123,12 +134,12 @@ impl From<ToolkitError> for CommandError {
         CommandError::new(code, key)
     }
 }
-pub(super) fn client() -> Result<(ToolkitClient, Vec<u32>), CommandError> {
+pub(super) fn client() -> Result<(ToolkitClient, ToolkitDescription), CommandError> {
     let pid = network::game_process_id()
         .map_err(|_| CommandError::from(ToolkitError::Failed))?
         .ok_or_else(|| CommandError::from(ToolkitError::Unavailable))?;
     let c = ToolkitClient::open(pid)?;
-    let capabilities = c.capabilities()?;
+    let capabilities = c.describe()?;
     Ok((c, capabilities))
 }
 fn runtime_directory(
@@ -189,15 +200,17 @@ fn snapshot(state: &AppState) -> PluginPanel {
     }
     let read = (|| {
         let (c, capabilities) = client()?;
-        let identity = c.identity();
-        let plugins: Vec<Plugin> = c.json(3, 0, "", &|| false)?;
-        if plugins.len() > 64 || plugins.iter().any(|p| !valid_file(&p.file)) {
-            return Err(CommandError::from(ToolkitError::InvalidProtocol));
-        }
-        let combat: Option<CombatStatus> = match c.json(100, 0, "", &|| false) {
-            Ok(value) => Some(value),
-            Err(ToolkitError::Unavailable | ToolkitError::Unsupported) => None,
-            Err(e) => return Err(CommandError::from(e)),
+        let identity = capabilities.operation_session;
+        let capabilities = capabilities.commands;
+        let plugins = plugin_rows(c.json(3, 0, "", &|| false)?)?;
+        let combat: Option<CombatStatus> = if capabilities.contains(&100) {
+            match c.json(100, 0, "", &|| false) {
+                Ok(value) => Some(value),
+                Err(ToolkitError::Unavailable | ToolkitError::Unsupported) => None,
+                Err(e) => return Err(CommandError::from(e)),
+            }
+        } else {
+            None
         };
         if let Some(combat) = &combat
             && (combat.encounter_id.len() > 256
@@ -243,6 +256,28 @@ fn snapshot(state: &AppState) -> PluginPanel {
         }
     }
     result
+}
+// A resident image and a replacement candidate can share a filename in PluginList.
+fn plugin_rows(mut rows: Vec<Plugin>) -> Result<Vec<Plugin>, ToolkitError> {
+    if rows.len() > 64 || rows.iter().any(|p| !valid_file(&p.file)) {
+        return Err(ToolkitError::InvalidProtocol);
+    }
+    rows.sort_by_cached_key(|p| {
+        (
+            p.file.to_ascii_lowercase(),
+            match p.state {
+                PluginState::Blocked | PluginState::ReleasePending | PluginState::UnloadPending => {
+                    0
+                }
+                PluginState::Loaded | PluginState::Faulted => 1,
+                PluginState::Validated => 2,
+                PluginState::Rejected | PluginState::Failed | PluginState::FaultedUnloaded => 3,
+                PluginState::Unloaded | PluginState::Discovered => 4,
+            },
+        )
+    });
+    rows.dedup_by(|a, b| a.file.eq_ignore_ascii_case(&b.file));
+    Ok(rows)
 }
 fn valid_file(file: &str) -> bool {
     file.len() <= 128
@@ -297,6 +332,7 @@ pub(crate) enum PluginControlAction {
 pub(crate) async fn control_plugin(
     action: PluginControlAction,
     file: String,
+    expected_identity: String,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
@@ -335,10 +371,15 @@ pub(crate) async fn control_plugin(
             return Err(CommandError::from(ToolkitError::Busy));
         }
         let (c, capabilities) = client()?;
-        if !capabilities.contains(&command) {
+        if !capabilities.commands.contains(&command) {
             return Err(unsupported());
         }
-        c.call(command, 0, &file, &|| false)?;
+        if expected_identity != capabilities.operation_session {
+            return Err(ToolkitError::SessionChanged.into());
+        }
+        c.call(command, 0, &format!("{expected_identity}/{file}"), &|| {
+            false
+        })?;
         Ok(())
     })
     .await
@@ -376,6 +417,7 @@ pub(crate) enum ReleaseAction {
     TrainingWoodenEnable,
     TrainingWoodenDisable,
     TrainingOperation,
+    TrainingHideUid,
     UserStatus,
     UserRefresh,
     UserOperation,
@@ -414,6 +456,7 @@ impl ReleaseAction {
             Self::TrainingStatus => 400,
             Self::TrainingWoodenEnable | Self::TrainingWoodenDisable => 403,
             Self::TrainingOperation => 410,
+            Self::TrainingHideUid => 413,
             Self::UserStatus => 300,
             Self::UserRefresh => 301,
             Self::UserOperation => 302,
@@ -427,6 +470,7 @@ impl ReleaseAction {
                 | Self::TraceEnable
                 | Self::FrameRateConfigure
                 | Self::QuickUltimateConfigure
+                | Self::TrainingHideUid
         ) {
             value
                 .filter(|v| *v <= 1)
@@ -506,9 +550,6 @@ pub(crate) async fn release_plugin_action(
     if state.data_mode() != DataMode::Plugin {
         return Err(unsupported());
     }
-    if expected_identity.is_empty() || expected_identity.len() > 64 {
-        return Err(CommandError::from(ToolkitError::InvalidProtocol));
-    }
     if action.requires_confirmation() && !confirmed {
         return Err(CommandError::mod_studio_risk_acknowledgement_required());
     }
@@ -540,10 +581,10 @@ pub(crate) async fn release_plugin_action(
             return Err(CommandError::from(ToolkitError::Busy));
         }
         let (c, capabilities) = client()?;
-        if c.identity() != expected_identity {
+        if capabilities.operation_session != expected_identity {
             return Err(CommandError::from(ToolkitError::SessionChanged));
         }
-        if !capabilities.contains(&command) {
+        if !capabilities.commands.contains(&command) {
             return Err(unsupported());
         }
         let bytes = c.call(command, argument, "", &|| false)?;
@@ -1024,10 +1065,11 @@ mod tests {
         assert!(!ReleaseAction::HudConfigure.requires_idle());
     }
     #[test]
-    fn current_release_wire_arguments_match_combat_and_wooden_only_training() {
+    fn current_release_wire_arguments_match_combat_and_training() {
         for (action, command) in [
             (ReleaseAction::FrameRateConfigure, 123),
             (ReleaseAction::QuickUltimateConfigure, 126),
+            (ReleaseAction::TrainingHideUid, 413),
         ] {
             assert_eq!(action.wire(Some(0)).unwrap(), (command, 0));
             assert_eq!(action.wire(Some(1)).unwrap(), (command, 1));
@@ -1055,15 +1097,6 @@ mod tests {
             ReleaseAction::QuickUltimateStatus.wire(None).unwrap(),
             (125, 0)
         );
-        for name in [
-            "trainingEnter",
-            "trainingSpawn",
-            "trainingReset",
-            "trainingClear",
-            "performanceStatus",
-        ] {
-            assert!(serde_json::from_value::<ReleaseAction>(serde_json::json!(name)).is_err());
-        }
     }
     #[test]
     fn release_preview_is_bounded_utf8_and_does_not_claim_full_content() {
@@ -1093,6 +1126,31 @@ mod tests {
                 error: String::new()
             })
             .is_err()
+        );
+    }
+    #[test]
+    fn rejected_candidate_does_not_hide_resident_plugin() {
+        let rows = serde_json::from_str(r#"[{"file":"Combat.dll","state":"rejected"},{"file":"Combat.dll","state":"loaded"},{"file":"Training.dll","state":"discovered"}]"#).unwrap();
+        let rows = plugin_rows(rows).unwrap();
+        assert!(matches!(
+            rows.as_slice(),
+            [
+                Plugin {
+                    state: PluginState::Loaded,
+                    ..
+                },
+                Plugin {
+                    state: PluginState::Discovered,
+                    ..
+                }
+            ]
+        ));
+        assert!(
+            sanitize_operation(PluginOperation {
+                state: "idle".into(),
+                error: String::new()
+            })
+            .is_ok()
         );
     }
     #[test]

@@ -520,9 +520,8 @@ fn equipment_permit(
         }
     }
 }
-fn equipment_host()
--> Result<(nte_dps_tool::platform::toolkit::ToolkitClient, Vec<u32>), CommandError> {
-    super::toolkit::client().map_err(|mut e| {
+fn equipment_host() -> Result<nte_dps_tool::platform::toolkit::ToolkitClient, CommandError> {
+    super::toolkit::client().map(|(host, _)| host).map_err(|mut e| {
         e.message_key =
             "Equipment connection is unavailable. Check the User and Combat plugins, then refresh.";
         e
@@ -534,7 +533,7 @@ fn refresh_plugin(state: &AppState) -> Result<(), CommandError> {
         return Ok(());
     }
     let _permit = equipment_permit(state)?;
-    let (host, _) = equipment_host()?;
+    let host = equipment_host()?;
     let mut client =
         equipment_runtime::connect(&state.equipment_rpc(), &host, host.process_identity().0)?;
     let observed = equipment_runtime::watch(&host, &std::sync::atomic::AtomicBool::new(false))?;
@@ -630,7 +629,7 @@ fn submit(
         return Err(super::toolkit::unsupported());
     }
     let _permit = equipment_permit(state)?;
-    let (host, _) = equipment_host()?;
+    let host = equipment_host()?;
     let service = state.equipment_service();
     if service.inventory.identity()? != host.identity() {
         return Err(CommandError::from(

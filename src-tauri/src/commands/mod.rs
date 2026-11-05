@@ -15,4 +15,5 @@ pub(crate) mod skills;
 pub(crate) mod technical;
 pub(crate) mod timeline;
 pub(crate) mod toolkit;
+pub(crate) mod training;
 pub(crate) mod user_characters;

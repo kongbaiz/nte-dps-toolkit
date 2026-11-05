@@ -132,7 +132,8 @@ pub(crate) async fn get_user_characters(
         if state.data_mode() != DataMode::Plugin {
             return Err(toolkit::unsupported());
         }
-        let (client, capabilities) = toolkit::client()?;
+        let (client, description) = toolkit::client()?;
+        let capabilities = description.commands;
         let identity = client.identity();
         if request
             .expected_identity

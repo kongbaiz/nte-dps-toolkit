@@ -21,7 +21,8 @@ export const toolkitClient = {
     invokeCommand<HostLaunchResult>("launch_plugin_host", { forceOverwrite }),
   control: (
     action: "enable" | "disable",
-    file: string | null = null,
-    value: number | null = null,
-  ) => invokeCommand<void>("control_plugin", { action, file, value }),
+    file: string,
+    expectedIdentity: string,
+  ) =>
+    invokeCommand<void>("control_plugin", { action, file, expectedIdentity }),
 };

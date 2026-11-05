@@ -42,9 +42,9 @@ SUMMARIES = {
         "ja": "キャラクターと所持品のデータを読み取り、アカウントのスナップショットを確認・出力できます。",
     },
     "nte_plugintraining": {
-        "en": "Enables the in-game Tab wooden dummy wheel and provides training status and operation queries.",
-        "zh-CN": "提供游戏内 Tab 木桩轮盘开关、训练状态和操作状态查询。",
-        "ja": "ゲーム内の Tab 木人ホイールの切り替えと、トレーニング状態・操作状態の確認に対応します。",
+        "en": "Controls the wooden dummy wheel and UID visibility, and lets you spawn, inspect and edit training enemies.",
+        "zh-CN": "控制木桩轮盘和 UID 显示，召唤训练敌人并读取、编辑其属性。",
+        "ja": "木人ホイールと UID 表示を切り替え、訓練用の敵の召喚や属性の確認・編集ができます。",
     },
 
 }

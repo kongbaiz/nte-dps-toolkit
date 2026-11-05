@@ -862,6 +862,84 @@
       "damage_name_zh": "漆黑青春妄想·黑之书",
       "damage_name_en": "BlackBook: Arc Follow-up Damage",
       "damage_name_ja": "漆黑青春妄想・黒の書"
+    },
+    "GE_Player_Elyms_Branch1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "干扰故障",
+      "damage_name_en": "干扰故障",
+      "damage_name_ja": "干扰故障"
+    },
+    "GE_Player_Elyms_Branch2_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "干扰故障",
+      "damage_name_en": "干扰故障",
+      "damage_name_ja": "干扰故障"
+    },
+    "GE_Player_Elyms_Branch3_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "干扰故障",
+      "damage_name_en": "干扰故障",
+      "damage_name_ja": "干扰故障"
+    },
+    "GE_Player_Elyms_Aim_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "记忆锚点",
+      "damage_name_en": "记忆锚点",
+      "damage_name_ja": "记忆锚点"
+    },
+    "GE_Player_Elyms_AirAttack_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "坠落梦",
+      "damage_name_en": "坠落梦",
+      "damage_name_ja": "坠落梦"
+    },
+    "GE_Player_Elyms_Skill1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "离去的人们",
+      "damage_name_en": "离去的人们",
+      "damage_name_ja": "离去的人们"
+    },
+    "GE_Player_Elyms_Skill1_1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "离去的人们",
+      "damage_name_en": "离去的人们",
+      "damage_name_ja": "离去的人们"
+    },
+    "GE_Player_Elyms_Skill1_2_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "离去的人们",
+      "damage_name_en": "离去的人们",
+      "damage_name_ja": "离去的人们"
+    },
+    "GE_Player_Elyms_Skill2_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "不连续的存在",
+      "damage_name_en": "不连续的存在",
+      "damage_name_ja": "不连续的存在"
+    },
+    "GE_Player_Elyms_Skill2_1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "不连续的存在",
+      "damage_name_en": "不连续的存在",
+      "damage_name_ja": "不连续的存在"
+    },
+    "GE_Player_Elyms_Skill3_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "对你说再见",
+      "damage_name_en": "对你说再见",
+      "damage_name_ja": "对你说再见"
+    },
+    "GE_Player_Elyms_Skill3_1_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "对你说再见",
+      "damage_name_en": "对你说再见",
+      "damage_name_ja": "对你说再见"
+    },
+    "GE_Player_Elyms_QTE_Damage": {
+      "show_parent_ability": false,
+      "damage_name_zh": "我在",
+      "damage_name_en": "我在",
+      "damage_name_ja": "我在"
     }
   }
 }
