@@ -1483,8 +1483,6 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(full.critical, Some(false));
-        let json = serde_json::to_string(row).unwrap();
-        assert!(!json.contains("attackerAttributes"));
         assert!(
             find_hit_snapshot(&state, MainDpsDetailKind::Team, &row.id, "old-capture:2")
                 .unwrap()

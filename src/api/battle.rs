@@ -702,28 +702,25 @@ mod tests {
         state.push_hit(test_hit(15.0, 200.0));
 
         let record = battle_record(&state, context(0), true);
-        let json = serde_json::to_value(&record).unwrap();
-        assert_eq!(json["contract_version"], 6);
-        assert_eq!(json["summary"]["duration_seconds"], 2.0);
+        assert_eq!(record.summary.unwrap().duration_seconds, 2.0);
+        let intervals: Vec<_> = record
+            .time_stop_intervals
+            .iter()
+            .map(|i| {
+                (
+                    i.start_offset_seconds,
+                    i.end_offset_seconds,
+                    i.pause_type_mask,
+                )
+            })
+            .collect();
         assert_eq!(
-            json["time_stop_intervals"],
-            serde_json::json!([
-                {
-                    "start_offset_seconds": 1.0,
-                    "end_offset_seconds": 2.0,
-                    "pause_type_mask": 64
-                },
-                {
-                    "start_offset_seconds": 2.0,
-                    "end_offset_seconds": 3.0,
-                    "pause_type_mask": 68
-                },
-                {
-                    "start_offset_seconds": 3.0,
-                    "end_offset_seconds": 5.0,
-                    "pause_type_mask": 4
-                }
-            ])
+            intervals,
+            [
+                (1.0, 2.0, Some(64)),
+                (2.0, 3.0, Some(68)),
+                (3.0, 5.0, Some(4))
+            ]
         );
 
         let timeline = battle_timeline(

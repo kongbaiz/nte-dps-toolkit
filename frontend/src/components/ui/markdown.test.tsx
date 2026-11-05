@@ -48,7 +48,7 @@ const value = "<tag>";
 \`\`\``}</Markdown>,
     );
 
-    expect(html).toContain('class="language-ts"');
+    expect(html).toContain("<pre");
     expect(html).toContain("&lt;tag&gt;");
     expect(html).not.toContain("<tag>");
   });

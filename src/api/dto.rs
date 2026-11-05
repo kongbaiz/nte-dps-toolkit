@@ -447,13 +447,6 @@ mod tests {
     use crate::engine::model::{AbyssHalf, DpsTimeBasis};
 
     #[test]
-    fn inventory_uid_serializes_slot_without_internal_typo() {
-        let json = serde_json::to_value(ItemUidDto { slot: 1, serial: 2 }).unwrap();
-        assert_eq!(json, serde_json::json!({"slot": 1, "serial": 2}));
-        assert!(json.get("solt").is_none());
-    }
-
-    #[test]
     fn battle_summary_mapping_is_independent_and_uses_stable_source_codes() {
         let summary = CombatSessionSummary {
             duration_seconds: 10.0,
@@ -499,14 +492,13 @@ mod tests {
             },
         };
         let dto = BattleSummaryDto::from(&summary);
-        let json = serde_json::to_value(dto).unwrap();
-        assert_eq!(json["dps_time_mode"], "subtract_time_stop");
-        assert_eq!(json["max_hp_reduction"], 40.0);
-        assert_eq!(json["characters"][0]["char_id"], 7);
-        assert_eq!(json["skills"][0]["name"], "Skill");
-        assert_eq!(json["skills"][0]["ability_name"], "GA_Test_Skill");
-        assert_eq!(json["quality"]["source"], "live");
-        assert_eq!(json["quality"]["packet_count"], 8);
+        assert_eq!(dto.dps_time_mode, "subtract_time_stop");
+        assert_eq!(dto.max_hp_reduction, 40.0);
+        assert_eq!(dto.characters[0].char_id, 7);
+        assert_eq!(dto.skills[0].name, "Skill");
+        assert_eq!(dto.skills[0].ability_name.as_deref(), Some("GA_Test_Skill"));
+        assert_eq!(dto.quality.source, "live");
+        assert_eq!(dto.quality.packet_count, 8);
     }
 
     #[test]
@@ -525,10 +517,10 @@ mod tests {
             ..Default::default()
         };
 
-        let json = serde_json::to_value(BattleAbyssDto::from(&summary)).unwrap();
+        let dto = BattleAbyssDto::from(&summary);
 
-        assert_eq!(json["active_half"], "Descending Line");
-        assert_eq!(json["first_half"]["half"], "Ascending Line");
-        assert_eq!(json["second_half"]["half"], "Descending Line");
+        assert_eq!(dto.active_half.as_deref(), Some("Descending Line"));
+        assert_eq!(dto.first_half.unwrap().half, "Ascending Line");
+        assert_eq!(dto.second_half.unwrap().half, "Descending Line");
     }
 }

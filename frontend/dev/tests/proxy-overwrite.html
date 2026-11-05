@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <title>Proxy overwrite confirmation</title>
+  <div id="root"></div>
+  <output id="result">Running</output>
+  <script type="module">
+    import { act, createElement } from "react";
+    import { createRoot } from "react-dom/client";
+    import { mockIPC } from "@tauri-apps/api/mocks";
+    import { HostControls } from "../../src/features/mod-studio/host-controls";
+    import { setFrontendLanguage } from "../../src/lib/i18n";
+
+    setFrontendLanguage("en");
+    const attempts = [];
+    const conflict = {
+      code: "mod_proxy_deployment_conflict",
+      messageKey: "Conflict",
+      messageArguments: [],
+    };
+    mockIPC((command, args) => {
+      if (command !== "launch_plugin_host") throw new Error(command);
+      attempts.push(args.forceOverwrite);
+      if (!args.forceOverwrite) throw conflict;
+      return { outcome: "proxyDeployed" };
+    });
+    const panel = {
+      mode: "plugin",
+      loadingMethod: "proxy",
+      gameDirectory: "Game/Win64",
+      connection: "unavailable",
+      componentsReady: true,
+      capabilities: [],
+      plugins: [],
+    };
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.getElementById("root"));
+    const click = (label) =>
+      act(async () => {
+        const button = [...document.querySelectorAll("button")].find(
+          (b) => b.textContent === label,
+        );
+        if (!button || button.disabled)
+          throw new Error("Unavailable button: " + label);
+        button.click();
+      });
+    const dialog = () =>
+      document.querySelector('[role="alertdialog"][data-open]');
+    const result = document.getElementById("result");
+    try {
+      await act(() =>
+        root.render(
+          createElement(HostControls, {
+            panel,
+            pending: false,
+            run: async (action) => {
+              try {
+                await action();
+              } catch (e) {
+                if (e.code !== conflict.code) throw e;
+              }
+            },
+          }),
+        ),
+      );
+      await click("Load host");
+      if (!dialog()?.textContent.includes(panel.gameDirectory))
+        throw new Error("Missing target directory");
+      await click("Cancel");
+      if (dialog() || attempts.join() !== "false")
+        throw new Error("Cancel retried deployment or left the dialog open");
+      await click("Load host");
+      await click("Force overwrite");
+      if (
+        dialog() ||
+        attempts.join() !== "false,false,true" ||
+        !document.body.textContent.includes("Proxy deployment is ready.")
+      )
+        throw new Error("Confirmed deployment did not finish");
+      result.textContent = "PASS";
+    } catch (error) {
+      result.textContent = "FAIL: " + error.message;
+    } finally {
+      await act(() => root.unmount());
+    }
+  </script>
+</html>

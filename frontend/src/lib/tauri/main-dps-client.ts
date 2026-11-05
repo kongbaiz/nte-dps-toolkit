@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { invokeCommand, type CommandError } from "@/lib/tauri/command-error";
+import type { HudPreset } from "@/lib/tauri/generated/HudPreset";
 import type { MainDpsActionResult } from "@/lib/tauri/generated/MainDpsActionResult";
 import type { MainDpsEvent } from "@/lib/tauri/generated/MainDpsEvent";
 import type { MainDpsResetResult } from "@/lib/tauri/generated/MainDpsResetResult";
@@ -25,7 +26,7 @@ export const mainDpsClient = {
   newRound: () => snapshot("start_main_dps_new_round"),
   setOnboardingStep: (step: number) =>
     snapshot("set_main_dps_onboarding_step", { step }),
-  finishOnboarding: (hudPreset: "minimal" | "standard" | "detailed") =>
+  finishOnboarding: (hudPreset: HudPreset) =>
     snapshot("finish_main_dps_onboarding", { hudPreset }),
   setPaused: (paused: boolean) => snapshot("set_main_dps_paused", { paused }),
   selectRound: (recordId: string | null) =>

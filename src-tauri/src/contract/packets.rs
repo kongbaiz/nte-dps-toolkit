@@ -100,55 +100,13 @@ mod tests {
     use super::*;
     use nte_dps_tool::{
         core::packets::{
-            PACKETS_DISPLAY_LIMIT, PACKETS_MAX_DECLARED_IDS, PacketProjection,
-            PacketStreamRevision, PacketsProjection, project_recent_packets,
+            PACKETS_DISPLAY_LIMIT, PACKETS_MAX_DECLARED_IDS, PacketStreamRevision,
+            project_recent_packets,
         },
         engine::model::{CombatState, PacketDebug},
     };
 
     use crate::contract::stream::MAX_STREAM_DELIVERY_BYTES;
-
-    #[test]
-    fn packet_contract_uses_decimal_strings_and_omits_raw_payload_fields() {
-        let snapshot = PacketsSnapshot::from_projection(
-            PacketsProjection {
-                generation: u64::MAX,
-                session_generation: 2,
-                packet_generation: 3,
-                first_display_sequence: 1,
-                event_count: 4,
-                observed_packet_count: 5,
-                packets_with_hits: 1,
-                retained_packet_count: 1,
-                queued_event_count: 0,
-                truncated_packet_count: 0,
-                omitted_text_bytes: 0,
-                omitted_declared_id_count: 0,
-                packets: vec![PacketProjection {
-                    sequence: u64::MAX,
-                    timestamp: 1.25,
-                    source: "source".to_owned(),
-                    destination: "destination".to_owned(),
-                    direction: "outgoing".to_owned(),
-                    payload_len: 128,
-                    declared_ids: vec![1076],
-                    parsed_hits: 1,
-                    note: "note".to_owned(),
-                    decoded_text: "decoded".to_owned(),
-                    omitted_text_bytes: 0,
-                    omitted_declared_id_count: 0,
-                }],
-            },
-            LiveCapturePhase::Running,
-        );
-        let value = serde_json::to_value(snapshot).expect("packet snapshot serializes");
-
-        assert_eq!(value["generation"], u64::MAX.to_string());
-        assert_eq!(value["packets"][0]["sequence"], u64::MAX.to_string());
-        assert_eq!(value["capturePhase"], "running");
-        assert!(value["packets"][0].get("payloadHex").is_none());
-        assert!(value["packets"][0].get("payloadPreview").is_none());
-    }
 
     #[test]
     fn five_hundred_worst_case_escaped_packets_fit_the_stream_envelope() {

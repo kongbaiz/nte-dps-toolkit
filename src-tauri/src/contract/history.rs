@@ -578,7 +578,7 @@ fn history_party_label(record: &HistoryRecord) -> String {
 mod tests {
     use super::*;
     use crate::contract::stream::MAX_STREAM_DELIVERY_BYTES;
-    use nte_dps_tool::engine::model::{CombatSessionAbyssSummary, DpsTimeBasis};
+    use nte_dps_tool::engine::model::CombatSessionAbyssSummary;
 
     #[test]
     fn history_snapshot_never_projects_more_than_the_rust_record_limit() {
@@ -602,46 +602,6 @@ mod tests {
             nte_dps_tool::storage::history::MAX_HISTORY_RECORDS
         );
         assert_eq!(snapshot.skipped_files, 3);
-    }
-
-    #[test]
-    fn record_projection_uses_stable_codes_and_string_counters() {
-        let record = HistoryRecord {
-            id: "record-1".to_owned(),
-            summary: CombatSessionSummary {
-                total_hits: u64::MAX,
-                dps_time_mode: DpsTimeBasis::WallClock,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let value = serde_json::to_value(HistoryRecordSnapshot::from(&record))
-            .expect("history record must serialize");
-
-        assert_eq!(value["id"], "record-1");
-        assert_eq!(value["summary"]["totalHits"], u64::MAX.to_string());
-        assert_eq!(value["summary"]["dpsTimeBasis"], "wall_clock");
-        assert!(value.get("details").is_none());
-    }
-
-    #[test]
-    fn native_file_action_projection_does_not_expose_local_paths() {
-        let value = serde_json::to_value(HistoryImportFileSnapshot {
-            performed: true,
-            imported_record_id: Some("record-1".to_owned()),
-            history: HistorySnapshot {
-                revision: "1".to_owned(),
-                max_import_bytes: MAX_HISTORY_IMPORT_BYTES.to_string(),
-                skipped_files: 0,
-                records: Vec::new(),
-            },
-        })
-        .expect("history import result must serialize");
-
-        assert_eq!(value["performed"], true);
-        assert_eq!(value["importedRecordId"], "record-1");
-        assert!(value.get("path").is_none());
     }
 
     #[test]

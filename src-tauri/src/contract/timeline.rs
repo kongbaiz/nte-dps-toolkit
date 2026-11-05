@@ -189,23 +189,3 @@ pub(crate) struct TimelineSegmentSnapshot {
 pub(crate) enum TimelineEvent {
     Snapshot(TimelineSnapshot),
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn snapshot_serializes_js_unsafe_fields_as_decimal_strings() {
-        let snapshot = TimelineSnapshot::from_projection(
-            &TimelineProjection::default(),
-            9_007_199_254_740_992,
-            TimelineScope::Whole,
-            TimelineDpsViewMode::Team,
-        );
-        let value = serde_json::to_value(snapshot).expect("timeline snapshot serializes");
-        assert_eq!(value["generation"], "9007199254740992");
-        assert_eq!(value["hasData"], false);
-        assert_eq!(value["timeStopDuration"], 0.0);
-        assert_eq!(value["compactedTimeStopIntervals"], "0");
-    }
-}

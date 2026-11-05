@@ -17,7 +17,8 @@ export const toolkitClient = {
   clearGameDirectory: () => panel("clear_host_game_directory"),
   uninstallProxy: (confirmed: boolean) =>
     panel("uninstall_proxy_host", { confirmed }),
-  launchHost: () => invokeCommand<HostLaunchResult>("launch_plugin_host"),
+  launchHost: (forceOverwrite = false) =>
+    invokeCommand<HostLaunchResult>("launch_plugin_host", { forceOverwrite }),
   control: (
     action: "enable" | "disable",
     file: string | null = null,

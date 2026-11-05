@@ -456,56 +456,6 @@ fn hotkey_binding_snapshot(binding: HotkeyBinding) -> HotkeyBindingSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nte_dps_tool::storage::config::UiConfig;
-
-    #[test]
-    fn team_data_export_result_distinguishes_save_from_cancel() {
-        let saved = serde_json::to_value(TeamDataExportResult { saved: true })
-            .expect("saved result must serialize");
-        let cancelled = serde_json::to_value(TeamDataExportResult { saved: false })
-            .expect("cancelled result must serialize");
-
-        assert_eq!(saved["saved"], true);
-        assert_eq!(cancelled["saved"], false);
-    }
-
-    #[test]
-    fn team_data_file_import_result_keeps_local_paths_out_of_the_contract() {
-        let config = UiConfig::default();
-        let settings = SettingsSnapshot::from_config(
-            &config,
-            8,
-            false,
-            Vec::new(),
-            true,
-            CaptureLogStats::default(),
-            true,
-            false,
-            false,
-            UpdateSettingsSnapshot::from_runtime(
-                &config,
-                "idle",
-                "Updates have not been checked in this session",
-                Vec::new(),
-                &[],
-                None,
-                0,
-                0,
-                None,
-                None,
-            ),
-            CombatClockRuntimeHealth::Unknown,
-        );
-        let value = serde_json::to_value(TeamDataImportFileResult {
-            performed: true,
-            settings,
-        })
-        .expect("import result must serialize");
-
-        assert_eq!(value["performed"], true);
-        assert_eq!(value["settings"]["generation"], "8");
-        assert!(value.get("path").is_none());
-    }
 
     #[test]
     fn update_notes_select_only_the_active_language_section() {

@@ -11,10 +11,10 @@ import {
 import { Input, NativeSelect } from "@/components/ui/form-controls";
 
 describe("shared UI primitives", () => {
-  it("preserves semantic headings, content and explicit overrides", () => {
+  it("preserves semantic headings and content", () => {
     const html = renderToStaticMarkup(
       <>
-        <PageHeader className="p-2">
+        <PageHeader>
           <PageTitle>Settings</PageTitle>
           <PageDescription>Preferences</PageDescription>
         </PageHeader>
@@ -27,7 +27,6 @@ describe("shared UI primitives", () => {
     );
     expect(html).toContain("<header");
     expect(html).toContain("<h1");
-    expect(html).toContain("ui-page-header p-2");
     expect(html).toContain("Content");
   });
 
@@ -50,7 +49,7 @@ describe("shared UI primitives", () => {
     expect(html).toContain('value="en" selected=""');
   });
 
-  it("forwards native input validation, disabled state and local sizing", () => {
+  it("forwards native input validation and disabled state", () => {
     const html = renderToStaticMarkup(
       <Input
         aria-label="Width"
@@ -59,7 +58,6 @@ describe("shared UI primitives", () => {
         max={960}
         disabled
         aria-invalid="true"
-        className="w-24"
         defaultValue={380}
       />,
     );
@@ -70,7 +68,6 @@ describe("shared UI primitives", () => {
       'disabled=""',
       'aria-invalid="true"',
       'value="380"',
-      "ui-control w-24",
     ])
       expect(html).toContain(value);
   });

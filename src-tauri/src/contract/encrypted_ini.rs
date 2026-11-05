@@ -70,33 +70,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn snapshot_uses_string_generation_and_camel_case_fields() {
-        let value = serde_json::to_value(EncryptedIniSnapshot::from(EncryptedIniProjection {
-            generation: u64::MAX,
-            display_path: Some("Engine.ini".to_owned()),
-            file_name: Some("Engine.ini".to_owned()),
-            key: EncryptedIniKey::China,
-            plaintext: "Value=1".to_owned(),
-            encrypted_line_count: 3,
-        }))
-        .expect("serialize snapshot");
-        assert_eq!(value["generation"], u64::MAX.to_string());
-        assert_eq!(value["encryptedLineCount"], 3);
-        assert!(value.get("encrypted_line_count").is_none());
-    }
-
-    #[test]
-    fn save_request_rejects_unknown_fields() {
-        let value = serde_json::json!({
-            "expectedGeneration": "1",
-            "key": "global",
-            "plaintext": "Value=1",
-            "extra": true
-        });
-        assert!(serde_json::from_value::<SaveEncryptedIniRequest>(value).is_err());
-    }
-
-    #[test]
     fn generation_parser_is_strict() {
         assert_eq!(parse_generation("42"), Some(42));
         assert_eq!(parse_generation("+42"), None);

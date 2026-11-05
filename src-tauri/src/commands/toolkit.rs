@@ -702,12 +702,12 @@ pub(crate) struct HostLaunchResult {
 pub(crate) async fn launch_plugin_host(
     state: State<'_, AppState>,
     window: WebviewWindow,
+    force_overwrite: bool,
 ) -> Result<HostLaunchResult, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()?;
+        let _permit = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(CommandError::mod_studio_risk_acknowledgement_required());
         }
@@ -721,18 +721,19 @@ pub(crate) async fn launch_plugin_host(
         }
         let root = nte_dps_tool::storage::paths::toolkit_dir();
         let method = state.mod_studio_loading_method();
+        if force_overwrite && method != ModStudioLoadingMethod::Proxy {
+            return Err(CommandError::from(ToolkitError::Busy));
+        }
         let runtime = runtime_directory(&root, method)?;
         if method == ModStudioLoadingMethod::Proxy {
-            if network::game_process_id().map_err(|_| CommandError::from(ToolkitError::Failed))?.is_some() {
-                return Err(CommandError { code: "plugin_close_game_required", message_key: "Close the game before deploying the proxy host, then restart it to load the host.", message_arguments: vec![], diagnostic_line: None });
-            }
-            let manual = state.proxy_game_directory();
-            let destination = nte_dps_tool::platform::mods_plugin::toolkit_game_directory(manual.as_deref().map(std::path::Path::new))
-                .map_err(|_| if manual.is_some() { directory_error() } else { CommandError { code: "plugin_game_directory_unavailable", message_key: "A unique game installation could not be confirmed. No files were changed.", message_arguments: vec![], diagnostic_line: None } })?;
-            nte_dps_tool::core::mod_market::deploy_proxy(&runtime, &destination).map_err(CommandError::from_mod_market)?;
-            return Ok(HostLaunchResult { panel: snapshot(&state), outcome: "proxyDeployed" });
+            deploy_proxy_host(&state, &runtime, force_overwrite)?;
+            return Ok(HostLaunchResult {
+                panel: snapshot(&state),
+                outcome: "proxyDeployed",
+            });
         }
-        let root = std::fs::canonicalize(root).map_err(|_| CommandError::from(ToolkitError::Unavailable))?;
+        let root = std::fs::canonicalize(root)
+            .map_err(|_| CommandError::from(ToolkitError::Unavailable))?;
         let runtime = root.join("game");
         // Execute only the managed package's compiled Loader. It owns UAC, driver
         // cleanup and bounded handshake. Never kill it while cleanup may be pending.
@@ -764,10 +765,45 @@ pub(crate) async fn launch_plugin_host(
         }
         // Exit 0 is not treated as a live connection: independently verify IPC.
         client()?;
-        Ok(HostLaunchResult { panel: snapshot(&state), outcome: "connected" })
+        Ok(HostLaunchResult {
+            panel: snapshot(&state),
+            outcome: "connected",
+        })
     })
     .await
     .map_err(|_| CommandError::from(ToolkitError::Failed))?
+}
+
+fn deploy_proxy_host(
+    state: &AppState,
+    runtime: &std::path::Path,
+    force_overwrite: bool,
+) -> Result<(), CommandError> {
+    if network::game_process_id()
+        .map_err(|_| CommandError::from(ToolkitError::Failed))?
+        .is_some()
+    {
+        return Err(CommandError::new(
+            "plugin_close_game_required",
+            "Close the game before deploying the proxy host, then restart it to load the host.",
+        ));
+    }
+    let manual = state.proxy_game_directory();
+    let destination = nte_dps_tool::platform::mods_plugin::toolkit_game_directory(
+        manual.as_deref().map(std::path::Path::new),
+    )
+    .map_err(|_| {
+        if manual.is_some() {
+            directory_error()
+        } else {
+            CommandError::new(
+                "plugin_game_directory_unavailable",
+                "A unique game installation could not be confirmed. No files were changed.",
+            )
+        }
+    })?;
+    nte_dps_tool::core::mod_market::deploy_proxy(runtime, &destination, force_overwrite)
+        .map_err(CommandError::from_mod_market)
 }
 
 const MAX_LOADER_RECEIPT_BYTES: usize = 64 * 1024;

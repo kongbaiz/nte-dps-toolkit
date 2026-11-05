@@ -22,6 +22,17 @@ pub(crate) fn atomic_write_file<F>(path: &Path, write: F) -> Result<(), String>
 where
     F: FnOnce(&mut BufWriter<File>) -> Result<(), String>,
 {
+    atomic_publish_file(path, true, write)
+}
+
+pub(crate) fn atomic_publish_file<F>(
+    path: &Path,
+    replace_existing: bool,
+    write: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut BufWriter<File>) -> Result<(), String>,
+{
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -37,7 +48,7 @@ where
             .sync_all()
             .map_err(|error| error.to_string())?;
         drop(writer);
-        replace_file(&temp_path, path)
+        publish_file(&temp_path, path, replace_existing)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp_path);
@@ -58,7 +69,7 @@ fn temporary_write_path(path: &Path) -> PathBuf {
 }
 
 #[cfg(windows)]
-fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
+fn publish_file(temp_path: &Path, path: &Path, replace_existing: bool) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
 
     let temp_wide = temp_path
@@ -71,14 +82,13 @@ fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    // SAFETY: Both wide strings are NUL-terminated and stay alive for the call.
-    let result = unsafe {
-        MoveFileExW(
-            temp_wide.as_ptr(),
-            path_wide.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
+    let flags = if replace_existing {
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+    } else {
+        MOVEFILE_WRITE_THROUGH
     };
+    // SAFETY: Both wide strings are NUL-terminated and stay alive for the call.
+    let result = unsafe { MoveFileExW(temp_wide.as_ptr(), path_wide.as_ptr(), flags) };
     if result == 0 {
         Err(format!(
             "替换 {} 失败: {}",
@@ -91,7 +101,13 @@ fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
+fn publish_file(temp_path: &Path, path: &Path, replace_existing: bool) -> Result<(), String> {
+    if !replace_existing {
+        std::fs::hard_link(temp_path, path).map_err(|error| error.to_string())?;
+        // The complete destination is already published.
+        let _ = std::fs::remove_file(temp_path);
+        return Ok(());
+    }
     std::fs::rename(temp_path, path)
         .map_err(|error| format!("替换 {} 失败: {error}", path.display()))
 }

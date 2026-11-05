@@ -1458,198 +1458,98 @@ fn inventory_equipment_item(
 }
 
 #[test]
-fn inventory_reassembly_replaces_stale_fragments_after_sequence_wrap() {
-    let mut state = InventoryConnectionState::default();
-    assert!(
-        state
-            .push_bunches(
-                100,
-                vec![
-                    inventory_bunch(1023, 0x09, 0xa1),
-                    inventory_bunch(1, 0x0c, 0xa3),
-                ]
-            )
-            .is_empty()
-    );
-
-    let completed = state.push_bunches(
-        200,
-        vec![
-            inventory_bunch(1023, 0x09, 0xb1),
-            inventory_bunch(0, 0x08, 0xb2),
-            inventory_bunch(1, 0x0c, 0xb3),
-        ],
-    );
-
-    assert_eq!(completed.len(), 1);
-    assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3]);
-    assert_eq!(completed[0].bit_len, 24);
-}
-
-#[test]
-fn inventory_reassembly_does_not_join_a_new_start_to_stale_future_fragments() {
-    let mut state = InventoryConnectionState::default();
-    assert!(
-        state
-            .push_bunches(
-                100,
-                vec![
-                    inventory_bunch(12, 0x08, 0xa3),
-                    inventory_bunch(13, 0x0c, 0xa4),
-                ]
-            )
-            .is_empty()
-    );
-    assert!(
-        state
-            .push_bunches(
-                200,
-                vec![
-                    inventory_bunch(10, 0x09, 0xb1),
-                    inventory_bunch(11, 0x08, 0xb2),
-                ]
-            )
-            .is_empty()
-    );
-
-    let completed = state.push_bunches(
-        201,
-        vec![
-            inventory_bunch(12, 0x08, 0xb3),
-            inventory_bunch(13, 0x0c, 0xb4),
-        ],
-    );
-
-    assert_eq!(completed.len(), 1);
-    assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3, 0xb4]);
-    assert_eq!(completed[0].bit_len, 32);
-}
-
-#[test]
-fn inventory_reassembly_retries_after_a_fragment_is_retransmitted_in_a_newer_packet() {
-    let mut state = InventoryConnectionState::default();
-    assert!(
-        state
-            .push_bunches(100, vec![inventory_bunch(12, 0x0c, 0xa3)])
-            .is_empty()
-    );
-    assert!(
-        state
-            .push_bunches(
-                200,
-                vec![
-                    inventory_bunch(10, 0x09, 0xa1),
-                    inventory_bunch(11, 0x08, 0xa2),
-                ],
-            )
-            .is_empty()
-    );
-
-    let completed = state.push_bunches(201, vec![inventory_bunch(12, 0x0c, 0xa3)]);
-
-    assert_eq!(completed.len(), 1);
-    assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3]);
-    assert_eq!(completed[0].bit_len, 24);
-}
-
-#[test]
-fn inventory_reassembly_keeps_logically_newer_fragments_that_arrive_before_their_start() {
-    let mut state = InventoryConnectionState::default();
-    assert!(
-        state
-            .push_bunches(1_867, vec![inventory_bunch(810, 0x08, 0xa2)])
-            .is_empty()
-    );
-    assert!(
-        state
-            .push_bunches(1_868, vec![inventory_bunch(811, 0x08, 0xa3)])
-            .is_empty()
-    );
-    assert!(
-        state
-            .push_bunches(1_866, vec![inventory_bunch(809, 0x09, 0xa1)])
-            .is_empty()
-    );
-
-    let completed = state.push_bunches(1_869, vec![inventory_bunch(812, 0x0c, 0xa4)]);
-
-    assert_eq!(completed.len(), 1);
-    assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
-    assert_eq!(completed[0].bit_len, 32);
-}
-
-#[test]
-fn inventory_reassembly_accepts_a_late_retransmitted_start_fragment() {
-    let mut state = InventoryConnectionState::default();
-    assert!(
-        state
-            .push_bunches(4_684, vec![inventory_bunch(992, 0x08, 0xa2)])
-            .is_empty()
-    );
-    assert!(
-        state
-            .push_bunches(4_685, vec![inventory_bunch(993, 0x08, 0xa3)])
-            .is_empty()
-    );
-    assert!(
-        state
-            .push_bunches(4_686, vec![inventory_bunch(994, 0x0c, 0xa4)])
-            .is_empty()
-    );
-
-    let completed = state.push_bunches(4_763, vec![inventory_bunch(991, 0x09, 0xa1)]);
-
-    assert_eq!(completed.len(), 1);
-    assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
-    assert_eq!(completed[0].bit_len, 32);
-}
-
-#[test]
-fn inventory_reassembly_accepts_transport_packet_id_wrap() {
-    let mut state = InventoryConnectionState::default();
-    assert!(
-        state
-            .push_bunches((1 << 14) - 1, vec![inventory_bunch(100, 0x09, 0xa1)],)
-            .is_empty()
-    );
-
-    let completed = state.push_bunches(0, vec![inventory_bunch(101, 0x0c, 0xa2)]);
-
-    assert_eq!(completed.len(), 1);
-    assert_eq!(completed[0].data, vec![0xa1, 0xa2]);
-    assert_eq!(completed[0].bit_len, 16);
-}
-
-#[test]
-fn inventory_reassembly_finishes_a_stream_before_the_next_start_in_the_same_packet() {
-    let mut state = InventoryConnectionState::default();
-    assert!(
-        state
-            .push_bunches(
-                1_912,
-                vec![
-                    inventory_bunch(821, 0x09, 0xa1),
-                    inventory_bunch(822, 0x08, 0xa2),
-                    inventory_bunch(823, 0x08, 0xa3),
-                ],
-            )
-            .is_empty()
-    );
-
-    let completed = state.push_bunches(
-        1_915,
-        vec![
-            inventory_bunch(824, 0x0c, 0xa4),
-            inventory_bunch(825, 0x09, 0xb1),
-        ],
-    );
-
-    assert_eq!(completed.len(), 1);
-    assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
-    assert_eq!(completed[0].bit_len, 32);
-    let next = state.push_bunches(1_916, vec![inventory_bunch(826, 0x0c, 0xb2)]);
-    assert_eq!(next.len(), 1);
-    assert_eq!(next[0].data, vec![0xb1, 0xb2]);
+fn inventory_reassembly_orders_fragments_across_packets() {
+    const START: u8 = 0x09;
+    const MID: u8 = 0x08;
+    const END: u8 = 0x0c;
+    type Step = (u16, &'static [(u16, u8, u8)]);
+    type Case<'a> = (&'a str, &'a [Step], &'a [&'a [u8]]);
+    let cases: &[Case<'_>] = &[
+        (
+            "stale fragments are replaced after sequence wrap",
+            &[
+                (100, &[(1023, START, 0xa1), (1, END, 0xa3)]),
+                (200, &[(1023, START, 0xb1), (0, MID, 0xb2), (1, END, 0xb3)]),
+            ],
+            &[&[0xb1, 0xb2, 0xb3]],
+        ),
+        (
+            "a new start does not join stale future fragments",
+            &[
+                (100, &[(12, MID, 0xa3), (13, END, 0xa4)]),
+                (200, &[(10, START, 0xb1), (11, MID, 0xb2)]),
+                (201, &[(12, MID, 0xb3), (13, END, 0xb4)]),
+            ],
+            &[&[0xb1, 0xb2, 0xb3, 0xb4]],
+        ),
+        (
+            "fragment retransmitted in a newer packet",
+            &[
+                (100, &[(12, END, 0xa3)]),
+                (200, &[(10, START, 0xa1), (11, MID, 0xa2)]),
+                (201, &[(12, END, 0xa3)]),
+            ],
+            &[&[0xa1, 0xa2, 0xa3]],
+        ),
+        (
+            "newer fragments arrive before their start",
+            &[
+                (1_867, &[(810, MID, 0xa2)]),
+                (1_868, &[(811, MID, 0xa3)]),
+                (1_866, &[(809, START, 0xa1)]),
+                (1_869, &[(812, END, 0xa4)]),
+            ],
+            &[&[0xa1, 0xa2, 0xa3, 0xa4]],
+        ),
+        (
+            "late retransmitted start fragment",
+            &[
+                (4_684, &[(992, MID, 0xa2)]),
+                (4_685, &[(993, MID, 0xa3)]),
+                (4_686, &[(994, END, 0xa4)]),
+                (4_763, &[(991, START, 0xa1)]),
+            ],
+            &[&[0xa1, 0xa2, 0xa3, 0xa4]],
+        ),
+        (
+            "transport packet id wrap",
+            &[
+                ((1 << 14) - 1, &[(100, START, 0xa1)]),
+                (0, &[(101, END, 0xa2)]),
+            ],
+            &[&[0xa1, 0xa2]],
+        ),
+        (
+            "stream finishes before the next start in the same packet",
+            &[
+                (
+                    1_912,
+                    &[(821, START, 0xa1), (822, MID, 0xa2), (823, MID, 0xa3)],
+                ),
+                (1_915, &[(824, END, 0xa4), (825, START, 0xb1)]),
+                (1_916, &[(826, END, 0xb2)]),
+            ],
+            &[&[0xa1, 0xa2, 0xa3, 0xa4], &[0xb1, 0xb2]],
+        ),
+    ];
+    for (name, steps, expected) in cases {
+        let mut state = InventoryConnectionState::default();
+        let completed = steps
+            .iter()
+            .flat_map(|(packet_id, bunches)| {
+                let bunches = bunches
+                    .iter()
+                    .map(|&(sequence, flags, data)| inventory_bunch(sequence, flags, data))
+                    .collect();
+                state.push_bunches(*packet_id, bunches)
+            })
+            .map(|payload| {
+                assert_eq!(payload.bit_len, payload.data.len() * 8, "{name}");
+                payload.data
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(completed, *expected, "{name}");
+    }
 }
 
 #[test]
@@ -3857,30 +3757,40 @@ fn summary_marker_presence(text: &str) -> [bool; 8] {
 }
 
 #[test]
-fn summary_payload_markers_match_full_debug_for_every_bit_shift() {
-    let text = b"FAbyssGamePlayData ConditionState_Success EAbyssFightStage::SecondHalf AbyssCloneCharacterItemData Event.Montage.Player.UltraSkillB";
-
-    for bit_shift in 0..8 {
-        let mut payload = vec![0_u8; text.len() + 4];
-        write_shifted_bytes(&mut payload, bit_shift, 1, text);
-
-        let full = decode_payload_text_filtered(&payload, |value| {
-            value.contains("Abyss")
-                || value.contains("ConditionState_Success")
-                || value.contains("UltraSkill")
-        });
-        let summary = decode_summary_payload_text(&payload);
-
-        assert_eq!(
-            summary_marker_presence(&summary.text),
-            summary_marker_presence(&full.text),
-            "marker parity failed at bit shift {bit_shift}"
-        );
-        assert_eq!(
-            format!("{:?}", abyss_events_from_text(30.0, &summary.text)),
-            format!("{:?}", abyss_events_from_text(30.0, &full.text)),
-            "Abyss event parity failed at bit shift {bit_shift}"
-        );
+fn summary_payload_matches_full_debug_for_every_bit_shift() {
+    let identifier = b"Abyss_12_6_1";
+    let mut length_prefixed = ((identifier.len() + 1) as u32).to_le_bytes().to_vec();
+    length_prefixed.extend_from_slice(identifier);
+    length_prefixed.push(0);
+    let cases: [(&str, &[u8]); 3] = [
+        (
+            "markers",
+            b"FAbyssGamePlayData ConditionState_Success EAbyssFightStage::SecondHalf AbyssCloneCharacterItemData Event.Montage.Player.UltraSkillB",
+        ),
+        ("explicit stage", b"  Abyss_12_6_1  "),
+        ("length-prefixed stage", &length_prefixed),
+    ];
+    for (name, text) in cases {
+        for bit_shift in 0..8 {
+            let mut payload = vec![0_u8; text.len() + 4];
+            write_shifted_bytes(&mut payload, bit_shift, 1, text);
+            let full = decode_payload_text_filtered(&payload, |value| {
+                value.contains("Abyss")
+                    || value.contains("ConditionState_Success")
+                    || value.contains("UltraSkill")
+            });
+            let summary = decode_summary_payload_text(&payload);
+            assert_eq!(
+                summary_marker_presence(&summary.text),
+                summary_marker_presence(&full.text),
+                "{name}: marker parity failed at bit shift {bit_shift}"
+            );
+            assert_eq!(
+                format!("{:?}", abyss_events_from_text(30.0, &summary.text)),
+                format!("{:?}", abyss_events_from_text(30.0, &full.text)),
+                "{name}: Abyss event parity failed at bit shift {bit_shift}"
+            );
+        }
     }
 }
 
@@ -3911,43 +3821,6 @@ fn summary_payload_scanner_handles_stream_boundaries_and_no_match() {
         let summary = decode_summary_payload_text(&payload);
         assert_eq!(summary.text, UNREADABLE_PROTOCOL_TEXT);
         assert!(!summary.has_readable_text);
-    }
-}
-
-#[test]
-fn summary_payload_explicit_stage_matches_full_debug() {
-    let text = b"  Abyss_12_6_1  ";
-    for bit_shift in 0..8 {
-        let mut payload = vec![0_u8; text.len() + 3];
-        write_shifted_bytes(&mut payload, bit_shift, 1, text);
-        let full = decode_payload_text_filtered(&payload, |value| value.contains("Abyss"));
-        let summary = decode_summary_payload_text(&payload);
-        assert_eq!(
-            format!("{:?}", abyss_events_from_text(40.0, &summary.text)),
-            format!("{:?}", abyss_events_from_text(40.0, &full.text)),
-            "explicit stage parity failed at bit shift {bit_shift}"
-        );
-    }
-}
-
-#[test]
-fn summary_payload_length_prefixed_stage_matches_full_debug() {
-    let identifier = b"Abyss_12_6_1";
-    let mut logical_payload = Vec::with_capacity(identifier.len() + 5);
-    logical_payload.extend_from_slice(&((identifier.len() + 1) as u32).to_le_bytes());
-    logical_payload.extend_from_slice(identifier);
-    logical_payload.push(0);
-
-    for bit_shift in 0..8 {
-        let mut payload = vec![0_u8; logical_payload.len() + 3];
-        write_shifted_bytes(&mut payload, bit_shift, 1, &logical_payload);
-        let full = decode_payload_text_filtered(&payload, |value| value.contains("Abyss"));
-        let summary = decode_summary_payload_text(&payload);
-        assert_eq!(
-            format!("{:?}", abyss_events_from_text(50.0, &summary.text)),
-            format!("{:?}", abyss_events_from_text(50.0, &full.text)),
-            "length-prefixed stage parity failed at bit shift {bit_shift}"
-        );
     }
 }
 

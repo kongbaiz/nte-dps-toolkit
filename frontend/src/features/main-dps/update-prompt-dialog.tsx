@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCw, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,9 +13,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Markdown } from "@/components/ui/markdown";
+import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import { t, tf } from "@/lib/i18n";
+import { useSettingsPresentation } from "@/lib/settings-presentation";
+import { toCommandError } from "@/lib/tauri/command-error";
 import type { AvailableUpdateSnapshot } from "@/lib/tauri/generated/AvailableUpdateSnapshot";
+import type { UpdatePromptSnapshot } from "@/lib/tauri/generated/UpdatePromptSnapshot";
 import type { UpdateSettingsSnapshot } from "@/lib/tauri/generated/UpdateSettingsSnapshot";
+import { updatePromptClient } from "@/lib/tauri/update-prompt-client";
 import {
   formatByteCount,
   formatUpdateByteProgress,
@@ -22,6 +28,105 @@ import {
   updateProgressPercent,
 } from "@/lib/update-presentation";
 import { cn } from "@/lib/utils";
+
+/** Startup update prompt: opens once per set of available updates until dismissed. */
+export function MainUpdatePrompt() {
+  const { language } = useSettingsPresentation();
+  const [prompt, setPrompt] = useState<UpdatePromptSnapshot | null>(null);
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dismissedKey = useRef<string | null>(null);
+  const request = useRef(0);
+
+  const refresh = useCallback(async (openWhenAvailable: boolean) => {
+    const current = ++request.current;
+    try {
+      const next = await updatePromptClient.get();
+      if (current !== request.current) return;
+      setPrompt(next);
+      if (next.updates.available.length === 0) {
+        setOpen(false);
+        return;
+      }
+      if (openWhenAvailable && dismissedKey.current !== updatePromptKey(next)) {
+        setOpen(true);
+      }
+    } catch (value) {
+      if (current === request.current && openWhenAvailable)
+        setError(commandErrorMessage(value));
+    }
+  }, []);
+
+  useEffect(() => {
+    return cleanupAsyncRegistration(
+      updatePromptClient.subscribeAvailable(() => {
+        void refresh(true);
+      }),
+    );
+  }, [refresh]);
+
+  useEffect(() => {
+    void refresh(true);
+  }, [language, refresh]);
+
+  if (!open || prompt === null) return null;
+
+  const updateNow = async () => {
+    if (pending) return;
+    ++request.current;
+    const component =
+      prompt.updates.prepared?.component ??
+      preferredUpdate(prompt.updates.available)?.component;
+    if (component === undefined) return;
+    setPending(true);
+    setError(null);
+    try {
+      let next = prompt;
+      if (next.updates.prepared === null) {
+        next = await updatePromptClient.download(component);
+        setPrompt(next);
+      }
+      if (next.updates.prepared !== null && next.updates.installEnabled) {
+        next = await updatePromptClient.install();
+        setPrompt(next);
+        if (next.updates.status === "up-to-date") setOpen(false);
+      }
+    } catch (value) {
+      setError(commandErrorMessage(value));
+    } finally {
+      setPending(false);
+      void refresh(false);
+    }
+  };
+
+  return (
+    <UpdatePromptDialog
+      error={error}
+      onLater={() => {
+        dismissedKey.current = updatePromptKey(prompt);
+        setOpen(false);
+        setError(null);
+      }}
+      onUpdate={() => void updateNow()}
+      pending={pending}
+      updates={prompt.updates}
+    />
+  );
+}
+
+function commandErrorMessage(value: unknown): string {
+  const error = toCommandError(value);
+  return tf(error.messageKey, error.messageArguments);
+}
+
+function updatePromptKey(prompt: UpdatePromptSnapshot): string {
+  return prompt.updates.available
+    .map(
+      (update) => `${update.component}:${update.version}:${update.publishedAt}`,
+    )
+    .join("|");
+}
 
 interface UpdatePromptDialogProps {
   updates: UpdateSettingsSnapshot;
@@ -31,7 +136,7 @@ interface UpdatePromptDialogProps {
   onUpdate(): void;
 }
 
-export function UpdatePromptDialog({
+function UpdatePromptDialog({
   updates,
   pending,
   error,

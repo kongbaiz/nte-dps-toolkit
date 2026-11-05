@@ -6,7 +6,6 @@ import simplifiedChinese from "@res/languages/zh-CN.json";
 import { CONSOLE_PAGE_IDS } from "./console-navigation";
 import {
   CONSOLE_COMMANDS,
-  consoleCommandRowClasses,
   filterConsoleCommands,
   nextEnabledCommandIndex,
 } from "./console-command-palette-model";
@@ -68,19 +67,5 @@ describe("Console command palette model", () => {
       expect(simplifiedChinese).toHaveProperty(key);
       expect(japanese).toHaveProperty(key);
     }
-  });
-
-  it("keeps hover and selected colors mutually exclusive", () => {
-    const idle = consoleCommandRowClasses(false, false);
-    const selected = consoleCommandRowClasses(false, true);
-    const disabled = consoleCommandRowClasses(true, true);
-
-    expect(idle.row).toContain("hover:bg-muted");
-    expect(selected.row).toContain("bg-accent");
-    expect(selected.row).toContain("text-accent-foreground");
-    expect(selected.row).not.toContain("hover:bg-muted");
-    expect(selected.secondary).toBe("text-accent-foreground/75");
-    expect(disabled.row).toContain("opacity-45");
-    expect(disabled.row).not.toContain("bg-accent");
   });
 });

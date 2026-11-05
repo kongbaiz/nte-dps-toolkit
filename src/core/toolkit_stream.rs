@@ -1,12 +1,12 @@
 //! Connection-owned native hit push consumer. No complete report polling.
-use super::{Damage, Participant, project_damage, wire_u64};
+use super::{Damage, MAX_UNIX_US, Participant, project_damage, wire_u64};
 use crate::engine::model::plugin_snapshot::{
     HitSnapshotData, MAX_SESSION_SNAPSHOT_BYTES, MAX_SESSION_SNAPSHOTS, PluginHitSnapshot,
 };
 use crate::{
     engine::{
         capture::EngineEventSink,
-        model::{AbyssEvent, AbyssHalf, CombatClockRuntimeHealth, EngineEvent, TimeStopEvent},
+        model::{AbyssEvent, AbyssHalf, CombatClockRuntimeHealth, EngineEvent, Hit, TimeStopEvent},
     },
     platform::{
         capture_pipe::{CapturePipe, MAX_FRAME},
@@ -326,6 +326,97 @@ fn apply_hp_scaling(
     }
     Ok(())
 }
+const MAX_FRAME_ROWS: usize = 64;
+const MAX_STARTUP_EVENTS: usize = 4096;
+struct SnapshotBudget {
+    count: usize,
+    bytes: usize,
+}
+impl SnapshotBudget {
+    fn retain(&mut self, size: usize) -> bool {
+        let retain =
+            self.count < MAX_SESSION_SNAPSHOTS && self.bytes + size <= MAX_SESSION_SNAPSHOT_BYTES;
+        if retain {
+            self.count += 1;
+            self.bytes += size;
+        }
+        retain
+    }
+}
+fn context_actors(team: Option<Team>) -> Result<HashMap<String, String>, ToolkitError> {
+    let mut actors = HashMap::new();
+    let Some(rows) = team.and_then(|t| t.actors) else {
+        return Ok(actors);
+    };
+    if rows.len() > 16 {
+        return Err(ToolkitError::TooLarge);
+    }
+    for a in rows {
+        if let (Some(key), Some(role)) = (a.object_key, a.role) {
+            if key.len() > 48 || role.len() > 64 {
+                return Err(ToolkitError::TooLarge);
+            }
+            if actors.insert(key, role).is_some() {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+        }
+    }
+    Ok(actors)
+}
+fn abyss_event(row: &Value, timestamp: f64) -> Result<AbyssEvent, ToolkitError> {
+    let floor = |v: &Value| {
+        v.as_u64()
+            .filter(|n| *n > 0 && *n <= i32::MAX as u64)
+            .map(|n| n as u32)
+            .ok_or(ToolkitError::InvalidProtocol)
+    };
+    let half = |v: &Value| match v.as_u64() {
+        Some(1) => Ok(AbyssHalf::First),
+        Some(2) => Ok(AbyssHalf::Second),
+        _ => Err(ToolkitError::InvalidProtocol),
+    };
+    Ok(match text(row, "kind")? {
+        "location" => {
+            if !row["half"].is_null() {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            AbyssEvent::Location {
+                timestamp,
+                floor: floor(&row["floor"])?,
+            }
+        }
+        "stage" => AbyssEvent::Stage {
+            timestamp,
+            half: half(&row["half"])?,
+            floor: if row["floor"].is_null() {
+                None
+            } else {
+                Some(floor(&row["floor"])?)
+            },
+            allow_late_backfill: false,
+        },
+        "restart_half" => {
+            if !row["floor"].is_null() {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            AbyssEvent::RestartHalf {
+                timestamp,
+                half: half(&row["half"])?,
+            }
+        }
+        kind @ ("restart" | "success" | "exit") => {
+            if !row["half"].is_null() || !row["floor"].is_null() {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            match kind {
+                "restart" => AbyssEvent::RestartDetected { timestamp },
+                "success" => AbyssEvent::Success { timestamp },
+                _ => AbyssEvent::Exit { timestamp },
+            }
+        }
+        _ => return Err(ToolkitError::InvalidProtocol),
+    })
+}
 struct Cursor {
     provider: String,
     capture: String,
@@ -394,377 +485,301 @@ impl Cursor {
         if seq != self.seq + 1 || self.ended {
             return Err(ToolkitError::DataGap);
         }
-        let mut events = vec![];
-        match method.as_str() {
-            "event.combat.started" => {}
+        let mut events = match method.as_str() {
+            // Buff presence records are not damage events.
+            "event.combat.started" | "event.combat.effects" => vec![],
             "event.combat.context" => {
-                let Value::Array(rows) = p["contexts"].take() else {
-                    return Err(ToolkitError::InvalidProtocol);
-                };
-                if rows.len() > 6 {
-                    return Err(ToolkitError::TooLarge);
-                }
-                for row in rows {
-                    // Context change events do not replace the full observed team snapshot.
-                    if row["recordType"] == "event" {
-                        continue;
-                    }
-                    let c: Context =
-                        serde_json::from_value(row).map_err(|_| ToolkitError::InvalidProtocol)?;
-                    if c.schema_version != 1 || c.context_id.is_empty() || c.context_id.len() > 20 {
-                        return Err(ToolkitError::InvalidProtocol);
-                    }
-                    let mut actors = HashMap::new();
-                    if let Some(rows) = c.team.and_then(|t| t.actors) {
-                        if rows.len() > 16 {
-                            return Err(ToolkitError::TooLarge);
-                        }
-                        for a in rows {
-                            if let (Some(key), Some(role)) = (a.object_key, a.role) {
-                                if key.len() > 48 || role.len() > 64 {
-                                    return Err(ToolkitError::TooLarge);
-                                }
-                                if actors.insert(key, role).is_some() {
-                                    return Err(ToolkitError::InvalidProtocol);
-                                }
-                            }
-                        }
-                    }
-                    if self.contexts.contains_key(&c.context_id) {
-                        return Err(ToolkitError::InvalidProtocol);
-                    }
-                    if self.order.len() == 256
-                        && let Some(old) = self.order.pop_front()
-                    {
-                        self.contexts.remove(&old);
-                    }
-                    self.order.push_back(c.context_id.clone());
-                    self.contexts.insert(c.context_id, actors);
-                }
+                self.contexts_frame(p["contexts"].take())?;
+                vec![]
             }
-            "event.combat.hits" => {
-                let Value::Array(rows) = p["hits"].take() else {
-                    return Err(ToolkitError::InvalidProtocol);
-                };
-                let count = rows.len();
-                if rows.len() > 64 {
-                    return Err(ToolkitError::TooLarge);
-                }
-                // Damage must not enter a wall-time projection while the plugin clock
-                // is still initializing. Bounded, reliable startup staging; overflow fails.
-                if !self.clock_ready && self.pending_events.len() + count > 4096 {
-                    return Err(ToolkitError::TooLarge);
-                }
-                let mut snapshot_bytes = self.snapshot_bytes;
-                let mut snapshot_count = self.snapshot_count;
-                let mut last = self.hit;
-                // Stage only this small scalar ledger. Failed frames leave its predecessors intact.
-                let mut hp_witnesses = self.hp_witnesses.clone();
-                for row in rows {
-                    let h: StreamHit =
-                        serde_json::from_value(row).map_err(|_| ToolkitError::InvalidProtocol)?;
-                    let e = &h.event;
-                    if h.hit_id <= last
-                        || !e.damage.is_finite()
-                        || e.damage <= 0.0
-                        || e.unix_us > 9_007_199_254_740_991
-                        || e.victim_hp.is_some_and(|v| !v.is_finite() || v < 0.0)
-                        || e.victim_max_hp.is_some_and(|v| !v.is_finite() || v < 0.0)
-                        || [
-                            &e.skill_name,
-                            &e.skill_key,
-                            &e.attack_detail_key,
-                            &e.attack_detail_name,
-                            &e.attacker_name,
-                            &e.victim_name,
-                            &e.association,
-                        ]
-                        .iter()
-                        .any(|v| v.len() > 512)
-                    {
-                        return Err(ToolkitError::InvalidProtocol);
-                    }
-                    super::direction(&e.direction)?;
-                    let incoming = e.direction == "incoming";
-                    let index = if incoming {
-                        e.victim_object_index
-                    } else {
-                        e.attacker_object_index
-                    };
-                    let candidates = if incoming {
-                        [
-                            h.snapshot_data
-                                .victim_attributes
-                                .as_ref()
-                                .map(|v| (v.actor_index, v.actor_serial)),
-                            h.snapshot_data
-                                .victim_effects
-                                .as_ref()
-                                .map(|v| (v.actor_index, v.actor_serial)),
-                        ]
-                    } else {
-                        [
-                            h.snapshot_data
-                                .attacker_attributes
-                                .as_ref()
-                                .map(|v| (v.actor_index, v.actor_serial)),
-                            h.snapshot_data
-                                .attacker_effects
-                                .as_ref()
-                                .map(|v| (v.actor_index, v.actor_serial)),
-                        ]
-                    };
-                    let mut candidates = candidates
-                        .into_iter()
-                        .flatten()
-                        .filter(|w| w.0 == index && w.1 > 0);
-                    let first = candidates.next();
-                    let witness = first.filter(|first| candidates.all(|w| w.1 == first.1));
-                    let role = h
-                        .context_ref
-                        .as_ref()
-                        .and_then(|c| self.contexts.get(&c.context_id))
-                        .and_then(|actors| {
-                            witness
-                                .filter(|w| w.0 == index && w.1 > 0)
-                                .and_then(|w| actors.get(&format!("{}:{}", w.0, w.1)))
-                        });
-                    let participant = role.map(|role| Participant {
-                        object_index: index,
-                        role_id: role.clone(),
-                        display_name: if incoming {
-                            e.victim_name.clone()
-                        } else {
-                            e.attacker_name.clone()
-                        },
-                    });
-                    let participants = participant
-                        .as_ref()
-                        .map(|p| HashMap::from([(index, p)]))
-                        .unwrap_or_default();
-                    let mut hit = project_damage(e, &participants)?;
-                    let size = h.snapshot_data.validate().map_err(snapshot_error)?;
-                    apply_hp_scaling(&self.catalog, &mut hp_witnesses, &h, &mut hit)?;
-                    if h.critical_known && h.critical.is_none()
-                        || h.critical_source.as_ref().is_some_and(|s| s.len() > 256)
-                    {
-                        return Err(ToolkitError::InvalidProtocol);
-                    }
-                    let attacker = h
-                        .snapshot_data
-                        .attacker_effects
-                        .as_ref()
-                        .and_then(|s| s.counts());
-                    let victim = h
-                        .snapshot_data
-                        .victim_effects
-                        .as_ref()
-                        .and_then(|s| s.counts());
-                    let (role_effects, enemy_effects) = match e.direction.as_str() {
-                        "outgoing" => (attacker, victim),
-                        "incoming" => (victim, attacker),
-                        _ => (None, None),
-                    };
-                    let present = h.snapshot_data.has_observations();
-                    let retain = present
-                        && snapshot_count < MAX_SESSION_SNAPSHOTS
-                        && snapshot_bytes.saturating_add(size) <= MAX_SESSION_SNAPSHOT_BYTES;
-                    if retain {
-                        snapshot_count += 1;
-                        snapshot_bytes += size;
-                    }
-                    let snapshot = PluginHitSnapshot {
-                        instance_id: 0,
-                        key: format!("{}:{}", self.capture, h.hit_id),
-                        critical: h.critical_known.then_some(h.critical).flatten(),
-                        critical_source: if h.critical_known {
-                            h.critical_source
-                        } else {
-                            None
-                        },
-                        role_effects,
-                        enemy_effects,
-                        retention: if retain {
-                            "available"
-                        } else if present {
-                            "budget_exceeded"
-                        } else {
-                            "missing"
-                        }
-                        .into(),
-                        data: retain.then_some(h.snapshot_data),
-                    };
-                    hit.plugin_snapshot = Some(snapshot.seal().map_err(snapshot_error)?);
-                    hit.target_context
-                        .push("plugin_transport:native_push".into());
-                    if role.is_some() {
-                        hit.target_context
-                            .push("plugin_identity:frozen_context_actor_serial".into());
-                    }
-                    events.push(EngineEvent::Hit(Box::new(hit)));
-                    last = h.hit_id;
-                }
-                self.hp_witnesses = hp_witnesses;
-                self.snapshot_bytes = snapshot_bytes;
-                self.snapshot_count = snapshot_count;
-                self.hit = last;
-                self.hits += count as u64;
-                if !self.clock_ready {
-                    self.pending_events.append(&mut events);
-                }
-            }
-            "event.combat.rounds" => {
-                let rows = p["events"]
-                    .as_array()
-                    .ok_or(ToolkitError::InvalidProtocol)?;
-                if rows.is_empty()
-                    || rows.len() > 64
-                    || (!self.clock_ready && self.pending_events.len() + rows.len() > 4096)
-                {
-                    return Err(ToolkitError::TooLarge);
-                }
-                let mut last = self.round_id;
-                for row in rows {
-                    let id = decimal(&row["restartId"])?;
-                    let us = decimal(&row["unixUs"])?;
-                    if id <= last
-                        || us == 0
-                        || us > 9_007_199_254_740_991
-                        || row["kind"] != "restart"
-                    {
-                        return Err(ToolkitError::InvalidProtocol);
-                    }
-                    let clone_type = match row["cloneType"].as_u64() {
-                        Some(value @ (9 | 16)) => value as u8,
-                        _ => return Err(ToolkitError::InvalidProtocol),
-                    };
-                    events.push(EngineEvent::ChallengeRestart {
-                        timestamp: us as f64 / 1_000_000.0,
-                        clone_type,
-                    });
-                    last = id;
-                }
-                self.round_id = last;
-                self.hp_witnesses.clear();
-                if !self.clock_ready {
-                    self.pending_events.append(&mut events);
-                }
-            }
-            "event.combat.abyss" => {
-                let rows = p["events"]
-                    .as_array()
-                    .ok_or(ToolkitError::InvalidProtocol)?;
-                if rows.is_empty()
-                    || rows.len() > 64
-                    || (!self.clock_ready && self.pending_events.len() + rows.len() > 4096)
-                {
-                    return Err(ToolkitError::TooLarge);
-                }
-                let mut last = self.abyss_timestamp;
-                for row in rows {
-                    if row.get("half").is_none() || row.get("floor").is_none() {
-                        return Err(ToolkitError::InvalidProtocol);
-                    }
-                    let us = decimal(&row["unixUs"])?;
-                    if us == 0 || us > 9_007_199_254_740_991 || us < last {
-                        return Err(ToolkitError::InvalidProtocol);
-                    }
-                    let timestamp = us as f64 / 1_000_000.0;
-                    let event = match text(row, "kind")? {
-                        "location" => {
-                            if !row["half"].is_null() {
-                                return Err(ToolkitError::InvalidProtocol);
-                            }
-                            let floor = row["floor"]
-                                .as_u64()
-                                .filter(|n| *n > 0 && *n <= i32::MAX as u64)
-                                .ok_or(ToolkitError::InvalidProtocol)?
-                                as u32;
-                            AbyssEvent::Location { timestamp, floor }
-                        }
-                        "stage" => {
-                            let half = match row["half"].as_u64() {
-                                Some(1) => AbyssHalf::First,
-                                Some(2) => AbyssHalf::Second,
-                                _ => return Err(ToolkitError::InvalidProtocol),
-                            };
-                            let floor = if row["floor"].is_null() {
-                                None
-                            } else {
-                                Some(
-                                    row["floor"]
-                                        .as_u64()
-                                        .filter(|n| *n > 0 && *n <= i32::MAX as u64)
-                                        .ok_or(ToolkitError::InvalidProtocol)?
-                                        as u32,
-                                )
-                            };
-                            AbyssEvent::Stage {
-                                timestamp,
-                                floor,
-                                half,
-                                allow_late_backfill: false,
-                            }
-                        }
-                        "restart_half" => {
-                            if !row["floor"].is_null() {
-                                return Err(ToolkitError::InvalidProtocol);
-                            }
-                            let half = match row["half"].as_u64() {
-                                Some(1) => AbyssHalf::First,
-                                Some(2) => AbyssHalf::Second,
-                                _ => return Err(ToolkitError::InvalidProtocol),
-                            };
-                            AbyssEvent::RestartHalf { timestamp, half }
-                        }
-                        kind @ ("restart" | "success" | "exit") => {
-                            if !row["half"].is_null() || !row["floor"].is_null() {
-                                return Err(ToolkitError::InvalidProtocol);
-                            }
-                            match kind {
-                                "restart" => AbyssEvent::RestartDetected { timestamp },
-                                "success" => AbyssEvent::Success { timestamp },
-                                _ => AbyssEvent::Exit { timestamp },
-                            }
-                        }
-                        _ => return Err(ToolkitError::InvalidProtocol),
-                    };
-                    events.push(EngineEvent::Abyss(event));
-                    last = us;
-                }
-                self.abyss_timestamp = last;
-                if !self.clock_ready {
-                    self.pending_events.append(&mut events);
-                }
-            }
-            "event.combat.effects" => {} // Buff presence records are not damage events.
+            "event.combat.hits" => self.hits_frame(p["hits"].take())?,
+            "event.combat.rounds" => self.rounds_frame(&p["events"])?,
+            "event.combat.abyss" => self.abyss_frame(&p["events"])?,
             "event.combat.ended" => {
-                if decimal(&p["hitCount"])? != self.hits {
-                    return Err(ToolkitError::DataGap);
-                }
-                for key in [
-                    "droppedRecords",
-                    "sourceDroppedRecords",
-                    "rejectedTargets",
-                    "droppedContexts",
-                ] {
-                    if decimal(&p[key])? != 0 {
-                        return Err(ToolkitError::DataGap);
-                    }
-                }
-                self.ended = true;
+                self.ended_frame(&p)?;
+                vec![]
             }
             _ => return Err(ToolkitError::Unsupported),
-        }
-        if events
-            .iter()
-            .any(|e| matches!(e, EngineEvent::ChallengeRestart { .. }))
-        {
-            self.hp_witnesses.clear();
+        };
+        // Damage must not enter a wall-time projection while the plugin clock
+        // is still initializing. Bounded, reliable startup staging; overflow fails.
+        if !self.clock_ready {
+            self.pending_events.append(&mut events);
         }
         self.seq = seq;
         self.last_frame = bytes;
         Ok(events)
+    }
+    fn staged_rows<'a>(&self, rows: &'a Value) -> Result<&'a Vec<Value>, ToolkitError> {
+        let rows = rows.as_array().ok_or(ToolkitError::InvalidProtocol)?;
+        if rows.is_empty() || rows.len() > MAX_FRAME_ROWS || self.startup_overflow(rows.len()) {
+            return Err(ToolkitError::TooLarge);
+        }
+        Ok(rows)
+    }
+    fn startup_overflow(&self, count: usize) -> bool {
+        !self.clock_ready && self.pending_events.len() + count > MAX_STARTUP_EVENTS
+    }
+    fn contexts_frame(&mut self, rows: Value) -> Result<(), ToolkitError> {
+        let Value::Array(rows) = rows else {
+            return Err(ToolkitError::InvalidProtocol);
+        };
+        if rows.len() > 6 {
+            return Err(ToolkitError::TooLarge);
+        }
+        for row in rows {
+            // Context change events do not replace the full observed team snapshot.
+            if row["recordType"] == "event" {
+                continue;
+            }
+            let c: Context =
+                serde_json::from_value(row).map_err(|_| ToolkitError::InvalidProtocol)?;
+            if c.schema_version != 1 || c.context_id.is_empty() || c.context_id.len() > 20 {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            let actors = context_actors(c.team)?;
+            if self.contexts.contains_key(&c.context_id) {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            if self.order.len() == 256
+                && let Some(old) = self.order.pop_front()
+            {
+                self.contexts.remove(&old);
+            }
+            self.order.push_back(c.context_id.clone());
+            self.contexts.insert(c.context_id, actors);
+        }
+        Ok(())
+    }
+    fn hits_frame(&mut self, rows: Value) -> Result<Vec<EngineEvent>, ToolkitError> {
+        let Value::Array(rows) = rows else {
+            return Err(ToolkitError::InvalidProtocol);
+        };
+        let count = rows.len();
+        if count > MAX_FRAME_ROWS || self.startup_overflow(count) {
+            return Err(ToolkitError::TooLarge);
+        }
+        let mut budget = SnapshotBudget {
+            count: self.snapshot_count,
+            bytes: self.snapshot_bytes,
+        };
+        let mut last = self.hit;
+        // Stage only this small scalar ledger. Failed frames leave its predecessors intact.
+        let mut hp_witnesses = self.hp_witnesses.clone();
+        let mut events = Vec::with_capacity(count);
+        for row in rows {
+            let h: StreamHit =
+                serde_json::from_value(row).map_err(|_| ToolkitError::InvalidProtocol)?;
+            if h.hit_id <= last {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            last = h.hit_id;
+            let hit = self.stream_hit(h, &mut hp_witnesses, &mut budget)?;
+            events.push(EngineEvent::Hit(Box::new(hit)));
+        }
+        self.hp_witnesses = hp_witnesses;
+        self.snapshot_bytes = budget.bytes;
+        self.snapshot_count = budget.count;
+        self.hit = last;
+        self.hits += count as u64;
+        Ok(events)
+    }
+    fn stream_hit(
+        &self,
+        h: StreamHit,
+        hp_witnesses: &mut HashMap<(i32, i32), HpWitness>,
+        budget: &mut SnapshotBudget,
+    ) -> Result<Hit, ToolkitError> {
+        let e = &h.event;
+        if !e.damage.is_finite()
+            || e.damage <= 0.0
+            || e.unix_us > MAX_UNIX_US
+            || e.victim_hp.is_some_and(|v| !v.is_finite() || v < 0.0)
+            || e.victim_max_hp.is_some_and(|v| !v.is_finite() || v < 0.0)
+            || [
+                &e.skill_name,
+                &e.skill_key,
+                &e.attack_detail_key,
+                &e.attack_detail_name,
+                &e.attacker_name,
+                &e.victim_name,
+                &e.association,
+            ]
+            .iter()
+            .any(|v| v.len() > 512)
+        {
+            return Err(ToolkitError::InvalidProtocol);
+        }
+        super::direction(&e.direction)?;
+        let incoming = e.direction == "incoming";
+        let index = if incoming {
+            e.victim_object_index
+        } else {
+            e.attacker_object_index
+        };
+        let role = self.frozen_role(&h, index, incoming);
+        let participant = role.map(|role| Participant {
+            object_index: index,
+            role_id: role.clone(),
+            display_name: if incoming {
+                e.victim_name.clone()
+            } else {
+                e.attacker_name.clone()
+            },
+        });
+        let participants = participant
+            .as_ref()
+            .map(|p| HashMap::from([(index, p)]))
+            .unwrap_or_default();
+        let mut hit = project_damage(e, &participants)?;
+        let size = h.snapshot_data.validate().map_err(snapshot_error)?;
+        apply_hp_scaling(&self.catalog, hp_witnesses, &h, &mut hit)?;
+        if h.critical_known && h.critical.is_none()
+            || h.critical_source.as_ref().is_some_and(|s| s.len() > 256)
+        {
+            return Err(ToolkitError::InvalidProtocol);
+        }
+        let attacker = h
+            .snapshot_data
+            .attacker_effects
+            .as_ref()
+            .and_then(|s| s.counts());
+        let victim = h
+            .snapshot_data
+            .victim_effects
+            .as_ref()
+            .and_then(|s| s.counts());
+        let (role_effects, enemy_effects) = match e.direction.as_str() {
+            "outgoing" => (attacker, victim),
+            "incoming" => (victim, attacker),
+            _ => (None, None),
+        };
+        let present = h.snapshot_data.has_observations();
+        let retain = present && budget.retain(size);
+        let snapshot = PluginHitSnapshot {
+            instance_id: 0,
+            key: format!("{}:{}", self.capture, h.hit_id),
+            critical: h.critical_known.then_some(h.critical).flatten(),
+            critical_source: if h.critical_known {
+                h.critical_source
+            } else {
+                None
+            },
+            role_effects,
+            enemy_effects,
+            retention: if retain {
+                "available"
+            } else if present {
+                "budget_exceeded"
+            } else {
+                "missing"
+            }
+            .into(),
+            data: retain.then_some(h.snapshot_data),
+        };
+        hit.plugin_snapshot = Some(snapshot.seal().map_err(snapshot_error)?);
+        hit.target_context
+            .push("plugin_transport:native_push".into());
+        if role.is_some() {
+            hit.target_context
+                .push("plugin_identity:frozen_context_actor_serial".into());
+        }
+        Ok(hit)
+    }
+    /// Role of the hit's own actor, bound through the frozen context by an unambiguous actor serial.
+    fn frozen_role(&self, h: &StreamHit, index: i32, incoming: bool) -> Option<&String> {
+        let data = &h.snapshot_data;
+        let candidates = if incoming {
+            [
+                data.victim_attributes
+                    .as_ref()
+                    .map(|v| (v.actor_index, v.actor_serial)),
+                data.victim_effects
+                    .as_ref()
+                    .map(|v| (v.actor_index, v.actor_serial)),
+            ]
+        } else {
+            [
+                data.attacker_attributes
+                    .as_ref()
+                    .map(|v| (v.actor_index, v.actor_serial)),
+                data.attacker_effects
+                    .as_ref()
+                    .map(|v| (v.actor_index, v.actor_serial)),
+            ]
+        };
+        let mut candidates = candidates
+            .into_iter()
+            .flatten()
+            .filter(|w| w.0 == index && w.1 > 0);
+        let first = candidates.next()?;
+        if !candidates.all(|w| w.1 == first.1) {
+            return None;
+        }
+        let actors = self.contexts.get(&h.context_ref.as_ref()?.context_id)?;
+        actors.get(&format!("{}:{}", first.0, first.1))
+    }
+    fn rounds_frame(&mut self, rows: &Value) -> Result<Vec<EngineEvent>, ToolkitError> {
+        let rows = self.staged_rows(rows)?;
+        let mut events = Vec::with_capacity(rows.len());
+        let mut last = self.round_id;
+        for row in rows {
+            let id = decimal(&row["restartId"])?;
+            let us = decimal(&row["unixUs"])?;
+            if id <= last || us == 0 || us > MAX_UNIX_US || row["kind"] != "restart" {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            let clone_type = match row["cloneType"].as_u64() {
+                Some(value @ (9 | 16)) => value as u8,
+                _ => return Err(ToolkitError::InvalidProtocol),
+            };
+            events.push(EngineEvent::ChallengeRestart {
+                timestamp: us as f64 / 1_000_000.0,
+                clone_type,
+            });
+            last = id;
+        }
+        self.round_id = last;
+        self.hp_witnesses.clear();
+        Ok(events)
+    }
+    fn abyss_frame(&mut self, rows: &Value) -> Result<Vec<EngineEvent>, ToolkitError> {
+        let rows = self.staged_rows(rows)?;
+        let mut events = Vec::with_capacity(rows.len());
+        let mut last = self.abyss_timestamp;
+        for row in rows {
+            if row.get("half").is_none() || row.get("floor").is_none() {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            let us = decimal(&row["unixUs"])?;
+            if us == 0 || us > MAX_UNIX_US || us < last {
+                return Err(ToolkitError::InvalidProtocol);
+            }
+            events.push(EngineEvent::Abyss(abyss_event(
+                row,
+                us as f64 / 1_000_000.0,
+            )?));
+            last = us;
+        }
+        self.abyss_timestamp = last;
+        Ok(events)
+    }
+    fn ended_frame(&mut self, p: &Value) -> Result<(), ToolkitError> {
+        if decimal(&p["hitCount"])? != self.hits {
+            return Err(ToolkitError::DataGap);
+        }
+        for key in [
+            "droppedRecords",
+            "sourceDroppedRecords",
+            "rejectedTargets",
+            "droppedContexts",
+        ] {
+            if decimal(&p[key])? != 0 {
+                return Err(ToolkitError::DataGap);
+            }
+        }
+        self.ended = true;
+        Ok(())
     }
     fn clock(&mut self, v: Value) -> Result<Vec<EngineEvent>, ToolkitError> {
         let c: Clock = serde_json::from_value(v).map_err(|_| ToolkitError::InvalidProtocol)?;

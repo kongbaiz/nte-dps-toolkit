@@ -5941,6 +5941,135 @@ impl PacketDecoder {
         {
             return;
         }
+        let frame = FrameContext {
+            timestamp,
+            capture_timestamp,
+            source: (src, src_port),
+            destination: (dst, dst_port),
+            local_ip,
+            payload,
+            include_incoming,
+            characters,
+        };
+        let exact_components = self.observe_exact_settlements(&frame, sender);
+        let expired_hits = self.take_expired_ambiguous_hits(timestamp);
+        self.emit_hits(expired_hits, characters, sender);
+        let expired_targetless_hits = self.take_expired_targetless_hits(timestamp);
+        self.emit_hits(expired_targetless_hits, characters, sender);
+
+        let decoded_payload = match self.packet_emission {
+            PacketEmissionMode::FullDebug => decode_payload_text_filtered(payload, |_| true),
+            PacketEmissionMode::SummaryOnly => decode_summary_payload_text(payload),
+        };
+        let abyss_events = abyss_events_from_text(timestamp, &decoded_payload.text);
+        let transport = self.observe_frame_transport(&frame);
+        let mut frame_hits = self.collect_frame_hits(&frame, &transport);
+        let prepared_hits = self.prepare_hits_for_emission(
+            std::mem::take(&mut frame_hits.hits),
+            &frame_hits.declared_ids,
+            include_incoming,
+            characters,
+        );
+        for character_id in &frame_hits.declared_ids {
+            self.character_declarations.insert(*character_id, timestamp);
+        }
+        self.character_declarations
+            .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
+        let targets = self.parse_frame_target_updates(&frame, &transport, frame_hits.outgoing);
+        let resolved_target_hits = self.resolve_frame_targets(timestamp, &targets);
+        let accepted = prepared_hits.emit.len() + exact_components + resolved_target_hits.len();
+        let inventory_recognized = self.observe_frame_inventory(&frame, sender);
+        let equipment_slots = frame_equipment_slots(
+            payload,
+            transport.single_bunch.as_ref(),
+            frame_hits.outgoing,
+        );
+        if targets.current_hp.is_empty()
+            && targets.target_hp.is_empty()
+            && targets.boss_hp.is_empty()
+            && targets.settlements.is_empty()
+            && prepared_hits.deferred_ambiguous == 0
+            && prepared_hits.deferred_targetless == 0
+            && equipment_slots.is_empty()
+            && !should_keep_debug_packet(
+                payload,
+                &frame_hits.declared_ids,
+                accepted,
+                equipment_slots.len(),
+                inventory_recognized,
+                decoded_payload.has_readable_text,
+            )
+        {
+            return;
+        }
+        let reconciliation = self.reconcile_frame_damage(
+            timestamp,
+            &targets,
+            resolved_target_hits.iter().chain(prepared_hits.emit.iter()),
+        );
+        match self.packet_emission {
+            PacketEmissionMode::SummaryOnly => {
+                let _ = sender.send(EngineEvent::PacketObservation(PacketObservation {
+                    parsed_hits: accepted,
+                }));
+            }
+            PacketEmissionMode::FullDebug => {
+                let note = self.frame_debug_note(
+                    &frame,
+                    &transport,
+                    &frame_hits,
+                    &prepared_hits,
+                    &targets,
+                    &equipment_slots,
+                    &decoded_payload.text,
+                );
+                let _ = send_packet_debug_events(
+                    sender,
+                    PacketDebug {
+                        timestamp,
+                        source: format!("{src}:{src_port}"),
+                        destination: format!("{dst}:{dst_port}"),
+                        direction: frame_direction(frame_hits.outgoing).to_owned(),
+                        payload_len: payload.len(),
+                        declared_ids: frame_hits.declared_ids,
+                        parsed_hits: accepted,
+                        note,
+                        payload_preview: {
+                            let preview_len = payload.len().min(96);
+                            hex::encode(&payload[..preview_len])
+                        },
+                        payload_hex: hex::encode(payload),
+                        decoded_text: decoded_payload.text,
+                    },
+                );
+            }
+        }
+        self.emit_preobserved_hits(resolved_target_hits, characters, sender);
+        self.emit_preobserved_hits(prepared_hits.emit, characters, sender);
+        for event in abyss_events {
+            let _ = sender.send(EngineEvent::Abyss(event));
+        }
+        for follow_up in reconciliation.follow_ups {
+            let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
+        }
+        for correction in reconciliation.corrections {
+            let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
+        }
+        for observation in reconciliation.unattributed {
+            let _ = sender.send(EngineEvent::UnattributedServerDamage(observation));
+        }
+        self.emit_hits(reconciliation.residual_hits, characters, sender);
+    }
+
+    /// Feeds the frame to the exact settlement runtimes and returns how many
+    /// settlement components the latest datagram produced.
+    fn observe_exact_settlements(
+        &mut self,
+        frame: &FrameContext<'_>,
+        sender: &EngineEventSink,
+    ) -> usize {
+        let (src, src_port) = frame.source;
+        let (dst, dst_port) = frame.destination;
         let mut exact_components = 0;
         if let Some(automatic) = self.exact_auto.as_mut() {
             let was_ready = automatic.ready;
@@ -5949,11 +6078,11 @@ impl PacketDecoder {
                 src_port,
                 dst,
                 dst_port,
-                local_ip,
-                payload,
-                capture_timestamp,
-                characters,
-                include_incoming,
+                frame.local_ip,
+                frame.payload,
+                frame.capture_timestamp,
+                frame.characters,
+                frame.include_incoming,
             );
             for projection in projections {
                 let _ = sender.send(EngineEvent::ExactSettlement(Box::new(projection)));
@@ -5978,10 +6107,10 @@ impl PacketDecoder {
                 src_port,
                 dst,
                 dst_port,
-                payload,
-                capture_timestamp,
-                characters,
-                include_incoming,
+                frame.payload,
+                frame.capture_timestamp,
+                frame.characters,
+                frame.include_incoming,
             ) {
                 Ok(projections) => {
                     for p in projections {
@@ -5997,106 +6126,95 @@ impl PacketDecoder {
             }
             exact_components = runtime.last_settlement_components;
         }
-        let expired_hits = self.take_expired_ambiguous_hits(timestamp);
-        self.emit_hits(expired_hits, characters, sender);
-        let expired_targetless_hits = self.take_expired_targetless_hits(timestamp);
-        self.emit_hits(expired_targetless_hits, characters, sender);
+        exact_components
+    }
 
-        let decoded_payload = match self.packet_emission {
-            PacketEmissionMode::FullDebug => decode_payload_text_filtered(payload, |_| true),
-            PacketEmissionMode::SummaryOnly => decode_summary_payload_text(payload),
-        };
-        let decoded_text = decoded_payload.text;
-        let abyss_events = abyss_events_from_text(timestamp, &decoded_text);
-        let transport_packet = parse_transport_packet(payload);
-        let bunch_packet = match &transport_packet {
-            Some(TransportPacket::Sequenced(packet)) => parse_bunch_packet(packet).ok(),
+    fn observe_frame_transport(&mut self, frame: &FrameContext<'_>) -> FrameTransport {
+        let packet = parse_transport_packet(frame.payload);
+        let sequenced = match &packet {
+            Some(TransportPacket::Sequenced(sequenced)) => Some(sequenced),
             _ => None,
         };
-        let single_bunch = match &transport_packet {
-            Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
-            _ => None,
+        let bunches = sequenced.and_then(|sequenced| parse_bunch_packet(sequenced).ok());
+        let single_bunch = sequenced.and_then(parse_single_bunch);
+        let reassembled = match sequenced {
+            Some(sequenced) => {
+                let fallback = single_bunch.as_ref().map(|bunch| BunchPacket {
+                    packet_info_bit_len: 0,
+                    bunches: vec![crate::engine::protocol::LocatedBunch {
+                        bit_offset: 0,
+                        bunch: bunch.clone(),
+                    }],
+                });
+                self.bunch_connections.observe_sequenced(
+                    frame.source,
+                    frame.destination,
+                    frame.timestamp,
+                    sequenced,
+                    bunches.as_ref().or(fallback.as_ref()),
+                )
+            }
+            None => Vec::new(),
         };
-        let fallback_bunch_packet = single_bunch.as_ref().map(|bunch| BunchPacket {
-            packet_info_bit_len: 0,
-            bunches: vec![crate::engine::protocol::LocatedBunch {
-                bit_offset: 0,
-                bunch: bunch.clone(),
-            }],
-        });
-        let reassembled_bunches = match &transport_packet {
-            Some(TransportPacket::Sequenced(packet)) => self.bunch_connections.observe_sequenced(
-                (src, src_port),
-                (dst, dst_port),
-                timestamp,
-                packet,
-                bunch_packet.as_ref().or(fallback_bunch_packet.as_ref()),
-            ),
-            _ => Vec::new(),
-        };
-        let mut bool_enum_fragment_observation = match single_bunch.as_ref() {
+        FrameTransport {
+            packet,
+            bunches,
+            single_bunch,
+            reassembled,
+        }
+    }
+
+    fn collect_frame_hits(
+        &mut self,
+        frame: &FrameContext<'_>,
+        transport: &FrameTransport,
+    ) -> FrameHits {
+        let single_bunch = transport.single_bunch.as_ref();
+        let bool_enum_fragment_observation = match single_bunch {
             Some(bunch) => self.bool_enum_gameplay_effect_fragments.observe(
-                timestamp,
-                (src, src_port),
-                (dst, dst_port),
+                frame.timestamp,
+                frame.source,
+                frame.destination,
                 bunch,
             ),
             None => BoolEnumGameplayEffectFragmentObservation {
                 abandoned_hits: self
                     .bool_enum_gameplay_effect_fragments
-                    .take_expired(timestamp),
+                    .take_expired(frame.timestamp),
                 ..Default::default()
             },
         };
-        let combat_payload = single_bunch
-            .as_ref()
-            .filter(|bunch| bunch.partial_flags == 0x09)
-            .map_or(payload, |bunch| bunch.data.as_slice());
+        let partial_bunch = single_bunch.filter(|bunch| bunch.partial_flags == 0x09);
+        let combat_payload = partial_bunch.map_or(frame.payload, |bunch| bunch.data.as_slice());
         let evidence = find_declared_character_evidence(combat_payload);
         let final_tower_evidence = find_final_tower_character_evidence(combat_payload);
         let character_evidence = merged_character_evidence(&evidence, &final_tower_evidence);
         let ids = character_ids_from_evidence_sources(&evidence, &final_tower_evidence);
+        let (src, src_port) = frame.source;
+        let (dst, dst_port) = frame.destination;
         let outgoing = infer_outgoing(
             src,
             src_port,
             dst,
             dst_port,
-            local_ip,
+            frame.local_ip,
             &ids,
             &self.client_endpoints,
         );
         if outgoing && !ids.is_empty() {
-            self.client_endpoints.insert((src, src_port));
+            self.client_endpoints.insert(frame.source);
         }
-        let direction = if outgoing { "C2S" } else { "S2C" };
         let gameplay_effects = parse_gameplay_effects(combat_payload);
-        let inherited_gameplay_effect = single_bunch.as_ref().and_then(|bunch| {
+        let inherited_gameplay_effect = single_bunch.and_then(|bunch| {
             self.gameplay_effect_fragments.observe(
-                (src, src_port),
-                (dst, dst_port),
+                frame.source,
+                frame.destination,
                 bunch,
                 &gameplay_effects,
             )
         });
         let mut hits = if outgoing && !self.exact_mode {
-            let packet_char_id = if ids.len() == 1 {
-                ids.first().copied()
-            } else {
-                None
-            };
-            let session_key = (src, src_port, dst, dst_port);
-            if let Some(id) = packet_char_id {
-                self.session_characters.insert(session_key, id);
-            }
-            let fallback = self.session_characters.get(&session_key).copied();
-            parse_damage_payload(
-                combat_payload,
-                timestamp,
-                packet_char_id,
-                fallback,
-                characters,
-                &evidence,
-            )
+            self.parse_legacy_outgoing_hits(frame, combat_payload, &ids, &evidence)
         } else {
             Vec::new()
         };
@@ -6110,264 +6228,319 @@ impl PacketDecoder {
             &self.gameplay_effect_names,
             &self.ability_catalog,
             &evidence,
-            characters,
+            frame.characters,
         );
         for hit in &mut hits {
-            reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
+            reattribute_hit_from_ability_name(
+                hit,
+                !final_tower_evidence.is_empty(),
+                frame.characters,
+            );
         }
         if outgoing {
             promote_resolved_outgoing_hits(&mut hits);
-        }
-        let starts_partial_stream = single_bunch
-            .as_ref()
-            .is_some_and(|bunch| bunch.partial_flags == 0x09)
-            || bunch_packet.as_ref().is_some_and(|packet| {
-                packet
-                    .bunches
-                    .iter()
-                    .any(|located| located.bunch.partial_flags == 0x09)
-            });
-        if outgoing && starts_partial_stream {
-            let mut retained = Vec::with_capacity(hits.len());
-            for hit in hits {
-                if should_defer_partial_stream_hit(&hit)
-                    && self.pending_ambiguous_hits.len() < MAX_PENDING_FOLLOW_UP_HITS
-                {
-                    self.pending_ambiguous_hits.push(hit);
-                } else {
-                    retained.push(hit);
-                }
+            let starts_partial_stream = partial_bunch.is_some()
+                || transport.bunches.as_ref().is_some_and(|packet| {
+                    packet
+                        .bunches
+                        .iter()
+                        .any(|located| located.bunch.partial_flags == 0x09)
+                });
+            if starts_partial_stream {
+                hits = self.defer_partial_stream_hits(hits);
             }
-            hits = retained;
-        }
-        if outgoing && !self.exact_mode {
-            for reassembled in reassembled_bunches
-                .iter()
-                .filter(|observation| observation.bunch.fragment_count > 1)
-            {
-                let reassembled_payload = &reassembled.bunch;
-                let reassembled_evidence =
-                    find_declared_character_evidence(&reassembled_payload.data);
-                let reassembled_final_tower =
-                    find_final_tower_character_evidence(&reassembled_payload.data);
-                let reassembled_ids = character_ids_from_evidence_sources(
-                    &reassembled_evidence,
-                    &reassembled_final_tower,
-                );
-                let reassembled_packet_char_id = if reassembled_ids.len() == 1 {
-                    reassembled_ids.first().copied()
-                } else {
-                    None
-                };
-                let session_key = (src, src_port, dst, dst_port);
-                let fallback = self.session_characters.get(&session_key).copied();
-                let mut confirmed_hits = parse_damage_payload(
-                    &reassembled_payload.data,
-                    timestamp,
-                    reassembled_packet_char_id,
-                    fallback,
-                    characters,
-                    &reassembled_evidence,
-                );
-                let reassembled_effects = parse_gameplay_effects(&reassembled_payload.data);
-                enrich_packet_hits(
-                    &reassembled_payload.data,
-                    &mut confirmed_hits,
-                    &reassembled_effects,
-                    &self.gameplay_effect_names,
-                    &self.ability_catalog,
-                    &reassembled_evidence,
-                    characters,
-                );
-                for hit in &mut confirmed_hits {
-                    reattribute_hit_from_ability_name(
-                        hit,
-                        !reassembled_final_tower.is_empty(),
-                        characters,
-                    );
-                }
-                let mut resolved = self.resolve_pending_untyped_skills(&confirmed_hits);
-                let recovered = self.take_new_reassembled_hits(
-                    confirmed_hits,
-                    &resolved,
-                    reassembled.started_at,
-                );
-                resolved.extend(recovered);
-                extend_unique_exact_wire_hits(&mut hits, resolved);
+            if !self.exact_mode {
+                self.recover_reassembled_hits(frame, &transport.reassembled, &mut hits);
             }
         }
+        if let Some(bunch) = partial_bunch {
+            self.attach_trailing_bool_enum_hit(frame, bunch, &mut hits);
+        }
+        if let Some(completed) = bool_enum_fragment_observation.completed {
+            hits.push(self.complete_bool_enum_hit(completed, frame.characters));
+        }
+        hits.extend(bool_enum_fragment_observation.abandoned_hits);
+        propagate_unanimous_trailing_skill(&mut hits);
+        self.resolve_and_observe_hit_targets(&mut hits);
+        if outgoing {
+            promote_resolved_outgoing_hits(&mut hits);
+        }
+        FrameHits {
+            hits,
+            declared_ids: ids,
+            outgoing,
+            gameplay_effects,
+            character_evidence,
+        }
+    }
 
-        if let Some(bunch) = single_bunch
-            .as_ref()
-            .filter(|bunch| bunch.partial_flags == 0x09)
-            && hits.last().is_some_and(|hit| {
-                hit.gameplay_effect_name.is_none()
-                    && damage_record_encoding_at(combat_payload, hit.byte_offset, hit.bit_shift)
-                        == Some(DamageRecordEncoding::BoolAndEnums)
-                    && hit.byte_offset * 8
-                        + usize::from(hit.bit_shift)
-                        + BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS[0]
-                        + 32
-                        > bunch.data_bit_len
-            })
-            && let Some(pending_hit) = hits.pop()
+    fn parse_legacy_outgoing_hits(
+        &mut self,
+        frame: &FrameContext<'_>,
+        combat_payload: &[u8],
+        ids: &[u32],
+        evidence: &[(u32, u8, usize)],
+    ) -> Vec<Hit> {
+        let packet_char_id = match ids {
+            [id] => Some(*id),
+            _ => None,
+        };
+        let session_key = frame_session_key(frame);
+        if let Some(id) = packet_char_id {
+            self.session_characters.insert(session_key, id);
+        }
+        let fallback = self.session_characters.get(&session_key).copied();
+        parse_damage_payload(
+            combat_payload,
+            frame.timestamp,
+            packet_char_id,
+            fallback,
+            frame.characters,
+            evidence,
+        )
+    }
+
+    fn defer_partial_stream_hits(&mut self, hits: Vec<Hit>) -> Vec<Hit> {
+        let mut retained = Vec::with_capacity(hits.len());
+        for hit in hits {
+            if should_defer_partial_stream_hit(&hit)
+                && self.pending_ambiguous_hits.len() < MAX_PENDING_FOLLOW_UP_HITS
+            {
+                self.pending_ambiguous_hits.push(hit);
+            } else {
+                retained.push(hit);
+            }
+        }
+        retained
+    }
+
+    fn recover_reassembled_hits(
+        &mut self,
+        frame: &FrameContext<'_>,
+        reassembled: &[ReassembledBunchObservation],
+        hits: &mut Vec<Hit>,
+    ) {
+        for reassembled in reassembled
+            .iter()
+            .filter(|observation| observation.bunch.fragment_count > 1)
+        {
+            let reassembled_payload = &reassembled.bunch;
+            let reassembled_evidence = find_declared_character_evidence(&reassembled_payload.data);
+            let reassembled_final_tower =
+                find_final_tower_character_evidence(&reassembled_payload.data);
+            let reassembled_ids = character_ids_from_evidence_sources(
+                &reassembled_evidence,
+                &reassembled_final_tower,
+            );
+            let reassembled_packet_char_id = match reassembled_ids.as_slice() {
+                [id] => Some(*id),
+                _ => None,
+            };
+            let fallback = self
+                .session_characters
+                .get(&frame_session_key(frame))
+                .copied();
+            let mut confirmed_hits = parse_damage_payload(
+                &reassembled_payload.data,
+                frame.timestamp,
+                reassembled_packet_char_id,
+                fallback,
+                frame.characters,
+                &reassembled_evidence,
+            );
+            let reassembled_effects = parse_gameplay_effects(&reassembled_payload.data);
+            enrich_packet_hits(
+                &reassembled_payload.data,
+                &mut confirmed_hits,
+                &reassembled_effects,
+                &self.gameplay_effect_names,
+                &self.ability_catalog,
+                &reassembled_evidence,
+                frame.characters,
+            );
+            for hit in &mut confirmed_hits {
+                reattribute_hit_from_ability_name(
+                    hit,
+                    !reassembled_final_tower.is_empty(),
+                    frame.characters,
+                );
+            }
+            let mut resolved = self.resolve_pending_untyped_skills(&confirmed_hits);
+            let recovered =
+                self.take_new_reassembled_hits(confirmed_hits, &resolved, reassembled.started_at);
+            resolved.extend(recovered);
+            extend_unique_exact_wire_hits(hits, resolved);
+        }
+    }
+
+    /// Hands the last hit of a partial bunch to the fragment tracker when its
+    /// BoolAndEnums GameplayEffect reference runs past the end of the bunch.
+    fn attach_trailing_bool_enum_hit(
+        &mut self,
+        frame: &FrameContext<'_>,
+        bunch: &SingleBunch,
+        hits: &mut Vec<Hit>,
+    ) {
+        if hits.last().is_some_and(|hit| {
+            hit.gameplay_effect_name.is_none()
+                && damage_record_encoding_at(&bunch.data, hit.byte_offset, hit.bit_shift)
+                    == Some(DamageRecordEncoding::BoolAndEnums)
+                && hit.byte_offset * 8
+                    + usize::from(hit.bit_shift)
+                    + BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS[0]
+                    + 32
+                    > bunch.data_bit_len
+        }) && let Some(pending_hit) = hits.pop()
             && let Some(hit) = self.bool_enum_gameplay_effect_fragments.attach_hit(
-                (src, src_port),
-                (dst, dst_port),
+                frame.source,
+                frame.destination,
                 bunch,
                 pending_hit,
             )
         {
             hits.push(hit);
         }
+    }
 
-        if let Some(mut completed) = bool_enum_fragment_observation.completed.take() {
-            let encoding = damage_record_encoding_at(
+    fn complete_bool_enum_hit(
+        &self,
+        mut completed: CompletedBoolEnumGameplayEffectFragment,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) -> Hit {
+        let encoding = damage_record_encoding_at(
+            &completed.payload,
+            completed.hit.byte_offset,
+            completed.hit.bit_shift,
+        );
+        let effect = encoding.and_then(|encoding| {
+            matching_bool_enum_gameplay_effect(
                 &completed.payload,
-                completed.hit.byte_offset,
-                completed.hit.bit_shift,
+                &completed.hit,
+                encoding,
+                &self.gameplay_effect_names,
+                &self.ability_catalog,
+            )
+        });
+        if let Some(effect) = effect.as_ref() {
+            apply_gameplay_effect(
+                &mut completed.hit,
+                effect,
+                &self.gameplay_effect_names,
+                &self.ability_catalog,
             );
-            let effect = encoding.and_then(|encoding| {
-                matching_bool_enum_gameplay_effect(
-                    &completed.payload,
-                    &completed.hit,
-                    encoding,
-                    &self.gameplay_effect_names,
-                    &self.ability_catalog,
-                )
-            });
-            if let Some(effect) = effect.as_ref() {
-                apply_gameplay_effect(
-                    &mut completed.hit,
-                    effect,
-                    &self.gameplay_effect_names,
-                    &self.ability_catalog,
-                );
-                reattribute_hit_from_gameplay_effect_semantics(
-                    &mut completed.hit,
-                    &self.ability_catalog,
-                    characters,
-                );
-                reattribute_hit_from_ability_name(&mut completed.hit, false, characters);
-            }
-            hits.push(completed.hit);
+            reattribute_hit_from_gameplay_effect_semantics(
+                &mut completed.hit,
+                &self.ability_catalog,
+                characters,
+            );
+            reattribute_hit_from_ability_name(&mut completed.hit, false, characters);
         }
-        hits.append(&mut bool_enum_fragment_observation.abandoned_hits);
-        propagate_unanimous_trailing_skill(&mut hits);
-        self.resolve_and_observe_hit_targets(&mut hits);
+        completed.hit
+    }
+
+    fn parse_frame_target_updates(
+        &self,
+        frame: &FrameContext<'_>,
+        transport: &FrameTransport,
+        outgoing: bool,
+    ) -> FrameTargetUpdates {
+        let mut updates = FrameTargetUpdates::default();
         if outgoing {
-            promote_resolved_outgoing_hits(&mut hits);
+            return updates;
         }
-        let prepared_hits =
-            self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
-        for character_id in &ids {
-            self.character_declarations.insert(*character_id, timestamp);
-        }
-        self.character_declarations
-            .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
-        let mut accepted = prepared_hits.emit.len() + exact_components;
-        // CurrentHP 候选缺少目标 handle 校验，仅用于调试显示，不参与 follow-up 计算。
-        let current_hp_updates = if outgoing || self.exact_mode {
-            Vec::new()
-        } else {
-            parse_current_hp_updates(payload)
-        };
-        let direct_client_damage_boss = if outgoing || self.exact_mode {
+        let payload = frame.payload;
+        let direct_client_damage_boss = if self.exact_mode {
             None
         } else {
-            match (&transport_packet, &bunch_packet) {
+            match (&transport.packet, &transport.bunches) {
                 (Some(TransportPacket::Sequenced(packet)), Some(bunches)) => {
                     parse_client_damage_boss_update(packet, bunches)
                 }
                 _ => None,
             }
         };
-        let direct_boss_target = direct_client_damage_boss
-            .as_ref()
-            .map(|update| update.target_handle);
-        let used_direct_client_damage_boss = direct_boss_target.is_some();
-        let mut target_hp_updates = if outgoing || self.exact_mode {
-            Vec::new()
-        } else {
-            parse_client_fight_target_updates(payload)
-        };
-        if !outgoing && !self.exact_mode {
-            let mut seen = target_hp_updates
+        if !self.exact_mode {
+            // CurrentHP 候选缺少目标 handle 校验，仅用于调试显示，不参与 follow-up 计算。
+            updates.current_hp = parse_current_hp_updates(payload);
+            updates.target_hp = parse_client_fight_target_updates(payload);
+            let mut seen = updates
+                .target_hp
                 .iter()
                 .map(|update| (update.target_handle, update.current_hp.to_bits()))
                 .collect::<HashSet<_>>();
-            for observation in &reassembled_bunches {
+            for observation in &transport.reassembled {
                 for update in parse_client_fight_target_updates(&observation.bunch.data) {
                     if seen.insert((update.target_handle, update.current_hp.to_bits())) {
-                        target_hp_updates.push(update);
+                        updates.target_hp.push(update);
                     }
                 }
             }
-        }
-        let mut server_damage_settlements = if outgoing || self.exact_mode {
-            Vec::new()
-        } else {
-            parse_server_damage_settlements(payload)
-        };
-        if !outgoing && !self.exact_mode {
-            let reassembled_settlements = reassembled_bunches
+            updates.settlements = parse_server_damage_settlements(payload);
+            let reassembled_settlements = transport
+                .reassembled
                 .iter()
                 .flat_map(|observation| parse_server_damage_settlements(&observation.bunch.data))
                 .collect();
             merge_reassembled_server_damage_settlements(
-                &mut server_damage_settlements,
+                &mut updates.settlements,
                 reassembled_settlements,
             );
         }
-        let target_hp_keys = target_hp_updates
-            .iter()
-            .map(|update| (update.target_handle, update.current_hp.to_bits()))
-            .collect::<HashSet<_>>();
-        let mut boss_hp_updates = match direct_client_damage_boss {
-            Some(update) => vec![update],
-            None if !outgoing && !self.exact_mode => parse_boss_hp_updates(payload)
+        if let Some(update) = direct_client_damage_boss {
+            updates.boss_hp = vec![update];
+            updates.used_direct_client_damage_boss = true;
+            return updates;
+        }
+        if !self.exact_mode {
+            let target_hp_keys = updates
+                .target_hp
+                .iter()
+                .map(|update| (update.target_handle, update.current_hp.to_bits()))
+                .collect::<HashSet<_>>();
+            updates.boss_hp = parse_boss_hp_updates(payload)
                 .into_iter()
                 .filter(|update| {
                     !target_hp_keys.contains(&(update.target_handle, update.current_hp.to_bits()))
                 })
-                .collect(),
-            None => Vec::new(),
-        };
-        if !outgoing && direct_boss_target.is_none() {
-            let mut seen = boss_hp_updates
-                .iter()
+                .collect();
+        }
+        let mut seen = updates
+            .boss_hp
+            .iter()
+            .map(|update| (update.target_handle, update.current_hp.to_bits()))
+            .collect::<HashSet<_>>();
+        for observation in &transport.reassembled {
+            let generic = parse_client_fight_target_updates(&observation.bunch.data)
+                .into_iter()
                 .map(|update| (update.target_handle, update.current_hp.to_bits()))
                 .collect::<HashSet<_>>();
-            for observation in &reassembled_bunches {
-                let generic = parse_client_fight_target_updates(&observation.bunch.data)
-                    .into_iter()
-                    .map(|update| (update.target_handle, update.current_hp.to_bits()))
-                    .collect::<HashSet<_>>();
-                for update in parse_boss_hp_updates(&observation.bunch.data) {
-                    let key = (update.target_handle, update.current_hp.to_bits());
-                    if !generic.contains(&key) && seen.insert(key) {
-                        boss_hp_updates.push(update);
-                    }
+            for update in parse_boss_hp_updates(&observation.bunch.data) {
+                let key = (update.target_handle, update.current_hp.to_bits());
+                if !generic.contains(&key) && seen.insert(key) {
+                    updates.boss_hp.push(update);
                 }
             }
         }
-        for update in &target_hp_updates {
+        updates
+    }
+
+    /// Observes the frame's target HP evidence and returns the pending hits it
+    /// resolved to a target.
+    fn resolve_frame_targets(&mut self, timestamp: f64, updates: &FrameTargetUpdates) -> Vec<Hit> {
+        for update in updates.target_hp.iter().chain(&updates.boss_hp) {
             self.observe_target_hp_update(timestamp, update);
         }
-        for update in &boss_hp_updates {
-            self.observe_target_hp_update(timestamp, update);
-        }
-        let mut target_evidence = target_hp_updates.clone();
+        let mut target_evidence = updates.target_hp.clone();
         let mut target_evidence_keys = target_evidence
             .iter()
             .map(|update| (update.target_handle, update.current_hp.to_bits()))
             .collect::<HashSet<_>>();
-        for update in &boss_hp_updates {
+        for update in &updates.boss_hp {
             if target_evidence_keys.insert((update.target_handle, update.current_hp.to_bits())) {
                 target_evidence.push(update.clone());
             }
         }
-        for settlement in &server_damage_settlements {
+        for settlement in &updates.settlements {
             if target_evidence_keys
                 .insert((settlement.target_handle, settlement.current_hp.to_bits()))
             {
@@ -6381,131 +6554,108 @@ impl PacketDecoder {
                 target_evidence.push(update);
             }
         }
-        let resolved_target_hits = self.resolve_pending_hit_targets(
-            timestamp,
-            &target_evidence,
-            &server_damage_settlements,
-        );
-        accepted += resolved_target_hits.len();
+        self.resolve_pending_hit_targets(timestamp, &target_evidence, &updates.settlements)
+    }
+
+    /// Feeds inbound frames to the exact inventory decoder and reports whether
+    /// the frame was recognized as an inventory update.
+    fn observe_frame_inventory(
+        &mut self,
+        frame: &FrameContext<'_>,
+        sender: &EngineEventSink,
+    ) -> bool {
+        let (src, src_port) = frame.source;
+        let (dst, dst_port) = frame.destination;
         // Inventory direction must not depend on byte-scanned character guesses.
-        let inventory_inbound = local_ip.map_or(!src.is_private() && dst.is_private(), |local| {
-            dst == local && src != local
-        });
-        let inventory_result = if inventory_inbound {
-            match self.exact_inventory.datagram(
-                format!("{src}:{src_port}"),
-                format!("{dst}:{dst_port}"),
-                payload,
+        let inbound = frame
+            .local_ip
+            .map_or(!src.is_private() && dst.is_private(), |local| {
+                dst == local && src != local
+            });
+        if !inbound {
+            return false;
+        }
+        match self.exact_inventory.datagram(
+            format!("{src}:{src_port}"),
+            format!("{dst}:{dst_port}"),
+            frame.payload,
+            frame.timestamp,
+        ) {
+            Ok(Some(update)) => {
+                let _ = sender.send(EngineEvent::PacketInventory {
+                    items: update.items,
+                    characters: update.characters,
+                });
+                true
+            }
+            Ok(None) => false,
+            Err(_) => {
+                let _ = sender.send(EngineEvent::Warning(
+                    "exact_inventory_unavailable_or_unsupported_update".into(),
+                ));
+                let _ = sender.send(EngineEvent::PacketInventory {
+                    items: vec![],
+                    characters: vec![],
+                });
+                true
+            }
+        }
+    }
+
+    fn reconcile_frame_damage<'a>(
+        &mut self,
+        timestamp: f64,
+        targets: &FrameTargetUpdates,
+        current_packet_hits: impl IntoIterator<Item = &'a Hit>,
+    ) -> FrameDamageReconciliation {
+        let reconciliation = self.reconcile_current_packet_server_damage_settlements_with_sources(
+            timestamp,
+            &targets.settlements,
+            current_packet_hits,
+        );
+        let (follow_ups, authoritative_shared_hits) = self
+            .reconcile_authoritative_additional_damage_settlements(
                 timestamp,
-            ) {
-                Ok(Some(update)) => InventoryPacketResult {
-                    snapshot: Some(update.items),
-                    characters: Some(update.characters),
-                    recognized: true,
-                },
-                Ok(None) => InventoryPacketResult::default(),
-                Err(_) => {
-                    let _ = sender.send(EngineEvent::Warning(
-                        "exact_inventory_unavailable_or_unsupported_update".into(),
-                    ));
-                    InventoryPacketResult {
-                        snapshot: Some(vec![]),
-                        characters: Some(vec![]),
-                        recognized: true,
-                    }
-                }
-            }
-        } else {
-            InventoryPacketResult::default()
-        };
-        if let (Some(items), Some(characters)) =
-            (inventory_result.snapshot, inventory_result.characters)
-        {
-            let _ = sender.send(EngineEvent::PacketInventory { items, characters });
+                &targets.settlements,
+                &reconciliation.sources,
+            );
+        let mut corrections = reconciliation.corrections;
+        let mut unattributed = reconciliation.unattributed;
+        let mut residual_hits = reconciliation.residual_hits;
+        residual_hits.extend(authoritative_shared_hits);
+        let unclaimed_boss_hp_updates = targets
+            .boss_hp
+            .iter()
+            .filter(|update| {
+                !Self::hp_update_has_authoritative_settlement(&targets.settlements, update)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let (_, legacy_corrections, legacy_unattributed) =
+            self.reconcile_boss_hp_updates(timestamp, &unclaimed_boss_hp_updates);
+        corrections.extend(legacy_corrections);
+        unattributed.extend(legacy_unattributed);
+        FrameDamageReconciliation {
+            follow_ups,
+            corrections,
+            unattributed,
+            residual_hits,
         }
-        let mut equipment_slots = Vec::new();
-        if !outgoing {
-            append_unique_equipment_slots(&mut equipment_slots, parse_equipment_slots(payload));
-            if let Some(bunch) = &single_bunch {
-                append_unique_equipment_slots(
-                    &mut equipment_slots,
-                    parse_equipment_slots(&bunch.data),
-                );
-            }
-        }
-        if current_hp_updates.is_empty()
-            && target_hp_updates.is_empty()
-            && boss_hp_updates.is_empty()
-            && server_damage_settlements.is_empty()
-            && prepared_hits.deferred_ambiguous == 0
-            && prepared_hits.deferred_targetless == 0
-            && equipment_slots.is_empty()
-            && !should_keep_debug_packet(
-                payload,
-                &ids,
-                accepted,
-                equipment_slots.len(),
-                inventory_result.recognized,
-                decoded_payload.has_readable_text,
-            )
-        {
-            return;
-        }
-        if matches!(self.packet_emission, PacketEmissionMode::SummaryOnly) {
-            let current_packet_hits = resolved_target_hits
-                .iter()
-                .chain(prepared_hits.emit.iter())
-                .collect::<Vec<_>>();
-            let reconciliation = self
-                .reconcile_current_packet_server_damage_settlements_with_sources(
-                    timestamp,
-                    &server_damage_settlements,
-                    current_packet_hits.iter().copied(),
-                );
-            let (inferred_follow_ups, authoritative_shared_hits) = self
-                .reconcile_authoritative_additional_damage_settlements(
-                    timestamp,
-                    &server_damage_settlements,
-                    &reconciliation.sources,
-                );
-            let mut server_damage_corrections = reconciliation.corrections;
-            let mut unattributed_server_damage = reconciliation.unattributed;
-            let mut server_residual_hits = reconciliation.residual_hits;
-            server_residual_hits.extend(authoritative_shared_hits);
-            let unclaimed_boss_hp_updates = boss_hp_updates
-                .iter()
-                .filter(|update| {
-                    !Self::hp_update_has_authoritative_settlement(
-                        &server_damage_settlements,
-                        update,
-                    )
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            let (_, legacy_server_damage_corrections, legacy_unattributed_server_damage) =
-                self.reconcile_boss_hp_updates(timestamp, &unclaimed_boss_hp_updates);
-            server_damage_corrections.extend(legacy_server_damage_corrections);
-            unattributed_server_damage.extend(legacy_unattributed_server_damage);
-            let _ = sender.send(EngineEvent::PacketObservation(PacketObservation {
-                parsed_hits: accepted,
-            }));
-            self.emit_preobserved_hits(resolved_target_hits, characters, sender);
-            self.emit_preobserved_hits(prepared_hits.emit, characters, sender);
-            for event in abyss_events {
-                let _ = sender.send(EngineEvent::Abyss(event));
-            }
-            for follow_up in inferred_follow_ups {
-                let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
-            }
-            for correction in server_damage_corrections {
-                let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
-            }
-            for observation in unattributed_server_damage {
-                let _ = sender.send(EngineEvent::UnattributedServerDamage(observation));
-            }
-            self.emit_hits(server_residual_hits, characters, sender);
-            return;
-        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn frame_debug_note(
+        &self,
+        frame: &FrameContext<'_>,
+        transport: &FrameTransport,
+        frame_hits: &FrameHits,
+        prepared_hits: &PreparedHits,
+        targets: &FrameTargetUpdates,
+        equipment_slots: &[ParsedEquipmentSlot],
+        decoded_text: &str,
+    ) -> String {
+        let payload = frame.payload;
+        let direction = frame_direction(frame_hits.outgoing);
         let mut note = String::new();
         if prepared_hits.filtered_incoming > 0 {
             append_packet_note(
@@ -6545,14 +6695,20 @@ impl PacketDecoder {
         }
         append_packet_note(
             &mut note,
-            binary_payload_diagnostic(payload, direction, &decoded_text, &character_evidence),
+            binary_payload_diagnostic(
+                payload,
+                direction,
+                decoded_text,
+                &frame_hits.character_evidence,
+            ),
         );
-        if !gameplay_effects.is_empty() {
+        if !frame_hits.gameplay_effects.is_empty() {
             append_packet_note(
                 &mut note,
                 Some(format!(
                     "GameplayEffect: {}",
-                    gameplay_effects
+                    frame_hits
+                        .gameplay_effects
                         .iter()
                         .map(|effect| {
                             let location = format!("@{}:{}", effect.byte_offset, effect.bit_shift);
@@ -6568,12 +6724,13 @@ impl PacketDecoder {
                 )),
             );
         }
-        if !current_hp_updates.is_empty() {
+        if !targets.current_hp.is_empty() {
             append_packet_note(
                 &mut note,
                 Some(format!(
                     "CurrentHP 更新候选：{}",
-                    current_hp_updates
+                    targets
+                        .current_hp
                         .iter()
                         .map(|update| format!(
                             "{:.0}@{}:{}",
@@ -6584,59 +6741,42 @@ impl PacketDecoder {
                 )),
             );
         }
-        if !target_hp_updates.is_empty() {
+        if !targets.target_hp.is_empty() {
             append_packet_note(
                 &mut note,
                 Some(format!(
                     "ClientFight target updates: {}",
-                    target_hp_updates
-                        .iter()
-                        .map(|update| format!(
-                            "{}={:.0}@{}:{}",
-                            hex::encode(update.target_handle),
-                            update.current_hp,
-                            update.byte_offset,
-                            update.bit_shift
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    hp_updates_note(&targets.target_hp)
                 )),
             );
         }
-        if !boss_hp_updates.is_empty() {
+        if !targets.boss_hp.is_empty() {
             append_packet_note(
                 &mut note,
                 Some(format!(
                     "Boss HP updates: {}",
-                    boss_hp_updates
-                        .iter()
-                        .map(|update| format!(
-                            "{}={:.0}@{}:{}",
-                            hex::encode(update.target_handle),
-                            update.current_hp,
-                            update.byte_offset,
-                            update.bit_shift
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    hp_updates_note(&targets.boss_hp)
                 )),
             );
         }
-        if !server_damage_settlements.is_empty() {
+        if !targets.settlements.is_empty() {
             append_packet_note(
                 &mut note,
                 Some(format!(
                     "Server damage settlements: {} rows, raw={}, additional_rows={}, additional_damage={}",
-                    server_damage_settlements.len(),
-                    server_damage_settlements
+                    targets.settlements.len(),
+                    targets
+                        .settlements
                         .iter()
                         .map(|settlement| u64::from(settlement.raw_damage))
                         .sum::<u64>(),
-                    server_damage_settlements
+                    targets
+                        .settlements
                         .iter()
                         .filter(|settlement| settlement.additional_damage.is_some())
                         .count(),
-                    server_damage_settlements
+                    targets
+                        .settlements
                         .iter()
                         .filter_map(|settlement| settlement.additional_damage)
                         .map(u64::from)
@@ -6644,7 +6784,7 @@ impl PacketDecoder {
                 )),
             );
         }
-        if used_direct_client_damage_boss {
+        if targets.used_direct_client_damage_boss {
             append_packet_note(
                 &mut note,
                 Some(
@@ -6653,38 +6793,8 @@ impl PacketDecoder {
                 ),
             );
         }
-        append_packet_note(&mut note, equipment_slots_note(&equipment_slots));
-        let current_packet_hits = resolved_target_hits
-            .iter()
-            .chain(prepared_hits.emit.iter())
-            .collect::<Vec<_>>();
-        let reconciliation = self.reconcile_current_packet_server_damage_settlements_with_sources(
-            timestamp,
-            &server_damage_settlements,
-            current_packet_hits.iter().copied(),
-        );
-        let (inferred_follow_ups, authoritative_shared_hits) = self
-            .reconcile_authoritative_additional_damage_settlements(
-                timestamp,
-                &server_damage_settlements,
-                &reconciliation.sources,
-            );
-        let mut server_damage_corrections = reconciliation.corrections;
-        let mut unattributed_server_damage = reconciliation.unattributed;
-        let mut server_residual_hits = reconciliation.residual_hits;
-        server_residual_hits.extend(authoritative_shared_hits);
-        let unclaimed_boss_hp_updates = boss_hp_updates
-            .iter()
-            .filter(|update| {
-                !Self::hp_update_has_authoritative_settlement(&server_damage_settlements, update)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let (_, legacy_server_damage_corrections, legacy_unattributed_server_damage) =
-            self.reconcile_boss_hp_updates(timestamp, &unclaimed_boss_hp_updates);
-        server_damage_corrections.extend(legacy_server_damage_corrections);
-        unattributed_server_damage.extend(legacy_unattributed_server_damage);
-        if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
+        append_packet_note(&mut note, equipment_slots_note(equipment_slots));
+        if let Some(TransportPacket::Sequenced(packet)) = &transport.packet {
             if packet.mode != 0 {
                 append_packet_note(
                     &mut note,
@@ -6696,7 +6806,7 @@ impl PacketDecoder {
                         packet.payload_bit_len
                     )),
                 );
-            } else if let Some(bunch) = &single_bunch {
+            } else if let Some(bunch) = &transport.single_bunch {
                 append_packet_note(
                     &mut note,
                     Some(format!(
@@ -6709,52 +6819,103 @@ impl PacketDecoder {
                     )),
                 );
             }
-            if let Some(bunches) = &bunch_packet {
+            if let Some(bunches) = &transport.bunches {
                 append_packet_note(
                     &mut note,
                     Some(bunch_wire_shape_note(
                         direction,
                         bunches,
-                        reassembled_bunches.len(),
+                        transport.reassembled.len(),
                     )),
                 );
             }
         }
-        let _ = send_packet_debug_events(
-            sender,
-            PacketDebug {
-                timestamp,
-                source: format!("{src}:{src_port}"),
-                destination: format!("{dst}:{dst_port}"),
-                direction: direction.to_owned(),
-                payload_len: payload.len(),
-                declared_ids: ids,
-                parsed_hits: accepted,
-                note,
-                payload_preview: {
-                    let preview_len = payload.len().min(96);
-                    hex::encode(&payload[..preview_len])
-                },
-                payload_hex: hex::encode(payload),
-                decoded_text,
-            },
-        );
-        self.emit_preobserved_hits(resolved_target_hits, characters, sender);
-        self.emit_preobserved_hits(prepared_hits.emit, characters, sender);
-        for event in abyss_events {
-            let _ = sender.send(EngineEvent::Abyss(event));
-        }
-        for follow_up in inferred_follow_ups {
-            let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
-        }
-        for correction in server_damage_corrections {
-            let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
-        }
-        for observation in unattributed_server_damage {
-            let _ = sender.send(EngineEvent::UnattributedServerDamage(observation));
-        }
-        self.emit_hits(server_residual_hits, characters, sender);
+        note
     }
+}
+
+/// Per-frame inputs shared by the `process_capture_frame` stages.
+struct FrameContext<'a> {
+    timestamp: f64,
+    capture_timestamp: Option<f64>,
+    source: (Ipv4Addr, u16),
+    destination: (Ipv4Addr, u16),
+    local_ip: Option<Ipv4Addr>,
+    payload: &'a [u8],
+    include_incoming: bool,
+    characters: &'a HashMap<u32, CharacterInfo>,
+}
+
+struct FrameTransport {
+    packet: Option<TransportPacket>,
+    bunches: Option<BunchPacket>,
+    single_bunch: Option<SingleBunch>,
+    reassembled: Vec<ReassembledBunchObservation>,
+}
+
+struct FrameHits {
+    hits: Vec<Hit>,
+    declared_ids: Vec<u32>,
+    outgoing: bool,
+    gameplay_effects: Vec<ParsedGameplayEffect>,
+    character_evidence: Vec<(u32, u8, usize)>,
+}
+
+#[derive(Default)]
+struct FrameTargetUpdates {
+    current_hp: Vec<crate::engine::parser::ParsedCurrentHpUpdate>,
+    target_hp: Vec<crate::engine::parser::ParsedBossHpUpdate>,
+    boss_hp: Vec<crate::engine::parser::ParsedBossHpUpdate>,
+    settlements: Vec<ParsedServerDamageSettlement>,
+    used_direct_client_damage_boss: bool,
+}
+
+struct FrameDamageReconciliation {
+    follow_ups: Vec<HitFollowUp>,
+    corrections: Vec<HitDamageCorrection>,
+    unattributed: Vec<UnattributedServerDamage>,
+    residual_hits: Vec<Hit>,
+}
+
+fn frame_direction(outgoing: bool) -> &'static str {
+    if outgoing { "C2S" } else { "S2C" }
+}
+
+fn frame_session_key(frame: &FrameContext<'_>) -> (Ipv4Addr, u16, Ipv4Addr, u16) {
+    let (src, src_port) = frame.source;
+    let (dst, dst_port) = frame.destination;
+    (src, src_port, dst, dst_port)
+}
+
+fn frame_equipment_slots(
+    payload: &[u8],
+    single_bunch: Option<&SingleBunch>,
+    outgoing: bool,
+) -> Vec<ParsedEquipmentSlot> {
+    let mut equipment_slots = Vec::new();
+    if !outgoing {
+        append_unique_equipment_slots(&mut equipment_slots, parse_equipment_slots(payload));
+        if let Some(bunch) = single_bunch {
+            append_unique_equipment_slots(&mut equipment_slots, parse_equipment_slots(&bunch.data));
+        }
+    }
+    equipment_slots
+}
+
+fn hp_updates_note(updates: &[crate::engine::parser::ParsedBossHpUpdate]) -> String {
+    updates
+        .iter()
+        .map(|update| {
+            format!(
+                "{}={:.0}@{}:{}",
+                hex::encode(update.target_handle),
+                update.current_hp,
+                update.byte_offset,
+                update.bit_shift
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn start_capture(
@@ -8159,6 +8320,31 @@ fn read_capture_json_import(path: &Path) -> Result<String, CaptureImportError> {
 fn validate_capture_export_structure(
     document: &CaptureExportDocument,
 ) -> Result<(), CaptureImportError> {
+    validate_capture_export_counts(document)?;
+    validate_capture_export_metadata(document)?;
+    validate_capture_export_party(document)?;
+    validate_capture_export_empty_curtain(&document.empty_curtain)?;
+    validate_capture_export_hits(&document.hits)?;
+    validate_capture_export_packets(&document.packets)?;
+    for event in &document.time_stop_events {
+        let timestamp = match event {
+            TimeStopEvent::GamePauseStarted { timestamp, .. }
+            | TimeStopEvent::GamePauseEnded { timestamp, .. }
+            | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
+        };
+        validate_capture_number(
+            "time_stop_events[].timestamp",
+            timestamp,
+            0.0,
+            MAX_CAPTURE_JSON_IMPORT_TIMESTAMP,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_capture_export_counts(
+    document: &CaptureExportDocument,
+) -> Result<(), CaptureImportError> {
     if document.hits.len() > MAX_CAPTURE_JSON_IMPORT_HITS {
         return Err(CaptureImportError::TooManyHits {
             count: document.hits.len(),
@@ -8201,6 +8387,12 @@ fn validate_capture_export_structure(
         document.time_stop_events.len(),
         MAX_CAPTURE_JSON_IMPORT_TIME_STOP_EVENTS,
     )?;
+    Ok(())
+}
+
+fn validate_capture_export_metadata(
+    document: &CaptureExportDocument,
+) -> Result<(), CaptureImportError> {
     validate_capture_text(
         "exported_at",
         &document.exported_at,
@@ -8270,6 +8462,12 @@ fn validate_capture_export_structure(
             MAX_CAPTURE_JSON_IMPORT_LABEL_BYTES,
         )?;
     }
+    Ok(())
+}
+
+fn validate_capture_export_party(
+    document: &CaptureExportDocument,
+) -> Result<(), CaptureImportError> {
     for row in &document.party {
         validate_capture_text(
             "party[].name",
@@ -8317,7 +8515,13 @@ fn validate_capture_export_structure(
             validate_capture_number(field, timestamp, 0.0, MAX_CAPTURE_JSON_IMPORT_TIMESTAMP)?;
         }
     }
-    for item in &document.empty_curtain {
+    Ok(())
+}
+
+fn validate_capture_export_empty_curtain(
+    items: &[EmptyCurtainItem],
+) -> Result<(), CaptureImportError> {
+    for item in items {
         validate_capture_collection(
             "empty_curtain[].main_stats",
             item.main_stats.len(),
@@ -8347,8 +8551,12 @@ fn validate_capture_export_structure(
             )?;
         }
     }
+    Ok(())
+}
+
+fn validate_capture_export_hits(hits: &[ExportHit]) -> Result<(), CaptureImportError> {
     let mut aggregate_damage = 0.0_f64;
-    for hit in &document.hits {
+    for hit in hits {
         validate_capture_collection(
             "hits[].target_context",
             hit.target_context.len(),
@@ -8461,7 +8669,11 @@ fn validate_capture_export_structure(
         }
         aggregate_damage = next_aggregate_damage;
     }
-    for packet in &document.packets {
+    Ok(())
+}
+
+fn validate_capture_export_packets(packets: &[ExportPacket]) -> Result<(), CaptureImportError> {
+    for packet in packets {
         for (field, value, limit) in [
             (
                 "packets[].time_local",
@@ -8517,19 +8729,6 @@ fn validate_capture_export_structure(
                 field: "packets[].payload_len",
             });
         }
-    }
-    for event in &document.time_stop_events {
-        let timestamp = match event {
-            TimeStopEvent::GamePauseStarted { timestamp, .. }
-            | TimeStopEvent::GamePauseEnded { timestamp, .. }
-            | TimeStopEvent::GamePauseMaskChanged { timestamp, .. } => *timestamp,
-        };
-        validate_capture_number(
-            "time_stop_events[].timestamp",
-            timestamp,
-            0.0,
-            MAX_CAPTURE_JSON_IMPORT_TIMESTAMP,
-        )?;
     }
     Ok(())
 }

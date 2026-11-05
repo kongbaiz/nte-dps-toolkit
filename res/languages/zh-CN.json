@@ -2404,5 +2404,8 @@
   "Paused / {} pending events / {} debug packets": "已暂停 / {} 个待处理事件 / {} 个调试封包",
   "Capture and data": "采集与数据",
   "Session reset. Use Undo within 5 seconds.": "会话已重置，可在 5 秒内使用撤销恢复。",
-  "Esper Cycle: {}": "环合：{}"
+  "Esper Cycle: {}": "环合：{}",
+  "Force overwrite proxy files?": "强制覆盖代理文件？",
+  "Close the game first. Replace d3d12.dll and same-name plugin DLLs in the target directory with the downloaded components. Existing third-party files with these names will also be overwritten.": "请先关闭游戏。使用已下载的组件替换目标目录中的 d3d12.dll 和本次部署的同名插件 DLL。已有同名第三方文件也会被覆盖。",
+  "Force overwrite": "强制覆盖"
 }

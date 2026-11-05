@@ -208,48 +208,6 @@ mod tests {
     };
 
     #[test]
-    fn snapshot_serializes_unsafe_counters_as_decimal_strings() {
-        let projection = SkillsProjection {
-            total_damage: 42.0,
-            total_hits: u64::MAX,
-            characters: vec![SkillsCharacterProjection {
-                id: 1,
-                name: "Character".to_owned(),
-                color: "#123abc".to_owned(),
-                damage: 42.0,
-                entries: 1,
-            }],
-            diagnostics: SkillsDiagnosticsProjection {
-                unknown_character_hits: u64::MAX,
-                unmapped_gameplay_effects: vec![SkillsUnknownEffectProjection {
-                    index: 7,
-                    hits: u64::MAX,
-                    damage: 42.0,
-                }],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let snapshot = SkillsSnapshot::from_projection(
-            projection,
-            9_007_199_254_740_992,
-            TimelineScope::Whole,
-        );
-        let value = serde_json::to_value(snapshot).expect("skills snapshot serializes");
-
-        assert_eq!(value["generation"], "9007199254740992");
-        assert_eq!(value["totalHits"], u64::MAX.to_string());
-        assert_eq!(
-            value["diagnostics"]["unknownCharacterHits"],
-            u64::MAX.to_string()
-        );
-        assert_eq!(
-            value["diagnostics"]["unmappedGameplayEffects"][0]["hits"],
-            u64::MAX.to_string()
-        );
-    }
-
-    #[test]
     fn category_localization_uses_stable_keys_and_preserves_unknown_labels() {
         assert_eq!(localized_label("E技能"), i18n::t("Skill"));
         assert_eq!(

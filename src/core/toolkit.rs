@@ -184,6 +184,8 @@ fn direction(value: &str) -> Result<HitDirection, ToolkitError> {
     HitDirection::try_from(value).map_err(|_| ToolkitError::InvalidProtocol)
 }
 const MAX_EVENTS: usize = 16_384;
+/// JavaScript `Number.MAX_SAFE_INTEGER`: plugin timestamps cross IPC as JSON numbers.
+const MAX_UNIX_US: u64 = 9_007_199_254_740_991;
 const MAX_PARTICIPANTS: usize = 256;
 #[derive(Default)]
 pub struct ReportCursor {
@@ -244,7 +246,7 @@ impl ReportCursor {
             || clock.transitions.iter().any(|t| {
                 !t.world_seconds.is_finite()
                     || t.world_seconds < 0.0
-                    || t.unix_us > 9_007_199_254_740_991
+                    || t.unix_us > MAX_UNIX_US
                     || t.pause_mask >= 128
             })
             || clock.transitions.windows(2).any(|pair| {
@@ -277,31 +279,32 @@ impl ReportCursor {
         } else {
             CombatClockRuntimeHealth::DataUnavailable
         };
-        let abyss = match &report.abyss {
-            Some(abyss) => {
-                if abyss.schema_version != 1 {
-                    return Err(ToolkitError::Unsupported);
+        let abyss =
+            match &report.abyss {
+                Some(abyss) => {
+                    if abyss.schema_version != 1 {
+                        return Err(ToolkitError::Unsupported);
+                    }
+                    if abyss.transitions.len() > 4096 {
+                        return Err(ToolkitError::TooLarge);
+                    }
+                    if abyss.dropped_events != 0 {
+                        return Err(ToolkitError::DataGap);
+                    }
+                    if abyss.transitions.iter().any(|t| {
+                        t.unix_us == 0 || t.unix_us > MAX_UNIX_US || t.from > 2 || t.to > 2
+                    }) || abyss
+                        .transitions
+                        .windows(2)
+                        .any(|p| p[1].unix_us < p[0].unix_us)
+                    {
+                        return Err(ToolkitError::InvalidProtocol);
+                    }
+                    abyss.transitions.as_slice()
                 }
-                if abyss.transitions.len() > 4096 {
-                    return Err(ToolkitError::TooLarge);
-                }
-                if abyss.dropped_events != 0 {
-                    return Err(ToolkitError::DataGap);
-                }
-                if abyss.transitions.iter().any(|t| {
-                    t.unix_us == 0 || t.unix_us > 9_007_199_254_740_991 || t.from > 2 || t.to > 2
-                }) || abyss
-                    .transitions
-                    .windows(2)
-                    .any(|p| p[1].unix_us < p[0].unix_us)
-                {
-                    return Err(ToolkitError::InvalidProtocol);
-                }
-                abyss.transitions.as_slice()
-            }
-            None if self.abyss_supported => return Err(ToolkitError::DataGap),
-            None => &[],
-        };
+                None if self.abyss_supported => return Err(ToolkitError::DataGap),
+                None => &[],
+            };
         if abyss.len() < self.abyss.len() || abyss[..self.abyss.len()] != self.abyss {
             return Err(ToolkitError::DataGap);
         }
@@ -326,7 +329,7 @@ impl ReportCursor {
         for event in &report.events {
             if !event.damage.is_finite()
                 || event.damage < 0.0
-                || event.unix_us > 9_007_199_254_740_991
+                || event.unix_us > MAX_UNIX_US
                 || event.victim_hp.is_some_and(|x| !x.is_finite() || x < 0.0)
                 || event
                     .victim_max_hp

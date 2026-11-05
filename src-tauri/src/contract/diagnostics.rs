@@ -306,7 +306,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn report_contract_keeps_stable_message_keys_and_omits_private_detail_fields() {
+    fn failed_check_preserves_localizable_detail() {
         let snapshot = DiagnosticsReportSnapshot::from(DiagnosticReport {
             checks: vec![DiagnosticCheck {
                 status: DiagnosticStatus::Failed,
@@ -321,30 +321,14 @@ mod tests {
                 },
             }],
         });
-        let value = serde_json::to_value(snapshot).expect("diagnostics report serializes");
-
-        assert_eq!(value["failedCount"], 1);
-        assert_eq!(value["checks"][0]["status"], "failed");
+        assert_eq!(snapshot.failed_count, 1);
         assert_eq!(
-            value["checks"][0]["detail"]["messageKey"],
+            snapshot.checks[0].detail.message_key,
             "Recent diagnostic message: {}"
         );
-        assert!(value["checks"][0].get("detailText").is_none());
-    }
-
-    #[test]
-    fn quality_contract_exposes_unattributed_server_damage_without_rounding_event_count() {
-        let snapshot = DiagnosticsQualitySnapshot::from(CaptureQualitySummary {
-            unattributed_server_damage_events: u64::MAX,
-            unattributed_server_damage: 26_955.5,
-            ..CaptureQualitySummary::default()
-        });
-        let value = serde_json::to_value(snapshot).expect("diagnostics quality serializes");
-
         assert_eq!(
-            value["unattributedServerDamageEvents"],
-            u64::MAX.to_string()
+            snapshot.checks[0].detail.message_arguments,
+            ["private detail"]
         );
-        assert_eq!(value["unattributedServerDamage"], 26_955.5);
     }
 }

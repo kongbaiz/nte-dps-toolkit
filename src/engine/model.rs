@@ -1695,15 +1695,15 @@ impl SkillBreakdownIndex {
 
         if !hit.char_known {
             self.observe_unknown_character(hit.char_id);
-            self.unknown_character_hits = self.unknown_character_hits.saturating_add(1);
+            self.unknown_character_hits += 1;
         }
 
         if hit.damage.is_finite() && hit.damage > 0.0 {
             self.observe_entry(hit, SkillEntryRef::from_hit(hit, false), hit.damage);
             self.total_damage += hit.damage;
-            self.total_hits = self.total_hits.saturating_add(1);
+            self.total_hits += 1;
             if is_hit_skill_unmapped(hit) {
-                self.unmapped_skill_hits = self.unmapped_skill_hits.saturating_add(1);
+                self.unmapped_skill_hits += 1;
                 self.unmapped_skill_damage += hit.damage;
             }
             if let Some(index) = hit.gameplay_effect_index
@@ -1719,7 +1719,7 @@ impl SkillBreakdownIndex {
                 hit.follow_up_damage,
             );
             self.total_damage += hit.follow_up_damage;
-            self.total_hits = self.total_hits.saturating_add(1);
+            self.total_hits += 1;
         }
     }
 
@@ -1731,15 +1731,15 @@ impl SkillBreakdownIndex {
 
         if !hit.char_known {
             self.remove_unknown_character(hit.char_id);
-            self.unknown_character_hits = self.unknown_character_hits.saturating_sub(1);
+            self.unknown_character_hits -= 1;
         }
 
         if hit.damage.is_finite() && hit.damage > 0.0 {
             self.remove_entry(hit, SkillEntryRef::from_hit(hit, false), hit.damage);
             self.total_damage = (self.total_damage - hit.damage).max(0.0);
-            self.total_hits = self.total_hits.saturating_sub(1);
+            self.total_hits -= 1;
             if is_hit_skill_unmapped(hit) {
-                self.unmapped_skill_hits = self.unmapped_skill_hits.saturating_sub(1);
+                self.unmapped_skill_hits -= 1;
                 self.unmapped_skill_damage = (self.unmapped_skill_damage - hit.damage).max(0.0);
             }
             if let Some(index) = hit.gameplay_effect_index
@@ -1755,7 +1755,7 @@ impl SkillBreakdownIndex {
                 hit.follow_up_damage,
             );
             self.total_damage = (self.total_damage - hit.follow_up_damage).max(0.0);
-            self.total_hits = self.total_hits.saturating_sub(1);
+            self.total_hits -= 1;
         }
     }
 
@@ -1765,9 +1765,9 @@ impl SkillBreakdownIndex {
     }
 
     fn promote_unknown_direction(&mut self, damage: f64) {
-        self.directions.unknown_hits = self.directions.unknown_hits.saturating_sub(1);
+        self.directions.unknown_hits -= 1;
         self.directions.unknown_damage = (self.directions.unknown_damage - damage).max(0.0);
-        self.directions.outgoing_hits = self.directions.outgoing_hits.saturating_add(1);
+        self.directions.outgoing_hits += 1;
         self.directions.outgoing_damage += damage;
     }
 
@@ -1775,15 +1775,15 @@ impl SkillBreakdownIndex {
         let damage = hit.total_damage();
         match hit.direction {
             HitDirection::Outgoing => {
-                self.directions.outgoing_hits = self.directions.outgoing_hits.saturating_add(1);
+                self.directions.outgoing_hits += 1;
                 self.directions.outgoing_damage += damage;
             }
             HitDirection::Unknown => {
-                self.directions.unknown_hits = self.directions.unknown_hits.saturating_add(1);
+                self.directions.unknown_hits += 1;
                 self.directions.unknown_damage += damage;
             }
             HitDirection::Incoming => {
-                self.directions.incoming_hits = self.directions.incoming_hits.saturating_add(1);
+                self.directions.incoming_hits += 1;
                 self.directions.incoming_damage += damage;
             }
         }
@@ -1793,16 +1793,16 @@ impl SkillBreakdownIndex {
         let damage = hit.total_damage();
         match hit.direction {
             HitDirection::Outgoing => {
-                self.directions.outgoing_hits = self.directions.outgoing_hits.saturating_sub(1);
+                self.directions.outgoing_hits -= 1;
                 self.directions.outgoing_damage =
                     (self.directions.outgoing_damage - damage).max(0.0);
             }
             HitDirection::Unknown => {
-                self.directions.unknown_hits = self.directions.unknown_hits.saturating_sub(1);
+                self.directions.unknown_hits -= 1;
                 self.directions.unknown_damage = (self.directions.unknown_damage - damage).max(0.0);
             }
             HitDirection::Incoming => {
-                self.directions.incoming_hits = self.directions.incoming_hits.saturating_sub(1);
+                self.directions.incoming_hits -= 1;
                 self.directions.incoming_damage =
                     (self.directions.incoming_damage - damage).max(0.0);
             }
@@ -1811,24 +1811,22 @@ impl SkillBreakdownIndex {
 
     fn observe_unknown_character(&mut self, char_id: u32) {
         if let Some(hits) = self.unknown_characters.get_mut(&char_id) {
-            *hits = hits.saturating_add(1);
+            *hits += 1;
         } else if self.unknown_characters.len() < MAX_INDEXED_UNKNOWN_CHARACTERS {
             self.unknown_characters.insert(char_id, 1);
         } else {
-            self.unknown_character_overflow_hits =
-                self.unknown_character_overflow_hits.saturating_add(1);
+            self.unknown_character_overflow_hits += 1;
         }
     }
 
     fn remove_unknown_character(&mut self, char_id: u32) {
         let remove = match self.unknown_characters.get_mut(&char_id) {
             Some(hits) => {
-                *hits = hits.saturating_sub(1);
+                *hits -= 1;
                 *hits == 0
             }
             None => {
-                self.unknown_character_overflow_hits =
-                    self.unknown_character_overflow_hits.saturating_sub(1);
+                self.unknown_character_overflow_hits -= 1;
                 false
             }
         };
@@ -1856,112 +1854,83 @@ impl SkillBreakdownIndex {
             hits: 0,
             damage: 0.0,
         });
-        row.hits = row.hits.saturating_add(1);
+        row.hits += 1;
         row.damage += damage;
-        if !entry.is_follow_up
-            && entry.damage_name.is_none()
-            && entry.ability_name.is_none()
-            && entry.gameplay_effect_name.is_none()
-        {
-            self.overflow_unmapped_hits = self.overflow_unmapped_hits.saturating_add(1);
+        if !entry.is_follow_up && is_hit_skill_unmapped(hit) {
+            self.overflow_unmapped_hits += 1;
         }
     }
 
     fn remove_entry(&mut self, hit: &Hit, entry: SkillEntryRef, damage: f64) {
         let key = skill_breakdown_key(hit, &entry);
-        let mut remove_key = false;
         if let Some(row) = self.rows.get_mut(&key) {
-            row.hits = row.hits.saturating_sub(1);
+            row.hits -= 1;
             row.damage = (row.damage - damage).max(0.0);
-            remove_key = row.hits == 0;
-        } else if let Some(row) = self.overflow_row.as_mut() {
-            row.hits = row.hits.saturating_sub(1);
-            row.damage = (row.damage - damage).max(0.0);
-            if !entry.is_follow_up
-                && entry.damage_name.is_none()
-                && entry.ability_name.is_none()
-                && entry.gameplay_effect_name.is_none()
-            {
-                self.overflow_unmapped_hits = self.overflow_unmapped_hits.saturating_sub(1);
-            }
             if row.hits == 0 {
-                self.overflow_row = None;
-                self.overflow_unmapped_hits = 0;
+                self.rows.remove(&key);
             }
+            return;
         }
-        if remove_key {
-            self.rows.remove(&key);
+
+        let row = self
+            .overflow_row
+            .as_mut()
+            .expect("unindexed skill hits are counted in overflow");
+        row.hits -= 1;
+        row.damage = (row.damage - damage).max(0.0);
+        if !entry.is_follow_up && is_hit_skill_unmapped(hit) {
+            // Rows can share a key across mapped and unmapped damage names. After
+            // a slot is reused the overflow row cannot identify the original hit.
+            self.overflow_unmapped_hits = self.overflow_unmapped_hits.saturating_sub(1);
+        }
+        if row.hits == 0 {
+            self.overflow_row = None;
+            self.overflow_unmapped_hits = 0;
         }
     }
 
     fn observe_unmapped_effect(&mut self, index: u32, damage: f64) {
-        if index == SKILL_OVERFLOW_EFFECT_INDEX {
-            let effect =
-                self.overflow_unmapped_gameplay_effect
-                    .get_or_insert(UnknownGameplayEffect {
-                        index: SKILL_OVERFLOW_EFFECT_INDEX,
-                        hits: 0,
-                        damage: 0.0,
-                    });
-            effect.hits = effect.hits.saturating_add(1);
-            effect.damage += damage;
-            return;
-        }
-        if let Some(effect) = self.unmapped_gameplay_effects.get_mut(&index) {
-            effect.hits = effect.hits.saturating_add(1);
-            effect.damage += damage;
-        } else if self.unmapped_gameplay_effects.len() < MAX_INDEXED_UNMAPPED_GAMEPLAY_EFFECTS {
-            self.unmapped_gameplay_effects.insert(
-                index,
-                UnknownGameplayEffect {
+        use std::collections::hash_map::Entry;
+
+        let has_room = self.unmapped_gameplay_effects.len() < MAX_INDEXED_UNMAPPED_GAMEPLAY_EFFECTS;
+        let effect = match self.unmapped_gameplay_effects.entry(index) {
+            Entry::Occupied(slot) => slot.into_mut(),
+            Entry::Vacant(slot) if has_room && index != SKILL_OVERFLOW_EFFECT_INDEX => {
+                slot.insert(UnknownGameplayEffect {
                     index,
-                    hits: 1,
-                    damage,
-                },
-            );
-        } else {
-            let effect =
+                    ..Default::default()
+                })
+            }
+            Entry::Vacant(_) => {
                 self.overflow_unmapped_gameplay_effect
                     .get_or_insert(UnknownGameplayEffect {
                         index: SKILL_OVERFLOW_EFFECT_INDEX,
-                        hits: 0,
-                        damage: 0.0,
-                    });
-            effect.hits = effect.hits.saturating_add(1);
-            effect.damage += damage;
-        }
+                        ..Default::default()
+                    })
+            }
+        };
+        effect.hits += 1;
+        effect.damage += damage;
     }
 
     fn remove_unmapped_effect(&mut self, index: u32, damage: f64) {
-        if index == SKILL_OVERFLOW_EFFECT_INDEX {
-            if let Some(effect) = self.overflow_unmapped_gameplay_effect.as_mut() {
-                effect.hits = effect.hits.saturating_sub(1);
-                effect.damage = (effect.damage - damage).max(0.0);
-                if effect.hits == 0 {
-                    self.overflow_unmapped_gameplay_effect = None;
-                }
+        if let Some(effect) = self.unmapped_gameplay_effects.get_mut(&index) {
+            effect.hits -= 1;
+            effect.damage = (effect.damage - damage).max(0.0);
+            if effect.hits == 0 {
+                self.unmapped_gameplay_effects.remove(&index);
             }
             return;
         }
-        let remove = match self.unmapped_gameplay_effects.get_mut(&index) {
-            Some(effect) => {
-                effect.hits = effect.hits.saturating_sub(1);
-                effect.damage = (effect.damage - damage).max(0.0);
-                effect.hits == 0
-            }
-            None => {
-                if let Some(effect) = self.overflow_unmapped_gameplay_effect.as_mut() {
-                    effect.hits = effect.hits.saturating_sub(1);
-                    effect.damage = (effect.damage - damage).max(0.0);
-                    if effect.hits == 0 {
-                        self.overflow_unmapped_gameplay_effect = None;
-                    }
-                }
-                false
-            }
-        };
-        if remove {
-            self.unmapped_gameplay_effects.remove(&index);
+
+        let effect = self
+            .overflow_unmapped_gameplay_effect
+            .as_mut()
+            .expect("unindexed effect hits are counted in overflow");
+        effect.hits -= 1;
+        effect.damage = (effect.damage - damage).max(0.0);
+        if effect.hits == 0 {
+            self.overflow_unmapped_gameplay_effect = None;
         }
     }
 

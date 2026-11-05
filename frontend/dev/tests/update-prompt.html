@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <title>Startup update prompt regression</title>
+  <div id="root"></div>
+  <output id="result">Running</output>
+  <script type="module">
+    import { act, createElement, StrictMode } from "react";
+    import { createRoot } from "react-dom/client";
+    import { mockIPC } from "@tauri-apps/api/mocks";
+    import { MainUpdatePrompt } from "../../src/features/main-dps/update-prompt-dialog";
+    import { t } from "../../src/lib/i18n";
+    import { useSettingsPresentation } from "../../src/lib/settings-presentation";
+    import { settingsFixture } from "../fixtures";
+
+    const updates = settingsFixture().updates;
+    updates.available.push({
+      component: "app",
+      version: "1.2.3",
+      publishedAt: "2026-01-01",
+      notes: "Startup regression fixture",
+      artifactSize: "100",
+    });
+    mockIPC(
+      (command) => {
+        if (command === "get_main_dps_update_prompt") return { updates };
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.getElementById("root"));
+    const result = document.getElementById("result");
+    try {
+      await act(() =>
+        root.render(
+          createElement(StrictMode, null, createElement(MainUpdatePrompt)),
+        ),
+      );
+      if (
+        !document
+          .querySelector('[role="dialog"]')
+          ?.textContent.includes("1.2.3")
+      )
+        throw new Error("Available update did not open a dialog on startup");
+      const later = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent === t("Later"),
+      );
+      await act(() => later.click());
+      await act(() =>
+        useSettingsPresentation.setState(({ language }) => ({
+          language: language === "ja" ? "en" : "ja",
+        })),
+      );
+      if (document.querySelector('[role="dialog"]'))
+        throw new Error("Changing language reopened the dismissed update");
+      result.textContent = "PASS";
+    } catch (error) {
+      result.textContent = "FAIL: " + error.message;
+      throw error;
+    } finally {
+      await act(() => root.unmount());
+    }
+  </script>
+</html>

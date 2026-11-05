@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Power, ArrowRight, Store } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogBackdrop,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogPortal,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toCommandError } from "@/lib/tauri/command-error";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
@@ -28,6 +37,7 @@ export function HostControls({
   onOpenMarket: () => void;
 }) {
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const alive = useRef(false);
   useEffect(() => {
     alive.current = true;
@@ -35,6 +45,34 @@ export function HostControls({
       alive.current = false;
     };
   }, []);
+  useEffect(() => {
+    setConfirmOverwrite(false);
+  }, [panel.gameDirectory, panel.loadingMethod, panel.mode]);
+  const launchHost = (forceOverwrite = false) => {
+    setNotice(null);
+    void run(async () => {
+      try {
+        const result = await toolkitClient.launchHost(forceOverwrite);
+        if (alive.current) {
+          setConfirmOverwrite(false);
+          setNotice(
+            result.outcome === "proxyDeployed"
+              ? "Proxy deployment is ready. Restart the game, then check host status."
+              : "Host connection confirmed.",
+          );
+        }
+      } catch (error) {
+        if (
+          alive.current &&
+          panel.loadingMethod === "proxy" &&
+          !forceOverwrite &&
+          toCommandError(error).code === "mod_proxy_deployment_conflict"
+        )
+          setConfirmOverwrite(true);
+        throw error;
+      }
+    });
+  };
   const connected = panel.connection === "connected";
   const guidance = panel.collectorActive
     ? "Stop collection before changing plugin lifecycle state."
@@ -52,6 +90,55 @@ export function HostControls({
       className="flex min-w-0 flex-col gap-4"
       data-testid="host-control-page"
     >
+      <AlertDialog
+        open={confirmOverwrite}
+        onOpenChange={(open) => {
+          if (!pending) setConfirmOverwrite(open);
+        }}
+      >
+        <AlertDialogPortal>
+          <AlertDialogBackdrop />
+          <AlertDialogPopup className="left-1/2 top-1/2 flex w-[min(90vw,30rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border bg-background p-6 shadow-lg">
+            <AlertDialogTitle>
+              {t("Force overwrite proxy files?")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                "Close the game first. Replace d3d12.dll and same-name plugin DLLs in the target directory with the downloaded components. Existing third-party files with these names will also be overwritten.",
+              )}
+            </AlertDialogDescription>
+            <p className="break-all text-xs">
+              {panel.gameDirectory ?? t("Automatic detection")}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                disabled={pending}
+                onClick={() => setConfirmOverwrite(false)}
+              >
+                {t("Cancel")}
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={
+                  pending ||
+                  panel.collectorActive ||
+                  panel.mode !== "plugin" ||
+                  !panel.componentsReady ||
+                  connected ||
+                  panel.loadingMethod !== "proxy"
+                }
+                onClick={() => {
+                  setConfirmOverwrite(false);
+                  launchHost(true);
+                }}
+              >
+                {t("Force overwrite")}
+              </Button>
+            </div>
+          </AlertDialogPopup>
+        </AlertDialogPortal>
+      </AlertDialog>
       {!panel.componentsReady && (
         <section
           className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/25 p-4"
@@ -116,18 +203,7 @@ export function HostControls({
                       panel.mode !== "plugin" ||
                       !panel.componentsReady
                     }
-                    onClick={() => {
-                      setNotice(null);
-                      void run(async () => {
-                        const result = await toolkitClient.launchHost();
-                        if (alive.current)
-                          setNotice(
-                            result.outcome === "proxyDeployed"
-                              ? "Proxy deployment is ready. Restart the game, then check host status."
-                              : "Host connection confirmed.",
-                          );
-                      });
-                    }}
+                    onClick={() => launchHost()}
                   >
                     <Power />
                     {t("Load host")}

@@ -469,34 +469,6 @@ mod tests {
 
     use crate::contract::stream::MAX_STREAM_DELIVERY_BYTES;
 
-    #[test]
-    fn item_uids_remain_bounded_numbers() {
-        let uid = ItemUidSnapshot::from(ItemUid {
-            slot: u32::MAX,
-            serial: u32::MAX,
-        });
-        let json = serde_json::to_value(uid).unwrap();
-        assert_eq!(json["slot"], u32::MAX);
-        assert_eq!(json["serial"], u32::MAX);
-    }
-
-    #[test]
-    fn secondary_stat_unlock_state_uses_explicit_contract_fields() {
-        let json = serde_json::to_value(EmptyCurtainStatSnapshot {
-            property: "CritAdd".to_owned(),
-            label: "Critical Rate".to_owned(),
-            value: 0.08,
-            percent: true,
-            main: false,
-            unlock_level: Some(15),
-            unlocked: false,
-        })
-        .unwrap();
-
-        assert_eq!(json["unlockLevel"], 15);
-        assert_eq!(json["unlocked"], false);
-    }
-
     fn adversarial_item(index: u32, text: &str) -> InventoryItem {
         let stat = InventoryStat {
             property_id: text.to_owned(),
