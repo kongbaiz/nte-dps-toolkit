@@ -1,4 +1,4 @@
-//! Bounded midstream attachment to the two qualified PlayerController wire
+//! Bounded midstream attachment to the qualified PlayerController wire
 //! layouts. Endpoint/prefix observation alone never authorizes damage: a lane
 //! must first join a bidirectional request and settlement by the complete wire
 //! key and actor references. No scan for plausible amounts or timestamp proximity.
@@ -6,7 +6,7 @@ use super::{
     Change, Error, Ledger, MessageKey, SkillCatalog,
     application::{Projection, project},
     runtime::{catalog_from_document, new_generation},
-    transport::{Decoder, Profile, Rpc},
+    transport::{Decoder, Profile, Rpc, V7_REQUEST_INDEX, V7_SETTLEMENT_INDEX},
 };
 use crate::{engine::model::CharacterInfo, storage::resource::read_resource_text_bounded};
 use std::{collections::HashMap, net::Ipv4Addr, path::Path};
@@ -37,7 +37,7 @@ struct Lane {
 }
 
 impl Lane {
-    fn new(prefix: u8, upper: u32, settlement: u32) -> Result<Self, &'static str> {
+    fn new(prefix: u8, upper: u32, request: u32, settlement: u32) -> Result<Self, &'static str> {
         Ok(Self {
             // These are reviewed wire layouts, not values searched for by a
             // successful body parse. Other channel/class layouts stay unsupported.
@@ -45,7 +45,7 @@ impl Lane {
                 component_prefix: prefix,
                 channel: 3,
                 field_upper_exclusive: upper,
-                request_index: 100,
+                request_index: request,
                 settlement_index: settlement,
             })
             .map_err(|_| UNAVAILABLE)?,
@@ -276,10 +276,17 @@ impl Automatic {
                     }
                 }
             }
-            let lanes = [(219, 142), (213, 139)]
-                .into_iter()
-                .map(|(upper, index)| Lane::new(key.prefix, upper, index))
-                .collect::<Result<Vec<_>, _>>();
+            // The v7 capture uses the same field widths at the observed indices,
+            // with request 101 and settlement 146. Qualification still requires
+            // matching full request/settlement keys and actor references.
+            let lanes = [
+                (219, 100, 142),
+                (213, 100, 139),
+                (219, V7_REQUEST_INDEX, V7_SETTLEMENT_INDEX),
+            ]
+            .into_iter()
+            .map(|(upper, request, settlement)| Lane::new(key.prefix, upper, request, settlement))
+            .collect::<Result<Vec<_>, _>>();
             let Ok(lanes) = lanes else {
                 self.warning = Some(UNAVAILABLE);
                 return Vec::new();
@@ -483,7 +490,7 @@ mod tests {
         }
     }
     fn lane() -> Lane {
-        Lane::new(20, 219, 142).unwrap()
+        Lane::new(20, 219, 100, 142).unwrap()
     }
 
     #[test]
@@ -777,7 +784,7 @@ mod tests {
             server,
             prefix: 28,
         };
-        let mut l = Lane::new(28, 219, 142).unwrap();
+        let mut l = Lane::new(28, 219, 100, 142).unwrap();
         l.accept(Rpc::Request(request()), 1.0, &characters())
             .unwrap();
         l.accept(Rpc::Settlement(settlement()), 2.0, &characters())
@@ -919,7 +926,7 @@ mod tests {
             server,
             prefix: 28,
         };
-        let mut l = Lane::new(28, 219, 142).unwrap();
+        let mut l = Lane::new(28, 219, 100, 142).unwrap();
         l.accept(Rpc::Request(request()), 1.0, &characters())
             .unwrap();
         l.accept(Rpc::Settlement(settlement()), 2.0, &characters())

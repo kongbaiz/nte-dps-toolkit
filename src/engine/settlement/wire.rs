@@ -1,9 +1,12 @@
-//! Native v6 RPC parameter grammar ported from the verified research decoder.
+//! Native v6/v7 RPC parameter grammar, including the qualified v7 damage triples.
 //! Unknown branches/extra arrays fail visibly; no arbitrary byte-pattern search.
 use super::*;
 
 const MAX_ITEMS: usize = 1024;
 const MAX_RPC_BITS: usize = 8 * 1024 * 1024;
+const V6_REQUEST_FLAGS_BITS: usize = 5;
+const V7_REQUEST_FLAGS_BITS: usize = 7;
+const V7_DAMAGE_WRAPPERS_MARKER: u64 = 1;
 
 pub(crate) struct Bits<'a> {
     pub(crate) data: &'a [u8],
@@ -229,7 +232,8 @@ fn nested_map(r: &mut Bits<'_>) -> Result<(), Error> {
 }
 
 fn netfight(r: &mut Bits<'_>, message: i64) -> Result<RequestTarget, Error> {
-    if r.take(8)? != 6 {
+    let version = r.take(8)?;
+    if !matches!(version, 6 | 7) {
         return Err(Error::Unsupported);
     }
     let values = wrappers(r)?;
@@ -264,7 +268,13 @@ fn netfight(r: &mut Bits<'_>, message: i64) -> Result<RequestTarget, Error> {
         }
         _ => {}
     }
-    r.take(5)?;
+    // v7 expands this opaque flag region by two bits. It is framing, not
+    // evidence of critical hits or damage categories.
+    r.take(if version == 7 {
+        V7_REQUEST_FLAGS_BITS
+    } else {
+        V6_REQUEST_FLAGS_BITS
+    })?;
     if r.boolean()? {
         r.string()?;
     }
@@ -338,6 +348,23 @@ pub fn decode_request(data: &[u8], bits: usize, channel: u32) -> Result<Request,
 }
 
 pub fn decode_settlement(data: &[u8], bits: usize, channel: u32) -> Result<Settlement, Error> {
+    decode_settlement_format(data, bits, channel, false)
+}
+
+pub(super) fn decode_settlement_v7(
+    data: &[u8],
+    bits: usize,
+    channel: u32,
+) -> Result<Settlement, Error> {
+    decode_settlement_format(data, bits, channel, true)
+}
+
+fn decode_settlement_format(
+    data: &[u8],
+    bits: usize,
+    channel: u32,
+    v7: bool,
+) -> Result<Settlement, Error> {
     let mut r = Bits::new(data, bits)?;
     r.present()?;
     let message = r.take(64)? as i64;
@@ -355,18 +382,29 @@ pub fn decode_settlement(data: &[u8], bits: usize, channel: u32) -> Result<Settl
         {
             return Err(Error::InvalidValue);
         }
+        // The v7 target observed in the qualified capture prefixes its flat
+        // damage wrappers with this marker. Other marker values need wire evidence.
+        if v7 && r.take(32)? != V7_DAMAGE_WRAPPERS_MARKER {
+            return Err(Error::Unsupported);
+        }
         let raw = wrappers(&mut r)?;
-        if raw.len() % 2 != 0 {
+        let stride = if v7 { 3 } else { 2 };
+        if !raw.len().is_multiple_of(stride) {
             return Err(Error::Unsupported);
         }
         let mut components = Vec::new();
-        for pair in raw.as_chunks::<2>().0 {
-            let delta = pair[0].u32(6)? as i32;
+        for values in raw.chunks_exact(stride) {
+            let delta = values[0].u32(6)? as i32;
             if delta >= 0 {
                 return Err(Error::InvalidValue);
             }
             let damage = delta.checked_neg().ok_or(Error::InvalidValue)?;
-            let display_type = pair[1].u32(31)? as i32;
+            let display_type = values[1].u32(31)? as i32;
+            if v7 {
+                // UETools test-server's CombatSettlementFormat confirms this
+                // third enum is the text color, independent of the damage category.
+                values[2].u32(31)?;
+            }
             components.push(Component {
                 damage,
                 display_type,
@@ -434,6 +472,113 @@ pub(crate) mod tests {
             self.bits += count;
         }
     }
+    impl Writer {
+        fn wrapper(&mut self, tag: u8, value: u64, bytes: usize) {
+            self.put(u64::from(tag), 8);
+            self.put(bytes as u64, 32);
+            self.put(value, bytes * 8);
+        }
+
+        fn actor(&mut self) {
+            self.put(0, 3);
+            for word in [1, 2, 3, 4, 0, 0, 0] {
+                self.put(word, 32);
+            }
+        }
+    }
+
+    #[test]
+    fn v6_and_v7_damage_exchange_preserves_amounts_and_display_categories() {
+        for version in [6, 7] {
+            let mut request = Writer::default();
+            request.put(1, 1);
+            request.put(4, 32);
+            for (tag, value, bytes) in [(31, 0, 4), (7, 7, 8), (6, 0, 4), (13, 123, 8)] {
+                request.wrapper(tag, value, bytes);
+            }
+            request.put(1, 1);
+            request.put(1, 16);
+            request.put(version, 8);
+            request.put(0, 32); // calculation wrappers
+            request.put(0, 32); // diagnostic wrappers
+            request.put(7, 64);
+            request.actor();
+            request.actor();
+            request.put(4, 4); // compact effect is present
+            request.put(17, 32);
+            for _ in 0..4 {
+                request.put(0, 32); // auxiliary arrays and maps
+            }
+            request.put(2, 4);
+            for _ in 0..4 {
+                request.put(0, 32); // branch 2 calculation fields
+            }
+            request.put(0, if version == 7 { 7 } else { 5 });
+            request.put(0, 32); // optional string is absent
+            for value in [1, 0, 1, 0, 0, 1] {
+                request.put(value, 32);
+            }
+            request.put(0, 3);
+            let decoded_request = decode_request(&request.bytes, request.bits, 3).unwrap();
+            assert_eq!(decoded_request.targets[0].effect_index, Some(17));
+            assert!(decode_request(&request.bytes, request.bits - 1, 3).is_err());
+
+            let mut settlement = Writer::default();
+            settlement.put(1, 1);
+            settlement.put(7, 64);
+            settlement.actor();
+            settlement.put(1, 16);
+            settlement.actor();
+            settlement.put(u64::from(300f32.to_bits()), 32);
+            for _ in 0..3 {
+                settlement.put(0, 32); // death, shield damage, lock target
+            }
+            if version == 7 {
+                settlement.put(1, 32); // v7 damage wrapper marker
+            }
+            settlement.put(if version == 7 { 6 } else { 4 }, 32);
+            for (damage, display, color) in [(200, 22, 4), (30, 0, 8)] {
+                settlement.wrapper(6, u64::from((-damage) as u32), 4);
+                settlement.wrapper(31, display, 4);
+                if version == 7 {
+                    settlement.wrapper(31, color, 4);
+                }
+            }
+            settlement.put(0, 16); // extra damage
+            settlement.put(0, 16); // recoveries
+            settlement.put(123, 64);
+            settlement.put(0, 3);
+            settlement.put(1, 1);
+            settlement.put(0, 8); // hardcoded reaction name
+            let decode = if version == 7 {
+                decode_settlement_v7
+            } else {
+                decode_settlement
+            };
+            let decoded = decode(&settlement.bytes, settlement.bits, 3).unwrap();
+            assert_eq!(decoded.key, decoded_request.key);
+            assert_eq!(decoded.source, decoded_request.targets[0].source);
+            assert_eq!(decoded.targets[0].target, decoded_request.targets[0].target);
+            assert_eq!(
+                decoded.targets[0].components,
+                vec![
+                    Component {
+                        damage: 200,
+                        display_type: 22
+                    },
+                    Component {
+                        damage: 30,
+                        display_type: 0
+                    },
+                ],
+            );
+            assert_eq!(
+                decode(&settlement.bytes, settlement.bits - 1, 3),
+                Err(Error::Truncated)
+            );
+        }
+    }
+
     pub(crate) fn recovery_rpc(extra_count: u16, recovery_count: u16, hp: f32) -> (Vec<u8>, usize) {
         let mut w = Writer::default();
         w.put(1, 1);

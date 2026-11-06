@@ -6,6 +6,9 @@ use super::{Error, Name, Request, Settlement, decode_request, decode_settlement}
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+pub(super) const V7_REQUEST_INDEX: u32 = 101;
+pub(super) const V7_SETTLEMENT_INDEX: u32 = 146;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Profile {
     pub component_prefix: u8,
@@ -409,7 +412,14 @@ impl Decoder {
                     if !inbound {
                         return Err(Error::InvalidValue);
                     }
-                    result.push(match decode_settlement(&raw, count, self.profile.channel) {
+                    let decode = if self.profile.request_index == V7_REQUEST_INDEX
+                        && self.profile.settlement_index == V7_SETTLEMENT_INDEX
+                    {
+                        super::wire::decode_settlement_v7
+                    } else {
+                        decode_settlement
+                    };
+                    result.push(match decode(&raw, count, self.profile.channel) {
                         Ok(settlement) => Rpc::Settlement(settlement),
                         Err(Error::UnsupportedSettlementExtras) => Rpc::UnsupportedSettlementExtras,
                         Err(error) => return Err(error),
