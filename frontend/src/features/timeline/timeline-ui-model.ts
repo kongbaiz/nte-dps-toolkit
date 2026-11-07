@@ -1,44 +1,22 @@
-import type {
-  TimelineCurveMode,
-  TimelineScope,
-} from "@/lib/tauri/timeline-contract";
+import type { TimelineDpsViewMode } from "@/lib/tauri/generated/TimelineDpsViewMode";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
+import type { TimelineSnapshot } from "@/lib/tauri/generated/TimelineSnapshot";
 
-export type { TimelineCurveMode, TimelineScope };
+export type { TimelineDpsViewMode, TimelineScope };
 
-export interface TimelinePreviewBucket {
-  start: number;
-  end: number;
-  teamDps: number;
-  damage: number;
-  hits: string;
-  cumulativeDamage: number;
-  roles: Array<{ characterId: number; dps: number }>;
-}
-
-export interface TimelinePreviewCharacter {
-  id: number;
-  name: string;
-  color: string;
-  totalDamage: number;
-}
-
-export interface TimelinePreviewMarker {
-  offset: number;
-  labelKey: string;
-  kind: "half" | "clear" | "exit";
-}
-
-export interface TimelinePreviewSnapshot {
-  duration: number;
-  bucketSeconds: number;
-  effectiveBucketSeconds: number;
-  totalDamage: number;
-  peakDps: number;
-  timeStopIntervals: Array<{ start: number; end: number }>;
-  markers: TimelinePreviewMarker[];
-  characters: TimelinePreviewCharacter[];
-  buckets: TimelinePreviewBucket[];
-}
+/** The part of a timeline snapshot the chart draws. */
+export type TimelinePreviewSnapshot = Pick<
+  TimelineSnapshot,
+  | "duration"
+  | "bucketSeconds"
+  | "effectiveBucketSeconds"
+  | "totalDamage"
+  | "peakDps"
+  | "timeStopIntervals"
+  | "markers"
+  | "characters"
+  | "buckets"
+>;
 
 export interface TimelineChartPoint {
   x: number;
@@ -76,7 +54,7 @@ export function buildTimelineChartModel(
   snapshot: TimelinePreviewSnapshot,
   width: number,
   height: number,
-  mode: TimelineCurveMode,
+  mode: TimelineDpsViewMode,
   selectedCharacterId: number | null,
   requestedViewRange?: TimelineRange | null,
 ): TimelineChartModel {
@@ -167,7 +145,7 @@ export function buildTimelineChartModel(
 
 export function timelineBucketIndexAtX(
   model: TimelineChartModel,
-  buckets: readonly TimelinePreviewBucket[],
+  buckets: TimelinePreviewSnapshot["buckets"],
   x: number,
 ): number | null {
   if (buckets.length === 0 || x < model.plot.left) return null;

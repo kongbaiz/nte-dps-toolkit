@@ -1,3 +1,4 @@
+use crate::contract::island::IslandTone;
 use std::fs;
 
 use nte_dps_tool::{core::live_capture::LiveCapturePhase, storage::paths::capture_log_dir};
@@ -11,8 +12,10 @@ use crate::{
     windows::{console, hud, main_dps},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConsoleControlAction {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ConsoleControlAction {
     ToggleCapture,
     ResetSession,
     ToggleHud,
@@ -25,41 +28,33 @@ enum ConsoleControlAction {
 
 #[tauri::command]
 pub(crate) async fn execute_console_control(
-    action: String,
+    action: ConsoleControlAction,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
     console::validate_window(&window)?;
-    match parse_action(&action)? {
+    match action {
         ConsoleControlAction::ToggleCapture => toggle_capture(&state),
         ConsoleControlAction::ResetSession => {
-            state
-                .ensure_session_undo_runtime_available()
-                .map_err(super::main_dps::session_undo_error)?;
+            state.ensure_session_undo_runtime_available()?;
             if matches!(
                 state.capture_phase(),
                 LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
-            ) || state.replay_running().map_err(CommandError::from_core)?
+            ) || state.replay_running()?
             {
-                return Err(CommandError::main_dps(
+                return Err(CommandError::new(
                     "confirmation_required",
                     "Confirm resetting the active capture from the main window",
                 ));
             }
-            let undo_token = state
-                .reset_session_with_undo_action()
-                .map_err(super::main_dps::session_undo_error)?;
-            state
-                .set_main_processing_paused(false)
-                .map_err(super::main_dps::presentation_error)?;
-            state
-                .set_main_selected_round_id(None)
-                .map_err(super::main_dps::presentation_error)?;
+            let undo_token = state.reset_session_with_undo_action()?;
+            state.set_main_processing_paused(false)?;
+            state.set_main_selected_round_id(None)?;
             state.publish_island_notice(
-                "success",
+                IslandTone::Success,
                 if undo_token.is_some() {
-                    "Session reset · use Undo within 5 seconds"
+                    "Session reset. Use Undo within 5 seconds."
                 } else {
                     "Stats reset"
                 },
@@ -72,9 +67,7 @@ pub(crate) async fn execute_console_control(
         ConsoleControlAction::ToggleHud => toggle_hud(&app, &state),
         ConsoleControlAction::TogglePassthrough => toggle_passthrough(&app, &state),
         ConsoleControlAction::ToggleProcessing => {
-            state
-                .set_main_processing_paused(!state.main_processing_paused())
-                .map_err(super::main_dps::presentation_error)?;
+            state.set_main_processing_paused(!state.main_processing_paused())?;
             Ok(())
         }
         ConsoleControlAction::TogglePin => toggle_pin(&state, &window),
@@ -83,29 +76,15 @@ pub(crate) async fn execute_console_control(
     }
 }
 
-fn parse_action(action: &str) -> Result<ConsoleControlAction, CommandError> {
-    match action {
-        "toggle-capture" => Ok(ConsoleControlAction::ToggleCapture),
-        "reset-session" => Ok(ConsoleControlAction::ResetSession),
-        "toggle-hud" => Ok(ConsoleControlAction::ToggleHud),
-        "toggle-passthrough" => Ok(ConsoleControlAction::TogglePassthrough),
-        "toggle-processing" => Ok(ConsoleControlAction::ToggleProcessing),
-        "toggle-pin" => Ok(ConsoleControlAction::TogglePin),
-        "open-team-details" => Ok(ConsoleControlAction::OpenTeamDetails),
-        "open-capture-logs" => Ok(ConsoleControlAction::OpenCaptureLogs),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
 fn toggle_capture(state: &AppState) -> Result<(), CommandError> {
     match state.capture_phase() {
-        LiveCapturePhase::Starting | LiveCapturePhase::Running => state
-            .request_capture_stop()
-            .map_err(CommandError::from_core),
+        LiveCapturePhase::Starting | LiveCapturePhase::Running => {
+            state.request_capture_stop().map_err(CommandError::from)
+        }
         LiveCapturePhase::Stopping => Ok(()),
         LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed => state
             .request_capture_start(false)
-            .map_err(CommandError::from_core),
+            .map_err(CommandError::from),
     }
 }
 
@@ -174,22 +153,4 @@ async fn open_capture_logs() -> Result<(), CommandError> {
         log::error!("open capture log directory failed: {error}");
         CommandError::window_operation_failed()
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn console_control_actions_are_bounded_to_stable_ids() {
-        assert_eq!(
-            parse_action("toggle-capture").expect("capture action"),
-            ConsoleControlAction::ToggleCapture
-        );
-        assert_eq!(
-            parse_action("open-capture-logs").expect("logs action"),
-            ConsoleControlAction::OpenCaptureLogs
-        );
-        assert!(parse_action("../toggle-capture").is_err());
-    }
 }

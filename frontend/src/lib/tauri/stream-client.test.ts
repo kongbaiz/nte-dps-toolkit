@@ -1,12 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  subscribeStream,
-  type StreamTransport,
-} from "@/lib/tauri/stream-client";
+import { subscribeStream } from "@/lib/tauri/stream-client";
+
+const tauri = vi.hoisted(() => ({
+  invoke: vi.fn<(command: string, arguments_?: unknown) => Promise<unknown>>(),
+  send: undefined as ((event: unknown) => void) | undefined,
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: tauri.invoke,
+  Channel: class {
+    set onmessage(handler: (event: unknown) => void) {
+      tauri.send = handler;
+    }
+  },
+}));
 
 const receipt = {
-  streamProtocolVersion: 2,
   subscriptionId: "fixture",
   streamKind: "technical",
   streamGeneration: "1",
@@ -15,236 +25,102 @@ const receipt = {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+function respond(overrides: Record<string, () => Promise<unknown>> = {}) {
+  tauri.invoke.mockImplementation(async (command) => {
+    if (command in overrides) return overrides[command]!();
+    return command === "subscribe_technical_state" ? receipt : undefined;
+  });
+}
+
+function subscribe(onEvent = vi.fn(), onError = vi.fn()) {
+  const close = subscribeStream({
+    streamKind: "technical",
+    subscribeCommand: "subscribe_technical_state",
+    unsubscribeCommand: "unsubscribe_technical_state",
+    onEvent,
+    onError,
+  });
+  return { close, onEvent, onError };
+}
+
+const acknowledgements = () =>
+  tauri.invoke.mock.calls.filter(
+    ([command]) => command === "acknowledge_stream_delivery",
+  );
+const unsubscribes = () =>
+  tauri.invoke.mock.calls.filter(
+    ([command]) => command === "unsubscribe_technical_state",
+  );
+
 describe("stream client", () => {
-  it("subscribes with one direct Tauri Channel", async () => {
-    let onMessage: ((value: unknown) => void) | undefined;
-    const channel = {};
-    const invoke = vi.fn(async (command: string) => {
-      if (command === "subscribe_technical_state") return receipt;
-      return undefined;
-    });
-    const transport: StreamTransport = {
-      invoke,
-      createChannel(callback) {
-        onMessage = callback;
-        return channel;
-      },
-    };
-    const onEvent = vi.fn();
-    const close = subscribeStream({
-      transport,
-      streamKind: "technical",
-      subscriptionId: "fixture",
-      subscribeCommand: "subscribe_technical_state",
-      unsubscribeCommand: "unsubscribe_technical_state",
-      parseEvent: (value) => value,
-      onEvent,
-      onError: vi.fn(),
-    });
-    await flush();
-
-    expect(invoke).toHaveBeenCalledWith("subscribe_technical_state", {
-      subscriptionId: "fixture",
-      onEvent: channel,
-    });
-    onMessage?.({ streamProtocolVersion: 2, events: [{ value: 7 }] });
-    expect(onEvent).toHaveBeenCalledWith({ value: 7 });
-    expect(invoke).toHaveBeenCalledWith("acknowledge_stream_delivery", {
-      subscriptionId: "fixture",
-      streamKind: "technical",
-      streamGeneration: "1",
-      deliverySequence: "1",
-    });
-    onMessage?.({ streamProtocolVersion: 2, events: [{ value: 8 }] });
-    expect(invoke).toHaveBeenLastCalledWith("acknowledge_stream_delivery", {
-      subscriptionId: "fixture",
-      streamKind: "technical",
-      streamGeneration: "1",
-      deliverySequence: "2",
-    });
-
-    await close();
-    onMessage?.({ streamProtocolVersion: 2, events: [{ value: 9 }] });
-    expect(onEvent).toHaveBeenCalledTimes(2);
-    expect(invoke).toHaveBeenCalledWith("unsubscribe_technical_state", {
-      subscriptionId: "fixture",
-    });
+  beforeEach(() => {
+    tauri.invoke.mockReset();
+    tauri.send = undefined;
   });
 
-  it("buffers the first delivery until the receipt is validated", async () => {
-    let onMessage: ((value: unknown) => void) | undefined;
-    let resolveReceipt: ((value: unknown) => void) | undefined;
-    const subscribe = new Promise<unknown>((resolve) => {
-      resolveReceipt = resolve;
-    });
-    const transport: StreamTransport = {
-      invoke: vi.fn((command) =>
-        command === "subscribe_technical_state"
-          ? subscribe
-          : Promise.resolve(undefined),
-      ),
-      createChannel(callback) {
-        onMessage = callback;
-        return {};
-      },
-    };
-    const onEvent = vi.fn();
-    subscribeStream({
-      transport,
-      streamKind: "technical",
-      subscriptionId: "fixture",
-      subscribeCommand: "subscribe_technical_state",
-      unsubscribeCommand: "unsubscribe_technical_state",
-      parseEvent: (value) => value,
-      onEvent,
-      onError: vi.fn(),
-    });
+  it("acknowledges each delivery in order and stops after close", async () => {
+    respond();
+    const { close, onEvent } = subscribe();
+    await flush();
 
-    onMessage?.({ streamProtocolVersion: 2, events: ["early"] });
+    tauri.send?.(7);
+    tauri.send?.(8);
+    expect(onEvent.mock.calls).toEqual([[7], [8]]);
+    expect(acknowledgements().map(([, args]) => args)).toEqual([
+      expect.objectContaining({ streamGeneration: "1", deliverySequence: "1" }),
+      expect.objectContaining({ streamGeneration: "1", deliverySequence: "2" }),
+    ]);
+
+    await Promise.all([close(), close()]);
+    tauri.send?.(9);
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(unsubscribes()).toHaveLength(1);
+  });
+
+  it("buffers the first delivery until the receipt arrives", async () => {
+    let resolveReceipt: ((value: unknown) => void) | undefined;
+    respond({
+      subscribe_technical_state: () =>
+        new Promise((resolve) => (resolveReceipt = resolve)),
+    });
+    const { onEvent } = subscribe();
+
+    tauri.send?.("early");
     expect(onEvent).not.toHaveBeenCalled();
-    expect(transport.invoke).not.toHaveBeenCalledWith(
-      "acknowledge_stream_delivery",
-      expect.anything(),
-    );
     resolveReceipt?.(receipt);
     await flush();
     expect(onEvent).toHaveBeenCalledWith("early");
-    expect(transport.invoke).toHaveBeenCalledWith(
-      "acknowledge_stream_delivery",
-      expect.objectContaining({ streamGeneration: "1", deliverySequence: "1" }),
-    );
-  });
-
-  it("fails closed on an invalid delivery", async () => {
-    let onMessage: ((value: unknown) => void) | undefined;
-    const invoke = vi.fn(async (command: string) =>
-      command === "subscribe_technical_state" ? receipt : undefined,
-    );
-    const onError = vi.fn();
-    subscribeStream({
-      transport: {
-        invoke,
-        createChannel(callback) {
-          onMessage = callback;
-          return {};
-        },
-      },
-      streamKind: "technical",
-      subscriptionId: "fixture",
-      subscribeCommand: "subscribe_technical_state",
-      unsubscribeCommand: "unsubscribe_technical_state",
-      parseEvent: (value) => value,
-      onEvent: vi.fn(),
-      onError,
-    });
-    await flush();
-
-    onMessage?.({ streamProtocolVersion: 99, events: ["invalid"] });
-    await flush();
-    expect(onError).toHaveBeenCalledOnce();
-    expect(invoke).not.toHaveBeenCalledWith(
-      "acknowledge_stream_delivery",
-      expect.anything(),
-    );
-    expect(invoke).toHaveBeenCalledWith("unsubscribe_technical_state", {
-      subscriptionId: "fixture",
-    });
-  });
-
-  it("makes close idempotent", async () => {
-    const invoke = vi.fn(async (command: string) =>
-      command === "subscribe_technical_state" ? receipt : undefined,
-    );
-    const close = subscribeStream({
-      transport: { invoke, createChannel: () => ({}) },
-      streamKind: "technical",
-      subscriptionId: "fixture",
-      subscribeCommand: "subscribe_technical_state",
-      unsubscribeCommand: "unsubscribe_technical_state",
-      parseEvent: (value) => value,
-      onEvent: vi.fn(),
-      onError: vi.fn(),
-    });
-
-    await Promise.all([close(), close()]);
-    expect(
-      invoke.mock.calls.filter(
-        ([command]) => command === "unsubscribe_technical_state",
-      ),
-    ).toHaveLength(1);
+    expect(acknowledgements()).toHaveLength(1);
   });
 
   it("fails closed and unsubscribes when acknowledgement fails", async () => {
-    let onMessage: ((value: unknown) => void) | undefined;
-    const failure = new Error("ack failed");
-    const invoke = vi.fn(async (command: string) => {
-      if (command === "subscribe_technical_state") return receipt;
-      if (command === "acknowledge_stream_delivery") throw failure;
-      return undefined;
+    respond({
+      acknowledge_stream_delivery: () => Promise.reject(new Error("ack")),
     });
-    const onEvent = vi.fn();
-    const onError = vi.fn();
-    subscribeStream({
-      transport: {
-        invoke,
-        createChannel(callback) {
-          onMessage = callback;
-          return {};
-        },
-      },
-      streamKind: "technical",
-      subscriptionId: "fixture",
-      subscribeCommand: "subscribe_technical_state",
-      unsubscribeCommand: "unsubscribe_technical_state",
-      parseEvent: (value) => value,
-      onEvent,
-      onError,
-    });
+    const { onEvent, onError } = subscribe();
     await flush();
-    onMessage?.({ streamProtocolVersion: 2, events: ["first"] });
+
+    tauri.send?.("first");
     await flush();
-    expect(onError).toHaveBeenCalledWith(failure);
-    expect(invoke).toHaveBeenCalledWith("unsubscribe_technical_state", {
-      subscriptionId: "fixture",
-    });
-    onMessage?.({ streamProtocolVersion: 2, events: ["late"] });
+    expect(onError).toHaveBeenCalledOnce();
+    expect(unsubscribes()).toHaveLength(1);
+    tauri.send?.("late");
     expect(onEvent).toHaveBeenCalledTimes(1);
   });
 
   it("does not acknowledge a delivery rejected by the consumer", async () => {
-    let onMessage: ((value: unknown) => void) | undefined;
-    const invoke = vi.fn(async (command: string) =>
-      command === "subscribe_technical_state" ? receipt : undefined,
-    );
-    const onError = vi.fn();
-    subscribeStream({
-      transport: {
-        invoke,
-        createChannel(callback) {
-          onMessage = callback;
-          return {};
-        },
-      },
-      streamKind: "technical",
-      subscriptionId: "fixture",
-      subscribeCommand: "subscribe_technical_state",
-      unsubscribeCommand: "unsubscribe_technical_state",
-      parseEvent: (value) => value,
-      onEvent: () => {
+    respond();
+    const { onError } = subscribe(
+      vi.fn(() => {
         throw new Error("consumer failed");
-      },
-      onError,
-    });
+      }),
+    );
     await flush();
-    onMessage?.({ streamProtocolVersion: 2, events: ["first"] });
+
+    tauri.send?.("first");
     await flush();
     expect(onError).toHaveBeenCalledOnce();
-    expect(invoke).not.toHaveBeenCalledWith(
-      "acknowledge_stream_delivery",
-      expect.anything(),
-    );
-    expect(invoke).toHaveBeenCalledWith("unsubscribe_technical_state", {
-      subscriptionId: "fixture",
-    });
+    expect(acknowledgements()).toHaveLength(0);
+    expect(unsubscribes()).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { HudTimelineSnapshot } from "@/lib/tauri/technical-contract";
+import type { HudTimelineSnapshot } from "@/lib/tauri/generated/HudTimelineSnapshot";
 
 import {
   buildMiniTimelineDrawModel,

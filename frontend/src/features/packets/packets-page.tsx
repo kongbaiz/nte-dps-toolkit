@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import {
   Empty,
   EmptyDescription,
@@ -33,12 +34,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { t, tf } from "@/lib/i18n";
-import type {
-  PacketSnapshot,
-  PacketsCapturePhase,
-  PacketsCommandError,
-  PacketsSnapshot,
-} from "@/lib/tauri/packets-contract";
+import type { LiveCapturePhase } from "@/lib/tauri/generated/LiveCapturePhase";
+import type { PacketSnapshot } from "@/lib/tauri/generated/PacketSnapshot";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
+import { type CommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 
 import {
@@ -49,7 +48,7 @@ import {
 } from "./packets-model";
 import { usePackets } from "./use-packets";
 
-const PHASE_LABELS: Record<PacketsCapturePhase, string> = {
+const PHASE_LABELS: Record<LiveCapturePhase, string> = {
   idle: "Capture idle",
   starting: "Capture starting",
   running: "Live",
@@ -121,8 +120,8 @@ export function PacketsPage() {
             aria-hidden="true"
           />
           <span className="sr-only">{t("Search")}</span>
-          <input
-            className="h-9 w-full rounded-lg border bg-background pr-3 pl-9 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/25"
+          <Input
+            className="pl-9"
             placeholder={t("IP / ID / protocol name")}
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
@@ -168,14 +167,14 @@ export function PacketsPage() {
   );
 }
 
-function CaptureBadge({ phase }: { phase: PacketsCapturePhase }) {
+function CaptureBadge({ phase }: { phase: LiveCapturePhase }) {
   const active = phase === "running";
   return (
     <Badge variant="outline" className="gap-1.5">
       <span
         className={cn(
           "size-1.5 rounded-full",
-          active ? "bg-emerald-500" : "bg-muted-foreground/55",
+          active ? "bg-success" : "bg-muted-foreground/55",
           phase === "failed" && "bg-destructive",
         )}
       />
@@ -214,7 +213,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
       className="group px-3 py-1.5 open:bg-muted/20 min-[640px]:px-5"
       style={{ contentVisibility: "auto", containIntrinsicSize: "64px" }}
     >
-      <summary className="packet-summary flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/45 [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/45 max-[760px]:flex-wrap [&::-webkit-details-marker]:hidden">
         <ChevronRight
           className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
           aria-hidden="true"
@@ -224,7 +223,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
         </time>
         <DirectionBadge direction={packet.direction} />
         <span
-          className="min-w-[180px] flex-1 truncate font-mono text-xs"
+          className="min-w-[180px] flex-1 truncate font-mono text-xs max-[760px]:order-1 max-[760px]:ps-6"
           title={`${packet.source} -> ${packet.destination}`}
         >
           {packet.source} <span className="text-muted-foreground">→</span>{" "}
@@ -234,7 +233,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
           {packet.payloadLen.toLocaleString()} B
         </span>
         <span
-          className="hidden max-w-[220px] shrink-0 truncate font-mono text-xs text-muted-foreground min-[1040px]:inline"
+          className="hidden max-w-[220px] shrink-0 truncate font-mono text-xs text-muted-foreground max-[760px]:order-1 max-[760px]:ps-6 min-[1040px]:inline"
           title={ids}
         >
           ids=[{ids}]
@@ -248,9 +247,7 @@ function PacketRow({ packet }: { packet: PacketSnapshot }) {
       </summary>
       <div className="mr-2 mb-2 ml-8 border-l pl-4">
         {packet.note ? (
-          <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">
-            {packet.note}
-          </p>
+          <p className="mb-2 text-xs text-warning">{packet.note}</p>
         ) : null}
         <div className="mb-1.5 text-xs font-medium text-primary">
           {t("Auto Parse")}
@@ -292,7 +289,7 @@ function PacketsLoadError({
   error,
   onRetry,
 }: {
-  error: PacketsCommandError;
+  error: CommandError;
   onRetry: () => void;
 }) {
   return (
@@ -348,7 +345,7 @@ function PacketsStreamError({
   error,
   onDismiss,
 }: {
-  error: PacketsCommandError;
+  error: CommandError;
   onDismiss: () => void;
 }) {
   return createPortal(

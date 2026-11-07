@@ -1,27 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  easeOutCubic,
-  interpolateNumber,
-  startMotionViewTransition,
-} from "./motion";
+import { startMotionViewTransition } from "./motion";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("motion helpers", () => {
-  it("clamps easing progress to the animation range", () => {
-    expect(easeOutCubic(-1)).toBe(0);
-    expect(easeOutCubic(0)).toBe(0);
-    expect(easeOutCubic(1)).toBe(1);
-    expect(easeOutCubic(2)).toBe(1);
-  });
-
-  it("interpolates toward the next value with eased progress", () => {
-    expect(interpolateNumber(10, 20, 0)).toBe(10);
-    expect(interpolateNumber(10, 20, 1)).toBe(20);
-    expect(interpolateNumber(10, 20, 0.5)).toBeGreaterThan(15);
-  });
-
   it("updates immediately when reduced motion is active", () => {
     const transition = vi.fn();
     vi.stubGlobal("document", {

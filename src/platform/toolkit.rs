@@ -24,7 +24,7 @@ use windows_sys::Win32::{
 };
 
 const REGION_BYTES: usize = 262_760;
-const PAGE_BYTES: usize = 262_144;
+pub(super) const PAGE_BYTES: usize = 262_144;
 pub const MAX_BLOB_BYTES: usize = 32 * 1024 * 1024;
 const REQUEST: usize = 40;
 const RESPONSE: usize = 584;
@@ -33,6 +33,8 @@ const RESPONSE: usize = 584;
 #[serde(rename_all = "snake_case")]
 pub enum ToolkitError {
     Unavailable,
+    OperationUnavailable,
+    Stopping,
     Busy,
     Timeout,
     InvalidProtocol,
@@ -49,6 +51,66 @@ impl std::fmt::Display for ToolkitError {
     }
 }
 impl std::error::Error for ToolkitError {}
+
+#[path = "toolkit_form.rs"]
+pub mod form;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolkitService {
+    pub name: String,
+    pub owner: u64,
+    pub command: u32,
+    pub purpose: String,
+}
+
+pub struct ToolkitDescription {
+    pub operation_session: String,
+    pub commands: Vec<u32>,
+    pub services: Vec<ToolkitService>,
+}
+
+impl ToolkitDescription {
+    fn parse(bytes: &[u8], process: &str) -> Result<Self, ToolkitError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Description {
+            protocol: u32,
+            mode: String,
+            legacy_mod_protocol: bool,
+            operation_identity_version: u32,
+            operation_session: String,
+            commands: Vec<u32>,
+            #[serde(default)]
+            services: Vec<ToolkitService>,
+        }
+        let d: Description =
+            serde_json::from_slice(bytes).map_err(|_| ToolkitError::InvalidProtocol)?;
+        if d.protocol != 1
+            || d.mode != "toolkit"
+            || d.legacy_mod_protocol
+            || d.commands.len() > 128
+            || d.operation_identity_version != 1
+            || ![3, 7, 200].iter().all(|c| d.commands.contains(c))
+        {
+            return Err(ToolkitError::Unsupported);
+        }
+        let instance = d
+            .operation_session
+            .strip_prefix(process)
+            .and_then(|s| s.strip_prefix(':'))
+            .and_then(|s| s.strip_suffix(":0"))
+            .ok_or(ToolkitError::InvalidProtocol)?;
+        if instance.len() != 32 || !instance.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ToolkitError::InvalidProtocol);
+        }
+        Ok(Self {
+            operation_session: d.operation_session,
+            commands: d.commands,
+            services: d.services,
+        })
+    }
+}
 
 struct Handle(HANDLE);
 impl Handle {
@@ -303,6 +365,33 @@ impl ToolkitClient {
         text: &str,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<u8>, ToolkitError> {
+        self.call_request(command, argument, text, (0, 0), cancelled)
+    }
+    pub fn call_owned(
+        &self,
+        session: &str,
+        owner: u64,
+        command: u32,
+        argument: u32,
+        text: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<u8>, ToolkitError> {
+        self.call_request(
+            12,
+            command,
+            &format!("{session}\n{text}"),
+            (owner, argument),
+            cancelled,
+        )
+    }
+    fn call_request(
+        &self,
+        command: u32,
+        argument: u32,
+        text: &str,
+        envelope: (u64, u32),
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<u8>, ToolkitError> {
         if text.len() >= 512 || text.contains('\0') {
             return Err(ToolkitError::InvalidProtocol);
         }
@@ -312,21 +401,14 @@ impl ToolkitClient {
             command,
             argument,
             text.as_bytes(),
-            (0, 0),
+            envelope,
             deadline,
             cancelled,
         )?;
         if first.offset != 0 {
             return Err(ToolkitError::InvalidProtocol);
         }
-        match first.status {
-            0 | 1 => (),
-            3 => return Err(ToolkitError::Unsupported),
-            4 | 9 => return Err(ToolkitError::Unavailable),
-            5 => return Err(ToolkitError::Busy),
-            7 => return Err(ToolkitError::TooLarge),
-            _ => return Err(ToolkitError::Failed),
-        }
+        check_status(first.status)?;
         let mut bytes = first.payload;
         while bytes.len() < first.total {
             let next = self.exchange(
@@ -359,36 +441,8 @@ impl ToolkitClient {
         serde_json::from_slice(&self.call(command, argument, text, cancelled)?)
             .map_err(|_| ToolkitError::InvalidProtocol)
     }
-    pub fn capabilities(&self) -> Result<Vec<u32>, ToolkitError> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Description {
-            protocol: u32,
-            mode: String,
-            // UI presence is metadata, not a different control protocol.
-            #[serde(rename = "ui")]
-            _ui: bool,
-            legacy_mod_protocol: bool,
-            commands: Vec<u32>,
-        }
-        let d: Description = self.json(1, 0, "", &|| false)?;
-        if d.protocol != 1
-            || d.mode != "toolkit"
-            || d.legacy_mod_protocol
-            || d.commands.len() > 128
-            || ![3, 100, 101, 102, 106, 107, 200]
-                .iter()
-                .all(|c| d.commands.contains(c))
-        {
-            return Err(ToolkitError::Unsupported);
-        }
-        let mut commands = d.commands;
-        commands.sort_unstable();
-        commands.dedup();
-        Ok(commands)
-    }
-    pub fn describe(&self) -> Result<(), ToolkitError> {
-        self.capabilities().map(|_| ())
+    pub fn describe(&self) -> Result<ToolkitDescription, ToolkitError> {
+        ToolkitDescription::parse(&self.call(1, 0, "", &|| false)?, &self.identity())
     }
     pub fn process_identity(&self) -> (u32, u64) {
         (self.pid, self.created)
@@ -404,6 +458,19 @@ struct Page {
     offset: usize,
     payload: Vec<u8>,
 }
+fn check_status(status: u32) -> Result<(), ToolkitError> {
+    match status {
+        0 | 1 => Ok(()),
+        2 => Err(ToolkitError::InvalidProtocol),
+        3 => Err(ToolkitError::Unsupported),
+        4 => Err(ToolkitError::OperationUnavailable),
+        5 => Err(ToolkitError::Busy),
+        7 => Err(ToolkitError::TooLarge),
+        8 => Err(ToolkitError::SessionChanged),
+        9 => Err(ToolkitError::Stopping),
+        _ => Err(ToolkitError::Failed),
+    }
+}
 fn validate_page(bytes: usize, total: usize, offset: usize) -> Result<(), ToolkitError> {
     if total > MAX_BLOB_BYTES {
         return Err(ToolkitError::TooLarge);
@@ -417,6 +484,17 @@ fn validate_page(bytes: usize, total: usize, offset: usize) -> Result<(), Toolki
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn responding_host_rejections_are_not_connection_failures() {
+        for (status, expected) in [
+            (0, Ok(())),
+            (1, Ok(())),
+            (4, Err(ToolkitError::OperationUnavailable)),
+            (9, Err(ToolkitError::Stopping)),
+        ] {
+            assert_eq!(check_status(status), expected);
+        }
+    }
     #[test]
     fn toolkit_page_limits() {
         assert_eq!(validate_page(0, 0, 0), Ok(()));
@@ -432,6 +510,19 @@ mod tests {
         assert_eq!(validate_page(4, 3, 0), Err(ToolkitError::InvalidProtocol));
         assert_eq!(validate_page(0, 3, 4), Err(ToolkitError::InvalidProtocol));
     }
+    #[test]
+    fn host_without_combat_still_exposes_session_bound_plugin_control() {
+        let session = "42:1234:00112233445566778899aabbccddeeff:0";
+        let data = serde_json::to_vec(&serde_json::json!({"protocol":1,"mode":"toolkit",
+            "legacyModProtocol":false,"commands":[1,2,3,4,5,7,200,415],"operationIdentityVersion":1,"operationSession":session})).unwrap();
+        assert_eq!(
+            ToolkitDescription::parse(&data, "42:1234")
+                .unwrap()
+                .operation_session,
+            session
+        );
+        assert!(ToolkitDescription::parse(&data, "42:123").is_err());
+    }
     /// An opt-in test against a separate process hosting the unchanged compiled DLLs.
     #[test]
     #[ignore]
@@ -441,7 +532,7 @@ mod tests {
             .parse()
             .unwrap();
         let client = ToolkitClient::open(pid).unwrap();
-        client.describe().unwrap();
+        let session = client.describe().unwrap().operation_session;
         let plugins: Vec<serde_json::Value> = client.json(3, 0, "", &|| false).unwrap();
         assert!(
             plugins
@@ -450,7 +541,12 @@ mod tests {
         );
         for (command, expected) in [(5, "unloaded"), (4, "loaded")] {
             client
-                .call(command, 0, "NTE_PluginCombat.dll", &|| false)
+                .call(
+                    command,
+                    0,
+                    &format!("{session}/NTE_PluginCombat.dll"),
+                    &|| false,
+                )
                 .unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
@@ -468,10 +564,6 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(25));
             }
         }
-        client.call(8, 2, "", &|| false).unwrap();
-        println!(
-            "TOOLKIT_CONTROL_PASS: real compiled plugin disabled, enabled, and log level accepted"
-        );
         let report: serde_json::Value = client.json(107, 0, "", &|| false).unwrap();
         assert_eq!(report["schemaVersion"], 14);
         println!(

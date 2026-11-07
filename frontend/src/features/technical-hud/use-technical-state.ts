@@ -1,21 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  technicalClient,
-  type TechnicalClient,
-} from "@/lib/tauri/technical-client";
-import {
-  parseTechnicalCommandError,
-  type HudModuleId,
-  type TechnicalSnapshot,
-} from "@/lib/tauri/technical-contract";
+import { technicalClient } from "@/lib/tauri/technical-client";
+import type { HudModule } from "@/lib/tauri/generated/HudModule";
+import type { TechnicalSnapshot } from "@/lib/tauri/generated/TechnicalSnapshot";
+import { toCommandError } from "@/lib/tauri/command-error";
 
 import {
   acceptSnapshot,
   type TechnicalPageState,
 } from "./technical-view-model";
 
-export function useTechnicalState(client: TechnicalClient = technicalClient) {
+export function useTechnicalState() {
   const [state, setState] = useState<TechnicalPageState>({
     status: "loading",
   });
@@ -33,7 +28,7 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
   const applyError = useCallback((error: unknown) => {
     setState({
       status: "error",
-      error: parseTechnicalCommandError(error),
+      error: toCommandError(error),
     });
   }, []);
 
@@ -61,72 +56,76 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
   );
 
   const refresh = useCallback(async () => {
-    await runAction("refresh", () => client.getSnapshot());
-  }, [client, runAction]);
+    await runAction("refresh", () => technicalClient.getSnapshot());
+  }, [runAction]);
 
   const reset = useCallback(async () => {
-    await runAction("reset", () => client.resetSession());
-  }, [client, runAction]);
+    await runAction("reset", () => technicalClient.resetSession());
+  }, [runAction]);
 
   const setPassthrough = useCallback(
     async (enabled: boolean) => {
-      await runAction("passthrough", () => client.setPassthrough(enabled));
+      await runAction("passthrough", () =>
+        technicalClient.setPassthrough(enabled),
+      );
     },
-    [client, runAction],
+    [runAction],
   );
 
   const setAlwaysOnTop = useCallback(
     async (enabled: boolean) => {
-      await runAction("always-on-top", () => client.setAlwaysOnTop(enabled));
+      await runAction("always-on-top", () =>
+        technicalClient.setAlwaysOnTop(enabled),
+      );
     },
-    [client, runAction],
+    [runAction],
   );
 
   const setHudModuleVisibility = useCallback(
-    async (module: HudModuleId, visible: boolean) => {
+    async (module: HudModule, visible: boolean) => {
       await runAction("hud-modules", () =>
-        client.setModuleVisibility(module, visible),
+        technicalClient.setModuleVisibility(module, visible),
       );
     },
-    [client, runAction],
+    [runAction],
   );
 
   const moveHudModule = useCallback(
-    async (dragged: HudModuleId, target: HudModuleId, insertAfter: boolean) => {
+    async (dragged: HudModule, target: HudModule, insertAfter: boolean) => {
       await runAction("module-order", () =>
-        client.moveModule(dragged, target, insertAfter),
+        technicalClient.moveModule(dragged, target, insertAfter),
       );
     },
-    [client, runAction],
+    [runAction],
   );
 
   const setHudWidth = useCallback(
     async (width: number) => {
-      await runAction("hud-width", () => client.setWidth(width));
+      await runAction("hud-width", () => technicalClient.setWidth(width));
     },
-    [client, runAction],
+    [runAction],
   );
 
   const startCapture = useCallback(async () => {
-    await runAction("start-capture", () => client.startCapture());
-  }, [client, runAction]);
+    await runAction("start-capture", () => technicalClient.startCapture());
+  }, [runAction]);
 
   const stopCapture = useCallback(async () => {
-    await runAction("stop-capture", () => client.stopCapture());
-  }, [client, runAction]);
+    await runAction("stop-capture", () => technicalClient.stopCapture());
+  }, [runAction]);
 
   const clearActionNotice = useCallback(() => setActionNotice(null), []);
 
   useEffect(() => {
-    void client.getSnapshot().then(applySnapshot).catch(applyError);
-    const unsubscribe = client.subscribe(applySnapshot, applyError);
+    void technicalClient.getSnapshot().then(applySnapshot).catch(applyError);
+    const unsubscribe = technicalClient.subscribe(applySnapshot, applyError);
 
     return () => {
       void unsubscribe().catch((error: unknown) => {
         console.error("technical subscription cleanup failed", error);
       });
     };
-  }, [applyError, applySnapshot, client]);
+  }, [applyError, applySnapshot]);
 
   return {
     state,

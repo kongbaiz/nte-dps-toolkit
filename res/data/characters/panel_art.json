@@ -1,7 +1,7 @@
 {
   "sources": {
-    "DataTable/Equipment/DT_EquipmentPlanData.json": "3fed5c00ac8b166597c74db80755986012474371e68043595b887575ab2457cb",
-    "DataTable/Fork/DT_ForkItemData.json": "75d7f2d5a912c26b0303a1833a4a7786fd931da0043b393acd125c2f99e1dd08"
+    "DataTable/Equipment/DT_EquipmentPlanData.json": "90639ec7e9504a31fb2c468b98453b8b65e2e1e8c42f56975a7f31de2ab6a684",
+    "DataTable/Fork/DT_ForkItemData.json": "72eccac4092a9158697be186999df35defb25a7235fcbebe623073b5cab2312a"
   },
   "characters": {
     "1051": "res/images/character-panel/portraits/YH_UI_shizhuang_lihui_nvzhu.png",
@@ -28,7 +28,9 @@
     "1036": "res/images/character-panel/portraits/YH_UI_shizhuang_lihui_canhong.png",
     "1072": "res/images/character-panel/portraits/YH_UI_shizhuang_lihui_lingke.png",
     "1042": "res/images/character-panel/portraits/YH_UI_shizhuang_lihui_heiyu.png",
-    "1057": "res/images/character-panel/portraits/YH_UI_shizhuang_lihui_kaesi1.png"
+    "1057": "res/images/character-panel/portraits/YH_UI_shizhuang_lihui_mingyin.png",
+    "1090": "res/images/character-panel/portraits/980_Fashion_1090_0.png",
+    "1074": "res/images/character-panel/portraits/980_Fashion_1074_0.png"
   },
   "arcs": {
     "fork_yuren": "res/images/character-panel/arcs/fork_yuren_256.png",
@@ -81,6 +83,8 @@
     "fork_DemonBlade": "res/images/character-panel/arcs/fork_DemonBlade_256.png",
     "fork_GoldRecord": "res/images/character-panel/arcs/fork_GoldRecord_256.png",
     "fork_twinbirds": "res/images/character-panel/arcs/fork_twinbirds_256.png",
-    "fork_prism": "res/images/character-panel/arcs/fork_prism_256.png"
+    "fork_prism": "res/images/character-panel/arcs/fork_prism_256.png",
+    "fork_elyms": "res/images/character-panel/arcs/fork_elyms_256.png",
+    "fork_exe": "res/images/character-panel/arcs/fork_exe_256.png"
   }
 }

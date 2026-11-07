@@ -35,6 +35,7 @@ pub struct ModMarketCatalog {
 
 /// The signed catalog selects a fixed destination, never an arbitrary local path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum ComponentKind {
     #[default]
@@ -497,20 +498,18 @@ fn read_proxy_receipt(destination: &Path) -> Result<Option<ProxyReceipt>, ModMar
             "unsupported proxy receipt version",
         ));
     }
-    if receipt.files.is_empty() || receipt.files.len() > 65 {
+    if receipt.files.is_empty() || receipt.files.len() > MAX_MOD_MARKET_ITEMS + 1 {
         return Err(invalid_proxy_receipt());
     }
     for file in &receipt.files {
-        let plugin = file
-            .path
+        let normalized = file.path.to_ascii_lowercase();
+        let plugin = normalized
             .strip_prefix("plugins/")
             .and_then(|s| s.strip_suffix(".dll"));
-        if file.path != "d3d12.dll"
-            && !plugin.is_some_and(|id| validate_mod_id(&id.to_ascii_lowercase()).is_ok())
-        {
+        if normalized != "d3d12.dll" && !plugin.is_some_and(|id| validate_mod_id(id).is_ok()) {
             return Err(invalid_proxy_receipt());
         }
-        if !names.insert(file.path.to_ascii_lowercase()) {
+        if !names.insert(normalized) {
             return Err(invalid_proxy_receipt());
         }
     }
@@ -541,6 +540,7 @@ pub fn uninstall_proxy(runtime: &Path, destination: &Path) -> Result<(), ModMark
     if !destination.join("HTGame.exe").is_file() {
         return Err(proxy_conflict());
     }
+    let _lock = lock_proxy_directory(&destination)?;
     let receipt = read_proxy_receipt(&destination)?;
     let has_receipt = receipt.is_some();
     let receipt = if let Some(receipt) = receipt {
@@ -565,7 +565,11 @@ pub fn uninstall_proxy(runtime: &Path, destination: &Path) -> Result<(), ModMark
             }],
         }
     };
-    if receipt.files.iter().any(|f| f.path.starts_with("plugins/")) {
+    if receipt
+        .files
+        .iter()
+        .any(|f| f.path.to_ascii_lowercase().starts_with("plugins/"))
+    {
         match std::fs::symlink_metadata(destination.join("plugins")) {
             Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -586,7 +590,10 @@ pub fn uninstall_proxy(runtime: &Path, destination: &Path) -> Result<(), ModMark
         }
     }
     // Disable auto-loading first, without ever recursively deleting the plugin directory.
-    paths.sort_by_key(|p| p.file_name().is_none_or(|n| n != "d3d12.dll"));
+    paths.sort_by_key(|p| {
+        p.file_name()
+            .is_none_or(|n| !n.to_string_lossy().eq_ignore_ascii_case("d3d12.dll"))
+    });
     for path in paths {
         std::fs::remove_file(path).map_err(|_| proxy_io())?;
     }
@@ -596,16 +603,186 @@ pub fn uninstall_proxy(runtime: &Path, destination: &Path) -> Result<(), ModMark
     Ok(())
 }
 
-/// First deployment is activated by publishing the host last. Existing different
-/// files are never overwritten, including older/unknown proxies and plugins.
-/// Candidate validation and staging finish before any destination is published.
-pub fn deploy_proxy(runtime: &Path, destination: &Path) -> Result<(), ModMarketError> {
-    use std::fs;
-    let destination =
-        fs::canonicalize(destination).map_err(|_| invalid_catalog("game directory unavailable"))?;
+/// Publish plugins before the host, then record ownership for updates and removal.
+pub fn deploy_proxy(
+    runtime: &Path,
+    destination: &Path,
+    force_overwrite: bool,
+) -> Result<(), ModMarketError> {
+    let destination = std::fs::canonicalize(destination).map_err(|_| proxy_io())?;
     if !destination.join("HTGame.exe").is_file() {
         return Err(invalid_catalog("game executable unavailable"));
     }
+    let _lock = lock_proxy_directory(&destination)?;
+    let files = proxy_package_files(runtime)?;
+    let mut receipt = read_proxy_receipt(&destination)?.unwrap_or(ProxyReceipt {
+        schema: 1,
+        files: Vec::new(),
+    });
+    // The shared plugins directory also contains user settings and other plugins.
+    match std::fs::symlink_metadata(destination.join("plugins")) {
+        Ok(meta) if !meta.is_dir() || meta.file_type().is_symlink() => return Err(proxy_io()),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(proxy_io()),
+        _ => {}
+    }
+    let mut pending = Vec::new();
+    let mut receipt_changed = false;
+    for (relative, bytes) in files {
+        let target = destination.join(&relative);
+        let sha256: [u8; 32] = Sha256::digest(&bytes).into();
+        let existing_hash = existing_proxy_hash(&target)?;
+        let owned = receipt
+            .files
+            .iter_mut()
+            .find(|file| file.path.eq_ignore_ascii_case(&relative));
+        if existing_hash == Some(sha256) {
+            // Legacy byte-identical hosts were already removable. Do not claim
+            // pre-existing matching plugins that Toolkit never installed.
+            if owned.is_none() && relative != "d3d12.dll" {
+                continue;
+            }
+        } else {
+            if existing_hash.is_some()
+                && !force_overwrite
+                && !owned
+                    .as_ref()
+                    .is_some_and(|file| Some(file.sha256) == existing_hash)
+            {
+                return Err(proxy_conflict());
+            }
+            pending.push(ProxyDeploymentFile {
+                target,
+                bytes,
+                replace: existing_hash.is_some(),
+            });
+        }
+        match owned {
+            Some(file) if file.sha256 == sha256 => continue,
+            Some(file) => file.sha256 = sha256,
+            None => receipt.files.push(ProxyFile {
+                path: relative,
+                sha256,
+            }),
+        }
+        receipt_changed = true;
+    }
+    if pending.is_empty() && !receipt_changed {
+        return Ok(());
+    }
+    let receipt_bytes = serde_json::to_vec(&receipt).map_err(|_| proxy_io())?;
+    if receipt.files.len() > MAX_MOD_MARKET_ITEMS + 1
+        || receipt_bytes.len() as u64 > MAX_PROXY_RECEIPT_BYTES
+    {
+        return Err(ModMarketError::new(
+            ModMarketErrorCode::ProxyReceiptTooLarge,
+            "proxy receipt exceeds size limit",
+        ));
+    }
+    publish_proxy_files(
+        &destination,
+        &pending,
+        receipt_changed.then_some(receipt_bytes),
+    )
+}
+
+struct ProxyDeploymentFile {
+    target: std::path::PathBuf,
+    bytes: Vec<u8>,
+    replace: bool,
+}
+
+fn existing_proxy_hash(path: &Path) -> Result<Option<[u8; 32]>, ModMarketError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        _ => return Err(proxy_io()),
+    }
+    let mut file = std::fs::File::open(path).map_err(|_| proxy_io())?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 32 * 1024];
+    loop {
+        let n = file.read(&mut buffer).map_err(|_| proxy_io())?;
+        if n == 0 {
+            return Ok(Some(hash.finalize().into()));
+        }
+        hash.update(&buffer[..n]);
+    }
+}
+
+fn publish_proxy_files(
+    destination: &Path,
+    files: &[ProxyDeploymentFile],
+    receipt: Option<Vec<u8>>,
+) -> Result<(), ModMarketError> {
+    use std::fs;
+    // The deployment lock serializes writers. Never reuse a recovery directory
+    // left by an interrupted deployment.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| proxy_io())?
+        .as_nanos();
+    let staging = destination.join(format!(".nte-stage-{}-{stamp}", std::process::id()));
+    fs::create_dir(&staging).map_err(|_| proxy_io())?;
+    let mut published = 0;
+    let result = (|| {
+        for (index, file) in files.iter().enumerate() {
+            if file.replace {
+                fs::copy(&file.target, staging.join(index.to_string())).map_err(|_| proxy_io())?;
+            }
+            write_proxy_file(&file.target, &file.bytes, file.replace)?;
+            published += 1;
+        }
+        if let Some(bytes) = receipt {
+            write_proxy_file(&destination.join(PROXY_RECEIPT), &bytes, true)?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let mut rollback_failed = false;
+        for (index, file) in files[..published].iter().enumerate().rev() {
+            let restored = if file.replace {
+                fs::rename(staging.join(index.to_string()), &file.target)
+            } else {
+                fs::remove_file(&file.target)
+            };
+            rollback_failed |= restored.is_err();
+        }
+        if rollback_failed {
+            return Err(proxy_io()); // Keep remaining originals for recovery.
+        }
+    }
+    fs::remove_dir_all(staging).map_err(|_| proxy_io())?;
+    result
+}
+
+fn write_proxy_file(
+    path: &Path,
+    bytes: &[u8],
+    replace_existing: bool,
+) -> Result<(), ModMarketError> {
+    crate::storage::io_util::atomic_publish_file(path, replace_existing, |writer| {
+        writer.write_all(bytes).map_err(|error| error.to_string())
+    })
+    .map_err(|_| proxy_io())
+}
+
+fn lock_proxy_directory(destination: &Path) -> Result<std::fs::File, ModMarketError> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(destination.join(".nte-proxy.lock"))
+        .map_err(|_| proxy_io())?;
+    file.try_lock().map_err(|_| proxy_io())?;
+    // Keep the lock file in place so concurrent processes always lock the same file.
+    Ok(file)
+}
+
+const MAX_PROXY_DEPLOYMENT_BYTES: usize = 256 * 1024 * 1024;
+
+fn proxy_package_files(runtime: &Path) -> Result<Vec<(String, Vec<u8>)>, ModMarketError> {
+    use std::fs;
     let host = read_component_file(&runtime.join("d3d12.dll"), ComponentKind::Host)?
         .ok_or_else(|| invalid_catalog("managed host is missing"))?;
     let mut files = Vec::new();
@@ -619,158 +796,29 @@ pub fn deploy_proxy(runtime: &Path, destination: &Path) -> Result<(), ModMarketE
                     .file_name()
                     .into_string()
                     .map_err(|_| invalid_catalog("invalid plugin filename"))?;
-                if !name.ends_with(".dll") {
+                if !name.to_ascii_lowercase().ends_with(".dll") {
                     continue;
                 }
-                if files.len() >= 64 {
+                if files.len() >= MAX_MOD_MARKET_ITEMS {
                     return Err(invalid_catalog("too many plugin files"));
                 }
-                validate_mod_id(name.trim_end_matches(".dll").to_ascii_lowercase().as_str())
+                validate_mod_id(name[..name.len() - 4].to_ascii_lowercase().as_str())
                     .map_err(|_| invalid_catalog("invalid plugin filename"))?;
                 let bytes = read_component_file(&entry.path(), ComponentKind::Plugin)?
                     .ok_or_else(|| invalid_catalog("plugin disappeared"))?;
-                total = total.saturating_add(bytes.len());
-                if total > 256 * 1024 * 1024 {
+                total += bytes.len();
+                if total > MAX_PROXY_DEPLOYMENT_BYTES {
                     return Err(invalid_catalog("proxy deployment exceeds byte budget"));
                 }
-                files.push((std::path::PathBuf::from("plugins").join(name), bytes));
+                files.push((format!("plugins/{name}"), bytes));
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err(invalid_catalog("plugin enumeration failed")),
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
-    files.push(("d3d12.dll".into(), host));
-    let plugin_destination = destination.join("plugins");
-    let had_plugin_directory = match fs::symlink_metadata(&plugin_destination) {
-        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => true,
-        Ok(_) => {
-            return Err(invalid_catalog(
-                "plugin destination is not a regular directory",
-            ));
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-        Err(_) => return Err(invalid_catalog("plugin destination metadata failed")),
-    };
-    if had_plugin_directory {
-        for entry in fs::read_dir(&plugin_destination).map_err(|_| proxy_conflict())? {
-            let entry = entry.map_err(|_| proxy_conflict())?;
-            let relative = std::path::PathBuf::from("plugins").join(entry.file_name());
-            if !files.iter().any(|(path, _)| *path == relative) {
-                return Err(proxy_conflict());
-            }
-        }
-    }
-    let mut pending = Vec::new();
-    for (relative, bytes) in &files {
-        let target = destination.join(relative);
-        match fs::symlink_metadata(&target) {
-            Ok(meta) => {
-                if !meta.is_file()
-                    || meta.file_type().is_symlink()
-                    || meta.len() != bytes.len() as u64
-                {
-                    return Err(proxy_conflict());
-                }
-                let existing = read_component_file(&target, ComponentKind::Plugin)?;
-                if existing.as_deref() != Some(bytes.as_slice()) {
-                    return Err(proxy_conflict());
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => pending.push((relative, bytes)),
-            Err(_) => return Err(invalid_catalog("proxy destination metadata failed")),
-        }
-    }
-    if pending.is_empty() {
-        return Ok(());
-    }
-    // A receipt is needed to uninstall after the managed package is updated.
-    // Do not replace a previous/incomplete receipt or adopt pre-existing plugins.
-    if read_proxy_receipt(&destination)?.is_some() {
-        return Err(proxy_conflict());
-    }
-    let receipt = ProxyReceipt {
-        schema: 1,
-        files: pending
-            .iter()
-            .map(|(path, bytes)| ProxyFile {
-                path: path.to_string_lossy().replace('\\', "/"),
-                sha256: Sha256::digest(bytes.as_slice()).into(),
-            })
-            .collect(),
-    };
-    let receipt_bytes = serde_json::to_vec(&receipt).map_err(|_| proxy_io())?;
-    // Never add plugins under an existing host: that would mutate a potentially
-    // live installation without an atomic host activation boundary.
-    if !pending
-        .iter()
-        .any(|(path, _)| path.as_path() == Path::new("d3d12.dll"))
-    {
-        return Err(proxy_conflict());
-    }
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| invalid_catalog("clock unavailable"))?
-        .as_nanos();
-    let staging = destination.join(format!(".nte-stage-{}-{stamp}", std::process::id()));
-    fs::create_dir(&staging).map_err(|_| invalid_catalog("proxy staging failed"))?;
-    let mut staged = Vec::new();
-    let mut published = Vec::new();
-    let result = (|| {
-        for (index, (_, bytes)) in pending.iter().enumerate() {
-            let path = staging.join(index.to_string());
-            staged.push(path.clone());
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .map_err(|_| invalid_catalog("proxy staging failed"))?;
-            file.write_all(bytes)
-                .and_then(|_| file.sync_all())
-                .map_err(|_| invalid_catalog("proxy staging failed"))?;
-        }
-        if !had_plugin_directory && pending.iter().any(|(path, _)| path.starts_with("plugins")) {
-            fs::create_dir(&plugin_destination)
-                .map_err(|_| invalid_catalog("proxy plugin directory creation failed"))?;
-        }
-        // Publish receipt before host activation; include it in failure cleanup.
-        let receipt_stage = staging.join("receipt");
-        staged.push(receipt_stage.clone());
-        let mut receipt_file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&receipt_stage)
-            .map_err(|_| proxy_io())?;
-        receipt_file
-            .write_all(&receipt_bytes)
-            .and_then(|_| receipt_file.sync_all())
-            .map_err(|_| proxy_io())?;
-        drop(receipt_file);
-        let receipt_target = destination.join(PROXY_RECEIPT);
-        fs::hard_link(&receipt_stage, &receipt_target).map_err(|_| proxy_conflict())?;
-        published.push(receipt_target);
-        for ((relative, _), staged_file) in pending.iter().zip(&staged) {
-            let target = destination.join(relative);
-            // Same-volume hard_link publishes complete bytes atomically, with
-            // create-new semantics; a racing file is a conflict, never replaced.
-            fs::hard_link(staged_file, &target).map_err(|_| proxy_conflict())?;
-            published.push(target);
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        for file in published.iter().rev() {
-            let _ = fs::remove_file(file);
-        }
-    }
-    for file in staged {
-        let _ = fs::remove_file(file);
-    }
-    let _ = fs::remove_dir(staging);
-    if result.is_err() && !had_plugin_directory {
-        let _ = fs::remove_dir(plugin_destination);
-    }
-    result
+    files.push(("d3d12.dll".to_owned(), host));
+    Ok(files)
 }
 
 fn proxy_conflict() -> ModMarketError {
@@ -970,19 +1018,20 @@ mod tests {
         install_component(&package, &host_item, &host).unwrap();
         install_component(&package, &plugin_item, &plugin).unwrap();
         std::fs::write(game.join("d3d12.dll"), b"original").unwrap();
-        assert!(deploy_proxy(&package.join("game"), &game).is_err());
+        assert!(deploy_proxy(&package.join("game"), &game, false).is_err());
         assert_eq!(std::fs::read(game.join("d3d12.dll")).unwrap(), b"original");
         assert!(!game.join("plugins").exists());
         std::fs::remove_file(game.join("d3d12.dll")).unwrap();
-        deploy_proxy(&package.join("game"), &game).unwrap();
-        deploy_proxy(&package.join("game"), &game).unwrap();
+        deploy_proxy(&package.join("game"), &game, false).unwrap();
+        deploy_proxy(&package.join("game"), &game, false).unwrap();
         assert_eq!(std::fs::read(game.join("d3d12.dll")).unwrap(), host);
         assert_eq!(
             std::fs::read(game.join("plugins/nte_plugincombat.dll")).unwrap(),
             plugin
         );
         std::fs::write(game.join("plugins/unknown.dll"), b"original plugin").unwrap();
-        assert!(deploy_proxy(&package.join("game"), &game).is_err());
+        std::fs::write(game.join("plugins/settings.json"), b"user settings").unwrap();
+        deploy_proxy(&package.join("game"), &game, false).unwrap();
         assert_eq!(
             std::fs::read(game.join("plugins/unknown.dll")).unwrap(),
             b"original plugin"
@@ -998,6 +1047,139 @@ mod tests {
     }
 
     #[test]
+    fn proxy_redeploy_updates_owned_files_adds_plugins_and_repairs_missing_files() {
+        let root = temporary_directory("proxy-update");
+        let package = root.join("package");
+        let game = root.join("game");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("HTGame.exe"), []).unwrap();
+        let (host_item, host) = component_fixture(ComponentKind::Host);
+        let (plugin_item, plugin) = component_fixture(ComponentKind::Plugin);
+        install_component(&package, &host_item, &host).unwrap();
+        deploy_proxy(&package.join("game"), &game, false).unwrap();
+        install_component(&package, &plugin_item, &plugin).unwrap();
+        deploy_proxy(&package.join("game"), &game, false).unwrap();
+        let mut updated_host = host.clone();
+        updated_host.push(1);
+        let mut updated_plugin = plugin.clone();
+        updated_plugin.push(2);
+        std::fs::write(package.join("game/d3d12.dll"), &updated_host).unwrap();
+        std::fs::write(
+            package.join("game/plugins/nte_plugincombat.dll"),
+            &updated_plugin,
+        )
+        .unwrap();
+        deploy_proxy(&package.join("game"), &game, false).unwrap();
+        assert_eq!(std::fs::read(game.join("d3d12.dll")).unwrap(), updated_host);
+        assert_eq!(
+            std::fs::read(game.join("plugins/nte_plugincombat.dll")).unwrap(),
+            updated_plugin
+        );
+        for missing in ["d3d12.dll", "plugins/nte_plugincombat.dll"] {
+            std::fs::remove_file(game.join(missing)).unwrap();
+            deploy_proxy(&package.join("game"), &game, false).unwrap();
+            assert!(game.join(missing).is_file());
+        }
+        uninstall_proxy(&package.join("game"), &game).unwrap();
+        assert!(!game.join("d3d12.dll").exists());
+        assert!(!game.join("plugins/nte_plugincombat.dll").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn proxy_overwrite_requires_confirmation_for_foreign_or_changed_binaries() {
+        for recorded in [false, true] {
+            let root = temporary_directory("proxy-force");
+            let package = root.join("package");
+            let game = root.join("game");
+            std::fs::create_dir_all(game.join("plugins")).unwrap();
+            std::fs::write(game.join("HTGame.exe"), []).unwrap();
+            let (item, host) = component_fixture(ComponentKind::Host);
+            install_component(&package, &item, &host).unwrap();
+            let (item, plugin) = component_fixture(ComponentKind::Plugin);
+            install_component(&package, &item, &plugin).unwrap();
+            if recorded {
+                deploy_proxy(&package.join("game"), &game, false).unwrap();
+            }
+            std::fs::write(game.join("d3d12.dll"), b"other host").unwrap();
+            std::fs::write(game.join("plugins/nte_plugincombat.dll"), b"other plugin").unwrap();
+            std::fs::write(game.join("plugins/config.json"), b"settings").unwrap();
+            assert_eq!(
+                deploy_proxy(&package.join("game"), &game, false)
+                    .unwrap_err()
+                    .code,
+                ModMarketErrorCode::DeploymentConflict
+            );
+            assert_eq!(
+                std::fs::read(game.join("d3d12.dll")).unwrap(),
+                b"other host"
+            );
+            assert_eq!(
+                std::fs::read(game.join("plugins/nte_plugincombat.dll")).unwrap(),
+                b"other plugin"
+            );
+            deploy_proxy(&package.join("game"), &game, true).unwrap();
+            assert_eq!(std::fs::read(game.join("d3d12.dll")).unwrap(), host);
+            assert_eq!(
+                std::fs::read(game.join("plugins/nte_plugincombat.dll")).unwrap(),
+                plugin
+            );
+            uninstall_proxy(&package.join("game"), &game).unwrap();
+            assert_eq!(
+                std::fs::read(game.join("plugins/config.json")).unwrap(),
+                b"settings"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn proxy_write_failures_restore_existing_files_and_allow_retry() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+        for blocked in ["d3d12.dll", PROXY_RECEIPT, ".nte-proxy.lock"] {
+            let root = temporary_directory("proxy-rollback");
+            let package = root.join("package");
+            let game = root.join("game");
+            std::fs::create_dir_all(&game).unwrap();
+            std::fs::write(game.join("HTGame.exe"), []).unwrap();
+            let (item, host) = component_fixture(ComponentKind::Host);
+            install_component(&package, &item, &host).unwrap();
+            let (item, plugin) = component_fixture(ComponentKind::Plugin);
+            install_component(&package, &item, &plugin).unwrap();
+            deploy_proxy(&package.join("game"), &game, false).unwrap();
+            let receipt = std::fs::read(game.join(PROXY_RECEIPT)).unwrap();
+            let mut update = host.clone();
+            update.push(1);
+            std::fs::write(package.join("game/d3d12.dll"), &update).unwrap();
+            std::fs::write(package.join("game/plugins/nte_plugincombat.dll"), &update).unwrap();
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(game.join(blocked))
+                .unwrap();
+            assert_eq!(
+                deploy_proxy(&package.join("game"), &game, true)
+                    .unwrap_err()
+                    .code,
+                ModMarketErrorCode::ProxyIo
+            );
+            assert_eq!(std::fs::read(game.join("d3d12.dll")).unwrap(), host);
+            assert_eq!(
+                std::fs::read(game.join("plugins/nte_plugincombat.dll")).unwrap(),
+                plugin
+            );
+            assert_eq!(std::fs::read(game.join(PROXY_RECEIPT)).unwrap(), receipt);
+            drop(lock);
+            deploy_proxy(&package.join("game"), &game, false).unwrap();
+            assert_eq!(std::fs::read(game.join("d3d12.dll")).unwrap(), update);
+            uninstall_proxy(&package.join("game"), &game).unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn proxy_removal_preserves_foreign_files_and_survives_managed_updates() {
         let root = temporary_directory("proxy-remove");
         let package = root.join("package");
@@ -1008,7 +1190,7 @@ mod tests {
         install_component(&package, &item, &host).unwrap();
         let (item, plugin) = component_fixture(ComponentKind::Plugin);
         install_component(&package, &item, &plugin).unwrap();
-        deploy_proxy(&package.join("game"), &game).unwrap();
+        deploy_proxy(&package.join("game"), &game, false).unwrap();
         std::fs::write(game.join("plugins/foreign.dll"), b"third party").unwrap();
         std::fs::write(game.join("plugins/settings.json"), b"user settings").unwrap();
         std::fs::write(package.join("game/d3d12.dll"), b"updated package").unwrap();

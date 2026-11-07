@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { EMPTY_CURTAIN_FIXTURE } from "@/lib/tauri/empty-curtain-contract.test";
+import { equipmentFixture } from "../../../dev/fixtures";
 import { setFrontendLanguage } from "@/lib/i18n";
 import { EmptyCurtainPage } from "./empty-curtain-page";
 
@@ -17,7 +17,7 @@ describe("User plugin equipment inventory", () => {
     setFrontendLanguage("en");
     model.state = {
       status: "ready",
-      snapshot: { ...EMPTY_CURTAIN_FIXTURE, canOperate: false },
+      snapshot: { ...equipmentFixture, canOperate: false },
     };
     const html = renderToStaticMarkup(<EmptyCurtainPage />);
     const buttons = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g) ?? [];
@@ -40,7 +40,7 @@ describe("User plugin equipment inventory", () => {
     model.state = {
       status: "ready",
       snapshot: {
-        ...EMPTY_CURTAIN_FIXTURE,
+        ...equipmentFixture,
         operation: {
           status: "pending",
           messageKey:
@@ -54,14 +54,13 @@ describe("User plugin equipment inventory", () => {
     expect(html).toContain("Equipment operation is awaiting confirmation");
     expect(html).not.toContain("Equipment connection is unavailable");
   });
-  it("keeps a busy spinner visible while retained inventory is refreshing", () => {
+  it("shows refresh progress while keeping retained inventory available", () => {
     setFrontendLanguage("en");
-    model.state = { status: "ready", snapshot: EMPTY_CURTAIN_FIXTURE };
+    model.state = { status: "ready", snapshot: equipmentFixture };
     model.refreshing = true;
     const html = renderToStaticMarkup(<EmptyCurtainPage />);
     expect(html).toContain("Refreshing equipment...");
     expect(html).toContain('aria-busy="true"');
-    expect(html).toContain("animate-spin");
     expect(html).toContain("Export for Drive Calculator");
     model.refreshing = false;
     expect(renderToStaticMarkup(<EmptyCurtainPage />)).not.toContain(
@@ -70,7 +69,7 @@ describe("User plugin equipment inventory", () => {
   });
   it("retains inventory, filters, export and character equipment entry points with refresh", () => {
     setFrontendLanguage("en");
-    model.state = { status: "ready", snapshot: EMPTY_CURTAIN_FIXTURE };
+    model.state = { status: "ready", snapshot: equipmentFixture };
     const html = renderToStaticMarkup(<EmptyCurtainPage />);
     for (const label of [
       "Refresh from game",
@@ -87,7 +86,7 @@ describe("User plugin equipment inventory", () => {
     model.state = {
       status: "ready",
       snapshot: {
-        ...EMPTY_CURTAIN_FIXTURE,
+        ...equipmentFixture,
         hasData: false,
         items: [],
         characters: [],

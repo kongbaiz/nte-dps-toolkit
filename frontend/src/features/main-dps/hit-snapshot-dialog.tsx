@@ -12,12 +12,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 import { mainDpsDetailClient } from "@/lib/tauri/main-dps-detail-client";
-import type { MainDpsHit } from "@/lib/tauri/main-dps-detail-contract";
-import type {
-  HitSnapshot,
-  AttributeSnapshot,
-  EffectSnapshot,
-} from "@/lib/tauri/hit-snapshot-contract";
+import type { AttributeSnapshot } from "@/lib/tauri/generated/AttributeSnapshot";
+import type { EffectSnapshot } from "@/lib/tauri/generated/EffectSnapshot";
+import type { PluginHitSnapshot } from "@/lib/tauri/generated/PluginHitSnapshot";
+import type { MainDpsHitSnapshot } from "@/lib/tauri/generated/MainDpsHitSnapshot";
+import { EffectModifierValues } from "./effect-modifier-values";
 import { criticalTranslationKey } from "./main-dps-detail-model";
 
 const ATTRIBUTE_LABELS: Record<string, string> = {
@@ -180,12 +179,12 @@ export function EffectSnapshotView({
         {snapshot.observedUs ?? t("Unknown value")}
       </p>
       {snapshot.complete === false && (
-        <p role="status" className="text-sm text-amber-600">
+        <p role="status" className="text-sm text-warning">
           {t("Partial snapshot: only the observed entries are listed.")}
         </p>
       )}
       {snapshot.complete === null && (
-        <p role="status" className="text-sm text-amber-600">
+        <p role="status" className="text-sm text-warning">
           {t("Snapshot completeness is unknown.")}
         </p>
       )}
@@ -233,6 +232,7 @@ export function EffectSnapshotView({
                       </summary>
                       <div className="mt-2 space-y-2 whitespace-pre-wrap break-words text-xs text-muted-foreground">
                         <p>{e.description}</p>
+                        <EffectModifierValues modifiers={e.modifiers} />
                         <p>{e.key}</p>
                         <p>
                           {t("Snapshot ID")}: {e.instanceKey}
@@ -245,7 +245,7 @@ export function EffectSnapshotView({
                       </div>
                     </details>
                     {e.inhibited && (
-                      <span className="text-xs text-amber-600">
+                      <span className="text-xs text-warning">
                         {t("Inhibited")}
                       </span>
                     )}
@@ -297,10 +297,10 @@ export function HitSnapshotDialog({
   row,
   onClose,
 }: {
-  row: MainDpsHit;
+  row: MainDpsHitSnapshot;
   onClose: () => void;
 }) {
-  const [snapshot, setSnapshot] = useState<HitSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<PluginHitSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState("roleAttributes");
   useEffect(() => {
@@ -384,7 +384,7 @@ export function HitSnapshotDialog({
                 )}
               </DialogDescription>
               <p className="mt-3 text-sm">
-                {row.characterName} / {row.typeLabel} /{" "}
+                {row.characterName} / {row.typeLabel} {row.typeDetail} /{" "}
                 {new Date(row.timestamp * 1000).toLocaleTimeString()} /{" "}
                 {row.damage.toLocaleString()} / {t("Critical hit")}:{" "}
                 {t(criticalTranslationKey(row.critical))}

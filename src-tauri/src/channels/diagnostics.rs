@@ -2,14 +2,11 @@ use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
     channels::stream_runtime::{
-        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
-        validate_subscription_id,
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, validate_subscription_id,
     },
     commands::diagnostics::snapshot,
     contract::{
-        CommandError, SubscriptionReceipt,
-        diagnostics::DiagnosticsEvent,
-        stream::{StreamDeliveryBody, StreamKind},
+        CommandError, SubscriptionReceipt, diagnostics::DiagnosticsEvent, stream::StreamKind,
     },
     state::AppState,
     windows::console,
@@ -19,22 +16,18 @@ pub(crate) const DIAGNOSTICS_STREAM_INTERVAL_MS: u32 = 500;
 #[tauri::command]
 pub(crate) fn subscribe_diagnostics(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<DiagnosticsEvent>>,
+    on_event: Channel<DiagnosticsEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .diagnostics_revision()
-        .map_err(CommandError::from_core)?;
+    state.diagnostics_revision()?;
 
     let stream_kind = StreamKind::Diagnostics;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     let mut last_revision = None;
     spawn_polling_stream(
@@ -73,11 +66,9 @@ pub(crate) fn unsubscribe_diagnostics(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::Diagnostics.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::Diagnostics.stream_key(&subscription_id),
+    )?;
     Ok(())
 }

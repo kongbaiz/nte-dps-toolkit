@@ -4,14 +4,9 @@ use nte_dps_tool::engine::model::CombatClockRuntimeHealth;
 
 use crate::{
     channels::stream_runtime::{
-        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
-        validate_subscription_id,
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, validate_subscription_id,
     },
-    contract::{
-        CommandError, SubscriptionReceipt,
-        settings::SettingsEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
+    contract::{CommandError, SubscriptionReceipt, settings::SettingsEvent, stream::StreamKind},
     state::{AppState, UpdateActionError},
     windows::console,
 };
@@ -20,7 +15,7 @@ pub(crate) const SETTINGS_STREAM_INTERVAL_MS: u32 = 200;
 #[tauri::command]
 pub(crate) fn subscribe_settings(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<SettingsEvent>>,
+    on_event: Channel<SettingsEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -30,9 +25,7 @@ pub(crate) fn subscribe_settings(
     let stream_kind = StreamKind::Settings;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     let mut last_revision = None;
     let mut last_install_blocker = None;
@@ -83,12 +76,10 @@ pub(crate) fn unsubscribe_settings(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::Settings.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::Settings.stream_key(&subscription_id),
+    )?;
     Ok(())
 }
 
@@ -158,7 +149,7 @@ mod tests {
         ));
         assert!(combat_clock_projection_changed(
             Some(Some(CombatClockRuntimeHealth::Available)),
-            Some(CombatClockRuntimeHealth::ProviderUnavailable),
+            Some(CombatClockRuntimeHealth::DataUnavailable),
         ));
         assert!(combat_clock_projection_changed(
             Some(Some(CombatClockRuntimeHealth::Available)),

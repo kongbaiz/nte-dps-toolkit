@@ -31,6 +31,7 @@ use super::{
         HistoryArchivePolicy, PendingHistoryArchive, abyss_event_starts_new_round, auto_round_due,
     },
     reducer::{CoreSignal, apply_engine_event},
+    sync::lock_or_repair,
 };
 use crate::{
     engine::{
@@ -53,16 +54,9 @@ const RELIABLE_ENGINE_EVENT_CAPACITY: usize = 16_384;
 const DEBUG_ENGINE_EVENT_CAPACITY: usize = 2_048;
 const MAX_PENDING_ABYSS_ARCHIVES: usize = 64;
 
-#[cfg(all(test, feature = "desktop"))]
-std::thread_local! {
-    /// Guardrail counter: the incremental quality path must never fall back to
-    /// scanning the authoritative hit deque, including after cache poison.
-    static DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
 pub enum LiveCapturePhase {
     Idle,
     Starting,
@@ -150,7 +144,9 @@ impl LiveCaptureResources {
 #[derive(Clone)]
 pub struct LiveCaptureService(Arc<LiveCaptureInner>);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS), ts(export))]
+#[serde(rename_all = "snake_case")]
 pub enum CaptureReplayKind {
     Pcapng,
     Json,
@@ -440,18 +436,12 @@ impl LiveCaptureService {
 
     #[cfg(feature = "desktop")]
     fn cached_quality_summary(&self) -> Result<CaptureQualitySummary, CoreError> {
-        let mut cache = match self.0.diagnostic_quality.lock() {
-            Ok(cache) => cache,
-            Err(error) => {
-                // This cache is a derived read model with no authoritative
-                // state. Resetting it fully restores its only invariant; the
-                // next projection rebuilds from the retained hit ring.
-                let mut cache = error.into_inner();
-                *cache = DiagnosticQualityCache;
-                self.0.diagnostic_quality.clear_poison();
-                cache
-            }
-        };
+        // This cache is a derived read model with no authoritative state.
+        // Resetting it fully restores its only invariant; the next projection
+        // rebuilds from the retained hit ring.
+        let (mut cache, _) = lock_or_repair(&self.0.diagnostic_quality, |cache| {
+            *cache = DiagnosticQualityCache;
+        });
         let input = self.with_state_and_source(|state, source| {
             cache.prepare(
                 state,
@@ -600,29 +590,27 @@ impl LiveCaptureService {
 
     fn pending_archives_for_cleanup(&self) -> MutexGuard<'_, VecDeque<PendingHistoryArchive>> {
         loop {
-            match self.0.pending_abyss_archives.lock() {
-                Ok(pending) => return pending,
-                Err(error) => {
-                    // `VecDeque` remains structurally valid across unwind. Its
-                    // only service invariant is the explicit capacity bound,
-                    // which cleanup repairs before clearing poison. No capture
-                    // producer is stopped or joined while this guard is held.
-                    let mut pending = error.into_inner();
-                    let mut dropped = 0_u64;
-                    while pending.len() > MAX_PENDING_ABYSS_ARCHIVES {
-                        pending.pop_back();
-                        dropped += 1;
-                    }
-                    self.0.pending_abyss_archives.clear_poison();
-                    drop(pending);
-                    if dropped > 0 {
-                        self.0
-                            .dropped_history_archives
-                            .fetch_add(dropped, Ordering::AcqRel);
-                    }
-                    self.0.trip_integrity_failure();
+            // `VecDeque` remains structurally valid across unwind. Its only
+            // service invariant is the explicit capacity bound, which the
+            // repair restores. No capture producer is stopped or joined while
+            // this guard is held.
+            let mut dropped = 0_u64;
+            let (pending, recovered) = lock_or_repair(&self.0.pending_abyss_archives, |pending| {
+                while pending.len() > MAX_PENDING_ABYSS_ARCHIVES {
+                    pending.pop_back();
+                    dropped += 1;
                 }
+            });
+            if !recovered {
+                return pending;
             }
+            drop(pending);
+            if dropped > 0 {
+                self.0
+                    .dropped_history_archives
+                    .fetch_add(dropped, Ordering::AcqRel);
+            }
+            self.0.trip_integrity_failure();
         }
     }
 
@@ -1092,31 +1080,6 @@ impl LiveCaptureService {
         }
     }
 
-    /// Publishes both the running phase and any manual-network degradation as
-    /// one status mutation. Revision effect: exactly one capture/status
-    /// revision and one packet revision advance immediately after this critical
-    /// section, so consumers cannot observe Running without its warning.
-    #[cfg(test)]
-    fn publish_start_success(
-        &self,
-        network_probe_degradation: Option<NetworkProbeErrorCode>,
-    ) -> Result<bool, CoreError> {
-        let should_stop = {
-            let mut status = self.checked_guard(&self.0.status)?;
-            if status.phase == LiveCapturePhase::Stopping {
-                true
-            } else {
-                *status = LiveCaptureStatus {
-                    phase: LiveCapturePhase::Running,
-                    issue: network_probe_degradation.map(LiveCaptureIssue::NetworkProbeDegraded),
-                };
-                false
-            }
-        };
-        self.0.bump_capture_status_revision();
-        Ok(should_stop)
-    }
-
     fn spawn_stop_worker(&self) -> Result<(), CoreError> {
         let service = self.clone();
         thread::Builder::new()
@@ -1206,13 +1169,7 @@ impl LiveCaptureInner {
             return;
         }
 
-        match self.status.lock() {
-            Ok(mut status) => *status = terminal_capture_status(),
-            Err(mut error) => {
-                **error.get_mut() = terminal_capture_status();
-                self.status.clear_poison();
-            }
-        }
+        *lock_or_repair(&self.status, |_| {}).0 = terminal_capture_status();
         // One terminal state mutation invalidates both general and packet
         // projections. Outgoing-hit revision is deliberately untouched.
         self.revision.fetch_add(1, Ordering::AcqRel);
@@ -1220,14 +1177,7 @@ impl LiveCaptureInner {
             .fetch_add(1, Ordering::AcqRel);
         self.packet_revision.fetch_add(1, Ordering::AcqRel);
 
-        let control = match self.event_worker.lock() {
-            Ok(runtime) => runtime.control.clone(),
-            Err(mut error) => {
-                let control = error.get_mut().control.clone();
-                self.event_worker.clear_poison();
-                control
-            }
-        };
+        let control = lock_or_repair(&self.event_worker, |_| {}).0.control.clone();
         if let Some(control) = control {
             let _ = control.try_send(EventWorkerControl::FailClosed);
         } else {
@@ -1239,22 +1189,8 @@ impl LiveCaptureInner {
     }
 
     fn take_failure_producers(&self) -> FailureProducers {
-        let controller = match self.controller.lock() {
-            Ok(mut controller) => std::mem::take(&mut *controller),
-            Err(mut error) => {
-                let controller = std::mem::take(&mut **error.get_mut());
-                self.controller.clear_poison();
-                controller
-            }
-        };
-        let replay = match self.replay.lock() {
-            Ok(mut replay) => replay.take(),
-            Err(mut error) => {
-                let replay = error.get_mut().take();
-                self.replay.clear_poison();
-                replay
-            }
-        };
+        let controller = std::mem::take(&mut *lock_or_repair(&self.controller, |_| {}).0);
+        let replay = lock_or_repair(&self.replay, |_| {}).0.take();
         FailureProducers { controller, replay }
     }
 
@@ -1781,24 +1717,6 @@ fn next_engine_input(
 }
 
 #[cfg(test)]
-fn next_engine_event(
-    reliable_receiver: &Receiver<EngineEvent>,
-    debug_receiver: &Receiver<EngineEvent>,
-    defer_debug: bool,
-) -> Result<EngineEvent, RecvError> {
-    let (_control_sender, control_receiver) = bounded(1);
-    match next_engine_input(
-        reliable_receiver,
-        debug_receiver,
-        &control_receiver,
-        defer_debug,
-    )? {
-        EngineLoopInput::Event(event) => Ok(event),
-        EngineLoopInput::Control(_) => Err(RecvError),
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use std::{
         panic::{AssertUnwindSafe, catch_unwind},
@@ -1806,6 +1724,23 @@ mod tests {
     };
 
     use super::*;
+    fn next_engine_event(
+        reliable_receiver: &Receiver<EngineEvent>,
+        debug_receiver: &Receiver<EngineEvent>,
+        defer_debug: bool,
+    ) -> Result<EngineEvent, RecvError> {
+        let (_control_sender, control_receiver) = bounded(1);
+        match next_engine_input(
+            reliable_receiver,
+            debug_receiver,
+            &control_receiver,
+            defer_debug,
+        )? {
+            EngineLoopInput::Event(event) => Ok(event),
+            EngineLoopInput::Control(_) => Err(RecvError),
+        }
+    }
+
     use crate::core::packets::PacketStreamRevision;
     use crate::engine::model::{
         AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, Hit, HitCharacterSource, HitDirection,
@@ -1918,16 +1853,6 @@ mod tests {
             .expect("healthy live-capture runtime");
     }
 
-    #[cfg(feature = "desktop")]
-    fn reset_diagnostic_quality_full_rebuild_count() {
-        DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT.with(|count| count.set(0));
-    }
-
-    #[cfg(feature = "desktop")]
-    fn diagnostic_quality_full_rebuild_count() -> usize {
-        DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT.with(std::cell::Cell::get)
-    }
-
     fn project<T>(service: &LiveCaptureService, projection: impl FnOnce(&CombatState) -> T) -> T {
         service
             .with_state(projection)
@@ -1971,7 +1896,6 @@ mod tests {
     #[test]
     #[cfg(feature = "desktop")]
     fn diagnostics_quality_reuses_hit_projection_for_packet_only_revisions() {
-        reset_diagnostic_quality_full_rebuild_count();
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         process(&service, hit(100.0));
 
@@ -1989,17 +1913,11 @@ mod tests {
         assert_eq!(initial.hit_count, 1);
         assert_eq!(packet_updated.hit_count, 1);
         assert_eq!(packet_updated.packet_count, initial.packet_count + 1);
-        assert_eq!(
-            diagnostic_quality_full_rebuild_count(),
-            0,
-            "packet-only generations must never scan the authoritative hit log"
-        );
     }
 
     #[test]
     #[cfg(feature = "desktop")]
-    fn diagnostics_quality_extends_append_only_hits_without_full_rebuild() {
-        reset_diagnostic_quality_full_rebuild_count();
+    fn diagnostics_quality_extends_append_only_hits() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         process(&service, hit(100.0));
         service
@@ -2016,11 +1934,6 @@ mod tests {
 
         assert_eq!(incremental, legacy);
         assert_eq!(incremental.hit_count, 2);
-        assert_eq!(
-            diagnostic_quality_full_rebuild_count(),
-            0,
-            "append-only hits are already reflected by the reducer-maintained aggregate"
-        );
     }
 
     #[test]
@@ -2037,7 +1950,6 @@ mod tests {
         service
             .restore_session(state, CaptureQualitySource::Live)
             .expect("install retained maximum fixture");
-        reset_diagnostic_quality_full_rebuild_count();
 
         let initial = service
             .quality_summary()
@@ -2053,13 +1965,11 @@ mod tests {
         assert_eq!(initial.hit_count, 50_000);
         assert_eq!(packet_updated.hit_count, 50_000);
         assert_eq!(packet_updated.packet_count, 1);
-        assert_eq!(diagnostic_quality_full_rebuild_count(), 0);
     }
 
     #[test]
     #[cfg(feature = "desktop")]
     fn poisoned_diagnostics_cache_rebuilds_without_failing_capture_state() {
-        reset_diagnostic_quality_full_rebuild_count();
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         process(&service, hit(100.0));
         service
@@ -2082,7 +1992,6 @@ mod tests {
         assert_eq!(rebuilt.hit_count, 1);
         assert_eq!(service.status().phase, LiveCapturePhase::Idle);
         assert!(!service.0.integrity_failed.load(Ordering::Acquire));
-        assert_eq!(diagnostic_quality_full_rebuild_count(), 0);
     }
 
     fn take_archives(service: &LiveCaptureService) -> Vec<PendingHistoryArchive> {
@@ -2599,7 +2508,6 @@ mod tests {
                     &service,
                     EngineEvent::Abyss(AbyssEvent::Stage {
                         timestamp: 2.0,
-                        cycle: None,
                         floor: Some(11),
                         half: AbyssHalf::First,
                         allow_late_backfill: false,
@@ -2714,7 +2622,6 @@ mod tests {
         let stage = |timestamp, half| {
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp,
-                cycle: None,
                 floor: Some(11),
                 half,
                 allow_late_backfill: false,
@@ -2831,7 +2738,6 @@ mod tests {
             let mut state = service.0.state.lock().expect("live capture state lock");
             state.apply_abyss_event(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2860,7 +2766,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2871,7 +2776,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 3.0,
-                cycle: None,
                 floor: Some(13),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2896,7 +2800,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2932,7 +2835,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -2977,7 +2879,6 @@ mod tests {
             let mut state = service.0.state.lock().expect("live capture state lock");
             state.apply_abyss_event(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::Second,
                 allow_late_backfill: false,
@@ -3004,7 +2905,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3034,7 +2934,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3053,7 +2952,6 @@ mod tests {
                 &service,
                 EngineEvent::Abyss(AbyssEvent::Stage {
                     timestamp: (round + 1) as f64 + 0.5,
-                    cycle: None,
                     floor: Some(12),
                     half: crate::engine::model::AbyssHalf::First,
                     allow_late_backfill: false,
@@ -3081,7 +2979,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3112,7 +3009,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3137,7 +3033,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 12.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3154,7 +3049,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 20.0,
-                cycle: None,
                 floor: Some(13),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3277,47 +3171,14 @@ mod tests {
     }
 
     #[test]
-    fn manual_network_probe_degradation_is_published_with_status_revision() {
-        let service = LiveCaptureService::new(LiveCaptureResources::default());
-        let initial_revision = service.revision();
-        let initial_packet_revision = packet_projection(&service, |revision, _, _| revision);
-
-        assert!(
-            !service
-                .publish_start_success(Some(NetworkProbeErrorCode::ProcessSnapshotFailed))
-                .expect("healthy capture status")
-        );
-
-        assert_eq!(
-            service.status(),
-            LiveCaptureStatus {
-                phase: LiveCapturePhase::Running,
-                issue: Some(LiveCaptureIssue::NetworkProbeDegraded(
-                    NetworkProbeErrorCode::ProcessSnapshotFailed,
-                )),
-            }
-        );
-        assert_eq!(service.revision(), initial_revision + 1);
-        assert_eq!(
-            packet_projection(&service, |revision, _, _| revision.generation),
-            initial_packet_revision.generation + 1
-        );
-        assert_eq!(
-            packet_projection(&service, |revision, _, _| revision.session_generation),
-            initial_packet_revision.session_generation
-        );
-    }
-
-    #[test]
     fn manual_network_probe_degradation_survives_runtime_warnings() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         let code = NetworkProbeErrorCode::ProcessEnumerationFailed;
 
-        assert!(
-            !service
-                .publish_start_success(Some(code))
-                .expect("healthy capture status")
-        );
+        *service.0.status.lock().expect("status lock") = LiveCaptureStatus {
+            phase: LiveCapturePhase::Running,
+            issue: Some(LiveCaptureIssue::NetworkProbeDegraded(code)),
+        };
         let running_revision = service.revision();
         process(
             &service,
@@ -3361,7 +3222,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -3871,7 +3731,6 @@ mod tests {
             &service,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: None,
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,

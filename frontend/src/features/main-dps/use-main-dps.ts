@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { mainDpsClient } from "@/lib/tauri/main-dps-client";
-import {
-  parseMainDpsCommandError,
-  type MainDpsCommandError,
-  type MainDpsSnapshot,
-} from "@/lib/tauri/main-dps-contract";
+import type { MainDpsSnapshot } from "@/lib/tauri/generated/MainDpsSnapshot";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
 import { isGenerationNewer } from "./main-dps-model";
 
@@ -17,7 +14,7 @@ export interface MainDpsActionNotice {
 
 export function useMainDps() {
   const [snapshot, setSnapshot] = useState<MainDpsSnapshot | null>(null);
-  const [error, setError] = useState<MainDpsCommandError | null>(null);
+  const [error, setError] = useState<CommandError | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<MainDpsActionNotice | null>(
     null,
@@ -37,7 +34,7 @@ export function useMainDps() {
     void mainDpsClient
       .getSnapshot()
       .then(apply)
-      .catch((value) => setError(parseMainDpsCommandError(value)));
+      .catch((value) => setError(toCommandError(value)));
     const unsubscribe = mainDpsClient.subscribe(apply, setError);
     return () => {
       mounted.current = false;
@@ -74,7 +71,7 @@ export function useMainDps() {
       } catch (value) {
         if (mounted.current) {
           setActionNotice(null);
-          setError(parseMainDpsCommandError(value));
+          setError(toCommandError(value));
         }
       } finally {
         if (mounted.current) setPending(null);
@@ -95,7 +92,7 @@ export function useMainDps() {
       } catch (value) {
         if (mounted.current) {
           setActionNotice(null);
-          setError(parseMainDpsCommandError(value));
+          setError(toCommandError(value));
         }
       } finally {
         if (mounted.current) setPending(null);

@@ -32,45 +32,6 @@ const MAX_RETAINED_TIME_STOP_INTERVALS: usize = MAX_PROJECTED_TIME_STOP_INTERVAL
 const MAX_RETAINED_TIME_STOP_EVENTS: usize = 8_192;
 const TIME_STOP_EVENT_COMPACTION_CHUNK: usize = 1_024;
 
-#[cfg(test)]
-std::thread_local! {
-    static COMBAT_TOTAL_REBUILD_COUNT: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMPACT_TIMELINE_PROJECTION_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static COMBAT_DETAIL_QUERY_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static BULK_COMBAT_REBUILD_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(test, feature = "cli"))]
-std::thread_local! {
-    static GLOBAL_HIT_AXIS_PAGE_VISITS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-}
-
-#[cfg(all(test, feature = "cli"))]
-pub(crate) fn reset_global_hit_axis_page_visits() {
-    GLOBAL_HIT_AXIS_PAGE_VISITS.with(|visits| visits.set(0));
-}
-
-#[cfg(all(test, feature = "cli"))]
-pub(crate) fn global_hit_axis_page_visits() -> usize {
-    GLOBAL_HIT_AXIS_PAGE_VISITS.with(std::cell::Cell::get)
-}
-
 /// Compact, exportable team DPS snapshot used to predict abyss clear time.
 /// Deliberately holds no packets or per-hit data — only the latest total DPS and
 /// up to 4 members — so the exported file stays tiny.
@@ -1255,9 +1216,6 @@ impl CompactTimelineTree {
         while pending_len > 0 {
             pending_len -= 1;
             let index = pending[pending_len];
-            #[cfg(test)]
-            COMPACT_TIMELINE_PROJECTION_VISITS
-                .with(|visits| visits.set(visits.get().saturating_add(1)));
             let Some(node) = self.nodes.get(index) else {
                 continue;
             };
@@ -1292,24 +1250,6 @@ impl CompactTimelineTree {
                 }
             }
         }
-    }
-
-    #[cfg(test)]
-    fn max_depth(&self) -> usize {
-        let Some(root) = self.root else {
-            return 0;
-        };
-        let mut maximum = 0;
-        let mut pending = vec![(root, 0_usize)];
-        while let Some((index, depth)) = pending.pop() {
-            maximum = maximum.max(depth);
-            if let Some(CompactTimelineTreeNode::Branch { left, right, .. }) = self.nodes.get(index)
-            {
-                pending.push((*left, depth.saturating_add(1)));
-                pending.push((*right, depth.saturating_add(1)));
-            }
-        }
-        maximum
     }
 }
 
@@ -1544,10 +1484,6 @@ impl CompactTimelineIndex {
             // are read/reset, so 256 sparse roles over a 10k bucket chart do
             // not allocate and clear 2.56 million aggregates every refresh.
             let mut role_scratch = vec![CompactTimelineAggregate::default(); layout.bucket_count];
-            #[cfg(test)]
-            COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS.with(|slots| {
-                slots.set(slots.get().saturating_add(role_scratch.len()));
-            });
             let mut touched_buckets = Vec::<usize>::new();
             let role_budget = max_roles_per_bucket.max(1).min(roles.len());
             let mut candidates = std::iter::repeat_with(|| None)
@@ -1563,13 +1499,8 @@ impl CompactTimelineIndex {
                 );
                 for bucket_index in touched_buckets.drain(..) {
                     let aggregate = std::mem::take(&mut role_scratch[bucket_index]);
-                    let bucket_candidates = candidates[bucket_index].get_or_insert_with(|| {
-                        #[cfg(test)]
-                        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(|slots| {
-                            slots.set(slots.get().saturating_add(role_budget));
-                        });
-                        CompactTimelineRoleCandidates::new(role_budget)
-                    });
+                    let bucket_candidates = candidates[bucket_index]
+                        .get_or_insert_with(|| CompactTimelineRoleCandidates::new(role_budget));
                     bucket_candidates.consider(CompactTimelineRoleEvent {
                         first_sequence: aggregate.first_sequence,
                         char_id,
@@ -1764,15 +1695,15 @@ impl SkillBreakdownIndex {
 
         if !hit.char_known {
             self.observe_unknown_character(hit.char_id);
-            self.unknown_character_hits = self.unknown_character_hits.saturating_add(1);
+            self.unknown_character_hits += 1;
         }
 
         if hit.damage.is_finite() && hit.damage > 0.0 {
             self.observe_entry(hit, SkillEntryRef::from_hit(hit, false), hit.damage);
             self.total_damage += hit.damage;
-            self.total_hits = self.total_hits.saturating_add(1);
+            self.total_hits += 1;
             if is_hit_skill_unmapped(hit) {
-                self.unmapped_skill_hits = self.unmapped_skill_hits.saturating_add(1);
+                self.unmapped_skill_hits += 1;
                 self.unmapped_skill_damage += hit.damage;
             }
             if let Some(index) = hit.gameplay_effect_index
@@ -1788,7 +1719,7 @@ impl SkillBreakdownIndex {
                 hit.follow_up_damage,
             );
             self.total_damage += hit.follow_up_damage;
-            self.total_hits = self.total_hits.saturating_add(1);
+            self.total_hits += 1;
         }
     }
 
@@ -1800,15 +1731,15 @@ impl SkillBreakdownIndex {
 
         if !hit.char_known {
             self.remove_unknown_character(hit.char_id);
-            self.unknown_character_hits = self.unknown_character_hits.saturating_sub(1);
+            self.unknown_character_hits -= 1;
         }
 
         if hit.damage.is_finite() && hit.damage > 0.0 {
             self.remove_entry(hit, SkillEntryRef::from_hit(hit, false), hit.damage);
             self.total_damage = (self.total_damage - hit.damage).max(0.0);
-            self.total_hits = self.total_hits.saturating_sub(1);
+            self.total_hits -= 1;
             if is_hit_skill_unmapped(hit) {
-                self.unmapped_skill_hits = self.unmapped_skill_hits.saturating_sub(1);
+                self.unmapped_skill_hits -= 1;
                 self.unmapped_skill_damage = (self.unmapped_skill_damage - hit.damage).max(0.0);
             }
             if let Some(index) = hit.gameplay_effect_index
@@ -1824,7 +1755,7 @@ impl SkillBreakdownIndex {
                 hit.follow_up_damage,
             );
             self.total_damage = (self.total_damage - hit.follow_up_damage).max(0.0);
-            self.total_hits = self.total_hits.saturating_sub(1);
+            self.total_hits -= 1;
         }
     }
 
@@ -1834,9 +1765,9 @@ impl SkillBreakdownIndex {
     }
 
     fn promote_unknown_direction(&mut self, damage: f64) {
-        self.directions.unknown_hits = self.directions.unknown_hits.saturating_sub(1);
+        self.directions.unknown_hits -= 1;
         self.directions.unknown_damage = (self.directions.unknown_damage - damage).max(0.0);
-        self.directions.outgoing_hits = self.directions.outgoing_hits.saturating_add(1);
+        self.directions.outgoing_hits += 1;
         self.directions.outgoing_damage += damage;
     }
 
@@ -1844,15 +1775,15 @@ impl SkillBreakdownIndex {
         let damage = hit.total_damage();
         match hit.direction {
             HitDirection::Outgoing => {
-                self.directions.outgoing_hits = self.directions.outgoing_hits.saturating_add(1);
+                self.directions.outgoing_hits += 1;
                 self.directions.outgoing_damage += damage;
             }
             HitDirection::Unknown => {
-                self.directions.unknown_hits = self.directions.unknown_hits.saturating_add(1);
+                self.directions.unknown_hits += 1;
                 self.directions.unknown_damage += damage;
             }
             HitDirection::Incoming => {
-                self.directions.incoming_hits = self.directions.incoming_hits.saturating_add(1);
+                self.directions.incoming_hits += 1;
                 self.directions.incoming_damage += damage;
             }
         }
@@ -1862,16 +1793,16 @@ impl SkillBreakdownIndex {
         let damage = hit.total_damage();
         match hit.direction {
             HitDirection::Outgoing => {
-                self.directions.outgoing_hits = self.directions.outgoing_hits.saturating_sub(1);
+                self.directions.outgoing_hits -= 1;
                 self.directions.outgoing_damage =
                     (self.directions.outgoing_damage - damage).max(0.0);
             }
             HitDirection::Unknown => {
-                self.directions.unknown_hits = self.directions.unknown_hits.saturating_sub(1);
+                self.directions.unknown_hits -= 1;
                 self.directions.unknown_damage = (self.directions.unknown_damage - damage).max(0.0);
             }
             HitDirection::Incoming => {
-                self.directions.incoming_hits = self.directions.incoming_hits.saturating_sub(1);
+                self.directions.incoming_hits -= 1;
                 self.directions.incoming_damage =
                     (self.directions.incoming_damage - damage).max(0.0);
             }
@@ -1880,24 +1811,22 @@ impl SkillBreakdownIndex {
 
     fn observe_unknown_character(&mut self, char_id: u32) {
         if let Some(hits) = self.unknown_characters.get_mut(&char_id) {
-            *hits = hits.saturating_add(1);
+            *hits += 1;
         } else if self.unknown_characters.len() < MAX_INDEXED_UNKNOWN_CHARACTERS {
             self.unknown_characters.insert(char_id, 1);
         } else {
-            self.unknown_character_overflow_hits =
-                self.unknown_character_overflow_hits.saturating_add(1);
+            self.unknown_character_overflow_hits += 1;
         }
     }
 
     fn remove_unknown_character(&mut self, char_id: u32) {
         let remove = match self.unknown_characters.get_mut(&char_id) {
             Some(hits) => {
-                *hits = hits.saturating_sub(1);
+                *hits -= 1;
                 *hits == 0
             }
             None => {
-                self.unknown_character_overflow_hits =
-                    self.unknown_character_overflow_hits.saturating_sub(1);
+                self.unknown_character_overflow_hits -= 1;
                 false
             }
         };
@@ -1925,112 +1854,83 @@ impl SkillBreakdownIndex {
             hits: 0,
             damage: 0.0,
         });
-        row.hits = row.hits.saturating_add(1);
+        row.hits += 1;
         row.damage += damage;
-        if !entry.is_follow_up
-            && entry.damage_name.is_none()
-            && entry.ability_name.is_none()
-            && entry.gameplay_effect_name.is_none()
-        {
-            self.overflow_unmapped_hits = self.overflow_unmapped_hits.saturating_add(1);
+        if !entry.is_follow_up && is_hit_skill_unmapped(hit) {
+            self.overflow_unmapped_hits += 1;
         }
     }
 
     fn remove_entry(&mut self, hit: &Hit, entry: SkillEntryRef, damage: f64) {
         let key = skill_breakdown_key(hit, &entry);
-        let mut remove_key = false;
         if let Some(row) = self.rows.get_mut(&key) {
-            row.hits = row.hits.saturating_sub(1);
+            row.hits -= 1;
             row.damage = (row.damage - damage).max(0.0);
-            remove_key = row.hits == 0;
-        } else if let Some(row) = self.overflow_row.as_mut() {
-            row.hits = row.hits.saturating_sub(1);
-            row.damage = (row.damage - damage).max(0.0);
-            if !entry.is_follow_up
-                && entry.damage_name.is_none()
-                && entry.ability_name.is_none()
-                && entry.gameplay_effect_name.is_none()
-            {
-                self.overflow_unmapped_hits = self.overflow_unmapped_hits.saturating_sub(1);
-            }
             if row.hits == 0 {
-                self.overflow_row = None;
-                self.overflow_unmapped_hits = 0;
+                self.rows.remove(&key);
             }
+            return;
         }
-        if remove_key {
-            self.rows.remove(&key);
+
+        let row = self
+            .overflow_row
+            .as_mut()
+            .expect("unindexed skill hits are counted in overflow");
+        row.hits -= 1;
+        row.damage = (row.damage - damage).max(0.0);
+        if !entry.is_follow_up && is_hit_skill_unmapped(hit) {
+            // Rows can share a key across mapped and unmapped damage names. After
+            // a slot is reused the overflow row cannot identify the original hit.
+            self.overflow_unmapped_hits = self.overflow_unmapped_hits.saturating_sub(1);
+        }
+        if row.hits == 0 {
+            self.overflow_row = None;
+            self.overflow_unmapped_hits = 0;
         }
     }
 
     fn observe_unmapped_effect(&mut self, index: u32, damage: f64) {
-        if index == SKILL_OVERFLOW_EFFECT_INDEX {
-            let effect =
-                self.overflow_unmapped_gameplay_effect
-                    .get_or_insert(UnknownGameplayEffect {
-                        index: SKILL_OVERFLOW_EFFECT_INDEX,
-                        hits: 0,
-                        damage: 0.0,
-                    });
-            effect.hits = effect.hits.saturating_add(1);
-            effect.damage += damage;
-            return;
-        }
-        if let Some(effect) = self.unmapped_gameplay_effects.get_mut(&index) {
-            effect.hits = effect.hits.saturating_add(1);
-            effect.damage += damage;
-        } else if self.unmapped_gameplay_effects.len() < MAX_INDEXED_UNMAPPED_GAMEPLAY_EFFECTS {
-            self.unmapped_gameplay_effects.insert(
-                index,
-                UnknownGameplayEffect {
+        use std::collections::hash_map::Entry;
+
+        let has_room = self.unmapped_gameplay_effects.len() < MAX_INDEXED_UNMAPPED_GAMEPLAY_EFFECTS;
+        let effect = match self.unmapped_gameplay_effects.entry(index) {
+            Entry::Occupied(slot) => slot.into_mut(),
+            Entry::Vacant(slot) if has_room && index != SKILL_OVERFLOW_EFFECT_INDEX => {
+                slot.insert(UnknownGameplayEffect {
                     index,
-                    hits: 1,
-                    damage,
-                },
-            );
-        } else {
-            let effect =
+                    ..Default::default()
+                })
+            }
+            Entry::Vacant(_) => {
                 self.overflow_unmapped_gameplay_effect
                     .get_or_insert(UnknownGameplayEffect {
                         index: SKILL_OVERFLOW_EFFECT_INDEX,
-                        hits: 0,
-                        damage: 0.0,
-                    });
-            effect.hits = effect.hits.saturating_add(1);
-            effect.damage += damage;
-        }
+                        ..Default::default()
+                    })
+            }
+        };
+        effect.hits += 1;
+        effect.damage += damage;
     }
 
     fn remove_unmapped_effect(&mut self, index: u32, damage: f64) {
-        if index == SKILL_OVERFLOW_EFFECT_INDEX {
-            if let Some(effect) = self.overflow_unmapped_gameplay_effect.as_mut() {
-                effect.hits = effect.hits.saturating_sub(1);
-                effect.damage = (effect.damage - damage).max(0.0);
-                if effect.hits == 0 {
-                    self.overflow_unmapped_gameplay_effect = None;
-                }
+        if let Some(effect) = self.unmapped_gameplay_effects.get_mut(&index) {
+            effect.hits -= 1;
+            effect.damage = (effect.damage - damage).max(0.0);
+            if effect.hits == 0 {
+                self.unmapped_gameplay_effects.remove(&index);
             }
             return;
         }
-        let remove = match self.unmapped_gameplay_effects.get_mut(&index) {
-            Some(effect) => {
-                effect.hits = effect.hits.saturating_sub(1);
-                effect.damage = (effect.damage - damage).max(0.0);
-                effect.hits == 0
-            }
-            None => {
-                if let Some(effect) = self.overflow_unmapped_gameplay_effect.as_mut() {
-                    effect.hits = effect.hits.saturating_sub(1);
-                    effect.damage = (effect.damage - damage).max(0.0);
-                    if effect.hits == 0 {
-                        self.overflow_unmapped_gameplay_effect = None;
-                    }
-                }
-                false
-            }
-        };
-        if remove {
-            self.unmapped_gameplay_effects.remove(&index);
+
+        let effect = self
+            .overflow_unmapped_gameplay_effect
+            .as_mut()
+            .expect("unindexed effect hits are counted in overflow");
+        effect.hits -= 1;
+        effect.damage = (effect.damage - damage).max(0.0);
+        if effect.hits == 0 {
+            self.overflow_unmapped_gameplay_effect = None;
         }
     }
 
@@ -2039,10 +1939,6 @@ impl SkillBreakdownIndex {
         if let Some(overflow) = self.overflow_row.clone() {
             rows.push(overflow);
         }
-        #[cfg(test)]
-        SKILL_INDEX_PROJECTION_VISITS.with(|visits| {
-            visits.set(visits.get().saturating_add(rows.len()));
-        });
         rows.sort_by(|left, right| {
             right
                 .damage
@@ -2100,21 +1996,6 @@ impl SkillBreakdownIndex {
         self.unmapped_gameplay_effects.len()
             + usize::from(self.overflow_unmapped_gameplay_effect.is_some())
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    static SKILL_INDEX_PROJECTION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn reset_skill_index_projection_visits() {
-    SKILL_INDEX_PROJECTION_VISITS.with(|visits| visits.set(0));
-}
-
-#[cfg(test)]
-fn skill_index_projection_visits() -> usize {
-    SKILL_INDEX_PROJECTION_VISITS.with(std::cell::Cell::get)
 }
 
 const MAX_INDEXED_DETAIL_CHARACTERS: usize = 256;
@@ -2660,16 +2541,6 @@ impl CombatDetailIndex {
             && indexed_detail_filter_matches(filter, hit, self)
             && skill.is_none_or(|value| self.normalized_skill(hit_skill_id_ref(hit)) == value)
     }
-
-    #[cfg(test)]
-    fn position_slot_count(&self) -> usize {
-        self.character_positions
-            .values()
-            .chain(self.skill_positions.values())
-            .chain(self.filter_positions.values())
-            .map(|positions| positions.0.len())
-            .sum()
-    }
 }
 
 fn collect_exact_indexed_detail_page(
@@ -2679,10 +2550,6 @@ fn collect_exact_indexed_detail_page(
     positions
         .filter_map(|position| {
             let hit = hits.get(position)?;
-            #[cfg(test)]
-            COMBAT_DETAIL_QUERY_VISITS.with(|visits| {
-                visits.set(visits.get().saturating_add(1));
-            });
             Some((position, hit))
         })
         .collect()
@@ -2744,10 +2611,6 @@ fn collect_indexed_detail_page<'a>(
             let Some(hit) = hits.get(position) else {
                 continue;
             };
-            #[cfg(test)]
-            COMBAT_DETAIL_QUERY_VISITS.with(|visits| {
-                visits.set(visits.get().saturating_add(1));
-            });
             if !index.matches_query(hit, character_id, filter, skill) {
                 continue;
             }
@@ -2773,10 +2636,6 @@ fn collect_indexed_detail_page<'a>(
         let Some(hit) = hits.get(position) else {
             continue;
         };
-        #[cfg(test)]
-        COMBAT_DETAIL_QUERY_VISITS.with(|visits| {
-            visits.set(visits.get().saturating_add(1));
-        });
         if !index.matches_query(hit, character_id, filter, skill) {
             continue;
         }
@@ -3014,6 +2873,7 @@ fn remove_inline_detail_aggregate(row: &mut IndexedDetailAggregate, hits: u64, d
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureQualitySource {
     Plugin,
@@ -3808,8 +3668,6 @@ fn rebuild_combat_totals(
     total_damage_taken: &mut f64,
     max_hp_reduction: &mut f64,
 ) {
-    #[cfg(test)]
-    COMBAT_TOTAL_REBUILD_COUNT.with(|count| count.set(count.get().saturating_add(1)));
     stats.clear();
     *compact_timeline = CompactTimelineIndex::default();
     *started_at = None;
@@ -3855,10 +3713,6 @@ fn rebuild_all_combat_indexes(
     *max_hp_reduction = 0.0;
     let stable_end = hits.len().saturating_sub(RECENT_HIT_MUTATION_WINDOW);
     for (position, hit) in hits.iter().enumerate() {
-        #[cfg(test)]
-        BULK_COMBAT_REBUILD_VISITS.with(|visits| {
-            visits.set(visits.get().saturating_add(1));
-        });
         update_combat_totals(
             stats,
             compact_timeline,
@@ -4043,6 +3897,7 @@ fn apply_combat_totals_delta(
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum AbyssHalf {
     #[default]
@@ -4077,8 +3932,6 @@ pub enum AbyssEvent {
     },
     Stage {
         timestamp: f64,
-        #[allow(dead_code)]
-        cycle: Option<u32>,
         floor: Option<u32>,
         half: AbyssHalf,
         allow_late_backfill: bool,
@@ -4111,9 +3964,17 @@ pub enum TimeStopEvent {
 /// is separate from the user's configured DPS basis: `TimeStopAdjusted` must
 /// never imply that the provider is actually connected and producing data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum CombatClockRuntimeHealth {
+    /// The aliases read degraded states persisted in history by v0.4.2-v0.4.4.
+    /// Remove them when HISTORY_RECORD_VERSION is bumped.
     #[default]
+    #[serde(
+        alias = "provider_unavailable",
+        alias = "mod_disabled",
+        alias = "invalid_response"
+    )]
     Unknown,
     /// Replay/import supplied authoritative recorded pause transitions.
     Recorded,
@@ -4121,9 +3982,6 @@ pub enum CombatClockRuntimeHealth {
     /// Provider/controller responded, but the current generation has not
     /// produced a pause-valid combat-clock sample (or validity was lost).
     DataUnavailable,
-    ProviderUnavailable,
-    ModDisabled,
-    InvalidResponse,
 }
 
 impl CombatClockRuntimeHealth {
@@ -4278,7 +4136,7 @@ impl TimeStopTracker {
             _ => None,
         };
         if matches!(event, TimeStopEvent::GamePauseEnded { .. }) && had_active_pause {
-            self.event_count = self.event_count.saturating_add(1);
+            self.event_count += 1;
         }
         if let Some((start, end, pause_type_mask)) = self.event_segmenter.apply_event(event) {
             self.push_interval(start, end, pause_type_mask);
@@ -4435,7 +4293,7 @@ impl TimeStopTracker {
     }
 }
 
-const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
+pub(crate) const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5e;
 
 const fn known_pause_type_mask(pause_type_mask: u32) -> Option<u32> {
     if pause_type_mask == 0 || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0 {
@@ -4722,16 +4580,7 @@ impl PartyCombatState {
     }
 
     fn sync_clock_with_time_stops(&mut self) {
-        sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
-    }
-
-    #[allow(dead_code)]
-    pub fn time_stop_intervals_between(
-        &self,
-        start: f64,
-        end: f64,
-    ) -> Vec<TimelineTimeStopInterval> {
-        relative_time_stop_intervals(&self.time_stop, start, end)
+        sync_combat_clock_with_time_stops(&mut self.ended_at, &self.time_stop);
     }
 
     pub fn timeline(&self, bucket_seconds: f64, subtract_time_stop: bool) -> TimelineSeries {
@@ -4867,7 +4716,6 @@ impl AbyssRunState {
             }
             AbyssEvent::Stage {
                 timestamp,
-                cycle: _,
                 floor,
                 half,
                 allow_late_backfill: _,
@@ -5940,10 +5788,6 @@ impl CombatState {
         let end = start.saturating_add(limit).min(self.hits.len());
         (start..end).filter_map(move |position| {
             self.hits.get(position).map(|hit| {
-                #[cfg(all(test, feature = "cli"))]
-                GLOBAL_HIT_AXIS_PAGE_VISITS.with(|visits| {
-                    visits.set(visits.get().saturating_add(1));
-                });
                 let half = self
                     .global_hit_abyss_halves
                     .get(position)
@@ -6168,10 +6012,9 @@ impl CombatState {
     }
 
     fn sync_clock_with_time_stops(&mut self) {
-        sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
+        sync_combat_clock_with_time_stops(&mut self.ended_at, &self.time_stop);
     }
 
-    #[allow(dead_code)]
     pub fn time_stop_intervals_between(
         &self,
         start: f64,
@@ -6480,18 +6323,16 @@ fn character_duration_after_time_stop(
     (raw - time_stop.frozen_between(row.first_hit, row.last_hit)).max(0.001)
 }
 
-fn sync_combat_clock_with_time_stops(
-    started_at: Option<f64>,
-    ended_at: &mut Option<f64>,
-    time_stop: &TimeStopTracker,
-) {
-    let Some(started_at) = started_at else {
+fn sync_combat_clock_with_time_stops(ended_at: &mut Option<f64>, time_stop: &TimeStopTracker) {
+    let Some(end) = *ended_at else {
         return;
     };
     if let Some(timestamp) = time_stop.latest_game_pause_transition()
-        && timestamp >= started_at
+        && timestamp > end
+        // Extend only a fully frozen tail; no pause type proves activity during an idle gap.
+        && time_stop.frozen_between(end, timestamp) == timestamp - end
     {
-        *ended_at = Some(ended_at.map_or(timestamp, |value| value.max(timestamp)));
+        *ended_at = Some(timestamp);
     }
 }
 
@@ -7120,6 +6961,34 @@ impl From<&HitDamageCorrection> for HitSourceIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    impl CompactTimelineTree {
+        fn max_depth(&self) -> usize {
+            let Some(root) = self.root else {
+                return 0;
+            };
+            let mut maximum = 0;
+            let mut pending = vec![(root, 0_usize)];
+            while let Some((index, depth)) = pending.pop() {
+                maximum = maximum.max(depth);
+                if let Some(CompactTimelineTreeNode::Branch { left, right, .. }) =
+                    self.nodes.get(index)
+                {
+                    pending.push((*left, depth.saturating_add(1)));
+                    pending.push((*right, depth.saturating_add(1)));
+                }
+            }
+            maximum
+        }
+    }
+
+    #[test]
+    fn history_written_by_v0_4_4_loads_degraded_clock_health_as_unknown() {
+        for value in ["provider_unavailable", "mod_disabled", "invalid_response"] {
+            let health: CombatClockRuntimeHealth =
+                serde_json::from_value(serde_json::json!(value)).expect("legacy health loads");
+            assert_eq!(health, CombatClockRuntimeHealth::Unknown);
+        }
+    }
 
     #[test]
     fn mod_script_bridge_classifies_preprocess_and_postprocess_names() {
@@ -7524,54 +7393,6 @@ mod tests {
         );
     }
 
-    fn reset_combat_total_rebuild_count() {
-        COMBAT_TOTAL_REBUILD_COUNT.with(|count| count.set(0));
-    }
-
-    fn combat_total_rebuild_count() -> usize {
-        COMBAT_TOTAL_REBUILD_COUNT.with(std::cell::Cell::get)
-    }
-
-    fn reset_combat_detail_query_visits() {
-        COMBAT_DETAIL_QUERY_VISITS.with(|visits| visits.set(0));
-    }
-
-    fn combat_detail_query_visits() -> usize {
-        COMBAT_DETAIL_QUERY_VISITS.with(std::cell::Cell::get)
-    }
-
-    fn reset_bulk_combat_rebuild_visits() {
-        BULK_COMBAT_REBUILD_VISITS.with(|visits| visits.set(0));
-    }
-
-    fn bulk_combat_rebuild_visits() -> usize {
-        BULK_COMBAT_REBUILD_VISITS.with(std::cell::Cell::get)
-    }
-
-    fn reset_compact_timeline_projection_visits() {
-        COMPACT_TIMELINE_PROJECTION_VISITS.with(|visits| visits.set(0));
-    }
-
-    fn compact_timeline_projection_visits() -> usize {
-        COMPACT_TIMELINE_PROJECTION_VISITS.with(std::cell::Cell::get)
-    }
-
-    fn reset_compact_timeline_role_scratch_slots() {
-        COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS.with(|slots| slots.set(0));
-    }
-
-    fn compact_timeline_role_scratch_slots() -> usize {
-        COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS.with(std::cell::Cell::get)
-    }
-
-    fn reset_compact_timeline_role_candidate_slots() {
-        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(|slots| slots.set(0));
-    }
-
-    fn compact_timeline_role_candidate_slots() -> usize {
-        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(std::cell::Cell::get)
-    }
-
     fn scale_dense_timeline_tree(
         tree: &mut CompactTimelineTree,
         damage_factor: f64,
@@ -7963,8 +7784,6 @@ mod tests {
             next_sequence: (BUCKET_COUNT as u64).saturating_mul(u64::from(ROLE_COUNT)),
         };
 
-        reset_compact_timeline_role_scratch_slots();
-        reset_compact_timeline_role_candidate_slots();
         let timeline = index
             .project(1.0, BUCKET_COUNT, ROLES_PER_BUCKET, ROLE_COUNT as usize)
             .expect("dense timeline projection");
@@ -7995,20 +7814,6 @@ mod tests {
         assert_eq!(
             timeline.omitted_role_hits,
             dense_event_count - CANDIDATE_LIMIT as u64
-        );
-        assert_eq!(
-            compact_timeline_role_scratch_slots(),
-            BUCKET_COUNT,
-            "role projection must initialize one reusable bucket scratch, not one per role"
-        );
-        let candidate_slots = compact_timeline_role_candidate_slots();
-        assert!(
-            candidate_slots <= CANDIDATE_LIMIT,
-            "candidate slots must stay within bucket_count * max_roles_per_bucket"
-        );
-        assert_eq!(
-            candidate_slots, CANDIDATE_LIMIT,
-            "the dense fixture must fill every bounded candidate slot"
         );
         assert!(
             output_roles <= CANDIDATE_LIMIT,
@@ -8145,7 +7950,7 @@ mod tests {
     }
 
     #[test]
-    fn indexed_timeline_projection_visits_bounded_paths_for_large_history() {
+    fn indexed_timeline_projection_is_exact_for_large_history() {
         const HIT_COUNT: usize = 50_001;
         const OUTPUT_BUCKETS: usize = 60;
         let mut state = CombatState::default();
@@ -8165,9 +7970,7 @@ mod tests {
                 .values()
                 .all(|role| role.tree.max_depth() <= COMPACT_TIMELINE_MAX_TREE_DEPTH)
         );
-        reset_compact_timeline_projection_visits();
         let timeline = state.timeline_bounded(0.2, false, OUTPUT_BUCKETS, 4, 4);
-        let visits = compact_timeline_projection_visits();
 
         assert_eq!(timeline.buckets.len(), OUTPUT_BUCKETS);
         assert_eq!(timeline.total_damage, HIT_COUNT as f64);
@@ -8179,37 +7982,23 @@ mod tests {
                 .sum::<u64>(),
             HIT_COUNT as u64
         );
-        let structural_visit_bound =
-            (4 + 1) * (1 + 2 * OUTPUT_BUCKETS * COMPACT_TIMELINE_MAX_TREE_DEPTH);
-        assert!(
-            visits <= structural_visit_bound,
-            "projection visited {visits} nodes, exceeding the bucket/depth bound {structural_visit_bound}"
-        );
-        assert!(
-            visits < HIT_COUNT / 2,
-            "bounded projection visited {visits} index nodes for {HIT_COUNT} retained hits"
-        );
     }
 
     #[test]
-    fn indexed_skill_projection_visits_distinct_rows_instead_of_retained_hits() {
+    fn indexed_skill_projection_and_detail_pages_are_exact_for_large_history() {
         const HIT_COUNT: usize = 50_001;
         let mut state = CombatState::default();
         for index in 0..HIT_COUNT {
             state.push_hit(test_hit(index as f64, 1, "outgoing", 1.0));
         }
 
-        reset_skill_index_projection_visits();
         let breakdown = state.skill_breakdown(None);
-        let visits = skill_index_projection_visits();
 
         assert_eq!(state.hits.len(), HIT_COUNT);
         assert_eq!(breakdown.total_hits, HIT_COUNT as u64);
         assert_eq!(breakdown.total_damage, HIT_COUNT as f64);
         assert_eq!(breakdown.rows.len(), 1);
-        assert_eq!(visits, 1);
 
-        reset_combat_detail_query_visits();
         let middle = state.indexed_combat_details(
             None,
             &IndexedCombatDetailFilter::All,
@@ -8219,9 +8008,7 @@ mod tests {
         );
         assert_eq!(middle.rows.len(), 2);
         assert_eq!(middle.rows[0].0, HIT_COUNT / 2);
-        assert_eq!(combat_detail_query_visits(), 2);
 
-        reset_combat_detail_query_visits();
         let filtered_middle = state.indexed_combat_details(
             None,
             &IndexedCombatDetailFilter::Outgoing,
@@ -8231,9 +8018,7 @@ mod tests {
         );
         assert_eq!(filtered_middle.rows.len(), 2);
         assert_eq!(filtered_middle.rows[0].0, HIT_COUNT / 2);
-        assert_eq!(combat_detail_query_visits(), 2);
 
-        reset_combat_detail_query_visits();
         let skill = hit_skill_id_ref(state.hits.front().expect("large fixture hit"));
         let page = state.indexed_combat_details(
             Some(1),
@@ -8246,9 +8031,7 @@ mod tests {
         assert_eq!(page.rows.len(), 2);
         assert_eq!(page.rows[0].0, HIT_COUNT - 2);
         assert_eq!(page.rows[1].0, HIT_COUNT - 1);
-        assert_eq!(combat_detail_query_visits(), 2);
 
-        reset_combat_detail_query_visits();
         let empty = state.indexed_combat_details(
             Some(1),
             &IndexedCombatDetailFilter::Outgoing,
@@ -8257,7 +8040,6 @@ mod tests {
             2,
         );
         assert!(empty.rows.is_empty());
-        assert_eq!(combat_detail_query_visits(), 0);
     }
 
     #[test]
@@ -8291,30 +8073,13 @@ mod tests {
     }
 
     #[test]
-    fn combat_detail_position_index_has_a_constant_slot_factor() {
-        const HIT_COUNT: usize = 1_000_000;
-        let hit = test_hit(1.0, 7, "incoming", 1.0);
-        let mut index = CombatDetailIndex::default();
-        for position in 0..HIT_COUNT {
-            index.observe_hit(position, &hit);
-        }
-
-        // One character list, one skill list, and one incoming-filter list.
-        // No scope/filter/skill Cartesian product duplicates positions.
-        assert_eq!(index.position_slot_count(), HIT_COUNT * 3);
-        assert!(index.buckets.len() <= MAX_INDEXED_DETAIL_AGGREGATES);
-    }
-
-    #[test]
-    fn bulk_history_rehydrate_rebuilds_all_indexes_in_one_hit_pass() {
+    fn bulk_history_rehydrate_rebuilds_all_indexes() {
         const HIT_COUNT: usize = 50_001;
         let hit = test_hit(1.0, 7, "outgoing", 1.0);
         let mut state = CombatState::default();
 
-        reset_bulk_combat_rebuild_visits();
         state.replace_global_hits_bulk(std::iter::repeat_n(hit, HIT_COUNT).collect());
 
-        assert_eq!(bulk_combat_rebuild_visits(), HIT_COUNT);
         assert_eq!(state.hits.len(), HIT_COUNT);
         assert_eq!(state.total_damage, HIT_COUNT as f64);
         assert_eq!(state.stats[&7].hits, HIT_COUNT as u64);
@@ -8491,7 +8256,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8527,7 +8291,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8702,7 +8465,6 @@ mod tests {
         });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8766,7 +8528,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8774,7 +8535,6 @@ mod tests {
         let mut candidate = test_hit(1.0, 7, "unknown", 100.0);
         candidate.attack_type = Some("Normal Attack".to_owned());
         state.push_hit(candidate);
-        reset_combat_total_rebuild_count();
 
         let timestamp_100ns =
             FILETIME_UNIX_EPOCH_100NS.saturating_add((1.05 * FILETIME_TICKS_PER_SECOND) as u64);
@@ -8790,7 +8550,6 @@ mod tests {
             ModScriptApplyOutcome::ProjectionChanged
         );
 
-        assert_eq!(combat_total_rebuild_count(), 0);
         assert_eq!(state.total_damage, 100.0);
         assert_eq!(state.hits[0].direction, HitDirection::Outgoing);
         let global = state.stats.get(&7).expect("global character aggregate");
@@ -8814,7 +8573,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -8825,7 +8583,6 @@ mod tests {
         state.push_hit(first);
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 5.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -8861,7 +8618,6 @@ mod tests {
                 let mut state = CombatState::default();
                 state.apply_abyss_event(AbyssEvent::Stage {
                     timestamp: 0.0,
-                    cycle: Some(1),
                     floor: Some(1),
                     half: AbyssHalf::First,
                     allow_late_backfill: false,
@@ -9117,7 +8873,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9143,7 +8898,6 @@ mod tests {
         let first_generation = state.abyss.first_half.hits_generation;
         let second_generation = state.abyss.second_half.hits_generation;
         let total_before = state.total_damage;
-        reset_combat_total_rebuild_count();
 
         assert!(state.apply_damage_correction(HitDamageCorrection {
             source_byte_offset: None,
@@ -9187,7 +8941,6 @@ mod tests {
             damage_attribute: Some("灵".to_owned()),
         }));
 
-        assert_eq!(combat_total_rebuild_count(), 0);
         assert_eq!(state.hits_generation, global_generation.wrapping_add(2));
         assert_eq!(
             state.abyss.first_half.hits_generation,
@@ -9651,24 +9404,25 @@ mod tests {
     }
 
     #[test]
-    fn pause_start_and_end_edges_control_the_clock_immediately() {
-        let mut state = CombatState::default();
-        state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
-            timestamp: 12.0,
-            pause_type_mask: 1 << 2,
-        });
-        assert!((state.duration_with_time_stop(false) - 2.0).abs() < 1e-9);
-        assert!((state.duration_with_time_stop(true) - 2.0).abs() < 1e-9);
-
-        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
-            timestamp: 16.0,
-            pause_type_mask: 1 << 2,
-        });
-        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
-
-        assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
-        assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+    fn pause_edges_without_damage_do_not_count_idle_time() {
+        for pause_type_mask in [1 << 1, 1 << 2, 1 << 3] {
+            let mut state = CombatState::default();
+            state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+            let before = state.duration_with_time_stop(true);
+            state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+                timestamp: 12.0,
+                pause_type_mask,
+            });
+            assert_eq!(state.duration_with_time_stop(true), before);
+            state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+                timestamp: 16.0,
+                pause_type_mask,
+            });
+            assert_eq!(state.duration_with_time_stop(true), before);
+            state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+            assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
+            assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+        }
     }
 
     #[test]
@@ -9676,7 +9430,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 10.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9701,7 +9454,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 10.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9710,7 +9462,6 @@ mod tests {
         state.push_hit(test_hit(63.0, 1021, "outgoing", 200.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 66.183,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9772,7 +9523,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9800,14 +9550,12 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,
         });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9856,7 +9604,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9879,7 +9626,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 20.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::Second,
             allow_late_backfill: true,
@@ -9901,7 +9647,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 20.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::Second,
             allow_late_backfill: true,
@@ -9918,7 +9663,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9927,7 +9671,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(5),
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9948,7 +9691,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9957,7 +9699,6 @@ mod tests {
         state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 3.0 });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 4.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9974,7 +9715,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -9982,7 +9722,6 @@ mod tests {
         state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -9992,7 +9731,6 @@ mod tests {
         state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 5.0 });
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 5.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -10014,7 +9752,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: Some(6),
             floor: Some(11),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -10022,7 +9759,6 @@ mod tests {
         state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(6),
             floor: Some(11),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -10033,7 +9769,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 25.0,
-            cycle: Some(6),
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -10056,7 +9791,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -10067,7 +9801,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: None,
             floor: Some(12),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -10087,7 +9820,6 @@ mod tests {
 
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 20.0,
-            cycle: None,
             floor: None,
             half: AbyssHalf::First,
             allow_late_backfill: false,

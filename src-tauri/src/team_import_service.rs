@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use nte_dps_tool::core::sync::lock_or_repair;
 use nte_dps_tool::engine::model::{TeamDps, TeamDpsExport};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -48,22 +49,19 @@ impl TeamImportService {
         &self,
         on_unavailable: impl Fn(),
     ) -> Result<ImportedTeams, TeamImportError> {
-        match self.state.lock() {
-            Ok(state) => match &*state {
-                TeamImportState::Ready(teams) => Ok(teams.clone()),
-                TeamImportState::Unavailable => Err(TeamImportError {
-                    newly_unavailable: false,
-                }),
-            },
-            Err(mut poison) => {
-                **poison.get_mut() = TeamImportState::Unavailable;
-                self.state.clear_poison();
-                on_unavailable();
-                log::warn!("Imported team state was closed after an interrupted update");
-                Err(TeamImportError {
-                    newly_unavailable: true,
-                })
-            }
+        let (state, recovered) = lock_or_repair(&self.state, close_team_import);
+        if recovered {
+            on_unavailable();
+            log::warn!("Imported team state was closed after an interrupted update");
+            return Err(TeamImportError {
+                newly_unavailable: true,
+            });
+        }
+        match &*state {
+            TeamImportState::Ready(teams) => Ok(teams.clone()),
+            TeamImportState::Unavailable => Err(TeamImportError {
+                newly_unavailable: false,
+            }),
         }
     }
 
@@ -176,27 +174,24 @@ impl TeamImportService {
         update: impl FnOnce(&mut ImportedTeams) -> bool,
         on_change: impl Fn(),
     ) -> Result<TeamMutationOutcome, TeamImportError> {
-        match self.state.lock() {
-            Ok(mut state) => match &mut *state {
-                TeamImportState::Ready(teams) => {
-                    let changed = update(teams);
-                    if changed {
-                        on_change();
-                    }
-                    Ok(TeamMutationOutcome { changed })
+        let (mut state, recovered) = lock_or_repair(&self.state, close_team_import);
+        if recovered {
+            on_change();
+            return Err(TeamImportError {
+                newly_unavailable: true,
+            });
+        }
+        match &mut *state {
+            TeamImportState::Ready(teams) => {
+                let changed = update(teams);
+                if changed {
+                    on_change();
                 }
-                TeamImportState::Unavailable => Err(TeamImportError {
-                    newly_unavailable: false,
-                }),
-            },
-            Err(mut poison) => {
-                **poison.get_mut() = TeamImportState::Unavailable;
-                self.state.clear_poison();
-                on_change();
-                Err(TeamImportError {
-                    newly_unavailable: true,
-                })
+                Ok(TeamMutationOutcome { changed })
             }
+            TeamImportState::Unavailable => Err(TeamImportError {
+                newly_unavailable: false,
+            }),
         }
     }
 
@@ -207,6 +202,10 @@ impl TeamImportService {
             panic!("poison imported team state");
         });
     }
+}
+
+fn close_team_import(state: &mut TeamImportState) {
+    *state = TeamImportState::Unavailable;
 }
 
 #[cfg(test)]

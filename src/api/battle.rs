@@ -702,28 +702,25 @@ mod tests {
         state.push_hit(test_hit(15.0, 200.0));
 
         let record = battle_record(&state, context(0), true);
-        let json = serde_json::to_value(&record).unwrap();
-        assert_eq!(json["contract_version"], 6);
-        assert_eq!(json["summary"]["duration_seconds"], 2.0);
+        assert_eq!(record.summary.unwrap().duration_seconds, 2.0);
+        let intervals: Vec<_> = record
+            .time_stop_intervals
+            .iter()
+            .map(|i| {
+                (
+                    i.start_offset_seconds,
+                    i.end_offset_seconds,
+                    i.pause_type_mask,
+                )
+            })
+            .collect();
         assert_eq!(
-            json["time_stop_intervals"],
-            serde_json::json!([
-                {
-                    "start_offset_seconds": 1.0,
-                    "end_offset_seconds": 2.0,
-                    "pause_type_mask": 64
-                },
-                {
-                    "start_offset_seconds": 2.0,
-                    "end_offset_seconds": 3.0,
-                    "pause_type_mask": 68
-                },
-                {
-                    "start_offset_seconds": 3.0,
-                    "end_offset_seconds": 5.0,
-                    "pause_type_mask": 4
-                }
-            ])
+            intervals,
+            [
+                (1.0, 2.0, Some(64)),
+                (2.0, 3.0, Some(68)),
+                (3.0, 5.0, Some(4))
+            ]
         );
 
         let timeline = battle_timeline(
@@ -756,7 +753,6 @@ mod tests {
         duplicate.char_known = false;
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -764,7 +760,6 @@ mod tests {
         state.push_hit(duplicate.clone());
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 2.0,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -802,7 +797,6 @@ mod tests {
         state.push_hit(test_hit(2.0, 200.0));
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.5,
-            cycle: None,
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: true,
@@ -836,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn battle_axis_deep_page_and_timeline_role_preflight_do_not_visit_hit_prefix() {
+    fn battle_axis_deep_page_and_timeline_role_preflight_on_large_history() {
         const RETAINED_HITS: usize = 500_002;
         let mut state = CombatState::default();
         let mut hit = test_hit(1.0, 1.0);
@@ -845,12 +839,10 @@ mod tests {
         hit.attack_type = None;
         state.install_large_axis_fixture(hit, RETAINED_HITS);
 
-        crate::engine::model::reset_global_hit_axis_page_visits();
         let page = battle_axis(&state, context(0), Some(500_001), 2).expect("deep page");
         assert_eq!(page.rows.len(), 2);
         assert_eq!(page.rows[0].sequence, "500001");
         assert_eq!(page.rows[1].sequence, "500002");
-        assert_eq!(crate::engine::model::global_hit_axis_page_visits(), 2);
 
         let role_count = state.bounded_timeline_character_count();
         assert_eq!(

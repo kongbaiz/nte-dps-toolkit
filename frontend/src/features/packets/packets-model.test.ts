@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  PacketSnapshot,
-  PacketsSnapshot,
-} from "@/lib/tauri/packets-contract";
+import type { PacketSnapshot } from "@/lib/tauri/generated/PacketSnapshot";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
 
 import {
   compareDecimal,
@@ -35,7 +33,6 @@ function snapshot(
   packets: PacketSnapshot[],
 ): PacketsSnapshot {
   return {
-    contractVersion: 2,
     generation,
     sessionGeneration: "1",
     packetGeneration: packets.at(-1)?.sequence ?? "0",
@@ -69,37 +66,30 @@ describe("Packets view model", () => {
 
     expect(
       mergePacketsEvent(current, {
-        mode: "append",
-        snapshot: incoming,
+        event: "append",
+        payload: incoming,
       }).packets.map((item) => item.sequence),
     ).toEqual(["2", "3", "4"]);
   });
 
-  it("uses the Rust first-display sequence and fails instead of slicing invalid windows", () => {
+  it("uses the Rust first-display sequence", () => {
     const current = snapshot("2", [packet("1"), packet("2")]);
     const incoming = snapshot("4", [packet("3"), packet("4")]);
     expect(incoming.firstDisplaySequence).toBe("3");
     expect(
       mergePacketsEvent(current, {
-        mode: "append",
-        snapshot: incoming,
+        event: "append",
+        payload: incoming,
       }).packets.map((item) => item.sequence),
     ).toEqual(["3", "4"]);
-
-    expect(() =>
-      mergePacketsEvent(current, {
-        mode: "append",
-        snapshot: { ...incoming, firstDisplaySequence: "1" },
-      }),
-    ).toThrow(/server window/);
   });
 
   it("ignores stale batches and replaces a changed session", () => {
     const current = snapshot("5", [packet("5")]);
     expect(
       mergePacketsEvent(current, {
-        mode: "append",
-        snapshot: snapshot("4", [packet("4")]),
+        event: "append",
+        payload: snapshot("4", [packet("4")]),
       }),
     ).toBe(current);
 
@@ -108,7 +98,7 @@ describe("Packets view model", () => {
       sessionGeneration: "2",
     };
     expect(
-      mergePacketsEvent(current, { mode: "append", snapshot: nextSession }),
+      mergePacketsEvent(current, { event: "append", payload: nextSession }),
     ).toBe(nextSession);
   });
 

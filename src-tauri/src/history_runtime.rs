@@ -1,11 +1,12 @@
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
+use nte_dps_tool::core::sync::lock_or_repair;
 use nte_dps_tool::storage::history::load_history_summaries;
 use nte_dps_tool::storage::i18n::{self, Language};
 use tauri::{async_runtime::JoinHandle, ipc::Channel};
@@ -15,7 +16,7 @@ use crate::{
     contract::{
         CommandError,
         history::{HistoryEvent, HistorySnapshot},
-        stream::{MAX_STREAM_DELIVERY_BYTES, StreamDeliveryBody},
+        stream::MAX_STREAM_DELIVERY_BYTES,
     },
     state::{AppState, HistoryRuntimeError, StreamRegistration},
 };
@@ -23,25 +24,14 @@ use crate::{
 const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(250);
 pub(crate) const HISTORY_STREAM_INTERVAL: Duration = Duration::from_millis(250);
 
-pub(crate) fn history_runtime_unavailable(_error: HistoryRuntimeError) -> CommandError {
-    log::warn!("History operation did not finish after a runtime interruption");
-    CommandError::history(
-        "history_runtime_unavailable",
-        "History operation did not finish.",
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn run_history_maintenance_worker(
-    state: &AppState,
-    stop: &AtomicBool,
-    mut wait: impl FnMut(),
-) -> Result<(), HistoryRuntimeError> {
-    while !stop.load(Ordering::Acquire) {
-        state.maintain_history_rounds()?;
-        wait();
+impl From<HistoryRuntimeError> for CommandError {
+    fn from(_error: HistoryRuntimeError) -> Self {
+        log::warn!("History operation did not finish after a runtime interruption");
+        CommandError::new(
+            "history_runtime_unavailable",
+            "History operation did not finish.",
+        )
     }
-    Ok(())
 }
 
 pub(crate) struct HistoryRuntime {
@@ -53,7 +43,7 @@ pub(crate) struct HistoryRuntime {
 
 pub(crate) struct HistoryStreamRegistration {
     pub(crate) registration: StreamRegistration,
-    pub(crate) on_event: Channel<StreamDeliveryBody<HistoryEvent>>,
+    pub(crate) on_event: Channel<HistoryEvent>,
 }
 
 #[derive(Default)]
@@ -78,11 +68,7 @@ impl HistoryProjectionCache {
         &self,
         key: HistoryProjectionKey,
     ) -> Result<Option<Arc<CachedHistoryProjection>>, HistoryRuntimeError> {
-        let entry = self.entry.lock().map_err(|mut poison| {
-            **poison.get_mut() = None;
-            self.entry.clear_poison();
-            HistoryRuntimeError::Unavailable
-        })?;
+        let entry = self.lock_entry()?;
         Ok(entry.as_ref().filter(|entry| entry.key == key).cloned())
     }
 
@@ -90,11 +76,7 @@ impl HistoryProjectionCache {
         &self,
         projection: CachedHistoryProjection,
     ) -> Result<Arc<CachedHistoryProjection>, HistoryRuntimeError> {
-        let mut entry = self.entry.lock().map_err(|mut poison| {
-            **poison.get_mut() = None;
-            self.entry.clear_poison();
-            HistoryRuntimeError::Unavailable
-        })?;
+        let mut entry = self.lock_entry()?;
         if let Some(cached) = entry.as_ref().filter(|cached| cached.key == projection.key) {
             return Ok(Arc::clone(cached));
         }
@@ -103,34 +85,18 @@ impl HistoryProjectionCache {
         Ok(projection)
     }
 
-    #[cfg(test)]
-    fn get_or_build(
-        &self,
-        key: HistoryProjectionKey,
-        build: impl FnOnce() -> Result<CachedHistoryProjection, HistoryRuntimeError>,
-    ) -> Result<Arc<CachedHistoryProjection>, HistoryRuntimeError> {
-        if let Some(projection) = self.lookup(key)? {
-            return Ok(projection);
-        }
-        self.publish(build()?)
-    }
-
     fn clear(&self) {
-        match self.entry.lock() {
-            Ok(mut entry) => *entry = None,
-            Err(mut poison) => {
-                **poison.get_mut() = None;
-                self.entry.clear_poison();
-            }
-        }
+        *lock_or_repair(&self.entry, |_| {}).0 = None;
     }
 
-    #[cfg(test)]
-    fn entry_count_for_test(&self) -> usize {
-        self.entry
-            .lock()
-            .map(|entry| entry.iter().count())
-            .unwrap_or(0)
+    fn lock_entry(
+        &self,
+    ) -> Result<MutexGuard<'_, Option<Arc<CachedHistoryProjection>>>, HistoryRuntimeError> {
+        let (entry, recovered) = lock_or_repair(&self.entry, |entry| *entry = None);
+        if recovered {
+            return Err(HistoryRuntimeError::Unavailable);
+        }
+        Ok(entry)
     }
 }
 
@@ -198,14 +164,7 @@ impl HistoryRuntime {
 
     pub(crate) fn shutdown(&self) -> bool {
         self.stop.store(true, Ordering::Release);
-        let maintenance = match self.maintenance.lock() {
-            Ok(mut task) => task.take(),
-            Err(mut poison) => {
-                let task = poison.get_mut().take();
-                self.maintenance.clear_poison();
-                task
-            }
-        };
+        let maintenance = lock_or_repair(&self.maintenance, |_| {}).0.take();
         if let Some(task) = &maintenance {
             task.abort();
         }
@@ -259,9 +218,7 @@ async fn run_history_stream(
             continue;
         }
 
-        let body = StreamDeliveryBody::new(vec![HistoryEvent::Snapshot(
-            projection.snapshot.as_ref().clone(),
-        )]);
+        let body = HistoryEvent::Snapshot(projection.snapshot.as_ref().clone());
         if serde_json::to_vec(&body)
             .map(|encoded| encoded.len() > MAX_STREAM_DELIVERY_BYTES)
             .unwrap_or(true)
@@ -328,27 +285,6 @@ fn cached_history_stream_projection_with(
 }
 
 #[cfg(test)]
-pub(crate) fn project_history_stream_snapshot(
-    state: &AppState,
-) -> Result<(u64, HistorySnapshot), HistoryRuntimeError> {
-    let key = state.with_history_transaction(|| history_projection_key(state))?;
-    let characters = state.live_capture_resources().characters;
-    let loaded = load_history_summaries();
-    if state.with_history_transaction(|| history_projection_key(state))? != key {
-        return Err(HistoryRuntimeError::Unavailable);
-    }
-    Ok((
-        key.revision,
-        HistorySnapshot::from_localized_load_for_language(
-            loaded,
-            key.revision,
-            &characters,
-            key.language,
-        ),
-    ))
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::{sync::atomic::AtomicUsize, thread};
@@ -379,27 +315,24 @@ mod tests {
     #[test]
     fn revision_and_language_context_changes_rebuild_the_projection() {
         let cache = HistoryProjectionCache::default();
-        let builds = AtomicUsize::new(0);
         let keys = [
             HistoryProjectionKey::fixture(7, Language::English, 11),
             HistoryProjectionKey::fixture(8, Language::English, 11),
             HistoryProjectionKey::fixture(8, Language::Japanese, 11),
         ];
         for key in keys {
+            assert!(cache.lookup(key).expect("lookup projection").is_none());
             cache
-                .get_or_build(key, || {
-                    builds.fetch_add(1, Ordering::SeqCst);
-                    Ok(fixture_projection(key))
-                })
-                .expect("build projection");
+                .publish(fixture_projection(key))
+                .expect("publish projection");
         }
-        assert_eq!(builds.load(Ordering::SeqCst), 3);
     }
 
     #[test]
     fn revision_change_during_summary_scan_discards_projection() {
         let state = AppState::default();
         let cache = HistoryProjectionCache::default();
+        let stale_key = history_projection_key(&state);
         let projection = cached_history_stream_projection_with(&state, &cache, || {
             state
                 .with_history_transaction(|| state.bump_history_revision())
@@ -408,7 +341,12 @@ mod tests {
         })
         .expect("stale scan is not a runtime failure");
         assert!(projection.is_none());
-        assert_eq!(cache.entry_count_for_test(), 0);
+        assert!(
+            cache
+                .lookup(stale_key)
+                .expect("lookup projection")
+                .is_none()
+        );
     }
 
     #[test]

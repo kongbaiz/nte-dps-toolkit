@@ -1,10 +1,8 @@
 import { ImageOff } from "lucide-react";
 import { t } from "@/lib/i18n";
-import type {
-  CharacterDetail,
-  CharacterEntry,
-  CharacterSection,
-} from "@/lib/tauri/user-characters-client";
+import type { CharacterDetail } from "@/lib/tauri/generated/CharacterDetail";
+import type { CharacterEntry } from "@/lib/tauri/generated/CharacterEntry";
+import type { CharacterSection } from "@/lib/tauri/generated/CharacterSection";
 import {
   attributeLabel,
   entryValue,

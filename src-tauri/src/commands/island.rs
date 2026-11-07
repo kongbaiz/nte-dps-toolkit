@@ -1,3 +1,4 @@
+use crate::contract::island::IslandTone;
 use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
@@ -42,19 +43,22 @@ pub(crate) fn undo_island_notice(
         .island_notice()
         .filter(|notice| notice.id == notice_id)
         .ok_or_else(|| {
-            CommandError::main_dps(
+            CommandError::new(
                 "session_undo_missing",
                 "The previous session is no longer available",
             )
         })?;
     let token = notice.undo_token.ok_or_else(|| {
-        CommandError::main_dps("session_undo_missing", "The notice has no undo action")
+        CommandError::new("session_undo_missing", "The notice has no undo action")
     })?;
-    state
-        .undo_session_reset(&token)
-        .map_err(super::main_dps::session_undo_error)?;
+    state.undo_session_reset(&token)?;
     state.dismiss_island_notice(&notice_id);
-    state.publish_island_notice("success", "Previous session restored", Vec::new(), None);
+    state.publish_island_notice(
+        IslandTone::Success,
+        "Previous session restored",
+        Vec::new(),
+        None,
+    );
     island::show_notice(&app, state.inner())?;
     Ok(IslandSnapshot::from_state(state.inner()))
 }

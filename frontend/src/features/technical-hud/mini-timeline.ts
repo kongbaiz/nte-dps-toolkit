@@ -1,4 +1,4 @@
-import type { HudTimelineSnapshot } from "@/lib/tauri/technical-contract";
+import type { HudTimelineSnapshot } from "@/lib/tauri/generated/HudTimelineSnapshot";
 
 export const MINI_TIMELINE_HEIGHT = 42;
 const MINI_TIMELINE_TOP_INSET = 13;

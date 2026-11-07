@@ -1,11 +1,11 @@
-import { useSyncExternalStore } from "react";
+import { create } from "zustand";
 
 import { setFrontendLanguage } from "@/lib/i18n";
 import { settingsPresentationEqual } from "@/lib/settings-presentation-model";
-import type { InterfaceSettings } from "@/lib/tauri/settings-contract";
+import type { InterfaceSettingsSnapshot } from "@/lib/tauri/generated/InterfaceSettingsSnapshot";
 import { syncConsoleWindowBackground } from "@/lib/tauri/console-window-background";
 
-const DEFAULT_PRESENTATION: InterfaceSettings = {
+const DEFAULT_PRESENTATION: InterfaceSettingsSnapshot = {
   language: "zh-CN",
   darkMode: false,
   themePreset: "zinc",
@@ -16,37 +16,45 @@ const DEFAULT_PRESENTATION: InterfaceSettings = {
   islandOffsetX: 0,
 };
 const STORAGE_KEY = "nte.settings.presentation.v1";
-let presentation = readStoredPresentation();
-let revision = 0;
-const listeners = new Set<() => void>();
+
+/** The interface settings this window renders with; Rust is the source of truth. */
+export const useSettingsPresentation = create<InterfaceSettingsSnapshot>(
+  readStoredPresentation,
+);
+
+useSettingsPresentation.subscribe((next) => {
+  applyDocumentPresentation(next);
+  setFrontendLanguage(next.language);
+});
 
 window.addEventListener("storage", (event) => {
   if (event.key !== STORAGE_KEY) return;
-  const next = readStoredPresentation();
-  if (settingsPresentationEqual(presentation, next)) return;
-  presentation = next;
-  applyDocumentPresentation(next);
-  setFrontendLanguage(next.language);
-  revision += 1;
-  listeners.forEach((listener) => listener());
+  replacePresentation(readStoredPresentation());
 });
 
-export function applySettingsPresentation(next: InterfaceSettings): void {
-  if (settingsPresentationEqual(presentation, next)) return;
-  presentation = next;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  applyDocumentPresentation(next);
-  setFrontendLanguage(next.language);
-  revision += 1;
-  listeners.forEach((listener) => listener());
+export function applySettingsPresentation(
+  next: InterfaceSettingsSnapshot,
+): void {
+  if (replacePresentation(next)) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
 }
 
 export function bootstrapSettingsPresentation(): void {
+  const presentation = useSettingsPresentation.getState();
   applyDocumentPresentation(presentation);
   setFrontendLanguage(presentation.language);
 }
 
-function applyDocumentPresentation(next: InterfaceSettings) {
+function replacePresentation(next: InterfaceSettingsSnapshot): boolean {
+  if (settingsPresentationEqual(useSettingsPresentation.getState(), next)) {
+    return false;
+  }
+  useSettingsPresentation.setState(next, true);
+  return true;
+}
+
+function applyDocumentPresentation(next: InterfaceSettingsSnapshot) {
   const root = document.documentElement;
   const isConsole = root.dataset.windowRoute === "console";
   const isOpaqueDesktop =
@@ -67,19 +75,7 @@ function applyDocumentPresentation(next: InterfaceSettings) {
   }
 }
 
-export function useSettingsPresentation(): InterfaceSettings {
-  useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => revision,
-    () => revision,
-  );
-  return presentation;
-}
-
-function readStoredPresentation(): InterfaceSettings {
+function readStoredPresentation(): InterfaceSettingsSnapshot {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "");
     if (
@@ -92,7 +88,7 @@ function readStoredPresentation(): InterfaceSettings {
       "darkMode" in value &&
       typeof value.darkMode === "boolean"
     ) {
-      return { ...DEFAULT_PRESENTATION, ...value } as InterfaceSettings;
+      return { ...DEFAULT_PRESENTATION, ...value } as InterfaceSettingsSnapshot;
     }
   } catch {
     // A malformed local projection is replaced by the Rust snapshot in Console.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { HudConfigSnapshot } from "@/lib/tauri/technical-contract";
+import type { HudConfigSnapshot } from "@/lib/tauri/generated/HudConfigSnapshot";
 
 import {
   adjacentHudModuleMove,

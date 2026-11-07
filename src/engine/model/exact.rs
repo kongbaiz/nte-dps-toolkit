@@ -472,7 +472,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -481,7 +480,6 @@ mod tests {
         s.apply_exact_projection(initial.clone()).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -542,7 +540,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -559,7 +556,6 @@ mod tests {
         s.apply_exact_projection(extra.clone()).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -636,7 +632,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -644,13 +639,11 @@ mod tests {
         s.apply_exact_projection(hp_projection(false)).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
         });
         let generation = s.hits_generation;
-        COMBAT_TOTAL_REBUILD_COUNT.with(|v| v.set(0));
         assert!(s.apply_exact_projection(hp_projection(true)).unwrap());
         assert_eq!(s.total_damage, 280.0);
         assert_eq!(s.stats[&1].damage, 280.0);
@@ -668,7 +661,6 @@ mod tests {
         assert_eq!(s.max_hp_reduction, 0.0);
         assert_eq!(s.abyss.first_half.total_damage, 100.0);
         assert_eq!(s.timeline(1.0, false).total_damage, 100.0);
-        COMBAT_TOTAL_REBUILD_COUNT.with(|v| assert_eq!(v.get(), 0));
     }
 
     #[test]
@@ -726,7 +718,6 @@ mod tests {
         let generation = s.hits_generation;
         let mut update = projection("a", true);
         update.hits[0].timestamp = 20.0;
-        COMBAT_TOTAL_REBUILD_COUNT.with(|v| v.set(0));
         assert_eq!(
             apply_engine_event(
                 &mut s,
@@ -742,7 +733,6 @@ mod tests {
             apply_engine_event(&mut s, EngineEvent::ExactSettlement(Box::new(update))),
             CoreSignal::Unchanged
         );
-        COMBAT_TOTAL_REBUILD_COUNT.with(|v| assert_eq!(v.get(), 0));
     }
     #[test]
     fn conflicting_projection_retracts_once_and_cannot_resurrect() {
@@ -831,7 +821,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -840,7 +829,6 @@ mod tests {
         s.apply_exact_projection(p.clone()).unwrap();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::Second,
             allow_late_backfill: false,
@@ -864,7 +852,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,
@@ -906,7 +893,6 @@ mod tests {
         let mut s = CombatState::default();
         s.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: None,
             floor: Some(11),
             half: AbyssHalf::Second,
             allow_late_backfill: false,

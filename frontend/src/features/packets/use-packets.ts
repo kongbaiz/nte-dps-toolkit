@@ -1,25 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { packetsClient, type PacketsClient } from "@/lib/tauri/packets-client";
-import {
-  packetsError,
-  type PacketsCommandError,
-  type PacketsEvent,
-  type PacketsSnapshot,
-} from "@/lib/tauri/packets-contract";
+import { packetsClient } from "@/lib/tauri/packets-client";
+import type { PacketsEvent } from "@/lib/tauri/generated/PacketsEvent";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
 import { mergePacketsEvent } from "./packets-model";
 
 export type PacketsPageState =
   | { status: "loading" }
-  | { status: "error"; error: PacketsCommandError }
+  | { status: "error"; error: CommandError }
   | { status: "ready"; snapshot: PacketsSnapshot };
 
-export function usePackets(client: PacketsClient = packetsClient) {
+export function usePackets() {
   const [state, setState] = useState<PacketsPageState>({ status: "loading" });
-  const [streamError, setStreamError] = useState<PacketsCommandError | null>(
-    null,
-  );
+  const [streamError, setStreamError] = useState<CommandError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const snapshotRef = useRef<PacketsSnapshot | null>(null);
 
@@ -35,22 +30,22 @@ export function usePackets(client: PacketsClient = packetsClient) {
       snapshotRef.current = snapshot;
       setState({ status: "ready", snapshot });
     };
-    void client
+    void packetsClient
       .getSnapshot()
-      .then((snapshot) => accept({ mode: "replace", snapshot }))
+      .then((snapshot) => accept({ event: "snapshot", payload: snapshot }))
       .catch((error: unknown) => {
         if (active && snapshotRef.current === null) {
-          setState({ status: "error", error: packetsError(error) });
+          setState({ status: "error", error: toCommandError(error) });
         }
       });
-    const unsubscribe = client.subscribe(accept, (error) => {
+    const unsubscribe = packetsClient.subscribe(accept, (error) => {
       if (active) setStreamError(error);
     });
     return () => {
       active = false;
       void unsubscribe();
     };
-  }, [client, reloadKey]);
+  }, [reloadKey]);
 
   const retry = useCallback(() => {
     setReloadKey((value) => value + 1);

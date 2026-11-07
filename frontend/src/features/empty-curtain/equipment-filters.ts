@@ -1,9 +1,12 @@
-import type {
-  EmptyCurtainItem,
-  EquipmentQuality,
-} from "@/lib/tauri/empty-curtain-contract";
+import type { EmptyCurtainItemSnapshot } from "@/lib/tauri/generated/EmptyCurtainItemSnapshot";
 
-export type KnownEquipmentQuality = Exclude<EquipmentQuality, null>;
+export type KnownEquipmentQuality = "blue" | "purple" | "orange";
+
+export const EQUIPMENT_QUALITY_COLORS: Record<KnownEquipmentQuality, string> = {
+  blue: "#0ea5e9",
+  purple: "#8b5cf6",
+  orange: "#f59e0b",
+};
 
 export interface EquipmentFilters {
   filterIds: string[];
@@ -34,11 +37,11 @@ export function activeEquipmentFilterCount(filters: EquipmentFilters): number {
 }
 
 export function filterEquipmentItems(
-  items: EmptyCurtainItem[],
+  items: EmptyCurtainItemSnapshot[],
   filters: EquipmentFilters,
-): EmptyCurtainItem[] {
+): EmptyCurtainItemSnapshot[] {
   const filterIds = new Set(filters.filterIds);
-  const qualities = new Set(filters.qualities);
+  const qualities = new Set<string>(filters.qualities);
   const characterIds = new Set(filters.characterIds);
   return items.filter(
     (item) =>

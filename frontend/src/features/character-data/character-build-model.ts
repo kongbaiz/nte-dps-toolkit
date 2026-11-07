@@ -1,15 +1,15 @@
 import art from "@res/data/characters/panel_art.json";
 import equipment from "@res/data/equipment/equipment.json";
 import characters from "@res/data/characters/characters.json";
-import { currentFrontendLanguage, t } from "@/lib/i18n";
-import type { CharacterEntry } from "@/lib/tauri/user-characters-client";
+import { t, useFrontendLanguage } from "@/lib/i18n";
+import type { CharacterEntry } from "@/lib/tauri/generated/CharacterEntry";
 
 const images = import.meta.glob<string>(
   [
     "@res/images/character-panel/**/*.png",
     "@res/images/kongmu/256/*.png",
     "@res/images/fangkuai/*.png",
-    "@res/images/characters/player*.png",
+    "@res/images/characters/*.png",
   ],
   { eager: true, query: "?url", import: "default" },
 );
@@ -53,7 +53,7 @@ export const entryValue = (
 export function attributeLabel(key: string): string {
   const attribute = lookup(equipment.attributes, key);
   if (!attribute) return t(key);
-  const lang = currentFrontendLanguage();
+  const lang = useFrontendLanguage.getState();
   return lang === "zh-CN"
     ? attribute.name_zh
     : lang === "ja"
@@ -113,7 +113,7 @@ export function isKnownModifier(label: string): boolean {
 export function equipmentName(id: string | null): string | null {
   const item = lookup(equipment.items, id);
   if (!item) return null;
-  const lang = currentFrontendLanguage();
+  const lang = useFrontendLanguage.getState();
   return lang === "zh-CN"
     ? item.name_zh
     : lang === "ja"

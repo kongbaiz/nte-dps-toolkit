@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { marketFixture } from "../../../dev/fixtures";
 import { setFrontendLanguage } from "@/lib/i18n";
-import { parseModMarketCatalog } from "@/lib/tauri/mod-studio-contract";
 import { ModMarketPanel } from "./mod-market-panel";
 
 const market = {
@@ -14,7 +13,7 @@ const market = {
 
 describe("separate market categories", () => {
   it("uses a valid mixed catalog but defaults to feature plugins only", () => {
-    expect(parseModMarketCatalog(marketFixture).mods).toHaveLength(7);
+    expect(marketFixture.mods).toHaveLength(7);
     setFrontendLanguage("en");
     const html = renderToStaticMarkup(<ModMarketPanel market={market} />);
     expect(html).toContain("Foundation components");

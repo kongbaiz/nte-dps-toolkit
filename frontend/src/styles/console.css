@@ -23,13 +23,6 @@
     background: transparent;
   }
 
-  .skills-metrics > div {
-    min-width: 0;
-    border: var(--ui-border-width) solid var(--border);
-    border-radius: var(--radius-xl);
-    background: var(--card);
-  }
-
   .skills-workspace > aside {
     background: color-mix(in oklab, var(--muted) 35%, var(--card));
   }
@@ -54,13 +47,6 @@
 
   .character-data-workspace > aside {
     background: color-mix(in oklab, var(--muted) 25%, var(--card));
-  }
-
-  .console-page-stage[data-page="encrypted-ini"] textarea {
-    line-height: 1.8;
-    padding: 1.25rem;
-    background: var(--card);
-    tab-size: 4;
   }
 
   .packet-list {
@@ -88,17 +74,6 @@
   @media (max-width: 760px) {
     .console-page-stage {
       margin: 0.375rem 0.375rem 0.375rem 0;
-    }
-
-    .packet-summary {
-      flex-wrap: wrap;
-    }
-
-    .packet-summary > span[title] {
-      order: 1;
-      flex-basis: 100%;
-      min-width: 0;
-      padding-inline-start: 1.5rem;
     }
   }
 }

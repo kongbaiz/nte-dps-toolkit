@@ -1,6 +1,7 @@
 use std::sync::{Mutex, MutexGuard};
 
 use nte_dps_tool::core::diagnostics::DiagnosticRun;
+use nte_dps_tool::core::sync::lock_or_repair;
 
 #[derive(Debug, Default)]
 struct DiagnosticsState {
@@ -42,18 +43,14 @@ impl DiagnosticsRuntime {
     }
 
     fn lock_recover(&self) -> (MutexGuard<'_, DiagnosticsState>, bool) {
-        match self.state.lock() {
-            Ok(state) => (state, false),
-            Err(poison) => {
-                let mut state = poison.into_inner();
-                let changed = state.report.take().is_some();
-                if changed {
-                    state.revision = next_revision(state.revision);
-                }
-                self.state.clear_poison();
-                (state, changed)
+        let mut changed = false;
+        let (state, _) = lock_or_repair(&self.state, |state| {
+            changed = state.report.take().is_some();
+            if changed {
+                state.revision = next_revision(state.revision);
             }
-        }
+        });
+        (state, changed)
     }
 }
 

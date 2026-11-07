@@ -15048,55 +15048,6 @@
         },
         "UniqueIndex": 2150
       },
-      "Buff_Fork_yaodao_Lv1": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv1.Buff_Fork_yaodao_Lv1_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2151
-      },
-      "Buff_Fork_yaodao_Effect": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Effect.Buff_Fork_yaodao_Effect_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2152
-      },
-      "GE_Fork_yaodao_damage": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/GE_Fork_yaodao_damage.GE_Fork_yaodao_damage_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2153
-      },
-      "Buff_Fork_yaodao_Lv2": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv2.Buff_Fork_yaodao_Lv2_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2154
-      },
-      "Buff_Fork_yaodao_Lv3": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv3.Buff_Fork_yaodao_Lv3_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2155
-      },
-      "Buff_Fork_yaodao_Lv4": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv4.Buff_Fork_yaodao_Lv4_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2156
-      },
-      "Buff_Fork_yaodao_Lv5": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv5.Buff_Fork_yaodao_Lv5_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2157
-      },
       "Buff_Fork_Spider_Save": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Spider/Buff_Fork_Spider_Save.Buff_Fork_Spider_Save_C",
@@ -16804,13 +16755,6 @@
           "SubPathString": ""
         },
         "UniqueIndex": 2401
-      },
-      "Buff_Fork_yaodao_Delay": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Delay.Buff_Fork_yaodao_Delay_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 2402
       },
       "GE_Boss_027_Dmg_skill09_BP": {
         "GameplayEffectClass": {
@@ -45673,13 +45617,6 @@
         },
         "UniqueIndex": 6526
       },
-      "Buff_Oneiroi_Skill_AtkUP_Add": {
-        "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_075_Oneiroi/Buff/Buff_Oneiroi_Skill_AtkUP_Add.Buff_Oneiroi_Skill_AtkUP_Add_C",
-          "SubPathString": ""
-        },
-        "UniqueIndex": 6527
-      },
       "Buff_mon_35_Recover02": {
         "GameplayEffectClass": {
           "AssetPathName": "/Game/Blueprints/Abilities/Buff/GuardingAthera/Extra/Buff_mon_35_Recover02.Buff_mon_35_Recover02_C",
@@ -45927,7 +45864,7 @@
       },
       "GE_Gunplay_M4A1_Damage": {
         "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Player/GunPlay/Damage/GE_Gunplay_M4A1_Damage.GE_Gunplay_M4A1_Damage_C",
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/GunPlay/M4A1/Damage/GE_TPS_M4A1_Damage.GE_TPS_M4A1_Damage_C",
           "SubPathString": ""
         },
         "UniqueIndex": 6560
@@ -46456,6 +46393,2435 @@
           "SubPathString": ""
         },
         "UniqueIndex": 6635
+      },
+      "Buff_Fork_Elyms_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Lv1.Buff_Fork_Elyms_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6636
+      },
+      "Buff_Fork_Elyms_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Lv2.Buff_Fork_Elyms_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6637
+      },
+      "Buff_Fork_Elyms_Lv3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Lv3.Buff_Fork_Elyms_Lv3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6638
+      },
+      "Buff_Fork_Elyms_Lv4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Lv4.Buff_Fork_Elyms_Lv4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6639
+      },
+      "Buff_Fork_Elyms_Lv5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Lv5.Buff_Fork_Elyms_Lv5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6640
+      },
+      "Buff_Fork_Elyms_Effect_Condition": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Effect_Condition.Buff_Fork_Elyms_Effect_Condition_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6641
+      },
+      "Buff_Fork_Elyms_Effect_DefIgnore2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Effect_DefIgnore2.Buff_Fork_Elyms_Effect_DefIgnore2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6642
+      },
+      "Buff_Fork_Elyms_Effect_DefIgnore": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Effect_DefIgnore.Buff_Fork_Elyms_Effect_DefIgnore_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6643
+      },
+      "Buff_Fork_Elyms_Effect_Penetrate": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Elyms/Buff_Fork_Elyms_Effect_Penetrate.Buff_Fork_Elyms_Effect_Penetrate_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6644
+      },
+      "GE_boss_40_act11_uit_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageHit/GE_boss_40_act11_uit_Dmg01_BP.GE_boss_40_act11_uit_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6645
+      },
+      "GE_boss_11_out_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageHit/GE_boss_11_out_BP.GE_boss_11_out_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6646
+      },
+      "Buff_Exe_Aim": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_Aim.Buff_Exe_Aim_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6647
+      },
+      "Buff_Fork_Exe_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Exe/Buff_Fork_Exe_Lv1.Buff_Fork_Exe_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6648
+      },
+      "Buff_Fork_Exe_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Exe/Buff_Fork_Exe_Lv2.Buff_Fork_Exe_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6649
+      },
+      "Buff_Fork_Exe_Lv3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Exe/Buff_Fork_Exe_Lv3.Buff_Fork_Exe_Lv3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6650
+      },
+      "Buff_Fork_Exe_Lv4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Exe/Buff_Fork_Exe_Lv4.Buff_Fork_Exe_Lv4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6651
+      },
+      "Buff_Fork_Exe_Lv5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Exe/Buff_Fork_Exe_Lv5.Buff_Fork_Exe_Lv5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6652
+      },
+      "Buff_Fork_Exe_Effect_Stack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_Exe/Buff_Fork_Exe_Effect_Stack.Buff_Fork_Exe_Effect_Stack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6653
+      },
+      "GE_Reaction_GuangLingXiang_1090": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/element/Reaction/ReactionEffect/Reaction7/GE_Reaction_GuangLingXiang_1090.GE_Reaction_GuangLingXiang_1090_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6654
+      },
+      "Buff_CarWeapon_Tank_RPG": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Buff_CarWeapon_Tank_RPG.Buff_CarWeapon_Tank_RPG_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6655
+      },
+      "Buff_Strife_04_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_04_1.Buff_Strife_04_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6662
+      },
+      "Buff_Strife_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_01_01.Buff_Strife_01_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6663
+      },
+      "Buff_Strife_04_2_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_04_2_Effect.Buff_Strife_04_2_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6664
+      },
+      "Buff_Strife_04_1_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_04_1_Effect.Buff_Strife_04_1_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6665
+      },
+      "Buff_07_1_Def": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_07_1_Def.Buff_07_1_Def_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6666
+      },
+      "Buff_07_1_Atk": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_07_1_Atk.Buff_07_1_Atk_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6667
+      },
+      "GE_mon_boss40_act10_back": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageHit/GE_mon_boss40_act10_back.GE_mon_boss40_act10_back_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6668
+      },
+      "Buff_Nitsa_ChangeState": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_ChangeState.Buff_Nitsa_ChangeState_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6669
+      },
+      "GE_Player_Nitsa_Melee5_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee5_1_Damage.GE_Player_Nitsa_Melee5_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6670
+      },
+      "GE_Player_Nitsa_Melee4_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee4_1_Damage.GE_Player_Nitsa_Melee4_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6671
+      },
+      "GE_Player_Nitsa_Melee3_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee3_1_Damage.GE_Player_Nitsa_Melee3_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6672
+      },
+      "GE_Player_Nitsa_Skill1_Traction": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Skill1_Traction.GE_Player_Nitsa_Skill1_Traction_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6673
+      },
+      "GE_Player_Nitsa_Skill1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Skill1_HitBack.GE_Player_Nitsa_Skill1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6674
+      },
+      "GE_Player_Nitsa_Melee4_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee4_HitBack.GE_Player_Nitsa_Melee4_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6675
+      },
+      "GE_Player_Nitsa_Melee4_3_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee4_3_HitBack.GE_Player_Nitsa_Melee4_3_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6676
+      },
+      "GE_Player_Nitsa_Melee4_2_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee4_2_HitBack.GE_Player_Nitsa_Melee4_2_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6677
+      },
+      "GE_Player_Nitsa_Melee4_1_Traction": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee4_1_Traction.GE_Player_Nitsa_Melee4_1_Traction_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6678
+      },
+      "GE_Player_Nitsa_Melee1_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Melee1_1_HitBack.GE_Player_Nitsa_Melee1_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6679
+      },
+      "Buff_Elyms_TotalPowerE2ConsumedStack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_TotalPowerE2ConsumedStack.Buff_Elyms_TotalPowerE2ConsumedStack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6680
+      },
+      "GE_Player_Elyms_Skill1_HitDown": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_Skill1_HitDown.GE_Player_Elyms_Skill1_HitDown_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6681
+      },
+      "GE_Player_Elyms_QTE_HitOut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Effect/GE_Player_Elyms_QTE_HitOut.GE_Player_Elyms_QTE_HitOut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6682
+      },
+      "Buff_Elyms_Lv1_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level1/Buff_Elyms_Lv1_1.Buff_Elyms_Lv1_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6683
+      },
+      "Buff_Elyms_Level4_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level4/Buff_Elyms_Level4_1.Buff_Elyms_Level4_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6684
+      },
+      "Buff_Elyms_Lv6_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level6/Buff_Elyms_Lv6_1.Buff_Elyms_Lv6_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6685
+      },
+      "Buff_Strife_08_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_08_3.Buff_Strife_08_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6686
+      },
+      "Buff_Strife_08_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_08_2.Buff_Strife_08_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6687
+      },
+      "Buff_Strife_08_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_08_1.Buff_Strife_08_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6688
+      },
+      "Buff_Strife_07_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_07_3.Buff_Strife_07_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6689
+      },
+      "Buff_Strife_07_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_07_2.Buff_Strife_07_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6690
+      },
+      "Buff_Strife_07_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_07_1.Buff_Strife_07_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6691
+      },
+      "Buff_07_2_Effects": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_07_2_Effects.Buff_07_2_Effects_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6692
+      },
+      "Buff_Akane_UltraSkill_FootFashion3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_UltraSkill_FootFashion3.Buff_Akane_UltraSkill_FootFashion3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6693
+      },
+      "Buff_Nitsa_SuperSkill_into": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_SuperSkill_into.Buff_Nitsa_SuperSkill_into_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6694
+      },
+      "Buff_Nitsa_SuperSkill_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_SuperSkill_3.Buff_Nitsa_SuperSkill_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6695
+      },
+      "Buff_Nitsa_SuperSkill_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_SuperSkill_2.Buff_Nitsa_SuperSkill_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6696
+      },
+      "Buff_Nitsa_SuperSkill_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_SuperSkill_1.Buff_Nitsa_SuperSkill_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6697
+      },
+      "Buff_Nitsa_Hit_SuperSkill_into": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_Hit_SuperSkill_into.Buff_Nitsa_Hit_SuperSkill_into_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6698
+      },
+      "Buff_strife_06_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_strife_06_2.Buff_strife_06_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6699
+      },
+      "Buff_strife_06_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_strife_06_1.Buff_strife_06_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6700
+      },
+      "Buff_strife_05_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_strife_05_3.Buff_strife_05_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6701
+      },
+      "Buff_strife_05_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_strife_05_2.Buff_strife_05_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6702
+      },
+      "Buff_strife_05_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_strife_05_1.Buff_strife_05_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6703
+      },
+      "Buff_Strife_04_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_04_2.Buff_Strife_04_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6704
+      },
+      "Buff_strife_05_2STR": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_strife_05_2STR.Buff_strife_05_2STR_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6705
+      },
+      "BUFF_strife_05_1_Def": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/BUFF_strife_05_1_Def.BUFF_strife_05_1_Def_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6706
+      },
+      "GE_Break_Now": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/GE_Break_Now.GE_Break_Now_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6707
+      },
+      "BUFF_strife_04_2_HTER": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/BUFF_strife_04_2_HTER.BUFF_strife_04_2_HTER_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6708
+      },
+      "Buff_Strife_04_1_ATK": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_04_1_ATK.Buff_Strife_04_1_ATK_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6709
+      },
+      "Buff_08_1_Effects": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_08_1_Effects.Buff_08_1_Effects_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6710
+      },
+      "Buff_ChangeMaterial_WZY_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WZY/Buff_ChangeMaterial_WZY_1.Buff_ChangeMaterial_WZY_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6711
+      },
+      "Buff_Strife_06_1_DEF": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_06_1_DEF.Buff_Strife_06_1_DEF_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6712
+      },
+      "Buff_Strife_06_1_ATK": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_06_1_ATK.Buff_Strife_06_1_ATK_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6713
+      },
+      "Buff_strife_05_2B": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_strife_05_2B.Buff_strife_05_2B_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6714
+      },
+      "Buff_06_2_LoseHP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_06_2_LoseHP.Buff_06_2_LoseHP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6715
+      },
+      "Buff_06_2_LockHP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_06_2_LockHP.Buff_06_2_LockHP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6716
+      },
+      "GE_Player_Elyms_MeleeB3_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_MeleeB3_1_Damage.GE_Player_Elyms_MeleeB3_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6717
+      },
+      "GE_Player_Elyms_MeleeB2_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_MeleeB2_1_Damage.GE_Player_Elyms_MeleeB2_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6718
+      },
+      "GE_Player_Elyms_MeleeB1_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_MeleeB1_1_Damage.GE_Player_Elyms_MeleeB1_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6719
+      },
+      "GE_Player_Elyms_UltraSkillA2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_UltraSkillA2_Damage.GE_Player_Elyms_UltraSkillA2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6720
+      },
+      "GE_Player_Elyms_UltraSkillB2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_UltraSkillB2_Damage.GE_Player_Elyms_UltraSkillB2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6721
+      },
+      "Buff_Abyss_Phase_014": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P14/Buff_Abyss_Phase_014.Buff_Abyss_Phase_014_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6722
+      },
+      "Buff_Abyss_Phase_014_Penetrate": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P14/Buff_Abyss_Phase_014_Penetrate.Buff_Abyss_Phase_014_Penetrate_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6723
+      },
+      "Buff_Abyss_Phase_015": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Abyss/Phases/P15/Buff_Abyss_Phase_015.Buff_Abyss_Phase_015_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6724
+      },
+      "Buff_Gather_FlowerHeal4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Potion/Buff_Gather_Flower/Buff_Gather_FlowerHeal4.Buff_Gather_FlowerHeal4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6725
+      },
+      "Buff_Gather_FlowerHeal3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fantasy/Potion/Buff_Gather_Flower/Buff_Gather_FlowerHeal3.Buff_Gather_FlowerHeal3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6726
+      },
+      "GE_VehicleCombatDamage_RPG_Chaos": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Chaos/GE_VehicleCombatDamage_RPG_Chaos.GE_VehicleCombatDamage_RPG_Chaos_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6727
+      },
+      "Buff_CarWeapon_Tank_RPG_Chaos": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Chaos/Buff_CarWeapon_Tank_RPG_Chaos.Buff_CarWeapon_Tank_RPG_Chaos_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6728
+      },
+      "GE_VehicleCombatDamage_RPG_Cosmos": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Cosmos/GE_VehicleCombatDamage_RPG_Cosmos.GE_VehicleCombatDamage_RPG_Cosmos_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6729
+      },
+      "Buff_CarWeapon_Tank_RPG_Cosmos": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Cosmos/Buff_CarWeapon_Tank_RPG_Cosmos.Buff_CarWeapon_Tank_RPG_Cosmos_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6730
+      },
+      "GE_VehicleCombatDamage_RPG_Incantation": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Incantation/GE_VehicleCombatDamage_RPG_Incantation.GE_VehicleCombatDamage_RPG_Incantation_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6731
+      },
+      "Buff_CarWeapon_Tank_RPG_Incantation": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Incantation/Buff_CarWeapon_Tank_RPG_Incantation.Buff_CarWeapon_Tank_RPG_Incantation_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6732
+      },
+      "GE_VehicleCombatDamage_RPG_Lakshana": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Lakshana/GE_VehicleCombatDamage_RPG_Lakshana.GE_VehicleCombatDamage_RPG_Lakshana_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6733
+      },
+      "Buff_CarWeapon_Tank_RPG_Lakshana": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Lakshana/Buff_CarWeapon_Tank_RPG_Lakshana.Buff_CarWeapon_Tank_RPG_Lakshana_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6734
+      },
+      "GE_VehicleCombatDamage_RPG_Nature": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Nature/GE_VehicleCombatDamage_RPG_Nature.GE_VehicleCombatDamage_RPG_Nature_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6735
+      },
+      "Buff_CarWeapon_Tank_RPG_Nature": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Nature/Buff_CarWeapon_Tank_RPG_Nature.Buff_CarWeapon_Tank_RPG_Nature_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6736
+      },
+      "GE_VehicleCombatDamage_RPG_Psyche": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Psyche/GE_VehicleCombatDamage_RPG_Psyche.GE_VehicleCombatDamage_RPG_Psyche_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6737
+      },
+      "Buff_CarWeapon_Tank_RPG_Psyche": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Psyche/Buff_CarWeapon_Tank_RPG_Psyche.Buff_CarWeapon_Tank_RPG_Psyche_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6738
+      },
+      "Buff_Strife_06_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_06_3.Buff_Strife_06_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6739
+      },
+      "Buff_Strife_04_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_04_3.Buff_Strife_04_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6740
+      },
+      "Buff_Strife_03_03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_03_03.Buff_Strife_03_03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6741
+      },
+      "Buff_Strife_03_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_03_02.Buff_Strife_03_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6742
+      },
+      "Buff_Strife_03_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_03_01.Buff_Strife_03_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6743
+      },
+      "Buff_Strife_02_03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_02_03.Buff_Strife_02_03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6744
+      },
+      "Buff_Strife_02_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_02_02.Buff_Strife_02_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6745
+      },
+      "Buff_Strife_02_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_02_01.Buff_Strife_02_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6746
+      },
+      "Buff_Strife_01_03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_01_03.Buff_Strife_01_03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6747
+      },
+      "Buff_Strife_01_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_01_02.Buff_Strife_01_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6748
+      },
+      "Buff_Strife_01_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_01_01.Buff_Strife_01_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6749
+      },
+      "1Test_Buff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_01_03_1.Buff_Strife_01_03_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6750
+      },
+      "Buff_strife_05_3B": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_strife_05_3B.Buff_strife_05_3B_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6751
+      },
+      "Buff_Strife_04_3B": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_04_3B.Buff_Strife_04_3B_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6752
+      },
+      "Buff_Strife_04_2_ImmuneHeterochrome": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_04_2_ImmuneHeterochrome.Buff_Strife_04_2_ImmuneHeterochrome_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6753
+      },
+      "Buff_Strife_04_2_HTER1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Strife_04_2_HTER1.Buff_Strife_04_2_HTER1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6754
+      },
+      "Buff_05_3_SubEnergy": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_05_3_SubEnergy.Buff_05_3_SubEnergy_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6755
+      },
+      "Buff_04_3_ReverseMove": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_04_3_ReverseMove.Buff_04_3_ReverseMove_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6756
+      },
+      "Buff_03_02_HPUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_02_HPUP.Buff_03_02_HPUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6757
+      },
+      "Buff_03_02_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_02_Damage.Buff_03_02_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6758
+      },
+      "Buff_03_01_Effect2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Rec1.Buff_03_01_Rec1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6759
+      },
+      "Buff_03_01_Effect1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Effect1.Buff_03_01_Effect1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6760
+      },
+      "Buff_01_03_Dmg": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_03_Dmg.Buff_01_03_Dmg_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6761
+      },
+      "Buff_01_02_UseSupCrit": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_UseSupCrit.Buff_01_02_UseSupCrit_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6762
+      },
+      "Buff_01_02_UseAddCrit": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_UseAddCrit.Buff_01_02_UseAddCrit_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6763
+      },
+      "Buff_01_02_SupCrit": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_SupCrit.Buff_01_02_SupCrit_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6764
+      },
+      "Buff_01_02_EvadeAtk": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_EvadeAtk.Buff_01_02_EvadeAtk_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6765
+      },
+      "Buff_01_02_CritEffect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_CritEffect.Buff_01_02_CritEffect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6766
+      },
+      "Buff_01_02_AddCrit": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_AddCrit.Buff_01_02_AddCrit_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6767
+      },
+      "Buff_01_01_Remove1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_Icon.Buff_01_02_Icon_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6768
+      },
+      "Buff_01_01_Remove": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_01_Remove.Buff_01_01_Remove_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6769
+      },
+      "Buff_01_01_Healing": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_01_Healing.Buff_01_01_Healing_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6770
+      },
+      "GE_mon_boss40_act04_Out": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageHit/GE_mon_boss40_act04_Out.GE_mon_boss40_act04_Out_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6771
+      },
+      "GE_Mon_Exe_UltraSkill2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_UltraSkill2_Damage.GE_Mon_Exe_UltraSkill2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6772
+      },
+      "GE_Mon_Exe_UltraSkill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_UltraSkill1_Damage.GE_Mon_Exe_UltraSkill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6773
+      },
+      "GE_Mon_Exe_Skill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Skill_Damage.GE_Mon_Exe_Skill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6774
+      },
+      "GE_Mon_Exe_Skill1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Skill1_Damage.GE_Mon_Exe_Skill1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6775
+      },
+      "GE_Mon_Exe_QTE_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_QTE_Damage.GE_Mon_Exe_QTE_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6776
+      },
+      "GE_Mon_Exe_QTE1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_QTE1_Damage.GE_Mon_Exe_QTE1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6777
+      },
+      "GE_Mon_Exe_PerfectEvadeAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_PerfectEvadeAttack_Damage.GE_Mon_Exe_PerfectEvadeAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6778
+      },
+      "GE_Mon_Exe_Melee5_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Melee5_Damage.GE_Mon_Exe_Melee5_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6779
+      },
+      "GE_Mon_Exe_Melee4_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Melee4_Damage.GE_Mon_Exe_Melee4_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6780
+      },
+      "GE_Mon_Exe_Melee4_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Melee4_2_Damage.GE_Mon_Exe_Melee4_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6781
+      },
+      "GE_Mon_Exe_Melee4_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Melee4_1_Damage.GE_Mon_Exe_Melee4_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6782
+      },
+      "GE_Mon_Exe_Melee3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Melee3_Damage.GE_Mon_Exe_Melee3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6783
+      },
+      "GE_Mon_Exe_Melee2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Melee2_Damage.GE_Mon_Exe_Melee2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6784
+      },
+      "GE_Mon_Exe_Melee1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Damage/GE_Mon_Exe_Melee1_Damage.GE_Mon_Exe_Melee1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6785
+      },
+      "Buff_Player_Eri044_Q_Trigger": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_Q_Trigger.Buff_Player_Eri044_Q_Trigger_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6786
+      },
+      "Buff_Player_Eri044_Q_Spotlight": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_Q_Spotlight.Buff_Player_Eri044_Q_Spotlight_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6787
+      },
+      "Buff_Player_Eri044_Q_ChangeScene": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_Q_ChangeScene.Buff_Player_Eri044_Q_ChangeScene_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6788
+      },
+      "GE_Player_Eri044_Spread_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Damage/GE_Player_Eri044_Spread_Damage.GE_Player_Eri044_Spread_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6791
+      },
+      "GE_Player_Nitsa_Sup_Skill_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Sup_Skill_1_Damage.GE_Player_Nitsa_Sup_Skill_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6792
+      },
+      "GE_Player_Nitsa_Sup_Skill3_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Sup_Skill3_1_Damage.GE_Player_Nitsa_Sup_Skill3_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6793
+      },
+      "GE_Player_Nitsa_Sup_Skill2_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Sup_Skill2_1_Damage.GE_Player_Nitsa_Sup_Skill2_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6794
+      },
+      "GE_Player_Nitsa_Sup_Skill1_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Sup_Skill1_1_Damage.GE_Player_Nitsa_Sup_Skill1_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6795
+      },
+      "GE_Player_Nitsa_EX_Houtai_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_EX_Houtai_1_Damage.GE_Player_Nitsa_EX_Houtai_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6796
+      },
+      "GE_Player_Nitsa_Blur_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Blur_1_Damage.GE_Player_Nitsa_Blur_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6797
+      },
+      "GE_Player_Nitsa_BlurWhite_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_BlurWhite_1_Damage.GE_Player_Nitsa_BlurWhite_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6798
+      },
+      "Buff_Elyms_ForceReleasePossessAbility": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Buff/Buff_Elyms_ForceReleasePossessAbility.Buff_Elyms_ForceReleasePossessAbility_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6799
+      },
+      "GE_Player_Nimo_UltraSkill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_UltraSkill_Damage.GE_Player_Nimo_UltraSkill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6800
+      },
+      "GE_Player_Nimo_Skill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Skill_Damage.GE_Player_Nimo_Skill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6801
+      },
+      "GE_Player_Nimo_QTE_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_QTE_Damage.GE_Player_Nimo_QTE_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6802
+      },
+      "GE_Player_Nimo_PerfectEvadeAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_PerfectEvadeAttack_Damage.GE_Player_Nimo_PerfectEvadeAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6803
+      },
+      "GE_Player_Nimo_Melee5_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Melee5_Damage.GE_Player_Nimo_Melee5_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6804
+      },
+      "GE_Player_Nimo_Melee4_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Melee4_Damage.GE_Player_Nimo_Melee4_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6805
+      },
+      "GE_Player_Nimo_Melee3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Melee3_Damage.GE_Player_Nimo_Melee3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6806
+      },
+      "GE_Player_Nimo_Melee2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Melee2_Damage.GE_Player_Nimo_Melee2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6807
+      },
+      "GE_Player_Nimo_Melee1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Melee1_Damage.GE_Player_Nimo_Melee1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6808
+      },
+      "GE_Player_Nimo_Branch1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Branch1_Damage.GE_Player_Nimo_Branch1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6809
+      },
+      "GE_Player_Nimo_AirAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_AirAttack_Damage.GE_Player_Nimo_AirAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6810
+      },
+      "Buff_Nimo094_Passive2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/PassiveEffect/Buff_Nimo094_Passive2.Buff_Nimo094_Passive2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6811
+      },
+      "Buff_Nimo094_Passive1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/PassiveEffect/Buff_Nimo094_Passive1.Buff_Nimo094_Passive1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6812
+      },
+      "Buff_Nimo094_Level6_extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level6_extra.Buff_Nimo094_Level6_extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6813
+      },
+      "Buff_Nimo094_Level6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level6.Buff_Nimo094_Level6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6814
+      },
+      "Buff_Nimo094_Level5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level5.Buff_Nimo094_Level5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6815
+      },
+      "Buff_Nimo094_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level4.Buff_Nimo094_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6816
+      },
+      "Buff_Nimo094_Level3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level3.Buff_Nimo094_Level3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6817
+      },
+      "Buff_Nimo094_Level2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level2.Buff_Nimo094_Level2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6818
+      },
+      "Buff_Nimo094_Level1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level1.Buff_Nimo094_Level1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6819
+      },
+      "GE_Nimo_DamageBase": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/DamageShare/GE_Nimo_DamageBase.GE_Nimo_DamageBase_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6820
+      },
+      "Buff_Strife_02_04": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_02_04.Buff_Strife_02_04_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6821
+      },
+      "Buff_02_02_Ban": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_02_02_Ban.Buff_02_02_Ban_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6822
+      },
+      "Buff_02_03_Ban": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_02_03_Ban.Buff_02_03_Ban_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6823
+      },
+      "Buff_02_04_Ban": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_02_04_Ban.Buff_02_04_Ban_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6824
+      },
+      "Buff_03_02_Parry": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_02_Parry.Buff_03_02_Parry_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6825
+      },
+      "GE_03_3_AddCD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/GE_03_3_AddCD.GE_03_3_AddCD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6826
+      },
+      "Buff_02_01_Kill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_02_01_Kill.Buff_02_01_Kill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6827
+      },
+      "Buff_02_01_Healing": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_02_01_Healing.Buff_02_01_Healing_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6828
+      },
+      "Buff_Bag_DMG": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/Buff_Bag_DMG.Buff_Bag_DMG_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6829
+      },
+      "Buff_Bag_DMG_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/Buff_Bag_DMG_Effect.Buff_Bag_DMG_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6830
+      },
+      "Buff_Bag_Heal": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/Buff_Bag_Heal.Buff_Bag_Heal_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6831
+      },
+      "Buff_Bag_Heal_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/Buff_Bag_Heal_Effect.Buff_Bag_Heal_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6832
+      },
+      "GE_VehicleCombatVisual_RPG_Incantation": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Incantation/GE_VehicleCombatVisual_RPG_Incantation.GE_VehicleCombatVisual_RPG_Incantation_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6833
+      },
+      "GE_FortuneTower_act01_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/FortuneTower/GE/GE_FortuneTower_act01_Dmg_BP.GE_FortuneTower_act01_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6834
+      },
+      "GE_FortuneTower_act02_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/FortuneTower/GE/GE_FortuneTower_act02_Dmg_BP.GE_FortuneTower_act02_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6835
+      },
+      "BuffAdd_GA_exe_EvaParryA_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/BuffAdd_GA_exe_EvaParryA_BP.BuffAdd_GA_exe_EvaParryA_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6836
+      },
+      "BuffAdd_GA_exe_EvaParryB_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/BuffAdd_GA_exe_EvaParryB_BP.BuffAdd_GA_exe_EvaParryB_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6837
+      },
+      "Buff_Exe_AimHide": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_AimHide.Buff_Exe_AimHide_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6838
+      },
+      "Buff_Nitsa_Super": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_Super.Buff_Nitsa_Super_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6840
+      },
+      "GE_Player_Nitsa_Melee1_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee1_1_Damage.GE_Player_Nitsa_Melee1_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6842
+      },
+      "GE_Player_Nitsa_Melee2_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee2_1_Damage.GE_Player_Nitsa_Melee2_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6843
+      },
+      "GE_Player_Nitsa_Melee3_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee3_2_Damage.GE_Player_Nitsa_Melee3_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6844
+      },
+      "GE_Player_Nitsa_Melee4_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee4_2_Damage.GE_Player_Nitsa_Melee4_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6845
+      },
+      "GE_Player_Nitsa_Melee5_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee5_2_Damage.GE_Player_Nitsa_Melee5_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6846
+      },
+      "GE_Player_Nitsa_Sup_Skill1_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Sup_Skill1_2_Damage.GE_Player_Nitsa_Sup_Skill1_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6847
+      },
+      "GE_Player_Nitsa_Sup_Skill3_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Sup_Skill3_2_Damage.GE_Player_Nitsa_Sup_Skill3_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6848
+      },
+      "GE_Elyms_Lv5_CD": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/Level5/GE_Elyms_Lv5_CD.GE_Elyms_Lv5_CD_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6849
+      },
+      "GE_Player_Elyms_UltraSkillB3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Damage/GE_Player_Elyms_UltraSkillB3_Damage.GE_Player_Elyms_UltraSkillB3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6850
+      },
+      "Buff_Strife_01_03_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Buff_Strife_01_03_1.Buff_Strife_01_03_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6851
+      },
+      "GE_VehicleCombatDamage_RPG_General": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/GE_VehicleCombatDamage_RPG_General.GE_VehicleCombatDamage_RPG_General_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6852
+      },
+      "Buff_Player_Eri044_AudienceTarget": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_AudienceTarget.Buff_Player_Eri044_AudienceTarget_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6853
+      },
+      "GE_Player_Exe_Melee4_Float": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_Melee4_Float.GE_Player_Exe_Melee4_Float_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6855
+      },
+      "GE_Player_Exe_Melee5_HitDown": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Effect/GE_Player_Exe_Melee5_HitDown.GE_Player_Exe_Melee5_HitDown_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6856
+      },
+      "Buff_Nitsa_SuperSkill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_SuperSkill.Buff_Nitsa_SuperSkill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6857
+      },
+      "GE_Player_Nitsa_Melee4_3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Melee4_3_Damage.GE_Player_Nitsa_Melee4_3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6858
+      },
+      "GE_Player_Nitsa_Skill1_1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Skill1_1_Damage.GE_Player_Nitsa_Skill1_1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6859
+      },
+      "GE_Player_Nitsa_Skill1_2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Skill1_2_Damage.GE_Player_Nitsa_Skill1_2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6860
+      },
+      "GE_Player_Nitsa_Skill1_3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Skill1_3_Damage.GE_Player_Nitsa_Skill1_3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6861
+      },
+      "GE_Player_Nitsa_Skill1_4_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Damage/GE_Player_Nitsa_Skill1_4_Damage.GE_Player_Nitsa_Skill1_4_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6862
+      },
+      "Buff_03_01_Rec1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Rec1.Buff_03_01_Rec1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6863
+      },
+      "Buff_03_01_Rec2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Rec2.Buff_03_01_Rec2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6864
+      },
+      "Buff_03_01_Rec3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Rec3.Buff_03_01_Rec3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6865
+      },
+      "Buff_03_01_Rec4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Rec4.Buff_03_01_Rec4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6866
+      },
+      "Buff_03_01_Rec5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Rec5.Buff_03_01_Rec5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6867
+      },
+      "Buff_03_01_Rec6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_03_01_Rec6.Buff_03_01_Rec6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6868
+      },
+      "Buff_01_02_Icon": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_01_02_Icon.Buff_01_02_Icon_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6869
+      },
+      "Buff_02_01_HealingIcon": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_02_01_HealingIcon.Buff_02_01_HealingIcon_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6870
+      },
+      "Buff_Exe_DmgUp_Pas2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_DmgUp_Pas2.Buff_Exe_DmgUp_Pas2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6871
+      },
+      "Buff_Exe_DmgUpCount_Pas2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_074_Exe/Buff/Buff_Exe_DmgUpCount_Pas2.Buff_Exe_DmgUpCount_Pas2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6872
+      },
+      "GE_TPS_M4A1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/GunPlay/M4A1/Damage/GE_TPS_M4A1_Damage.GE_TPS_M4A1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6873
+      },
+      "GE_TPS_AK_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/GunPlay/AK/Damage/GE_TPS_AK_Damage.GE_TPS_AK_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6656
+      },
+      "GE_VehicleCombatDamage_RPG_Incantation_Direct": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/ScrimmageWeapon/Tank/Incantation/GE_VehicleCombatDamage_RPG_Incantation_Direct.GE_VehicleCombatDamage_RPG_Incantation_Direct_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6900
+      },
+      "Buff_BeDamaged_Reduction": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_BeDamaged_Reduction.Buff_BeDamaged_Reduction_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6657
+      },
+      "Buff_BeDamaged_UP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_BeDamaged_UP.Buff_BeDamaged_UP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6658
+      },
+      "Buff_Damage_Reducation": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_Damage_Reducation.Buff_Damage_Reducation_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6659
+      },
+      "Buff_Damage_Up": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_Damage_Up.Buff_Damage_Up_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6660
+      },
+      "Buff_HP_Steal": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_HP_Steal.Buff_HP_Steal_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6661
+      },
+      "Buff_Poison": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_Poison.Buff_Poison_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6901
+      },
+      "Buff_RecoverReducation": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_RecoverReducation.Buff_RecoverReducation_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6902
+      },
+      "Buff_Thorns": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_Thorns.Buff_Thorns_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6903
+      },
+      "Buff_Thorns_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/Buff_Thorns_Effect.Buff_Thorns_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6904
+      },
+      "GE_poison_Debuff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/GE_poison_Debuff.GE_poison_Debuff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6905
+      },
+      "GE_Thorns_Debuff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/BagActivity/commonEffect/GE_Thorns_Debuff.GE_Thorns_Debuff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6906
+      },
+      "Buff_Parry_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Strife/Exbuffs/Buff_Parry_Effect.Buff_Parry_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6907
+      },
+      "Buff_Boss_40_act15_HPRecover": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/Buff_Boss_40_act15_HPRecover.Buff_Boss_40_act15_HPRecover_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6908
+      },
+      "buff_boss_40_LockHP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/buff_boss_40_LockHP.buff_boss_40_LockHP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6909
+      },
+      "Buff_CanSummon": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/Buff_CanSummon.Buff_CanSummon_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6910
+      },
+      "Ge_boss_40_act03_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/Ge_boss_40_act03_Dmg_BP.Ge_boss_40_act03_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6911
+      },
+      "Ge_boss_40_act04_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/Ge_boss_40_act04_Dmg_BP.Ge_boss_40_act04_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6912
+      },
+      "GE_boss_40_act06_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_boss_40_act06_Dmg_BP.GE_boss_40_act06_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6913
+      },
+      "Ge_boss_40_act09_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/Ge_boss_40_act09_Dmg_BP.Ge_boss_40_act09_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6914
+      },
+      "Ge_boss_40_act11_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/Ge_boss_40_act11_Dmg_BP.Ge_boss_40_act11_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6915
+      },
+      "GE_boss_40_act13_1_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_boss_40_act13_1_Dmg_BP.GE_boss_40_act13_1_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6916
+      },
+      "GE_boss_40_act13_2_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_boss_40_act13_2_Dmg_BP.GE_boss_40_act13_2_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6917
+      },
+      "GE_boss_40_act13_3_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_boss_40_act13_3_Dmg_BP.GE_boss_40_act13_3_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6918
+      },
+      "GE_Boss_40_act14_Dmg_BP_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_Boss_40_act14_Dmg_BP_1.GE_Boss_40_act14_Dmg_BP_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6919
+      },
+      "GE_Boss_40_act14_Dmg_BP_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_Boss_40_act14_Dmg_BP_2.GE_Boss_40_act14_Dmg_BP_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6920
+      },
+      "GE_Boss_40_act14_Dmg_BP_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_Boss_40_act14_Dmg_BP_3.GE_Boss_40_act14_Dmg_BP_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6921
+      },
+      "GE_Boss_40_act14_Dmg_BP_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_Boss_40_act14_Dmg_BP_4.GE_Boss_40_act14_Dmg_BP_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6922
+      },
+      "GE_boss_40__sum_act02_Dmg_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageGE/GE_boss_40__sum_act02_Dmg_BP.GE_boss_40__sum_act02_Dmg_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6923
+      },
+      "GE_Boss_40_act14_Hitout": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageHit/GE_Boss_40_act14_Hitout.GE_Boss_40_act14_Hitout_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6924
+      },
+      "GE_Boss_40_back_Small": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/DamageHit/GE_Boss_40_back_Small.GE_Boss_40_back_Small_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6925
+      },
+      "GE_mon_exe_Melee02_Hitout": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/GE_mon_exe_Melee02_Hitout.GE_mon_exe_Melee02_Hitout_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6926
+      },
+      "GE_mon_exe_Melee05_Hitout": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/GE_mon_exe_Melee05_Hitout.GE_mon_exe_Melee05_Hitout_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6927
+      },
+      "mon_GE_Player_Exe_AirAttack_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/mon_GE_Player_Exe_AirAttack_HitBack.mon_GE_Player_Exe_AirAttack_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6928
+      },
+      "mon_GE_Player_Exe_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/mon_GE_Player_Exe_Melee1_HitBack.mon_GE_Player_Exe_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6929
+      },
+      "mon_GE_Player_Exe_Melee2_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/mon_GE_Player_Exe_Melee2_1_HitBack.mon_GE_Player_Exe_Melee2_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6930
+      },
+      "mon_GE_Player_Exe_PerfectEvadeAtk_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/mon_GE_Player_Exe_PerfectEvadeAtk_HitBack.mon_GE_Player_Exe_PerfectEvadeAtk_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6931
+      },
+      "mon_GE_Player_Exe_Skill_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/mon_GE_Player_Exe_Skill_HitBack.mon_GE_Player_Exe_Skill_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6932
+      },
+      "mon_GE_Player_Exe_Skill_Traction": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/Effect/mon_GE_Player_Exe_Skill_Traction.mon_GE_Player_Exe_Skill_Traction_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6933
+      },
+      "Buff_Ellie044_Level1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/Level1/Buff_Ellie044_Level1.Buff_Ellie044_Level1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6934
+      },
+      "Buff_Ellie044_Level2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/Level2/Buff_Ellie044_Level2.Buff_Ellie044_Level2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6935
+      },
+      "Buff_Ellie044_Level3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/Level3/Buff_Ellie044_Level3.Buff_Ellie044_Level3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6936
+      },
+      "Buff_Ellie044_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/Level4/Buff_Ellie044_Level4.Buff_Ellie044_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6937
+      },
+      "Buff_Ellie044_Level5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/Level5/Buff_Ellie044_Level5.Buff_Ellie044_Level5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6938
+      },
+      "Buff_Ellie044_Level6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/Level6/Buff_Ellie044_Level6.Buff_Ellie044_Level6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6939
+      },
+      "Buff_Ellie044_LevelExtra1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/LevelExtra/Buff_Ellie044_LevelExtra1.Buff_Ellie044_LevelExtra1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6940
+      },
+      "Buff_Ellie044_LevelExtra2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Upgrade/LevelExtra/Buff_Ellie044_LevelExtra2.Buff_Ellie044_LevelExtra2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6941
+      },
+      "GE_Player_Nitsa_SuperSkill1_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_SuperSkill1_1_HitBack.GE_Player_Nitsa_SuperSkill1_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6942
+      },
+      "GE_Player_Nitsa_SuperSkill1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_SuperSkill1_HitBack.GE_Player_Nitsa_SuperSkill1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6943
+      },
+      "GE_Player_Nitsa_SuperSkill1_HitOut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_SuperSkill1_HitOut.GE_Player_Nitsa_SuperSkill1_HitOut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6944
+      },
+      "GE_Player_Nitsa_SuperSkill2_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_SuperSkill2_1_HitBack.GE_Player_Nitsa_SuperSkill2_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6945
+      },
+      "GE_Player_Nitsa_SuperSkill2_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_SuperSkill2_HitBack.GE_Player_Nitsa_SuperSkill2_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6946
+      },
+      "GE_Player_Nitsa_SuperSkill3_HitOut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_SuperSkill3_HitOut.GE_Player_Nitsa_SuperSkill3_HitOut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6947
+      },
+      "GE_Player_Nitsa_Skill1_4_HitOut": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_Skill1_4_HitOut.GE_Player_Nitsa_Skill1_4_HitOut_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6948
+      },
+      "Buff_Nimo_Skill2_Hold_Count": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Buff/Buff_Nimo_Skill2_Hold_Count.Buff_Nimo_Skill2_Hold_Count_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6949
+      },
+      "GE_Player_Nimo_Skill_Extra_Level3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Skill_Extra_Level3_Damage.GE_Player_Nimo_Skill_Extra_Level3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6950
+      },
+      "GE_Player_Nimo_Skill_Melee_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Skill_Melee_Damage.GE_Player_Nimo_Skill_Melee_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6951
+      },
+      "GE_Player_Nimo_Skill2_Hold_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Damage/GE_Player_Nimo_Skill2_Hold_Damage.GE_Player_Nimo_Skill2_Hold_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6952
+      },
+      "GE_Player_Nimo_Skill_Traction_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Effect/GE_Player_Nimo_Skill_Traction_Level4.GE_Player_Nimo_Skill_Traction_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6953
+      },
+      "GE_Player_Nimo_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Effect/GE_Player_Nimo_Melee1_HitBack.GE_Player_Nimo_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6954
+      },
+      "Buff_Nimo094_Passive2_AtkUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/PassiveEffect/Buff_Nimo094_Passive2_AtkUp.Buff_Nimo094_Passive2_AtkUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6955
+      },
+      "Buff_Nimo094_Passive2_EnergyUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/PassiveEffect/Buff_Nimo094_Passive2_EnergyUp.Buff_Nimo094_Passive2_EnergyUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6956
+      },
+      "Buff_Nimo094_Level2_IgnoreDef": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level2_IgnoreDef.Buff_Nimo094_Level2_IgnoreDef_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6957
+      },
+      "Buff_Nimo094_Level3_extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level3_extra.Buff_Nimo094_Level3_extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6958
+      },
+      "Buff_Nimo094_Level4_CutDef": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level4_CutDef.Buff_Nimo094_Level4_CutDef_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6959
+      },
+      "Buff_Nimo094_Level6_DamUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_094_Nimo/Upgrade/Buff_Nimo094_Level6_DamUp.Buff_Nimo094_Level6_DamUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6960
+      },
+      "Buff_Fork_yaodao_Delay": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Delay.Buff_Fork_yaodao_Delay_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2151
+      },
+      "Buff_Fork_yaodao_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Effect.Buff_Fork_yaodao_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2152
+      },
+      "Buff_Fork_yaodao_Lv1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv1.Buff_Fork_yaodao_Lv1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2153
+      },
+      "Buff_Fork_yaodao_Lv2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv2.Buff_Fork_yaodao_Lv2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2154
+      },
+      "Buff_Fork_yaodao_Lv3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv3.Buff_Fork_yaodao_Lv3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2155
+      },
+      "Buff_Fork_yaodao_Lv4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv4.Buff_Fork_yaodao_Lv4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2156
+      },
+      "Buff_Fork_yaodao_Lv5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/Buff_Fork_yaodao_Lv5.Buff_Fork_yaodao_Lv5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2157
+      },
+      "GE_Fork_yaodao_damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Fork/Fork_yaodao/GE_Fork_yaodao_damage.GE_Fork_yaodao_damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 2402
+      },
+      "Buff_VehicleCombatReload": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/Buff_VehicleCombatReload.Buff_VehicleCombatReload_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6527
+      },
+      "buff_boss_40_LockHP4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/buff_boss_40_LockHP4.buff_boss_40_LockHP4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6874
+      },
+      "buff_boss_40_LockHP3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/buff_boss_40_LockHP3.buff_boss_40_LockHP3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6875
+      },
+      "buff_boss_40_LockHP2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/buff_boss_40_LockHP2.buff_boss_40_LockHP2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6876
+      },
+      "GE_mon_exe_Lock_5HP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_Exe/GE_mon_exe_Lock_5HP.GE_mon_exe_Lock_5HP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6877
+      },
+      "Buff_Nitsa_E3_End": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Buff_Nitsa_E3_End.Buff_Nitsa_E3_End_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6878
+      },
+      "Buff_mon_halfHP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Character/Monster/Buff/Buff_mon_halfHP.Buff_mon_halfHP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6879
+      },
+      "GE_Player_Eri044_QTE_Traction": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_QTE_Traction.GE_Player_Eri044_QTE_Traction_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6880
+      },
+      "GE_Player_Eri044_QTE2_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_QTE2_HitBack.GE_Player_Eri044_QTE2_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6881
+      },
+      "GE_Player_Eri044_QTE1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Effect/GE_Player_Eri044_QTE1_HitBack.GE_Player_Eri044_QTE1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6882
+      },
+      "Buff_Player_Eri044_Q_Spotlight_UnbalAccrueEfficiency": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_Q_Spotlight_UnbalAccrueEfficiency.Buff_Player_Eri044_Q_Spotlight_UnbalAccrueEfficiency_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6789
+      },
+      "Buff_Player_Eri044_Q_Spotlight_RecoverHP_Periodic": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_Q_Spotlight_RecoverHP_Periodic.Buff_Player_Eri044_Q_Spotlight_RecoverHP_Periodic_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6790
+      },
+      "Buff_Player_Eri044_Q_Spotlight_RecoverHPInstant": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_Q_Spotlight_RecoverHPInstant.Buff_Player_Eri044_Q_Spotlight_RecoverHPInstant_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6854
+      },
+      "Buff_Player_Eri044_Q_Spotlight_Duration": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_Q_Spotlight_Duration.Buff_Player_Eri044_Q_Spotlight_Duration_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6883
+      },
+      "Buff_Player_Eri044_AudienceTarget_Extra": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_044_Eri/Buff/Buff_Player_Eri044_AudienceTarget_Extra.Buff_Player_Eri044_AudienceTarget_Extra_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6884
+      },
+      "Buff_Elyms_LevelExtra6_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_090_Elyms/Upgrade/LevelExtra/Buff_Elyms_LevelExtra6_1.Buff_Elyms_LevelExtra6_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6885
+      },
+      "Buff_Nitsa_Super_Skill_AtkUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Effect/Buff_Nitsa_Super_Skill_AtkUp.Buff_Nitsa_Super_Skill_AtkUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6886
+      },
+      "GE_Player_Nitsa_SuperSkill_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Effect/GE_Player_Nitsa_SuperSkill_HitBack.GE_Player_Nitsa_SuperSkill_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6887
+      },
+      "Buff_Nitsa078_Passive2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/PassiveEffect/Buff_Nitsa078_Passive2.Buff_Nitsa078_Passive2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6888
+      },
+      "Buff_Nitsa_Level1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level1.Buff_Nitsa_Level1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6889
+      },
+      "Buff_Nitsa_Level2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level2.Buff_Nitsa_Level2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6890
+      },
+      "Buff_Nitsa_Level3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level3.Buff_Nitsa_Level3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6891
+      },
+      "Buff_Nitsa_Level4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level4.Buff_Nitsa_Level4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6892
+      },
+      "Buff_Nitsa_Level5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level5.Buff_Nitsa_Level5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6893
+      },
+      "Buff_Nitsa_Level6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level6.Buff_Nitsa_Level6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6894
+      },
+      "Buff_Nitsa_Level6EX": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level6EX.Buff_Nitsa_Level6EX_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6895
+      },
+      "Buff_Nitsa_Level3EX": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Buff_Nitsa_Level3EX.Buff_Nitsa_Level3EX_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6896
+      },
+      "Buff_Nitsa_Level6Check": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level6/Buff_Nitsa_Level6Check.Buff_Nitsa_Level6Check_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6897
+      },
+      "Buff_Nitsa_Level6ATKUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level6/Buff_Nitsa_Level6ATKUp.Buff_Nitsa_Level6ATKUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6898
+      },
+      "Buff_Nitsa_Level5Check": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level5/Buff_Nitsa_Level5Check.Buff_Nitsa_Level5Check_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6899
+      },
+      "Buff_Nitsa_Level5DamageUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level5/Buff_Nitsa_Level5DamageUp.Buff_Nitsa_Level5DamageUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6961
+      },
+      "Buff_Nitsa_EnterBattle_ALL": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level3_EX/Buff_Nitsa_EnterBattle_ALL.Buff_Nitsa_EnterBattle_ALL_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6962
+      },
+      "Buff_Nitsa_Level6_Ex_Check": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level6_EX/Buff_Nitsa_Level6_Ex_Check.Buff_Nitsa_Level6_Ex_Check_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6963
+      },
+      "Buff_Nitsa_Level6_Ex_CritDamageUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level6_EX/Buff_Nitsa_Level6_Ex_CritDamageUP.Buff_Nitsa_Level6_Ex_CritDamageUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6964
+      },
+      "Buff_Nitsa_Level4_CritDamageUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Upgrade/Level4/Buff_Nitsa_Level4_CritDamageUP.Buff_Nitsa_Level4_CritDamageUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6965
+      },
+      "Buff_Nitsa078_Xinling": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Resource/Buff_Nitsa078_Xinling.Buff_Nitsa078_Xinling_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6966
+      },
+      "Buff_Nitsa078_Hun": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Resource/Buff_Nitsa078_Hun.Buff_Nitsa078_Hun_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6967
+      },
+      "buff_boss_40_LockHP6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/buff_boss_40_LockHP6.buff_boss_40_LockHP6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6839
+      },
+      "buff_boss_40_LockHP5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/buff_boss_40_LockHP5.buff_boss_40_LockHP5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6841
+      },
+      "buff_boss_40_DefUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_40/Buff/buff_boss_40_DefUp.buff_boss_40_DefUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6968
+      },
+      "Buff_Nitsa_GSkill_PsychicallyUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Effect/Buff_Nitsa_GSkill_PsychicallyUp.Buff_Nitsa_GSkill_PsychicallyUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6969
+      },
+      "Buff_Nitsa_GSkill_DefIgnore": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Effect/Buff_Nitsa_GSkill_DefIgnore.Buff_Nitsa_GSkill_DefIgnore_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6970
+      },
+      "Buff_Nitsa_GSkill_CritDamageUp": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_078_Nitsa/Buff/Effect/Buff_Nitsa_GSkill_CritDamageUp.Buff_Nitsa_GSkill_CritDamageUp_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6971
+      },
+      "GE_HeistCombatRestriction": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/GameFeatures/Heist/Effects/GE_HeistCombatRestriction.GE_HeistCombatRestriction_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6972
+      },
+      "GE_HeistLockpickProtection": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/GameFeatures/Heist/Effects/GE_HeistLockpickProtection.GE_HeistLockpickProtection_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6973
       }
     }
   }

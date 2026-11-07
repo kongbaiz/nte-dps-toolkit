@@ -2,6 +2,7 @@ import {
   PageHeader,
   PageTitle,
   PageDescription,
+  PageScrollArea,
 } from "@/components/nte/page-layout";
 import {
   AlertTriangle,
@@ -41,15 +42,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
+import { characterAccent } from "@/lib/character-color";
 import { t, tf } from "@/lib/i18n";
-import type {
-  SkillsCharacter,
-  SkillsCommandError,
-  SkillsDiagnostics,
-  SkillsRow,
-  SkillsScope,
-  SkillsSnapshot,
-} from "@/lib/tauri/skills-contract";
+import type { SkillsCharacterSnapshot } from "@/lib/tauri/generated/SkillsCharacterSnapshot";
+import type { SkillsDiagnosticsSnapshot } from "@/lib/tauri/generated/SkillsDiagnosticsSnapshot";
+import type { SkillsRowSnapshot } from "@/lib/tauri/generated/SkillsRowSnapshot";
+import type { SkillsSnapshot } from "@/lib/tauri/generated/SkillsSnapshot";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
+import { type CommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 
 import {
@@ -65,7 +65,7 @@ import {
 } from "./skills-ui-model";
 import { useSkills } from "./use-skills";
 
-const SCOPES: Array<{ id: SkillsScope; labelKey: string }> = [
+const SCOPES: Array<{ id: TimelineScope; labelKey: string }> = [
   { id: "all", labelKey: "Whole Battle" },
   { id: "upper", labelKey: "First Half" },
   { id: "lower", labelKey: "Second Half" },
@@ -101,7 +101,7 @@ export function SkillsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <PageTitle>{t("Skills")}</PageTitle>
             <Badge variant="outline" className="gap-1.5">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span className="size-1.5 rounded-full bg-success" />
               {t("Live")}
             </Badge>
           </div>
@@ -125,7 +125,7 @@ export function SkillsPage() {
         </div>
       </PageHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 min-[900px]:p-4">
+      <PageScrollArea>
         <div className="mx-auto flex min-h-full w-full max-w-[1700px] flex-col gap-3.5">
           {state.status === "loading" ? <SkillsLoading /> : null}
           {state.status === "error" ? (
@@ -140,7 +140,7 @@ export function SkillsPage() {
             />
           ) : null}
         </div>
-      </div>
+      </PageScrollArea>
     </section>
   );
 }
@@ -177,18 +177,16 @@ function SkillsReady({
 
   return (
     <>
-      <div className="skills-metrics grid grid-cols-2 gap-3 min-[880px]:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 min-[880px]:grid-cols-4">
         <Metric
           icon={BarChart3}
           label="Attributed Damage"
           value={number(visibleMetrics.damage)}
-          prominent
         />
         <Metric
           icon={ListChecks}
           label="Skill Entries"
           value={String(visibleMetrics.entries)}
-          prominent
         />
         <Metric
           icon={AlertTriangle}
@@ -259,7 +257,7 @@ function SkillsReady({
           <div className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-border/60 pb-3">
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground">{t("Skill")}</p>
-              <h2 className="truncate text-base font-semibold">
+              <h2 className="truncate text-sm font-semibold">
                 {selectedCharacter?.name ?? t("Whole Team")}
               </h2>
             </div>
@@ -291,7 +289,7 @@ function SkillsReady({
           <details className="mt-3 border-t border-border/70 pt-2">
             <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-2 py-2 text-sm font-medium hover:bg-muted/55">
               <AlertTriangle
-                className="size-4 text-amber-600 dark:text-amber-400"
+                className="size-4 text-warning"
                 aria-hidden="true"
               />
               {t("Pending Mapping Diagnostics")}
@@ -380,7 +378,7 @@ function SkillsLoadError({
   error,
   onRetry,
 }: {
-  error: SkillsCommandError;
+  error: CommandError;
   onRetry: () => void;
 }) {
   return (
@@ -404,7 +402,7 @@ function SkillsStreamError({
   error,
   onDismiss,
 }: {
-  error: SkillsCommandError;
+  error: CommandError;
   onDismiss: () => void;
 }) {
   return createPortal(
@@ -497,8 +495,8 @@ function SkillRow({
   character,
   totalDamage,
 }: {
-  row: SkillsRow;
-  character: SkillsCharacter;
+  row: SkillsRowSnapshot;
+  character: SkillsCharacterSnapshot;
   totalDamage: number;
 }) {
   const share = skillDamageShare(row.damage, totalDamage);
@@ -586,7 +584,7 @@ function SkillDetail({
 function UnmappedGameplayEffect({
   effect,
 }: {
-  effect: SkillsDiagnostics["unmappedGameplayEffects"][number];
+  effect: SkillsDiagnosticsSnapshot["unmappedGameplayEffects"][number];
 }) {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">(
     "idle",
@@ -626,8 +624,7 @@ function UnmappedGameplayEffect({
               aria-label={t(statusLabel)}
               className={cn(
                 "ml-1 size-7 rounded-l-none",
-                copyStatus === "copied" &&
-                  "text-emerald-700 dark:text-emerald-400",
+                copyStatus === "copied" && "text-success",
                 copyStatus === "error" && "text-destructive",
               )}
               size="icon-xs"
@@ -658,21 +655,19 @@ function Metric({
   icon: Icon,
   label,
   value,
-  prominent = false,
   warning = false,
 }: {
   icon: LucideIcon;
   label: string;
   value: string;
-  prominent?: boolean;
   warning?: boolean;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-3 border-border/60 px-3 py-3">
+    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-3">
       <span
         className={cn(
           "flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground",
-          warning && "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+          warning && "bg-warning/10 text-warning",
         )}
       >
         <Icon className="size-4" aria-hidden="true" />
@@ -684,8 +679,7 @@ function Metric({
         <span
           className={cn(
             "block truncate font-mono text-sm font-semibold",
-            prominent && "text-base",
-            warning && "text-amber-700 dark:text-amber-400",
+            warning && "text-warning",
           )}
         >
           {value}
@@ -705,14 +699,14 @@ function Diagnostic({ label, value }: { label: string; value: string }) {
 }
 
 function characterFor(
-  row: SkillsRow,
-  characters: ReadonlyMap<number, SkillsCharacter>,
-): SkillsCharacter {
+  row: SkillsRowSnapshot,
+  characters: ReadonlyMap<number, SkillsCharacterSnapshot>,
+): SkillsCharacterSnapshot {
   return (
     characters.get(row.characterId) ?? {
       id: row.characterId,
       name: row.characterName,
-      color: "#737373",
+      color: characterAccent(row.characterId, null),
       damage: row.damage,
       entries: 1,
     }

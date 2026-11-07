@@ -1,17 +1,13 @@
+use crate::contract::island::IslandTone;
 use nte_dps_tool::core::live_capture::LiveCapturePhase;
 use tauri::{AppHandle, State, WebviewWindow, ipc::Channel};
 
 use crate::{
     channels::stream_runtime::{
-        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
-        validate_subscription_id,
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, validate_subscription_id,
     },
     commands::main_dps::snapshot,
-    contract::{
-        CommandError, SubscriptionReceipt,
-        main_dps::MainDpsEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
+    contract::{CommandError, SubscriptionReceipt, main_dps::MainDpsEvent, stream::StreamKind},
     state::AppState,
     windows::{island, main_dps},
 };
@@ -20,22 +16,18 @@ pub(crate) const MAIN_DPS_STREAM_INTERVAL_MS: u32 = 100;
 #[tauri::command]
 pub(crate) fn subscribe_main_dps(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<MainDpsEvent>>,
+    on_event: Channel<MainDpsEvent>,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     main_dps::validate_window(&window)?;
-    state
-        .main_dps_stream_revision()
-        .map_err(CommandError::from_core)?;
+    state.main_dps_stream_revision()?;
     let stream_kind = StreamKind::MainDps;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     let mut last_revision = None;
     let mut last_game_detected = None;
@@ -117,18 +109,21 @@ fn publish_capture_transition(
 fn capture_transition_notice(
     previous: (LiveCapturePhase, bool),
     current: (LiveCapturePhase, bool),
-) -> Option<(&'static str, &'static str)> {
+) -> Option<(IslandTone, &'static str)> {
     if previous.1 && !current.1 && current.0 == LiveCapturePhase::Stopped {
         return Some((
-            "success",
+            IslandTone::Success,
             "Import complete; see parse quality on the diagnostics page",
         ));
     }
     if current.0 == LiveCapturePhase::Failed && previous.0 != LiveCapturePhase::Failed {
-        return Some(("error", "Capture failed"));
+        return Some((IslandTone::Error, "Capture failed"));
     }
     if previous.0 == LiveCapturePhase::Starting && current.0 == LiveCapturePhase::Running {
-        return Some(("success", "Live capture started, BPF is being determined"));
+        return Some((
+            IslandTone::Success,
+            "Live capture started, BPF is being determined",
+        ));
     }
     if matches!(
         previous.0,
@@ -136,7 +131,7 @@ fn capture_transition_notice(
     ) && current.0 == LiveCapturePhase::Stopped
         && !previous.1
     {
-        return Some(("success", "Capture stopped"));
+        return Some((IslandTone::Success, "Capture stopped"));
     }
     None
 }
@@ -149,12 +144,10 @@ pub(crate) fn unsubscribe_main_dps(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     main_dps::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::MainDps.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::MainDps.stream_key(&subscription_id),
+    )?;
     Ok(())
 }
 
@@ -170,7 +163,7 @@ mod tests {
                 (LiveCapturePhase::Stopped, false),
             ),
             Some((
-                "success",
+                IslandTone::Success,
                 "Import complete; see parse quality on the diagnostics page",
             ))
         );
@@ -179,7 +172,7 @@ mod tests {
                 (LiveCapturePhase::Stopping, false),
                 (LiveCapturePhase::Stopped, false),
             ),
-            Some(("success", "Capture stopped"))
+            Some((IslandTone::Success, "Capture stopped"))
         );
     }
 }

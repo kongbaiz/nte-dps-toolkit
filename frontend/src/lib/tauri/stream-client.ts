@@ -1,163 +1,94 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-import {
-  StreamContractError,
-  parseStreamDelivery,
-  parseStreamSubscriptionReceipt,
-  type StreamKind,
-} from "@/lib/tauri/stream-contract";
-
-export interface InvokeTransport {
-  invoke(
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<unknown>;
-}
-
-export interface StreamTransport extends InvokeTransport {
-  createChannel(onMessage: (message: unknown) => void): unknown;
-}
+import { toCommandError, type CommandError } from "@/lib/tauri/command-error";
+import type { StreamKind } from "@/lib/tauri/generated/StreamKind";
+import type { SubscriptionReceipt } from "@/lib/tauri/generated/SubscriptionReceipt";
 
 export interface StreamOptions<Event> {
-  transport: StreamTransport;
   streamKind: StreamKind;
-  subscriptionId: string;
   subscribeCommand: string;
   unsubscribeCommand: string;
   subscribeArguments?: Record<string, unknown>;
-  parseEvent(value: unknown): Event;
   onEvent(event: Event): void;
-  onError(error: unknown): void;
+  onError(error: CommandError): void;
 }
 
-export const tauriInvokeTransport: InvokeTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-};
-
-export const tauriStreamTransport: StreamTransport = {
-  ...tauriInvokeTransport,
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
-
+/** Opens one ordered Tauri Channel and acknowledges each delivery after `onEvent`. */
 export function subscribeStream<Event>(
   options: StreamOptions<Event>,
 ): () => Promise<void> {
   const {
-    transport,
     streamKind,
-    subscriptionId,
     subscribeCommand,
     unsubscribeCommand,
     subscribeArguments,
-    parseEvent,
     onEvent,
     onError,
   } = options;
 
+  const subscriptionId = crypto.randomUUID();
   let closed = false;
   let closePromise: Promise<void> | undefined;
-  let rawReceipt: Promise<unknown> | undefined;
-  let receiptReady = false;
   let streamGeneration: string | undefined;
   let deliverySequence = 0n;
-  let pendingDelivery: unknown | undefined;
+  // Rust may deliver once before the receipt resolves; hold that event until then.
+  let pendingEvent: { event: Event } | undefined;
   let reportedFailure = false;
-
-  const close = (): Promise<void> => {
-    closed = true;
-    closePromise ??= (async () => {
-      if (rawReceipt === undefined) return;
-      try {
-        await rawReceipt;
-      } catch {
-        // Unsubscribe is idempotent and also covers a lost command response.
-      }
-      await transport.invoke(unsubscribeCommand, { subscriptionId });
-    })();
-    return reportedFailure ? closePromise.catch(() => undefined) : closePromise;
-  };
 
   const failClosed = (error: unknown): void => {
     if (reportedFailure) return;
     reportedFailure = true;
-    void close();
-    try {
-      onError(error);
-    } catch {
-      // Cleanup has already started; error reporting must not reopen the stream.
-    }
+    void close().catch(() => undefined);
+    onError(toCommandError(error));
   };
 
-  const deliver = (value: unknown): void => {
-    if (closed) return;
+  const deliver = (event: Event): void => {
     try {
-      for (const rawEvent of parseStreamDelivery(value)) {
-        onEvent(parseEvent(rawEvent));
-        if (closed) return;
-      }
-      deliverySequence += 1n;
-      void transport
-        .invoke("acknowledge_stream_delivery", {
-          subscriptionId,
-          streamKind,
-          streamGeneration,
-          deliverySequence: deliverySequence.toString(),
-        })
-        .catch((error: unknown) => {
-          if (!closed) failClosed(error);
-        });
+      onEvent(event);
     } catch (error) {
       failClosed(error);
-    }
-  };
-
-  const onMessage = (value: unknown): void => {
-    if (closed) return;
-    if (!receiptReady) {
-      if (pendingDelivery !== undefined) {
-        failClosed(
-          new StreamContractError(
-            "stream started before subscription completed",
-          ),
-        );
-        return;
-      }
-      pendingDelivery = value;
       return;
     }
-    deliver(value);
+    if (closed) return;
+    deliverySequence += 1n;
+    invoke("acknowledge_stream_delivery", {
+      subscriptionId,
+      streamKind,
+      streamGeneration,
+      deliverySequence: deliverySequence.toString(),
+    }).catch((error: unknown) => {
+      if (!closed) failClosed(error);
+    });
   };
 
-  const onEventChannel = transport.createChannel(onMessage);
-  rawReceipt = transport.invoke(subscribeCommand, {
+  const channel = new Channel<Event>();
+  channel.onmessage = (event) => {
+    if (closed) return;
+    if (streamGeneration === undefined) pendingEvent = { event };
+    else deliver(event);
+  };
+
+  const receipt = invoke<SubscriptionReceipt>(subscribeCommand, {
     ...subscribeArguments,
     subscriptionId,
-    onEvent: onEventChannel,
+    onEvent: channel,
   });
-  void rawReceipt.then((value) => {
-    try {
-      const receipt = parseStreamSubscriptionReceipt(value);
-      if (
-        receipt.subscriptionId !== subscriptionId ||
-        receipt.streamKind !== streamKind
-      ) {
-        throw new StreamContractError("stream subscription identity mismatch");
-      }
-      streamGeneration = receipt.streamGeneration;
-      receiptReady = true;
-      if (pendingDelivery !== undefined) {
-        const delivery = pendingDelivery;
-        pendingDelivery = undefined;
-        deliver(delivery);
-      }
-    } catch (error) {
-      failClosed(error);
-    }
+  receipt.then((value) => {
+    streamGeneration = value.streamGeneration;
+    if (pendingEvent === undefined || closed) return;
+    const { event } = pendingEvent;
+    pendingEvent = undefined;
+    deliver(event);
   }, failClosed);
+
+  const close = (): Promise<void> => {
+    closed = true;
+    closePromise ??= receipt
+      .catch(() => undefined)
+      // Unsubscribe is idempotent and also covers a lost subscribe response.
+      .then(() => invoke<void>(unsubscribeCommand, { subscriptionId }));
+    return closePromise;
+  };
 
   return close;
 }

@@ -11,10 +11,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use crate::{
     contract::{
         CommandError,
-        stream::{
-            MAX_EVENTS_PER_STREAM_DELIVERY, MAX_STREAM_DELIVERY_BYTES, StreamDeliveryBody,
-            StreamKind,
-        },
+        stream::{MAX_STREAM_DELIVERY_BYTES, StreamKind},
     },
     state::{AppState, StreamRegistration, StreamRegistryError},
 };
@@ -34,33 +31,34 @@ pub(crate) fn validate_subscription_id(value: &str) -> Result<(), CommandError> 
     }
 }
 
-pub(crate) fn stream_registry_error(_: StreamRegistryError) -> CommandError {
-    CommandError::stream_runtime_unavailable()
+impl From<StreamRegistryError> for CommandError {
+    fn from(_: StreamRegistryError) -> Self {
+        Self::stream_runtime_unavailable()
+    }
 }
 
 // The receipt binds generation; the ordered Channel binds delivery sequence.
 #[tauri::command]
 pub(crate) fn acknowledge_stream_delivery(
     subscription_id: String,
-    stream_kind: String,
+    stream_kind: StreamKind,
     stream_generation: String,
     delivery_sequence: String,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
-    let kind = StreamKind::parse(&stream_kind).ok_or_else(CommandError::invalid_subscription_id)?;
     let generation = parse_delivery_counter(&stream_generation)?;
     let sequence = parse_delivery_counter(&delivery_sequence)?;
     state
         .acknowledge_stream(
             window.label(),
-            &kind.stream_key(&subscription_id),
+            &stream_kind.stream_key(&subscription_id),
             generation,
             sequence,
         )
         .map(|_| ())
-        .map_err(stream_registry_error)
+        .map_err(CommandError::from)
 }
 
 fn parse_delivery_counter(value: &str) -> Result<u64, CommandError> {
@@ -84,11 +82,11 @@ pub(crate) enum PollingStreamOutput<T> {
 }
 
 pub(crate) struct StreamDeliveryEndpoint<T> {
-    channel: Channel<StreamDeliveryBody<T>>,
+    channel: Channel<T>,
 }
 
 impl<T> StreamDeliveryEndpoint<T> {
-    pub(crate) fn new(channel: Channel<StreamDeliveryBody<T>>) -> Self {
+    pub(crate) fn new(channel: Channel<T>) -> Self {
         Self { channel }
     }
 }
@@ -138,9 +136,9 @@ where
             }
 
             let output = catch_unwind(AssertUnwindSafe(|| poll(&task_state)));
-            let events = match output {
+            let event = match output {
                 Ok(PollingStreamOutput::NoChange) => continue,
-                Ok(PollingStreamOutput::Event(event)) => vec![event],
+                Ok(PollingStreamOutput::Event(event)) => event,
                 Ok(PollingStreamOutput::Stop) => break,
                 Err(_) => {
                     log::error!("{stream_name} stream projection panicked; subscription stopped");
@@ -151,27 +149,14 @@ where
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            if events.is_empty() {
-                continue;
-            }
-            if events.len() > MAX_EVENTS_PER_STREAM_DELIVERY {
-                log::error!(
-                    "{stream_name} stream produced {} events; maximum is {}",
-                    events.len(),
-                    MAX_EVENTS_PER_STREAM_DELIVERY
-                );
-                break;
-            }
-
-            let body = StreamDeliveryBody::new(events);
-            if !delivery_fits(&body) {
+            if !delivery_fits(&event) {
                 log::error!(
                     "{stream_name} stream delivery exceeded the {} byte limit",
                     MAX_STREAM_DELIVERY_BYTES
                 );
                 break;
             }
-            if !task_registration.begin_delivery() || delivery.channel.send(body).is_err() {
+            if !task_registration.begin_delivery() || delivery.channel.send(event).is_err() {
                 break;
             }
         }
@@ -185,8 +170,8 @@ where
     Ok(())
 }
 
-fn delivery_fits<T: Serialize>(delivery: &StreamDeliveryBody<T>) -> bool {
-    serde_json::to_vec(delivery)
+fn delivery_fits<T: Serialize>(event: &T) -> bool {
+    serde_json::to_vec(event)
         .map(|encoded| encoded.len() <= MAX_STREAM_DELIVERY_BYTES)
         .unwrap_or(false)
 }
@@ -223,11 +208,10 @@ where
                 match output {
                     Ok(PollingStreamOutput::NoChange) => {}
                     Ok(PollingStreamOutput::Event(event)) => {
-                        let body = StreamDeliveryBody::new(vec![event]);
                         if stop.load(Ordering::Acquire)
-                            || !delivery_fits(&body)
+                            || !delivery_fits(&event)
                             || !registration.begin_delivery()
-                            || delivery.channel.send(body).is_err()
+                            || delivery.channel.send(event).is_err()
                         {
                             break;
                         }
@@ -246,16 +230,6 @@ where
         let _ = state.finish_stream(&registration);
     });
     Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn serialize_stream_events<T: Serialize>(events: Vec<T>) -> std::io::Result<Vec<u8>> {
-    let bytes =
-        serde_json::to_vec(&StreamDeliveryBody::new(events)).map_err(std::io::Error::other)?;
-    if bytes.len() > MAX_STREAM_DELIVERY_BYTES {
-        return Err(std::io::Error::other("stream delivery is too large"));
-    }
-    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -322,9 +296,7 @@ mod tests {
 
     #[test]
     fn delivery_size_check_enforces_the_contract_limit() {
-        assert!(delivery_fits(&StreamDeliveryBody::new(vec!["small"])));
-        assert!(!delivery_fits(&StreamDeliveryBody::new(vec![
-            "x".repeat(MAX_STREAM_DELIVERY_BYTES)
-        ])));
+        assert!(delivery_fits(&"small"));
+        assert!(!delivery_fits(&"x".repeat(MAX_STREAM_DELIVERY_BYTES)));
     }
 }

@@ -21,33 +21,40 @@ use nte_dps_tool::{
     platform::update_http,
     storage::{
         config::{
-            AccentColor, GlobalHotkeyAction, HotkeyBinding, HotkeyKey, MainDpsAttribution,
-            MainDpsDisplayConfig, MainDpsMetric, ThemePreset, UiDensity,
+            GlobalHotkeyAction, HotkeyBinding, HotkeyKey, HudModule, MainDpsDisplayConfig,
+            UiDensity,
         },
-        i18n::{self, Language},
+        i18n,
         io_util::atomic_write_text,
         update::{self as update_storage, PreparedUpdate, installed_component_versions},
     },
 };
+use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+use ts_rs::TS;
 
 use crate::{
     contract::{
         CommandError,
         settings::{
-            CaptureSettingsInput, HotkeyBindingSnapshot, InterfaceSettingsInput,
-            MainDpsDisplayInput, SettingsSnapshot, TeamDataExportResult, TeamDataImportFileResult,
-            UpdateSettingsInput,
+            CaptureSettingsInput, HotkeyBindingSnapshot, InterfaceSettingsInput, SettingsSnapshot,
+            TeamDataExportResult, TeamDataImportFileResult, UpdateSettingsInput,
         },
     },
     file_dialog::{self, DialogOutcome},
     settings_service::SettingsServiceError,
-    state::{AppState, HudPreset, HudSettingOption, TeamOperationError, UpdateActionError},
-    team_import_service::TeamImportError,
+    state::{AppState, HudPreset, HudSettingOption, UpdateActionError},
     windows::{abyss_values, combat_details, console, hud, island, main_dps},
 };
 
-use super::{parse_hud_module, sanitize_hud_width};
+#[derive(Clone, Copy, Debug, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LayoutProfile {
+    Combat,
+    Review,
+    Research,
+}
 
 const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -62,14 +69,14 @@ pub(crate) fn set_settings_interface(
     if !settings.island_offset_x.is_finite() {
         return Err(CommandError::invalid_settings_input());
     }
-    let language = parse_language(&settings.language)?;
+    let language = settings.language;
     state
         .update_interface_settings(
             language,
             settings.dark_mode,
-            parse_theme_preset(&settings.theme_preset)?,
-            parse_accent(&settings.accent)?,
-            parse_density(&settings.density)?,
+            settings.theme_preset,
+            settings.accent,
+            settings.density,
             settings.reduce_motion,
             settings.island_notifications,
             settings.island_offset_x,
@@ -116,24 +123,20 @@ pub(crate) async fn check_settings_updates(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    run_update_check(state.clone())
-        .await
-        .map_err(update_action_error)?;
+    run_update_check(state.clone()).await?;
     Ok(state.settings_snapshot())
 }
 
 #[tauri::command]
 pub(crate) async fn download_settings_update(
-    component: String,
+    component: UpdateComponent,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let component = parse_update_component(&component)?;
+    let component = app_update_component(component)?;
     let state = state.inner().clone();
-    run_update_download(state.clone(), component)
-        .await
-        .map_err(update_action_error)?;
+    run_update_download(state.clone(), component).await?;
     Ok(state.settings_snapshot())
 }
 
@@ -145,15 +148,10 @@ pub(crate) async fn install_settings_update(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    if let Some(message_key) = state
-        .update_install_blocked_message_key()
-        .map_err(update_action_error)?
-    {
+    if let Some(message_key) = state.update_install_blocked_message_key()? {
         return Err(CommandError::update_install_blocked(message_key));
     }
-    install_update(app, state.clone())
-        .await
-        .map_err(update_action_error)?;
+    install_update(app, state.clone()).await?;
     Ok(state.settings_snapshot())
 }
 
@@ -411,9 +409,12 @@ pub(crate) fn refresh_settings_capture_devices(
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    state
-        .refresh_capture_devices()
-        .map_err(|_| CommandError::capture_devices_unavailable())?;
+    state.refresh_capture_devices().map_err(|_| {
+        CommandError::new(
+            "capture_devices_unavailable",
+            "Capture devices are unavailable.",
+        )
+    })?;
     Ok(state.settings_snapshot())
 }
 
@@ -435,13 +436,12 @@ pub(crate) fn set_settings_hotkeys_enabled(
 
 #[tauri::command]
 pub(crate) fn set_settings_hotkey_binding(
-    action: String,
+    action: GlobalHotkeyAction,
     binding: Option<HotkeyBindingSnapshot>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let action = parse_global_hotkey_action(&action)?;
     let binding = binding.map(parse_hotkey_binding).transpose()?;
     if binding.is_some_and(HotkeyBinding::is_reserved) {
         return Err(CommandError::invalid_settings_input());
@@ -462,40 +462,20 @@ pub(crate) fn set_settings_hotkey_binding(
 
 #[tauri::command]
 pub(crate) fn set_settings_main_dps_display(
-    settings: MainDpsDisplayInput,
+    settings: MainDpsDisplayConfig,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let metrics = settings
-        .metrics
-        .iter()
-        .map(|value| parse_main_dps_metric(value))
-        .collect::<Result<Vec<_>, _>>()?;
-    let attributions = settings
-        .attributions
-        .iter()
-        .map(|value| parse_main_dps_attribution(value))
-        .collect::<Result<Vec<_>, _>>()?;
-    if metrics.len() > MainDpsMetric::ALL.len()
-        || attributions.len() > MainDpsAttribution::ALL.len()
-        || unique_len(&metrics) != metrics.len()
-        || unique_len(&attributions) != attributions.len()
-    {
-        return Err(CommandError::invalid_settings_input());
-    }
     state
-        .update_main_dps_display(MainDpsDisplayConfig {
-            metrics,
-            attributions,
-        })
+        .update_main_dps_display(settings)
         .map_err(settings_save_error)?;
     Ok(state.settings_snapshot())
 }
 
 #[tauri::command]
 pub(crate) fn apply_settings_layout_profile(
-    profile: String,
+    profile: LayoutProfile,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
@@ -507,8 +487,8 @@ pub(crate) fn apply_settings_layout_profile(
         app.get_webview_window(combat_details::CHARACTER_DETAILS_WINDOW_LABEL),
         app.get_webview_window(combat_details::TEAM_DETAILS_WINDOW_LABEL),
     ];
-    match profile.as_str() {
-        "combat" => {
+    match profile {
+        LayoutProfile::Combat => {
             if !state.passthrough_hotkey_ready() {
                 return Err(CommandError::passthrough_hotkey_unavailable());
             }
@@ -528,7 +508,7 @@ pub(crate) fn apply_settings_layout_profile(
                 detail_window.hide().map_err(window_operation_error)?;
             }
         }
-        "review" => {
+        LayoutProfile::Review => {
             state
                 .set_density(UiDensity::Cozy)
                 .map_err(settings_save_error)?;
@@ -545,7 +525,7 @@ pub(crate) fn apply_settings_layout_profile(
                 detail_window.hide().map_err(window_operation_error)?;
             }
         }
-        "research" => {
+        LayoutProfile::Research => {
             state
                 .set_density(UiDensity::Compact)
                 .map_err(settings_save_error)?;
@@ -568,7 +548,6 @@ pub(crate) fn apply_settings_layout_profile(
                 super::main_dps::open_team_details(&app, state.inner())?;
             }
         }
-        _ => return Err(CommandError::invalid_settings_input()),
     }
     sync_hud_height(&app, &state);
     Ok(state.settings_snapshot())
@@ -585,7 +564,7 @@ pub(crate) fn import_settings_team_data(
         log::warn!("reject imported team DPS data: {detail}");
         CommandError::team_data_invalid()
     })?;
-    state.import_team_data(export).map_err(team_import_error)?;
+    state.import_team_data(export)?;
     Ok(state.settings_snapshot())
 }
 
@@ -619,7 +598,7 @@ pub(crate) async fn import_settings_team_data_file(
                 log::warn!("reject imported team DPS data: {detail}");
                 CommandError::team_data_invalid()
             })?;
-            state.import_team_data(export).map_err(team_import_error)?;
+            state.import_team_data(export)?;
             true
         } else {
             false
@@ -644,8 +623,7 @@ pub(crate) async fn export_settings_team_data(
 ) -> Result<TeamDataExportResult, CommandError> {
     console::validate_window(&window)?;
     let export = state
-        .export_team_data()
-        .map_err(team_operation_error)?
+        .export_team_data()?
         .ok_or_else(CommandError::team_data_unavailable)?;
     let json = serialize_team_data(&export)?;
 
@@ -732,14 +710,13 @@ pub(crate) fn get_settings_snapshot(
 
 #[tauri::command]
 pub(crate) fn set_settings_hud_option(
-    option: String,
+    option: HudSettingOption,
     enabled: bool,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let option = parse_hud_option(&option)?;
     state
         .set_hud_option(option, enabled)
         .map_err(config_save_error)?;
@@ -749,13 +726,12 @@ pub(crate) fn set_settings_hud_option(
 
 #[tauri::command]
 pub(crate) fn apply_settings_hud_preset(
-    preset: String,
+    preset: HudPreset,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let preset = parse_hud_preset(&preset)?;
     state.apply_hud_preset(preset).map_err(config_save_error)?;
     sync_hud_height(&app, &state);
     Ok(state.settings_snapshot())
@@ -763,14 +739,13 @@ pub(crate) fn apply_settings_hud_preset(
 
 #[tauri::command]
 pub(crate) fn set_settings_hud_module_visibility(
-    module: String,
+    module: HudModule,
     visible: bool,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let module = parse_hud_module(&module)?;
     state
         .set_hud_module_visibility(module, visible)
         .map_err(config_save_error)?;
@@ -780,16 +755,14 @@ pub(crate) fn set_settings_hud_module_visibility(
 
 #[tauri::command]
 pub(crate) fn move_settings_hud_module(
-    dragged: String,
-    target: String,
+    dragged: HudModule,
+    target: HudModule,
     insert_after: bool,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let dragged = parse_hud_module(&dragged)?;
-    let target = parse_hud_module(&target)?;
     state
         .move_hud_module(dragged, target, insert_after)
         .map_err(config_save_error)?;
@@ -799,15 +772,13 @@ pub(crate) fn move_settings_hud_module(
 
 #[tauri::command]
 pub(crate) fn set_settings_hud_width(
-    width: i32,
+    width: u16,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    state
-        .set_hud_width(sanitize_hud_width(width))
-        .map_err(config_save_error)?;
+    state.set_hud_width(width).map_err(config_save_error)?;
     if let Some(hud_window) = app.get_webview_window(hud::HUD_WINDOW_LABEL)
         && let Err(error) = hud::sync_content_width(&hud_window, &state)
     {
@@ -850,30 +821,6 @@ pub(crate) fn open_settings_hud_editor(
         return Err(window_operation_error(error));
     }
     Ok(state.settings_snapshot())
-}
-
-fn parse_hud_option(option: &str) -> Result<HudSettingOption, CommandError> {
-    match option {
-        "title" => Ok(HudSettingOption::Title),
-        "team_dps" => Ok(HudSettingOption::TeamDps),
-        "duration" => Ok(HudSettingOption::Duration),
-        "total_damage" => Ok(HudSettingOption::TotalDamage),
-        "damage_taken" => Ok(HudSettingOption::DamageTaken),
-        "character_rows" => Ok(HudSettingOption::CharacterRows),
-        "abyss_half" => Ok(HudSettingOption::AbyssHalf),
-        "passthrough_state" => Ok(HudSettingOption::PassthroughState),
-        "mini_timeline" => Ok(HudSettingOption::MiniTimeline),
-        _ => Err(CommandError::invalid_hud_option()),
-    }
-}
-
-fn parse_hud_preset(preset: &str) -> Result<HudPreset, CommandError> {
-    match preset {
-        "minimal" => Ok(HudPreset::Minimal),
-        "standard" => Ok(HudPreset::Standard),
-        "detailed" => Ok(HudPreset::Detailed),
-        _ => Err(CommandError::invalid_hud_preset()),
-    }
 }
 
 fn read_team_data_file(path: &Path) -> Result<String, CommandError> {
@@ -957,17 +904,6 @@ fn settings_save_error(error: SettingsServiceError) -> CommandError {
     }
 }
 
-fn team_import_error(_error: TeamImportError) -> CommandError {
-    CommandError::team_import_state_unavailable()
-}
-
-fn team_operation_error(error: TeamOperationError) -> CommandError {
-    match error {
-        TeamOperationError::State(error) => team_import_error(error),
-        TeamOperationError::Capture(error) => CommandError::from_core(error),
-    }
-}
-
 #[derive(Debug)]
 enum CheckSettingsUpdateError {
     NotConfigured,
@@ -1006,20 +942,36 @@ fn check_for_updates() -> Result<Vec<AvailableComponentUpdate>, CheckSettingsUpd
         .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))
 }
 
-pub(crate) fn parse_update_component(value: &str) -> Result<UpdateComponent, CommandError> {
-    match value {
-        "app" => Ok(UpdateComponent::App),
-        "mods-plugin" => Err(super::toolkit::unsupported()),
-        _ => Err(CommandError::invalid_settings_input()),
+pub(crate) fn app_update_component(
+    component: UpdateComponent,
+) -> Result<UpdateComponent, CommandError> {
+    match component {
+        UpdateComponent::App => Ok(component),
+        UpdateComponent::ModsPlugin => Err(super::toolkit::unsupported()),
     }
 }
 
-pub(crate) fn update_action_error(error: UpdateActionError) -> CommandError {
-    match error {
-        UpdateActionError::Busy => CommandError::update_operation_busy(),
-        UpdateActionError::Unavailable => CommandError::update_component_unavailable(),
-        UpdateActionError::NotPrepared => CommandError::update_not_prepared(),
-        UpdateActionError::RuntimeUnavailable => CommandError::update_runtime_unavailable(),
+impl From<UpdateActionError> for CommandError {
+    fn from(error: UpdateActionError) -> Self {
+        let (code, message_key) = match error {
+            UpdateActionError::Busy => (
+                "update_operation_busy",
+                "Another update operation is already in progress.",
+            ),
+            UpdateActionError::Unavailable => (
+                "update_component_unavailable",
+                "The selected update component is no longer available.",
+            ),
+            UpdateActionError::NotPrepared => (
+                "update_not_prepared",
+                "Download and verify the update before installing it.",
+            ),
+            UpdateActionError::RuntimeUnavailable => (
+                "update_runtime_unavailable",
+                "Update operation did not finish.",
+            ),
+        };
+        Self::new(code, message_key)
     }
 }
 
@@ -1036,54 +988,6 @@ fn validate_filter(filter: String) -> Result<String, CommandError> {
     Ok(filter.to_owned())
 }
 
-fn parse_language(value: &str) -> Result<Language, CommandError> {
-    match value {
-        "en" => Ok(Language::English),
-        "ja" => Ok(Language::Japanese),
-        "zh-CN" => Ok(Language::SimplifiedChinese),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
-fn parse_theme_preset(value: &str) -> Result<ThemePreset, CommandError> {
-    match value {
-        "zinc" => Ok(ThemePreset::Zinc),
-        "tactical" => Ok(ThemePreset::Tactical),
-        "high-contrast" => Ok(ThemePreset::HighContrast),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
-fn parse_accent(value: &str) -> Result<AccentColor, CommandError> {
-    match value {
-        "zinc" => Ok(AccentColor::Zinc),
-        "blue" => Ok(AccentColor::Blue),
-        "violet" => Ok(AccentColor::Violet),
-        "orange" => Ok(AccentColor::Orange),
-        "green" => Ok(AccentColor::Green),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
-fn parse_density(value: &str) -> Result<UiDensity, CommandError> {
-    match value {
-        "compact" => Ok(UiDensity::Compact),
-        "cozy" => Ok(UiDensity::Cozy),
-        "comfortable" => Ok(UiDensity::Comfortable),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
-fn parse_global_hotkey_action(value: &str) -> Result<GlobalHotkeyAction, CommandError> {
-    match value {
-        "capture" => Ok(GlobalHotkeyAction::ToggleCapture),
-        "reset" => Ok(GlobalHotkeyAction::ResetSession),
-        "hud" => Ok(GlobalHotkeyAction::ToggleHud),
-        "new-round" => Ok(GlobalHotkeyAction::NewRound),
-        _ => Err(CommandError::invalid_settings_input()),
-    }
-}
-
 fn parse_hotkey_binding(binding: HotkeyBindingSnapshot) -> Result<HotkeyBinding, CommandError> {
     let key = HotkeyKey::all()
         .iter()
@@ -1096,28 +1000,6 @@ fn parse_hotkey_binding(binding: HotkeyBindingSnapshot) -> Result<HotkeyBinding,
         binding.shift,
         key,
     ))
-}
-
-fn parse_main_dps_metric(value: &str) -> Result<MainDpsMetric, CommandError> {
-    MainDpsMetric::ALL
-        .into_iter()
-        .find(|metric| metric.id() == value)
-        .ok_or_else(CommandError::invalid_settings_input)
-}
-
-fn parse_main_dps_attribution(value: &str) -> Result<MainDpsAttribution, CommandError> {
-    MainDpsAttribution::ALL
-        .into_iter()
-        .find(|attribution| attribution.id() == value)
-        .ok_or_else(CommandError::invalid_settings_input)
-}
-
-fn unique_len<T: PartialEq>(values: &[T]) -> usize {
-    values
-        .iter()
-        .enumerate()
-        .filter(|(index, value)| !values[..*index].contains(value))
-        .count()
 }
 
 fn hotkey_conflicts(
@@ -1216,39 +1098,10 @@ mod tests {
     }
 
     #[test]
-    fn hud_option_input_accepts_only_stable_contract_values() {
-        assert_eq!(
-            parse_hud_option("team_dps").expect("team DPS"),
-            HudSettingOption::TeamDps
-        );
-        assert_eq!(
-            parse_hud_option("mini_timeline").expect("timeline"),
-            HudSettingOption::MiniTimeline
-        );
-        assert!(parse_hud_option("future").is_err());
-        assert!(parse_hud_option("../title").is_err());
-    }
-
-    #[test]
-    fn hud_preset_input_accepts_only_stable_contract_values() {
-        assert_eq!(
-            parse_hud_preset("minimal").expect("minimal"),
-            HudPreset::Minimal
-        );
-        assert_eq!(
-            parse_hud_preset("detailed").expect("detailed"),
-            HudPreset::Detailed
-        );
-        assert!(parse_hud_preset("custom").is_err());
-    }
-
-    #[test]
     fn general_settings_inputs_are_strictly_bounded() {
         assert_eq!(validate_filter(" udp ".to_owned()).expect("filter"), "udp");
         assert!(validate_filter("".to_owned()).is_err());
         assert!(validate_filter("udp\nor tcp".to_owned()).is_err());
-        assert_eq!(parse_language("ja").expect("Japanese"), Language::Japanese);
-        assert!(parse_language("future").is_err());
         assert!(
             parse_hotkey_binding(HotkeyBindingSnapshot {
                 ctrl: true,
@@ -1320,17 +1173,6 @@ mod tests {
     }
 
     #[test]
-    fn update_component_input_accepts_only_stable_contract_values() {
-        assert_eq!(
-            parse_update_component("app").expect("application update"),
-            UpdateComponent::App
-        );
-        assert!(parse_update_component("mods-plugin").is_err());
-        assert!(parse_update_component("../app").is_err());
-        assert!(parse_update_component("future").is_err());
-    }
-
-    #[test]
     fn poisoned_update_runtime_stops_workers_before_spawn_or_io() {
         let state = AppState::default();
         state.poison_update_runtime_for_test();
@@ -1374,7 +1216,7 @@ mod tests {
 
     #[test]
     fn update_runtime_unavailable_has_a_stable_redacted_command_error() {
-        let error = update_action_error(UpdateActionError::RuntimeUnavailable);
+        let error = CommandError::from(UpdateActionError::RuntimeUnavailable);
 
         assert_eq!(error.code, "update_runtime_unavailable");
         assert_eq!(error.message_key, "Update operation did not finish.");

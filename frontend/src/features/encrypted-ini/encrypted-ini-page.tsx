@@ -37,10 +37,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input, NativeSelect } from "@/components/ui/form-controls";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
-import type { EncryptedIniKey } from "@/lib/tauri/encrypted-ini-contract";
-import { cn } from "@/lib/utils";
+import type { EncryptedIniKey } from "@/lib/tauri/generated/EncryptedIniKey";
 
 import {
   encryptedIniCenteredScrollOffset,
@@ -52,9 +52,6 @@ import {
 import { type EncryptedIniNotice, useEncryptedIni } from "./use-encrypted-ini";
 
 type PendingAction = "reload" | "clear";
-
-const CONTROL_CLASS =
-  "h-9 rounded-lg border bg-background px-3 text-sm outline-none transition-shadow focus:border-ring focus:ring-3 focus:ring-ring/25 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
 
 export function EncryptedIniPage() {
   const model = useEncryptedIni();
@@ -211,8 +208,8 @@ export function EncryptedIniPage() {
           <div className="flex items-center gap-2 max-[540px]:flex-wrap">
             <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <span>{t("Save Key")}</span>
-              <select
-                className={cn(CONTROL_CLASS, "w-36")}
+              <NativeSelect
+                className="w-36"
                 value={key}
                 onChange={(event) =>
                   setKey(event.target.value as EncryptedIniKey)
@@ -220,7 +217,7 @@ export function EncryptedIniPage() {
               >
                 <option value="global">{t("Global key")}</option>
                 <option value="china">{t("China key")}</option>
-              </select>
+              </NativeSelect>
             </label>
             <Button
               aria-label={t("Reload")}
@@ -249,9 +246,9 @@ export function EncryptedIniPage() {
               aria-hidden="true"
               className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
             />
-            <input
+            <Input
               aria-label={t("Search")}
-              className={cn(CONTROL_CLASS, "w-full pl-9")}
+              className="pl-9"
               placeholder={t("Enter a config name or value")}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -293,7 +290,7 @@ export function EncryptedIniPage() {
           <textarea
             ref={textareaRef}
             aria-label={t("Decrypted INI plaintext")}
-            className="size-full resize-none overflow-auto bg-transparent p-4 font-mono text-sm leading-6 outline-none select-text placeholder:text-muted-foreground/70 focus:ring-3 focus:ring-inset focus:ring-ring/20"
+            className="size-full resize-none overflow-auto bg-transparent p-4 font-mono text-sm leading-6 outline-none select-text [tab-size:4] placeholder:text-muted-foreground/70 focus:ring-3 focus:ring-inset focus:ring-ring/20"
             placeholder={t(
               "After opening an encrypted INI, the decrypted plaintext appears here.",
             )}
@@ -410,7 +407,7 @@ function EncryptedIniConfirmation({
       }}
     >
       <AlertDialogPortal>
-        <AlertDialogBackdrop className="z-[110] bg-black/15 backdrop-blur-[1px]" />
+        <AlertDialogBackdrop className="z-[110]" />
         <AlertDialogPopup className="top-4 left-1/2 z-[111] grid w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 grid-cols-[0_1fr] gap-y-0.5 rounded-lg border bg-background px-4 py-3 text-sm shadow-xl has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-[>svg]:gap-x-3">
           <TriangleAlert aria-hidden="true" />
           <AlertDialogTitle className="col-start-2 text-sm">

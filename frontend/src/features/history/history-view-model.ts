@@ -1,7 +1,5 @@
-import type {
-  HistoryRecord,
-  HistorySnapshot,
-} from "@/lib/tauri/history-contract";
+import type { HistoryRecordSnapshot } from "@/lib/tauri/generated/HistoryRecordSnapshot";
+import type { HistorySnapshot } from "@/lib/tauri/generated/HistorySnapshot";
 
 export type HistoryPageState =
   | { status: "loading" }
@@ -9,7 +7,7 @@ export type HistoryPageState =
   | { status: "ready"; snapshot: HistorySnapshot };
 
 export function selectHistoryRecord(
-  records: HistoryRecord[],
+  records: HistoryRecordSnapshot[],
   selectedId: string | null,
 ): string | null {
   if (
@@ -22,7 +20,7 @@ export function selectHistoryRecord(
 }
 
 export function adjacentHistoryRecordId(
-  records: HistoryRecord[],
+  records: HistoryRecordSnapshot[],
   recordId: string,
 ): string | null {
   const index = records.findIndex((record) => record.id === recordId);
@@ -31,7 +29,7 @@ export function adjacentHistoryRecordId(
 }
 
 export function validHistoryComparisonPair(
-  records: HistoryRecord[],
+  records: HistoryRecordSnapshot[],
   leftId: string,
   rightId: string,
 ): boolean {
@@ -43,9 +41,9 @@ export function validHistoryComparisonPair(
 }
 
 export function historyRecordById(
-  records: HistoryRecord[],
+  records: HistoryRecordSnapshot[],
   recordId: string | null,
-): HistoryRecord | null {
+): HistoryRecordSnapshot | null {
   return records.find((record) => record.id === recordId) ?? null;
 }
 

@@ -7,38 +7,78 @@ use nte_dps_tool::{
     core::toolkit::{CombatStatus, DataMode},
     platform::{
         network,
-        toolkit::{ToolkitClient, ToolkitError},
+        toolkit::{ToolkitClient, ToolkitDescription, ToolkitError},
     },
     storage::config::ModStudioLoadingMethod,
 };
 use serde::{Deserialize, Serialize};
 use std::{io::Read, path::PathBuf};
 use tauri::{State, WebviewWindow};
+use ts_rs::TS;
 
-const PLUGIN_PANEL_CONTRACT_VERSION: u32 = 5;
-
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PluginPanel {
-    contract_version: u32,
     connection_identity: Option<String>,
     collector_active: bool,
     capabilities: Vec<u32>,
     mode: DataMode,
     loading_method: ModStudioLoadingMethod,
-    connection: &'static str,
+    connection: PluginConnection,
     plugins: Vec<Plugin>,
     combat: Option<Combat>,
     operation: Option<PluginOperation>,
     components_ready: bool,
     game_directory: Option<String>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+enum PluginConnection {
+    NotRequested,
+    Connected,
+    Unavailable,
+    Busy,
+    Error,
+}
+#[derive(Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+enum PluginState {
+    Loaded,
+    Unloaded,
+    UnloadPending,
+    Failed,
+    Discovered,
+    Faulted,
+    Blocked,
+    ReleasePending,
+    Validated,
+    FaultedUnloaded,
+    Rejected,
+}
+#[derive(Serialize, Deserialize, TS)]
+#[ts(export)]
 pub(crate) struct Plugin {
     file: String,
-    state: String,
+    state: PluginState,
+    #[serde(
+        default,
+        rename = "serviceOwner",
+        deserialize_with = "owner_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    service_owner: Option<String>,
 }
-#[derive(Serialize)]
+fn owner_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(Option::<u64>::deserialize(deserializer)?.map(|owner| owner.to_string()))
+}
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct Combat {
     generation: String,
@@ -50,7 +90,8 @@ struct Combat {
     inferred: f64,
     unknown: f64,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, TS)]
+#[ts(export)]
 pub(crate) struct PluginOperation {
     state: String,
     error: String,
@@ -59,10 +100,10 @@ pub(crate) struct PluginOperation {
 fn sanitize_operation(mut operation: PluginOperation) -> Result<PluginOperation, CommandError> {
     if !matches!(
         operation.state.as_str(),
-        "" | "queued" | "pending" | "completed" | "failed" | "rejected"
+        "idle" | "queued" | "pending" | "completed" | "failed" | "rejected"
     ) || operation.error.len() > 512
     {
-        return Err(error(ToolkitError::InvalidProtocol));
+        return Err(CommandError::from(ToolkitError::InvalidProtocol));
     }
     // Native diagnostics can contain game-directory paths. Expose a stable key only.
     if !operation.error.is_empty() {
@@ -72,45 +113,54 @@ fn sanitize_operation(mut operation: PluginOperation) -> Result<PluginOperation,
 }
 
 pub(crate) fn unsupported() -> CommandError {
-    error(ToolkitError::Unsupported)
+    ToolkitError::Unsupported.into()
 }
 
-pub(super) fn error(e: ToolkitError) -> CommandError {
-    let (code, key) = match e {
-        ToolkitError::Unavailable => (
-            "plugin_unavailable",
-            "UE Tools is not connected. Load the compiled Toolkit package in the game first.",
-        ),
-        ToolkitError::Busy => (
-            "plugin_busy",
-            "The plugin is busy. Query its status before retrying.",
-        ),
-        ToolkitError::Timeout => (
-            "plugin_timeout",
-            "The plugin operation timed out. Its result is unknown; do not retry automatically.",
-        ),
-        ToolkitError::Unsupported => (
-            "plugin_unsupported",
-            "This feature is not supported by the connected plugin.",
-        ),
-        _ => (
-            "plugin_invalid",
-            "Plugin data is unavailable or invalid. Packet capture was not started.",
-        ),
-    };
-    CommandError {
-        code,
-        message_key: key,
-        message_arguments: vec![],
-        diagnostic_line: None,
+impl From<ToolkitError> for CommandError {
+    fn from(e: ToolkitError) -> Self {
+        let (code, key) = match e {
+            ToolkitError::Unavailable => (
+                "plugin_unavailable",
+                "UE Tools is not connected. Load the compiled Toolkit package in the game first.",
+            ),
+            ToolkitError::OperationUnavailable => (
+                "plugin_operation_unavailable",
+                "The host is connected, but this plugin operation is unavailable. Check plugin diagnostics and game readiness.",
+            ),
+            ToolkitError::Stopping => (
+                "plugin_stopping",
+                "The plugin host is stopping. Wait for shutdown to finish before reconnecting.",
+            ),
+            ToolkitError::Busy => (
+                "plugin_busy",
+                "The plugin is busy. Query its status before retrying.",
+            ),
+            ToolkitError::SessionChanged => (
+                "plugin_session_changed",
+                "The plugin session changed. Refresh before continuing.",
+            ),
+            ToolkitError::Timeout => (
+                "plugin_timeout",
+                "The plugin operation timed out. Its result is unknown; do not retry automatically.",
+            ),
+            ToolkitError::Unsupported => (
+                "plugin_unsupported",
+                "This feature is not supported by the connected plugin.",
+            ),
+            _ => (
+                "plugin_invalid",
+                "Plugin data is unavailable or invalid. Packet capture was not started.",
+            ),
+        };
+        CommandError::new(code, key)
     }
 }
-pub(super) fn client() -> Result<(ToolkitClient, Vec<u32>), CommandError> {
+pub(super) fn client() -> Result<(ToolkitClient, ToolkitDescription), CommandError> {
     let pid = network::game_process_id()
-        .map_err(|_| error(ToolkitError::Failed))?
-        .ok_or_else(|| error(ToolkitError::Unavailable))?;
-    let c = ToolkitClient::open(pid).map_err(error)?;
-    let capabilities = c.capabilities().map_err(error)?;
+        .map_err(|_| CommandError::from(ToolkitError::Failed))?
+        .ok_or_else(|| CommandError::from(ToolkitError::Unavailable))?;
+    let c = ToolkitClient::open(pid)?;
+    let capabilities = c.describe()?;
     Ok((c, capabilities))
 }
 fn runtime_directory(
@@ -122,10 +172,10 @@ fn runtime_directory(
         && (!root.join("tools/NTE-Loader.exe").is_file()
             || !root.join("driver/uetools.sys").is_file())
     {
-        return Err(error(ToolkitError::Unsupported));
+        return Err(CommandError::from(ToolkitError::Unsupported));
     }
     if !runtime.join("d3d12.dll").is_file() || runtime.join("dwmapi.dll").exists() {
-        return Err(error(ToolkitError::Unsupported));
+        return Err(CommandError::from(ToolkitError::Unsupported));
     }
     Ok(runtime)
 }
@@ -144,7 +194,6 @@ fn validate_data_source_window(window: &WebviewWindow) -> Result<(), CommandErro
 fn snapshot(state: &AppState) -> PluginPanel {
     let mode = state.data_mode();
     let mut result = PluginPanel {
-        contract_version: PLUGIN_PANEL_CONTRACT_VERSION,
         game_directory: state.proxy_game_directory(),
         connection_identity: None,
         collector_active: matches!(
@@ -156,7 +205,7 @@ fn snapshot(state: &AppState) -> PluginPanel {
         capabilities: vec![],
         mode,
         loading_method: state.mod_studio_loading_method(),
-        connection: "notRequested",
+        connection: PluginConnection::NotRequested,
         plugins: vec![],
         combat: None,
         operation: None,
@@ -172,23 +221,22 @@ fn snapshot(state: &AppState) -> PluginPanel {
     }
     let read = (|| {
         let (c, capabilities) = client()?;
-        let identity = c.identity();
-        let plugins: Vec<Plugin> = c.json(3, 0, "", &|| false).map_err(error)?;
-        if plugins.len() > 64
-            || plugins.iter().any(|p| {
-                !valid_file(&p.file)
-                    || !matches!(
-                        p.state.as_str(),
-                        "loaded" | "unloaded" | "unload_pending" | "failed"
-                    )
-            })
-        {
-            return Err(error(ToolkitError::InvalidProtocol));
-        }
-        let combat: Option<CombatStatus> = match c.json(100, 0, "", &|| false) {
-            Ok(value) => Some(value),
-            Err(ToolkitError::Unavailable | ToolkitError::Unsupported) => None,
-            Err(e) => return Err(error(e)),
+        let identity = capabilities.operation_session;
+        let capabilities = capabilities.commands;
+        let plugins = plugin_rows(c.json(3, 0, "", &|| false)?)?;
+        let combat: Option<CombatStatus> = if capabilities.contains(&100) {
+            match c.json(100, 0, "", &|| false) {
+                Ok(value) => Some(value),
+                Err(
+                    ToolkitError::Unavailable
+                    | ToolkitError::OperationUnavailable
+                    | ToolkitError::Stopping
+                    | ToolkitError::Unsupported,
+                ) => None,
+                Err(e) => return Err(CommandError::from(e)),
+            }
+        } else {
+            None
         };
         if let Some(combat) = &combat
             && (combat.encounter_id.len() > 256
@@ -202,16 +250,16 @@ fn snapshot(state: &AppState) -> PluginPanel {
                 .iter()
                 .any(|x| !x.is_finite() || *x < 0.0))
         {
-            return Err(error(ToolkitError::InvalidProtocol));
+            return Err(CommandError::from(ToolkitError::InvalidProtocol));
         }
-        let operation = sanitize_operation(c.json(7, 0, "", &|| false).map_err(error)?)?;
+        let operation = sanitize_operation(c.json(7, 0, "", &|| false)?)?;
         Ok((plugins, combat, operation, capabilities, identity))
     })();
     match read {
         Ok((plugins, combat, op, capabilities, identity)) => {
             result.capabilities = capabilities;
             result.connection_identity = Some(identity);
-            result.connection = "connected";
+            result.connection = PluginConnection::Connected;
             result.plugins = plugins;
             result.operation = Some(op);
             result.combat = combat.map(|s| Combat {
@@ -227,13 +275,35 @@ fn snapshot(state: &AppState) -> PluginPanel {
         }
         Err(e) => {
             result.connection = match e.code {
-                "plugin_unavailable" => "unavailable",
-                "plugin_busy" => "busy",
-                _ => "error",
+                "plugin_unavailable" => PluginConnection::Unavailable,
+                "plugin_busy" => PluginConnection::Busy,
+                _ => PluginConnection::Error,
             }
         }
     }
     result
+}
+// A resident image and a replacement candidate can share a filename in PluginList.
+fn plugin_rows(mut rows: Vec<Plugin>) -> Result<Vec<Plugin>, ToolkitError> {
+    if rows.len() > 64 || rows.iter().any(|p| !valid_file(&p.file)) {
+        return Err(ToolkitError::InvalidProtocol);
+    }
+    rows.sort_by_cached_key(|p| {
+        (
+            p.file.to_ascii_lowercase(),
+            match p.state {
+                PluginState::Blocked | PluginState::ReleasePending | PluginState::UnloadPending => {
+                    0
+                }
+                PluginState::Loaded | PluginState::Faulted => 1,
+                PluginState::Validated => 2,
+                PluginState::Rejected | PluginState::Failed | PluginState::FaultedUnloaded => 3,
+                PluginState::Unloaded | PluginState::Discovered => 4,
+            },
+        )
+    });
+    rows.dedup_by(|a, b| a.file.eq_ignore_ascii_case(&b.file));
+    Ok(rows)
 }
 fn valid_file(file: &str) -> bool {
     file.len() <= 128
@@ -253,7 +323,7 @@ pub(crate) async fn get_plugin_panel(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || snapshot(&state))
         .await
-        .map_err(|_| error(ToolkitError::Failed))
+        .map_err(|_| CommandError::from(ToolkitError::Failed))
 }
 #[tauri::command]
 pub(crate) async fn set_data_mode(
@@ -268,19 +338,27 @@ pub(crate) async fn set_data_mode(
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        state.set_data_mode(mode).map_err(CommandError::from_core)?;
+        state.set_data_mode(mode)?;
         // Choosing a mode does not discard a recorded session. The normal Start
         // command retains its existing replace-current confirmation contract.
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
+#[derive(Clone, Copy, Debug, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PluginControlAction {
+    Enable,
+    Disable,
+}
+
 #[tauri::command]
 pub(crate) async fn control_plugin(
-    action: String,
-    file: Option<String>,
-    value: Option<u32>,
+    action: PluginControlAction,
+    file: String,
+    expected_identity: String,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
@@ -288,19 +366,12 @@ pub(crate) async fn control_plugin(
     if state.data_mode() != DataMode::Plugin {
         return Err(CommandError::mod_studio_risk_acknowledgement_required());
     }
-    let _ = value;
-    let file = file.unwrap_or_default();
-    let (command, argument) = match action.as_str() {
-        "enable" | "disable" if valid_file(&file) => (
-            match action.as_str() {
-                "enable" => 4,
-                "disable" => 5,
-                _ => 6,
-            },
-            0,
-        ),
-
-        _ => return Err(error(ToolkitError::Unsupported)),
+    if !valid_file(&file) {
+        return Err(CommandError::from(ToolkitError::Unsupported));
+    }
+    let command = match action {
+        PluginControlAction::Enable => 4,
+        PluginControlAction::Disable => 5,
     };
     // Combat collector owns start/stop. Never unload it under an active stream.
     if matches!(
@@ -308,162 +379,55 @@ pub(crate) async fn control_plugin(
         nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
-    ) && command != 8
-    {
-        return Err(error(ToolkitError::Busy));
+    ) {
+        return Err(CommandError::from(ToolkitError::Busy));
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _reservation = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _reservation = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(unsupported());
         }
-        if command != 8
-            && matches!(
-                state.capture_phase(),
-                nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
-                    | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
-                    | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
-            )
-        {
-            return Err(error(ToolkitError::Busy));
+        if matches!(
+            state.capture_phase(),
+            nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
+                | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
+        ) {
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         let (c, capabilities) = client()?;
-        if !capabilities.contains(&command) {
+        if !capabilities.commands.contains(&command) {
             return Err(unsupported());
         }
-        c.call(command, argument, &file, &|| false).map_err(error)?;
+        if expected_identity != capabilities.operation_session {
+            return Err(ToolkitError::SessionChanged.into());
+        }
+        c.call(command, 0, &format!("{expected_identity}/{file}"), &|| {
+            false
+        })?;
         Ok(())
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum ReleaseAction {
+pub(crate) enum HostAction {
     HostStatus,
     Shutdown,
-    CombatStatus,
-    CombatReset,
-    CombatExport,
-    CombatStopExport,
-    CombatOperation,
-    CombatReport,
-    EvidenceStatus,
-    NetworkStatus,
-    NetworkEnable,
-    NetworkFlush,
-    RuntimeRefresh,
-    RadarRefresh,
-    TraceEnable,
-    TraceClear,
-    HudStatus,
-    HudConfigure,
-    PrebattleSkillStatus,
-    PrebattleSkillUnlock,
-    FrameRateStatus,
-    FrameRateConfigure,
-    FrameRateRefresh,
-    QuickUltimateStatus,
-    QuickUltimateConfigure,
-    TrainingStatus,
-    TrainingWoodenEnable,
-    TrainingWoodenDisable,
-    TrainingOperation,
-    UserStatus,
-    UserRefresh,
-    UserOperation,
-    UserSnapshot,
-    UserExport,
-    UserCancel,
 }
-impl ReleaseAction {
-    fn wire(self, value: Option<u32>) -> Result<(u32, u32), ToolkitError> {
-        let command = match self {
+impl HostAction {
+    fn command(self) -> u32 {
+        match self {
             Self::HostStatus => 2,
             Self::Shutdown => 11,
-            Self::CombatStatus => 100,
-            Self::CombatReset => 103,
-            Self::CombatExport => 104,
-            Self::CombatStopExport => 105,
-            Self::CombatOperation => 106,
-            Self::CombatReport => 107,
-            Self::EvidenceStatus => 108,
-            Self::NetworkStatus => 109,
-            Self::NetworkEnable => 110,
-            Self::NetworkFlush => 113,
-            Self::RuntimeRefresh => 114,
-            Self::RadarRefresh => 115,
-            Self::TraceEnable => 116,
-            Self::TraceClear => 117,
-            Self::HudStatus => 118,
-            Self::HudConfigure => 119,
-            Self::PrebattleSkillStatus => 120,
-            Self::PrebattleSkillUnlock => 121,
-            Self::FrameRateStatus => 122,
-            Self::FrameRateConfigure => 123,
-            Self::FrameRateRefresh => 124,
-            Self::QuickUltimateStatus => 125,
-            Self::QuickUltimateConfigure => 126,
-            Self::TrainingStatus => 400,
-            Self::TrainingWoodenEnable | Self::TrainingWoodenDisable => 403,
-            Self::TrainingOperation => 410,
-            Self::UserStatus => 300,
-            Self::UserRefresh => 301,
-            Self::UserOperation => 302,
-            Self::UserSnapshot => 303,
-            Self::UserExport => 304,
-            Self::UserCancel => 305,
-        };
-        let argument = if matches!(
-            self,
-            Self::NetworkEnable
-                | Self::TraceEnable
-                | Self::FrameRateConfigure
-                | Self::QuickUltimateConfigure
-        ) {
-            value
-                .filter(|v| *v <= 1)
-                .ok_or(ToolkitError::InvalidProtocol)?
-        } else if matches!(self, Self::HudConfigure) {
-            value
-                .filter(|v| *v <= 31)
-                .ok_or(ToolkitError::InvalidProtocol)?
-        } else {
-            if value.is_some() {
-                return Err(ToolkitError::InvalidProtocol);
-            }
-            match self {
-                Self::TrainingWoodenEnable => 9,
-                Self::TrainingWoodenDisable => 10,
-                _ => 0,
-            }
-        };
-        Ok((command, argument))
-    }
-    fn requires_idle(self) -> bool {
-        matches!(
-            self,
-            Self::CombatReset | Self::CombatStopExport | Self::Shutdown
-        )
-    }
-    fn requires_confirmation(self) -> bool {
-        matches!(
-            self,
-            Self::CombatReset
-                | Self::CombatStopExport
-                | Self::Shutdown
-                | Self::TraceClear
-                | Self::UserCancel
-                | Self::PrebattleSkillUnlock
-                | Self::TrainingWoodenEnable
-                | Self::TrainingWoodenDisable
-        )
+        }
     }
 }
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReleaseResult {
     command: u32,
@@ -471,7 +435,7 @@ pub(crate) struct ReleaseResult {
     total_bytes: usize,
     truncated: bool,
 }
-fn preview(command: u32, bytes: &[u8]) -> Result<ReleaseResult, ToolkitError> {
+pub(super) fn preview(command: u32, bytes: &[u8]) -> Result<ReleaseResult, ToolkitError> {
     if bytes.len() > nte_dps_tool::platform::toolkit::MAX_BLOB_BYTES {
         return Err(ToolkitError::TooLarge);
     }
@@ -489,9 +453,8 @@ fn preview(command: u32, bytes: &[u8]) -> Result<ReleaseResult, ToolkitError> {
 }
 
 #[tauri::command]
-pub(crate) async fn release_plugin_action(
-    action: ReleaseAction,
-    value: Option<u32>,
+pub(crate) async fn host_action(
+    action: HostAction,
     expected_identity: String,
     confirmed: bool,
     state: State<'_, AppState>,
@@ -501,13 +464,10 @@ pub(crate) async fn release_plugin_action(
     if state.data_mode() != DataMode::Plugin {
         return Err(unsupported());
     }
-    if expected_identity.is_empty() || expected_identity.len() > 64 {
-        return Err(error(ToolkitError::InvalidProtocol));
-    }
-    if action.requires_confirmation() && !confirmed {
+    if matches!(action, HostAction::Shutdown) && !confirmed {
         return Err(CommandError::mod_studio_risk_acknowledgement_required());
     }
-    if action.requires_idle()
+    if matches!(action, HostAction::Shutdown)
         && matches!(
             state.capture_phase(),
             nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
@@ -515,18 +475,16 @@ pub(crate) async fn release_plugin_action(
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         )
     {
-        return Err(error(ToolkitError::Busy));
+        return Err(CommandError::from(ToolkitError::Busy));
     }
-    let (command, argument) = action.wire(value).map_err(error)?;
+    let command = action.command();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _reservation = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _reservation = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(unsupported());
         }
-        if action.requires_idle()
+        if matches!(action, HostAction::Shutdown)
             && matches!(
                 state.capture_phase(),
                 nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
@@ -534,20 +492,20 @@ pub(crate) async fn release_plugin_action(
                     | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
             )
         {
-            return Err(error(ToolkitError::Busy));
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         let (c, capabilities) = client()?;
-        if c.identity() != expected_identity {
-            return Err(error(ToolkitError::SessionChanged));
+        if capabilities.operation_session != expected_identity {
+            return Err(CommandError::from(ToolkitError::SessionChanged));
         }
-        if !capabilities.contains(&command) {
+        if !capabilities.commands.contains(&command) {
             return Err(unsupported());
         }
-        let bytes = c.call(command, argument, "", &|| false).map_err(error)?;
-        preview(command, &bytes).map_err(error)
+        let bytes = c.call(command, 0, "", &|| false)?;
+        preview(command, &bytes).map_err(CommandError::from)
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -559,25 +517,21 @@ pub(crate) async fn set_host_loading_method(
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         state
             .set_mod_studio_loading_method(method)
             .map_err(|_| CommandError::settings_config_save_failed())?;
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 fn directory_error() -> CommandError {
-    CommandError {
-        code: "plugin_game_directory_invalid",
-        message_key: "Select a valid game directory containing HTGame.exe. No files were changed.",
-        message_arguments: vec![],
-        diagnostic_line: None,
-    }
+    CommandError::new(
+        "plugin_game_directory_invalid",
+        "Select a valid game directory containing HTGame.exe. No files were changed.",
+    )
 }
 
 #[tauri::command]
@@ -609,9 +563,7 @@ pub(crate) async fn select_host_game_directory(
                         && !s.chars().any(|c| matches!(c, '\0' | '\r' | '\n'))
                 })
                 .ok_or_else(directory_error)?;
-            let _permit = state
-                .reserve_plugin_control()
-                .map_err(CommandError::from_core)?;
+            let _permit = state.reserve_plugin_control()?;
             state
                 .set_proxy_game_directory(Some(text.to_owned()))
                 .map_err(|_| CommandError::settings_config_save_failed())?;
@@ -619,7 +571,7 @@ pub(crate) async fn select_host_game_directory(
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -630,16 +582,14 @@ pub(crate) async fn clear_host_game_directory(
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         state
             .set_proxy_game_directory(None)
             .map_err(|_| CommandError::settings_config_save_failed())?;
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
 #[tauri::command]
@@ -659,19 +609,17 @@ pub(crate) async fn uninstall_proxy_host(
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         if matches!(
             state.capture_phase(),
             nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         ) {
-            return Err(error(ToolkitError::Busy));
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         if network::game_process_id()
-            .map_err(|_| error(ToolkitError::Failed))?
+            .map_err(|_| CommandError::from(ToolkitError::Failed))?
             .is_some()
         {
             return Err(CommandError {
@@ -694,10 +642,11 @@ pub(crate) async fn uninstall_proxy_host(
         Ok(snapshot(&state))
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HostLaunchResult {
     panel: PluginPanel,
@@ -708,13 +657,12 @@ pub(crate) struct HostLaunchResult {
 pub(crate) async fn launch_plugin_host(
     state: State<'_, AppState>,
     window: WebviewWindow,
+    force_overwrite: bool,
 ) -> Result<HostLaunchResult, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(CommandError::mod_studio_risk_acknowledgement_required());
         }
@@ -724,22 +672,23 @@ pub(crate) async fn launch_plugin_host(
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         ) {
-            return Err(error(ToolkitError::Busy));
+            return Err(CommandError::from(ToolkitError::Busy));
         }
         let root = nte_dps_tool::storage::paths::toolkit_dir();
         let method = state.mod_studio_loading_method();
+        if force_overwrite && method != ModStudioLoadingMethod::Proxy {
+            return Err(CommandError::from(ToolkitError::Busy));
+        }
         let runtime = runtime_directory(&root, method)?;
         if method == ModStudioLoadingMethod::Proxy {
-            if network::game_process_id().map_err(|_| error(ToolkitError::Failed))?.is_some() {
-                return Err(CommandError { code: "plugin_close_game_required", message_key: "Close the game before deploying the proxy host, then restart it to load the host.", message_arguments: vec![], diagnostic_line: None });
-            }
-            let manual = state.proxy_game_directory();
-            let destination = nte_dps_tool::platform::mods_plugin::toolkit_game_directory(manual.as_deref().map(std::path::Path::new))
-                .map_err(|_| if manual.is_some() { directory_error() } else { CommandError { code: "plugin_game_directory_unavailable", message_key: "A unique game installation could not be confirmed. No files were changed.", message_arguments: vec![], diagnostic_line: None } })?;
-            nte_dps_tool::core::mod_market::deploy_proxy(&runtime, &destination).map_err(CommandError::from_mod_market)?;
-            return Ok(HostLaunchResult { panel: snapshot(&state), outcome: "proxyDeployed" });
+            deploy_proxy_host(&state, &runtime, force_overwrite)?;
+            return Ok(HostLaunchResult {
+                panel: snapshot(&state),
+                outcome: "proxyDeployed",
+            });
         }
-        let root = std::fs::canonicalize(root).map_err(|_| error(ToolkitError::Unavailable))?;
+        let root = std::fs::canonicalize(root)
+            .map_err(|_| CommandError::from(ToolkitError::Unavailable))?;
         let runtime = root.join("game");
         // Execute only the managed package's compiled Loader. It owns UAC, driver
         // cleanup and bounded handshake. Never kill it while cleanup may be pending.
@@ -771,10 +720,45 @@ pub(crate) async fn launch_plugin_host(
         }
         // Exit 0 is not treated as a live connection: independently verify IPC.
         client()?;
-        Ok(HostLaunchResult { panel: snapshot(&state), outcome: "connected" })
+        Ok(HostLaunchResult {
+            panel: snapshot(&state),
+            outcome: "connected",
+        })
     })
     .await
-    .map_err(|_| error(ToolkitError::Failed))?
+    .map_err(|_| CommandError::from(ToolkitError::Failed))?
+}
+
+fn deploy_proxy_host(
+    state: &AppState,
+    runtime: &std::path::Path,
+    force_overwrite: bool,
+) -> Result<(), CommandError> {
+    if network::game_process_id()
+        .map_err(|_| CommandError::from(ToolkitError::Failed))?
+        .is_some()
+    {
+        return Err(CommandError::new(
+            "plugin_close_game_required",
+            "Close the game before deploying the proxy host, then restart it to load the host.",
+        ));
+    }
+    let manual = state.proxy_game_directory();
+    let destination = nte_dps_tool::platform::mods_plugin::toolkit_game_directory(
+        manual.as_deref().map(std::path::Path::new),
+    )
+    .map_err(|_| {
+        if manual.is_some() {
+            directory_error()
+        } else {
+            CommandError::new(
+                "plugin_game_directory_unavailable",
+                "A unique game installation could not be confirmed. No files were changed.",
+            )
+        }
+    })?;
+    nte_dps_tool::core::mod_market::deploy_proxy(runtime, &destination, force_overwrite)
+        .map_err(CommandError::from_mod_market)
 }
 
 const MAX_LOADER_RECEIPT_BYTES: usize = 64 * 1024;
@@ -790,16 +774,15 @@ fn read_loader_receipt(mut output: impl std::io::Read) -> std::io::Result<Vec<u8
 }
 
 fn loader_spawn_failed(error: &std::io::Error) -> CommandError {
-    CommandError {
-        code: "plugin_loader_launch_failed",
-        message_key: "Could not start or wait for Loader (OS error {}). Check the managed Loader file and access permissions.",
-        message_arguments: vec![
+    CommandError::with_arguments(
+        "plugin_loader_launch_failed",
+        "Could not start or wait for Loader (OS error {}). Check the managed Loader file and access permissions.",
+        vec![
             error
                 .raw_os_error()
                 .map_or("unknown".into(), |n| n.to_string()),
         ],
-        diagnostic_line: None,
-    }
+    )
 }
 
 fn loader_receipt_error(bytes: &[u8], exit: Option<i32>) -> CommandError {
@@ -885,18 +868,17 @@ fn loader_receipt_error(bytes: &[u8], exit: Option<i32>) -> CommandError {
         "connect" => "plugin_loader_handshake_failed",
         _ => "plugin_loader_result_invalid",
     };
-    CommandError {
+    CommandError::with_arguments(
         code,
-        message_key: "Loader failed: stage={}, reason={}, exit={}, Win32={}, driver cleanup={}. Check this stage before retrying; host startup may have been attempted.",
-        message_arguments: vec![
+        "Loader failed: stage={}, reason={}, exit={}, Win32={}, driver cleanup={}. Check this stage before retrying; host startup may have been attempted.",
+        vec![
             phase.into(),
             reason.into(),
             exit.map_or("unknown".into(), |n| n.to_string()),
             win32,
             cleanup,
         ],
-        diagnostic_line: None,
-    }
+    )
 }
 
 #[cfg(test)]
@@ -951,94 +933,6 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn release_controls_reject_developer_and_retired_commands_and_bad_arguments() {
-        for name in [
-            "mcp",
-            "dumper7",
-            "networkClear",
-            "networkLogMode",
-            "script",
-            "equipmentWrite",
-            "runtimeScan",
-            "runtimeStatus",
-        ] {
-            assert!(serde_json::from_value::<ReleaseAction>(serde_json::json!(name)).is_err());
-        }
-        assert_eq!(ReleaseAction::UserRefresh.wire(None).unwrap(), (301, 0));
-        assert!(ReleaseAction::UserRefresh.wire(Some(0)).is_err());
-        assert!(ReleaseAction::NetworkEnable.wire(None).is_err());
-        assert!(ReleaseAction::NetworkEnable.wire(Some(2)).is_err());
-        assert_eq!(
-            ReleaseAction::NetworkEnable.wire(Some(1)).unwrap(),
-            (110, 1)
-        );
-        assert!(ReleaseAction::Shutdown.requires_confirmation());
-        assert!(ReleaseAction::CombatReset.requires_idle());
-        assert_eq!(ReleaseAction::HudStatus.wire(None).unwrap(), (118, 0));
-        assert_eq!(
-            ReleaseAction::PrebattleSkillStatus.wire(None).unwrap(),
-            (120, 0)
-        );
-        assert_eq!(
-            ReleaseAction::PrebattleSkillUnlock.wire(None).unwrap(),
-            (121, 0)
-        );
-        assert!(ReleaseAction::PrebattleSkillUnlock.requires_confirmation());
-        assert!(!ReleaseAction::PrebattleSkillStatus.requires_confirmation());
-        assert!(ReleaseAction::PrebattleSkillUnlock.wire(Some(1)).is_err());
-
-        assert_eq!(ReleaseAction::HudConfigure.wire(Some(0)).unwrap(), (119, 0));
-        assert_eq!(
-            ReleaseAction::HudConfigure.wire(Some(31)).unwrap(),
-            (119, 31)
-        );
-        assert!(ReleaseAction::HudConfigure.wire(Some(32)).is_err());
-        assert!(ReleaseAction::HudConfigure.wire(None).is_err());
-        assert!(!ReleaseAction::HudConfigure.requires_idle());
-    }
-    #[test]
-    fn current_release_wire_arguments_match_combat_and_wooden_only_training() {
-        for (action, command) in [
-            (ReleaseAction::FrameRateConfigure, 123),
-            (ReleaseAction::QuickUltimateConfigure, 126),
-        ] {
-            assert_eq!(action.wire(Some(0)).unwrap(), (command, 0));
-            assert_eq!(action.wire(Some(1)).unwrap(), (command, 1));
-            assert!(action.wire(None).is_err());
-            assert!(action.wire(Some(2)).is_err());
-        }
-        for (action, argument) in [
-            (ReleaseAction::TrainingWoodenEnable, 9),
-            (ReleaseAction::TrainingWoodenDisable, 10),
-        ] {
-            assert_eq!(action.wire(None).unwrap(), (403, argument));
-            assert!(action.wire(Some(argument)).is_err());
-            assert!(action.requires_confirmation());
-        }
-        assert_eq!(ReleaseAction::TrainingStatus.wire(None).unwrap(), (400, 0));
-        assert_eq!(
-            ReleaseAction::TrainingOperation.wire(None).unwrap(),
-            (410, 0)
-        );
-        assert_eq!(
-            ReleaseAction::FrameRateRefresh.wire(None).unwrap(),
-            (124, 0)
-        );
-        assert_eq!(
-            ReleaseAction::QuickUltimateStatus.wire(None).unwrap(),
-            (125, 0)
-        );
-        for name in [
-            "trainingEnter",
-            "trainingSpawn",
-            "trainingReset",
-            "trainingClear",
-            "performanceStatus",
-        ] {
-            assert!(serde_json::from_value::<ReleaseAction>(serde_json::json!(name)).is_err());
-        }
-    }
-    #[test]
     fn release_preview_is_bounded_utf8_and_does_not_claim_full_content() {
         let data = "数".repeat(4000);
         let r = preview(303, data.as_bytes()).unwrap();
@@ -1049,6 +943,19 @@ mod tests {
         assert!(!preview(300, b"{}").unwrap().truncated);
     }
 
+    #[test]
+    fn remote_rejections_do_not_tell_users_to_reload_a_connected_host() {
+        for (error, code) in [
+            (
+                ToolkitError::OperationUnavailable,
+                "plugin_operation_unavailable",
+            ),
+            (ToolkitError::Stopping, "plugin_stopping"),
+            (ToolkitError::Unavailable, "plugin_unavailable"),
+        ] {
+            assert_eq!(CommandError::from(error).code, code);
+        }
+    }
     #[test]
     fn native_operation_diagnostics_never_expose_private_paths() {
         let operation = sanitize_operation(PluginOperation {
@@ -1066,6 +973,31 @@ mod tests {
                 error: String::new()
             })
             .is_err()
+        );
+    }
+    #[test]
+    fn rejected_candidate_does_not_hide_resident_plugin() {
+        let rows = serde_json::from_str(r#"[{"file":"Combat.dll","state":"rejected"},{"file":"Combat.dll","state":"loaded"},{"file":"Training.dll","state":"discovered"}]"#).unwrap();
+        let rows = plugin_rows(rows).unwrap();
+        assert!(matches!(
+            rows.as_slice(),
+            [
+                Plugin {
+                    state: PluginState::Loaded,
+                    ..
+                },
+                Plugin {
+                    state: PluginState::Discovered,
+                    ..
+                }
+            ]
+        ));
+        assert!(
+            sanitize_operation(PluginOperation {
+                state: "idle".into(),
+                error: String::new()
+            })
+            .is_ok()
         );
     }
     #[test]

@@ -21,25 +21,22 @@ import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
-import { resolveCharacterAvatar } from "@/lib/character-avatar";
-import { useCharacterAvatarCatalog } from "@/hooks/use-character-avatar";
+import {
+  resolveCharacterAvatar,
+  useCharacterAvatarCatalog,
+} from "@/lib/character-avatar";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
-import {
-  abyssValuesClient,
-  type AbyssValuesClient,
-} from "@/lib/tauri/abyss-values-client";
-import {
-  abyssValuesError,
-  type AbyssFloor,
-  type AbyssHalfId,
-  type AbyssMonster,
-  type AbyssPredictionTeams,
-  type AbyssTeam,
-  type AbyssValuesCommandError,
-  type AbyssValuesSnapshot,
-} from "@/lib/tauri/abyss-values-contract";
+import { abyssValuesClient } from "@/lib/tauri/abyss-values-client";
+import type { AbyssFloorSnapshot } from "@/lib/tauri/generated/AbyssFloorSnapshot";
+import type { AbyssHalf } from "@/lib/tauri/generated/AbyssHalf";
+import type { AbyssMonsterSnapshot } from "@/lib/tauri/generated/AbyssMonsterSnapshot";
+import type { AbyssPredictionTeamsSnapshot } from "@/lib/tauri/generated/AbyssPredictionTeamsSnapshot";
+import type { AbyssTeamSnapshot } from "@/lib/tauri/generated/AbyssTeamSnapshot";
+import type { AbyssValuesSnapshot } from "@/lib/tauri/generated/AbyssValuesSnapshot";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 
 import {
@@ -61,16 +58,12 @@ import {
 
 type PageState =
   | { status: "loading" }
-  | { status: "error"; error: AbyssValuesCommandError }
+  | { status: "error"; error: CommandError }
   | { status: "ready"; snapshot: AbyssValuesSnapshot };
 
 const STAT_DISPLAY_NAMES: Readonly<Record<string, string>> = statDisplayNames;
 
-export function AbyssValuesPage({
-  client = abyssValuesClient,
-}: {
-  client?: AbyssValuesClient;
-}) {
+export function AbyssValuesPage() {
   const presentation = useSettingsPresentation();
   const [state, setState] = useState<PageState>({ status: "loading" });
   const [selectedFloorKey, setSelectedFloorKey] =
@@ -79,14 +72,13 @@ export function AbyssValuesPage({
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState(false);
-  const [mutationError, setMutationError] =
-    useState<AbyssValuesCommandError | null>(null);
+  const [mutationError, setMutationError] = useState<CommandError | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: "loading" });
     setMutationError(null);
     try {
-      const snapshot = await client.getSnapshot();
+      const snapshot = await abyssValuesClient.getSnapshot();
       const initial = initialFloorKey(snapshot.seasons);
       setSelectedFloorKey((current) =>
         findFloor(snapshot.seasons, current) ? current : initial,
@@ -95,16 +87,16 @@ export function AbyssValuesPage({
       setSelectedPackId(null);
       setState({ status: "ready", snapshot });
     } catch (error) {
-      setState({ status: "error", error: abyssValuesError(error) });
+      setState({ status: "error", error: toCommandError(error) });
     }
-  }, [client]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const updateTeams = useCallback(
-    async (operation: () => Promise<AbyssPredictionTeams>) => {
+    async (operation: () => Promise<AbyssPredictionTeamsSnapshot>) => {
       if (state.status !== "ready" || pending) return;
       setPending(true);
       setMutationError(null);
@@ -115,7 +107,7 @@ export function AbyssValuesPage({
           snapshot: { ...state.snapshot, teams },
         });
       } catch (error) {
-        setMutationError(abyssValuesError(error));
+        setMutationError(toCommandError(error));
       } finally {
         setPending(false);
       }
@@ -159,13 +151,15 @@ export function AbyssValuesPage({
               setSelectedPackId(null);
             }}
             onSelectMonster={setSelectedPackId}
-            onSwapTeams={() => updateTeams(() => client.swapTeams())}
-            onClearTeam={(half) => updateTeams(() => client.clearTeam(half))}
+            onSwapTeams={() => updateTeams(() => abyssValuesClient.swapTeams())}
+            onClearTeam={(half) =>
+              updateTeams(() => abyssValuesClient.clearTeam(half))
+            }
             onImportTeam={(half, json) =>
-              updateTeams(() => client.importTeam(half, json))
+              updateTeams(() => abyssValuesClient.importTeam(half, json))
             }
             onImportCurrent={(half) =>
-              updateTeams(() => client.importCurrentTeam(half))
+              updateTeams(() => abyssValuesClient.importCurrentTeam(half))
             }
           />
         )}
@@ -203,9 +197,9 @@ function AbyssValuesReady({
   onSelectFloor: (key: AbyssFloorKey) => void;
   onSelectMonster: (packId: string) => void;
   onSwapTeams: () => void;
-  onClearTeam: (half: AbyssHalfId) => void;
-  onImportTeam: (half: AbyssHalfId, json: string) => void;
-  onImportCurrent: (half: AbyssHalfId) => void;
+  onClearTeam: (half: AbyssHalf) => void;
+  onImportTeam: (half: AbyssHalf, json: string) => void;
+  onImportCurrent: (half: AbyssHalf) => void;
 }) {
   const selectedFloor = findFloor(snapshot.seasons, selectedFloorKey);
   const filteredMonsters = useMemo(
@@ -231,7 +225,7 @@ function AbyssValuesReady({
           <p
             className={cn(
               "truncate text-xs text-muted-foreground",
-              snapshot.dataStale && "text-amber-600 dark:text-amber-400",
+              snapshot.dataStale && "text-warning",
             )}
             title={snapshot.dataVersion}
           >
@@ -391,19 +385,19 @@ function AbyssFloorContent({
   onImportTeam,
   onImportCurrent,
 }: {
-  floor: AbyssFloor;
-  monsters: AbyssMonster[];
-  selectedMonster: AbyssMonster | null;
+  floor: AbyssFloorSnapshot;
+  monsters: AbyssMonsterSnapshot[];
+  selectedMonster: AbyssMonsterSnapshot | null;
   query: string;
-  teams: AbyssPredictionTeams;
+  teams: AbyssPredictionTeamsSnapshot;
   currentTeamAvailable: AbyssValuesSnapshot["currentTeamAvailable"];
   pending: boolean;
   onQueryChange: (query: string) => void;
   onSelectMonster: (packId: string) => void;
   onSwapTeams: () => void;
-  onClearTeam: (half: AbyssHalfId) => void;
-  onImportTeam: (half: AbyssHalfId, json: string) => void;
-  onImportCurrent: (half: AbyssHalfId) => void;
+  onClearTeam: (half: AbyssHalf) => void;
+  onImportTeam: (half: AbyssHalf, json: string) => void;
+  onImportCurrent: (half: AbyssHalf) => void;
 }) {
   const upper = monstersForHalf(monsters, 0);
   const lower = monstersForHalf(monsters, 1);
@@ -415,7 +409,7 @@ function AbyssFloorContent({
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-2.5">
       <div className="flex min-h-9 flex-wrap items-center justify-between gap-2">
-        <h2 className="font-heading text-base font-medium">
+        <h2 className="font-heading text-sm font-medium">
           {floor.seasonName || tf("Season {}", [String(floor.season)])} /{" "}
           {floor.name || tf("Floor {}", [String(floor.floor)])}
         </h2>
@@ -433,8 +427,8 @@ function AbyssFloorContent({
               className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
             />
-            <input
-              className="h-8 w-full rounded-md border bg-background pr-2 pl-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            <Input
+              className="h-8 pr-2 pl-8"
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
               placeholder={t("Search monster / ID")}
@@ -453,7 +447,7 @@ function AbyssFloorContent({
           {upper.length > 0 || lower.length > 0 ? (
             <>
               <AbyssLineSection
-                half="upper"
+                half="first"
                 title={t("Ascending Line")}
                 monsters={upper}
                 team={teams.upper}
@@ -469,7 +463,7 @@ function AbyssFloorContent({
                 onImportCurrent={onImportCurrent}
               />
               <AbyssLineSection
-                half="lower"
+                half="second"
                 title={t("Descending Line")}
                 monsters={lower}
                 team={teams.lower}
@@ -488,7 +482,7 @@ function AbyssFloorContent({
           ) : null}
           {unassigned.length > 0 ? (
             <AbyssLineSection
-              half="upper"
+              half="first"
               title={t("Full floor config")}
               monsters={unassigned}
               team={null}
@@ -538,21 +532,21 @@ function AbyssLineSection({
   onImportTeam,
   onImportCurrent,
 }: {
-  half: AbyssHalfId;
+  half: AbyssHalf;
   title: string;
-  monsters: AbyssMonster[];
-  team: AbyssTeam | null;
+  monsters: AbyssMonsterSnapshot[];
+  team: AbyssTeamSnapshot | null;
   canImportCurrent: boolean;
   selectedPackId: string | null;
   recommendedElements: string[];
   maxSeconds: number | null;
-  thresholds: AbyssFloor["starThresholds"];
+  thresholds: AbyssFloorSnapshot["starThresholds"];
   pending: boolean;
   predictionEnabled?: boolean;
   onSelectMonster: (packId: string) => void;
-  onClearTeam: (half: AbyssHalfId) => void;
-  onImportTeam: (half: AbyssHalfId, json: string) => void;
-  onImportCurrent: (half: AbyssHalfId) => void;
+  onClearTeam: (half: AbyssHalf) => void;
+  onImportTeam: (half: AbyssHalf, json: string) => void;
+  onImportCurrent: (half: AbyssHalf) => void;
 }) {
   const defaultTarget =
     thresholds.reduce(
@@ -630,8 +624,8 @@ function AbyssLineSection({
               </span>
             )}
             <span className="text-muted-foreground">{t("Target")}</span>
-            <input
-              className="h-7 w-[68px] rounded-md border bg-background px-2 text-right tabular-nums outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+            <Input
+              className="h-7 w-[68px] px-2 text-right tabular-nums"
               type="number"
               min={1}
               max={maxSeconds ?? 600}
@@ -731,7 +725,7 @@ function AbyssLineSection({
   );
 }
 
-function AbyssTeamAvatars({ team }: { team: AbyssTeam }) {
+function AbyssTeamAvatars({ team }: { team: AbyssTeamSnapshot }) {
   useCharacterAvatarCatalog();
   return (
     <span className="flex items-center gap-1" aria-label={t("Team")}>
@@ -766,7 +760,7 @@ function MonsterChip({
   selected,
   onClick,
 }: {
-  monster: AbyssMonster;
+  monster: AbyssMonsterSnapshot;
   selected: boolean;
   onClick: () => void;
 }) {
@@ -795,7 +789,7 @@ function MonsterChip({
   );
 }
 
-function AbyssMonsterDetail({ monster }: { monster: AbyssMonster }) {
+function AbyssMonsterDetail({ monster }: { monster: AbyssMonsterSnapshot }) {
   const stats = Object.entries(monster.rawProps);
   const image = monsterImageUrl(monster.monsterId);
   return (
@@ -803,7 +797,7 @@ function AbyssMonsterDetail({ monster }: { monster: AbyssMonster }) {
       <div className="grid grid-cols-[72px_1fr_72px] items-center">
         <MonsterPortrait monster={monster} url={image} className="size-14" />
         <div className="min-w-0 text-center">
-          <h3 className="truncate text-lg font-medium">{monster.name}</h3>
+          <h3 className="truncate text-xl font-medium">{monster.name}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {monster.half === 0
               ? t("Ascending Line")
@@ -864,7 +858,7 @@ function MonsterPortrait({
   url,
   className,
 }: {
-  monster: AbyssMonster;
+  monster: AbyssMonsterSnapshot;
   url: string | null;
   className?: string;
 }) {
@@ -918,7 +912,7 @@ function AbyssValuesError({
   error,
   onRetry,
 }: {
-  error: AbyssValuesCommandError;
+  error: CommandError;
   onRetry: () => Promise<void>;
 }) {
   return (
@@ -947,7 +941,7 @@ function FloatingError({
   error,
   onDismiss,
 }: {
-  error: AbyssValuesCommandError;
+  error: CommandError;
   onDismiss: () => void;
 }) {
   return (

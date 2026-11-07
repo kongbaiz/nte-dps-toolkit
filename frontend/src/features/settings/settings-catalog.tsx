@@ -42,16 +42,14 @@ import {
 import { Markdown } from "@/components/ui/markdown";
 import { Switch } from "@/components/ui/switch";
 import { t, tf } from "@/lib/i18n";
-import {
-  type CaptureSettingsInput,
-  type InterfaceSettingsInput,
-  type LayoutProfileId,
-  type MainDpsAttributionId,
-  type MainDpsDisplayInput,
-  type MainDpsMetricId,
-  type SettingsSnapshot,
-  type UpdateComponentId,
-} from "@/lib/tauri/settings-contract";
+import type { CaptureSettingsInput } from "@/lib/tauri/generated/CaptureSettingsInput";
+import type { InterfaceSettingsInput } from "@/lib/tauri/generated/InterfaceSettingsInput";
+import type { LayoutProfile } from "@/lib/tauri/generated/LayoutProfile";
+import type { MainDpsAttribution } from "@/lib/tauri/generated/MainDpsAttribution";
+import type { MainDpsDisplayConfig } from "@/lib/tauri/generated/MainDpsDisplayConfig";
+import type { MainDpsMetric } from "@/lib/tauri/generated/MainDpsMetric";
+import type { SettingsSnapshot } from "@/lib/tauri/generated/SettingsSnapshot";
+import type { UpdateComponent } from "@/lib/tauri/generated/UpdateComponent";
 import {
   formatByteCount,
   formatUpdateByteProgress,
@@ -70,7 +68,7 @@ const LANGUAGE_OPTIONS = [
 const THEME_OPTIONS = [
   { value: "zinc", labelKey: "Zinc Theme" },
   { value: "tactical", labelKey: "Tactical" },
-  { value: "high-contrast", labelKey: "High Contrast" },
+  { value: "high_contrast", labelKey: "High Contrast" },
 ] as const;
 const ACCENT_OPTIONS = [
   { value: "zinc", labelKey: "Zinc" },
@@ -103,23 +101,23 @@ const LAYOUT_PROFILES = [
   },
 ] as const;
 const MAIN_DPS_METRICS: ReadonlyArray<{
-  id: MainDpsMetricId;
+  id: MainDpsMetric;
   labelKey: string;
 }> = [
-  { id: "team-dps", labelKey: "Team DPS" },
-  { id: "total-damage", labelKey: "Total Damage" },
-  { id: "total-damage-taken", labelKey: "Total Damage Taken" },
+  { id: "team_dps", labelKey: "Team DPS" },
+  { id: "total_damage", labelKey: "Total Damage" },
+  { id: "total_damage_taken", labelKey: "Total Damage Taken" },
   { id: "duration", labelKey: "Time" },
 ];
 const MAIN_DPS_ATTRIBUTIONS: ReadonlyArray<{
-  id: MainDpsAttributionId;
+  id: MainDpsAttribution;
   labelKey: string;
 }> = [
   { id: "character", labelKey: "Character attributed" },
   { id: "reaction", labelKey: "Reaction Damage" },
   { id: "shared", labelKey: "Shared mechanics" },
   { id: "unattributed", labelKey: "Unattributed" },
-  { id: "max-hp-reduction", labelKey: "Life reduction" },
+  { id: "max_hp_reduction", labelKey: "Life reduction" },
 ];
 export interface SettingsCatalogActions {
   setInterface(settings: InterfaceSettingsInput): Promise<void>;
@@ -128,12 +126,12 @@ export interface SettingsCatalogActions {
     autoDownload: boolean,
   ): Promise<void>;
   checkUpdates(): Promise<void>;
-  downloadUpdate(component: UpdateComponentId): Promise<void>;
+  downloadUpdate(component: UpdateComponent): Promise<void>;
   installUpdate(): Promise<void>;
   setCapture(settings: CaptureSettingsInput): Promise<void>;
-  setMainDpsDisplay(settings: MainDpsDisplayInput): Promise<void>;
+  setMainDpsDisplay(settings: MainDpsDisplayConfig): Promise<void>;
   refreshCaptureDevices(): Promise<void>;
-  applyLayoutProfile(profile: LayoutProfileId): Promise<void>;
+  applyLayoutProfile(profile: LayoutProfile): Promise<void>;
   importTeamDataFile(): Promise<boolean | null>;
   exportTeamData(): Promise<boolean | null>;
   refreshCaptureFiles(): Promise<void>;
@@ -784,7 +782,7 @@ function LayoutProfilesCard({
             variant="outline"
             disabled={pending}
             onClick={() =>
-              void actions.applyLayoutProfile(profile.id as LayoutProfileId)
+              void actions.applyLayoutProfile(profile.id as LayoutProfile)
             }
           >
             {t(profile.labelKey)}

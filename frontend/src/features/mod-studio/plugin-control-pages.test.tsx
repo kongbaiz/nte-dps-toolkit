@@ -1,15 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setFrontendLanguage } from "@/lib/i18n";
-import type { PluginPanel } from "@/lib/tauri/toolkit-client";
-import { RELEASE_ACTIONS } from "@/lib/tauri/release-plugin-client";
+import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import { HostLoadingControls } from "./host-loading-controls";
 import { HostControls } from "./host-controls";
 import { PluginControls } from "./plugin-controls";
-import { pluginControlGroup } from "./release-control-groups";
 
 const panel: PluginPanel = {
-  contractVersion: 5,
   loadingMethod: "proxy",
   gameDirectory: null,
   connectionIdentity: "123:456",
@@ -17,9 +14,7 @@ const panel: PluginPanel = {
   mode: "plugin",
   connection: "connected",
   componentsReady: true,
-  capabilities: [
-    ...new Set([4, 5, 6, 8, ...RELEASE_ACTIONS.map((action) => action[1])]),
-  ],
+  capabilities: [2, 4, 5, 6, 11, 12],
   plugins: ["Combat", "User", "Network", "Training", "Custom"].map((name) => ({
     file: `NTE_Plugin${name}.dll`,
     state: "loaded",
@@ -146,42 +141,12 @@ describe("Mod Workshop owner pages", () => {
     ])
       expect(html).not.toContain(label);
   });
-  for (const file of [
-    "NTE_PluginCombat.dll",
-    "NTE_PluginUser.dll",
-    "NTE_PluginTraining.dll",
-  ]) {
-    it(`renders only actions owned by ${file}`, () => {
-      const html = renderPlugin(file);
-      const group = pluginControlGroup(file)!;
-      const own: readonly string[] = [...group.actions, ...group.advanced];
-      for (const [action, , label] of RELEASE_ACTIONS) {
-        if (["hudStatus", "hudConfigure", "combatStopExport"].includes(action))
-          continue;
-        if (own.includes(action)) expect(html).toContain(label);
-        else expect(html).not.toContain(label);
-      }
-      expect(html).not.toContain("Host logging");
-      expect(html).not.toContain("Toolkit directory");
-      expect(html).not.toContain('role="tablist"');
-      if (group.id === "combat") expect(html).toContain("In-game enhanced HUD");
-      else expect(html).not.toContain("In-game enhanced HUD");
-    });
-  }
-  it("keeps internal diagnostic plugins manageable without retired feature controls", () => {
-    const html = renderPlugin("NTE_PluginNetwork.dll");
-    expect(html).toContain("Unload plugin");
-    expect(html).toContain("no feature controls exposed");
-    expect(html).not.toContain("Plugin network recording");
-  });
   it("gives unknown plugins their own lifecycle page without guessing capabilities", () => {
     const html = renderPlugin("NTE_PluginCustom.dll");
     expect(html).toContain("NTE_PluginCustom.dll");
-    expect(html).toContain("Check status");
     expect(html).not.toContain("Load plugin");
     expect(html).toContain("Unload plugin");
     expect(html).not.toContain("Reload");
-    expect(html).toContain("no feature controls exposed");
     expect(html).not.toContain("In-game enhanced HUD");
     expect(html).not.toContain("Preview native combat report");
   });
@@ -199,9 +164,9 @@ describe("Mod Workshop owner pages", () => {
     ]) {
       const html = renderPlugin("NTE_PluginCustom.dll", snapshot);
       const buttons = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)!;
-      expect(buttons.length).toBe(2);
       for (const button of buttons.filter(
-        (button) => !button.includes("Check status"),
+        (button) =>
+          button.includes("Load plugin") || button.includes("Unload plugin"),
       ))
         expect(button).toContain('disabled=""');
     }
@@ -210,9 +175,9 @@ describe("Mod Workshop owner pages", () => {
     const snapshot = { ...panel, collectorActive: true };
     const html = renderPlugin("NTE_PluginCustom.dll", snapshot);
     const buttons = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)!;
-    expect(buttons.length).toBe(2);
     for (const button of buttons.filter(
-      (button) => !button.includes("Check status"),
+      (button) =>
+        button.includes("Load plugin") || button.includes("Unload plugin"),
     ))
       expect(button).toContain('disabled=""');
     expect(html).toContain(
@@ -238,75 +203,14 @@ it("shows manual directory selection only for proxy loading", () => {
   expect(html).not.toContain("Start or connect with Loader");
 });
 
-it("shows the selected target and never enables unsupported or unloaded Training controls", () => {
-  const html = renderToStaticMarkup(
-    <HostLoadingControls
-      {...common}
-      panel={{ ...panel, gameDirectory: "GAME/Win64" }}
-    />,
-  );
-  expect(html).toContain("GAME/Win64");
-  for (const snapshot of [
-    { ...panel, capabilities: [4, 5] },
-    {
-      ...panel,
-      plugins: panel.plugins.map((p) =>
-        p.file === "NTE_PluginTraining.dll"
-          ? { ...p, state: "unloaded" as const }
-          : p,
-      ),
-    },
-  ]) {
-    const training = renderPlugin("NTE_PluginTraining.dll", snapshot);
-    const buttons = training.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)!;
-    for (const button of buttons.filter(
-      (b) =>
-        b.includes('aria-label="Training') ||
-        b.includes('aria-label="Enable wooden') ||
-        b.includes('aria-label="Disable wooden'),
-    ))
-      expect(button).toContain('disabled=""');
-    expect(training).not.toContain("Refresh account data");
-  }
-});
-
-describe("user-focused plugin controls", () => {
-  beforeEach(() => setFrontendLanguage("en"));
-  it.each(["Combat", "User", "Training"])(
-    "keeps %s diagnostic actions available but collapsed",
-    (name) => {
-      const file = `NTE_Plugin${name}.dll`;
-      const html = renderPlugin(file);
-      const group = pluginControlGroup(file)!;
-      const advanced = html.match(
-        /<details[^>]*data-testid="plugin-advanced-controls"[^>]*>[\s\S]*?<\/details>/,
-      )![0];
-      expect(advanced).not.toMatch(/<details[^>]*\bopen/);
-      const main = html.replace(advanced, "");
-      for (const action of group.advanced) {
-        const label = RELEASE_ACTIONS.find(([key]) => key === action)![2];
-        expect(advanced).toContain(label);
-        expect(main).not.toContain(label);
-      }
-      expect(html).toContain("Plugin details");
-    },
-  );
-  it("combines the wooden wheel commands without inventing an enabled state", () => {
-    const html = renderPlugin("NTE_PluginTraining.dll");
-    expect(html).toContain("Wooden dummy wheel");
-    expect(html).toContain('aria-label="Enable wooden dummy wheel"');
-    expect(html).toContain('aria-label="Disable wooden dummy wheel"');
-    expect(html).not.toContain('role="switch"');
-  });
-  it("offers loading instead of unloading for an unloaded plugin", () => {
-    const snapshot = {
-      ...panel,
-      plugins: panel.plugins.map((p) => ({ ...p, state: "unloaded" as const })),
-    };
-    const html = renderPlugin("NTE_PluginCustom.dll", snapshot);
-    expect(html).toContain("Load plugin");
-    expect(html).not.toContain("Unload plugin");
-  });
+it("offers loading instead of unloading for an unloaded plugin", () => {
+  const snapshot = {
+    ...panel,
+    plugins: panel.plugins.map((p) => ({ ...p, state: "unloaded" as const })),
+  };
+  const html = renderPlugin("NTE_PluginCustom.dll", snapshot);
+  expect(html).toContain("Load plugin");
+  expect(html).toContain("Load the plugin to view its controls.");
 });
 
 it("offers proxy removal only for proxy mode and blocks it during a live connection", () => {

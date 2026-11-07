@@ -128,9 +128,20 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/verify_runtime_safety.ps1
 
-      - name: Verify Rust and TypeScript contract version parity
+      - name: Verify generated TypeScript bindings
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/test_contract_version_parity.ps1
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $generated = "frontend/src/lib/tauri/generated"
+          Remove-Item -Recurse -Force $generated
+          cargo test --manifest-path src-tauri/Cargo.toml export_bindings
+          cargo test --features tauri_frontend --lib export_bindings
+          $stale = git status --porcelain -- $generated
+          if ($stale) {
+              throw "Generated bindings are stale; regenerate and commit them:`n$($stale -join "`n")"
+          }
 
       - name: Verify i18n source coverage
         shell: pwsh

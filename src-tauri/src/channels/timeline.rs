@@ -1,16 +1,12 @@
+use nte_dps_tool::core::timeline::TimelineScope;
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
     channels::stream_runtime::{
-        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
-        validate_subscription_id,
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, validate_subscription_id,
     },
-    commands::timeline::{parse_scope, snapshot},
-    contract::{
-        CommandError, SubscriptionReceipt,
-        stream::{StreamDeliveryBody, StreamKind},
-        timeline::TimelineEvent,
-    },
+    commands::timeline::snapshot,
+    contract::{CommandError, SubscriptionReceipt, stream::StreamKind, timeline::TimelineEvent},
     state::AppState,
     windows::console,
 };
@@ -19,24 +15,19 @@ pub(crate) const TIMELINE_STREAM_INTERVAL_MS: u32 = 100;
 #[tauri::command]
 pub(crate) fn subscribe_timeline(
     subscription_id: String,
-    scope: String,
-    on_event: Channel<StreamDeliveryBody<TimelineEvent>>,
+    scope: TimelineScope,
+    on_event: Channel<TimelineEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    let scope = parse_scope(&scope)?;
-    state
-        .main_dps_stream_revision()
-        .map_err(CommandError::from_core)?;
+    state.main_dps_stream_revision()?;
 
     let stream_kind = StreamKind::Timeline;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     let mut last_revision = None;
     spawn_polling_stream(
@@ -76,12 +67,10 @@ pub(crate) fn unsubscribe_timeline(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::Timeline.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::Timeline.stream_key(&subscription_id),
+    )?;
     Ok(())
 }
 
@@ -93,14 +82,11 @@ mod tests {
         TimelineRoleProjection, TimelineScope, TimelineSegmentProjection,
     };
 
-    use crate::{
-        channels::stream_runtime::serialize_stream_events,
-        contract::{
-            stream::MAX_STREAM_DELIVERY_BYTES,
-            timeline::{
-                MAX_TIMELINE_BUCKETS, MAX_TIMELINE_CHARACTERS, MAX_TIMELINE_ROLES_PER_BUCKET,
-                TimelineSnapshot,
-            },
+    use crate::contract::{
+        stream::MAX_STREAM_DELIVERY_BYTES,
+        timeline::{
+            MAX_TIMELINE_BUCKETS, MAX_TIMELINE_CHARACTERS, MAX_TIMELINE_ROLES_PER_BUCKET,
+            TimelineSnapshot,
         },
     };
     use nte_dps_tool::storage::config::TimelineDpsViewMode;
@@ -160,7 +146,7 @@ mod tests {
             TimelineScope::Whole,
             TimelineDpsViewMode::Characters,
         );
-        let bytes = serialize_stream_events(vec![TimelineEvent::Snapshot(snapshot)])
+        let bytes = serde_json::to_vec(&TimelineEvent::Snapshot(snapshot))
             .expect("maximal legal Timeline delivery stays serializable");
         assert!(bytes.len() <= MAX_STREAM_DELIVERY_BYTES);
         assert!(

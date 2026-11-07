@@ -192,6 +192,14 @@
       "name_zh": "小吱",
       "verified": true
     },
+    "1074": {
+      "attribute": "暗",
+      "avatar": "res/images/characters/200_Fashion_1074_0.png",
+      "codename": "exe",
+      "name_en": "exe",
+      "name_zh": "Exe",
+      "verified": true
+    },
     "1075": {
       "attribute": "灵",
       "avatar": "res/images/characters/player_yiluoyi.png",
@@ -206,6 +214,22 @@
       "codename": "shinku",
       "name_en": "shinku",
       "name_zh": "真红",
+      "verified": true
+    },
+    "1090": {
+      "attribute": "光",
+      "avatar": "res/images/characters/200_Fashion_1090_0.png",
+      "codename": "elyms",
+      "name_en": "elyms",
+      "name_zh": "曳尔沐",
+      "verified": true
+    },
+    "1091": {
+      "attribute": "灵",
+      "avatar": "res/images/characters/player_lingke.png",
+      "codename": "radio",
+      "name_en": "radio",
+      "name_zh": "安魂曲",
       "verified": true
     }
   }

@@ -2,30 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   emptyCurtainClient,
-  type EmptyCurtainClient,
   type ManageItemInput,
 } from "@/lib/tauri/empty-curtain-client";
-import {
-  emptyCurtainError,
-  type CharacterEquipmentAction,
-  type EmptyCurtainCommandError,
-  type EmptyCurtainFileResult,
-  type EmptyCurtainSnapshot,
-  type ItemUid,
-} from "@/lib/tauri/empty-curtain-contract";
+import type { CharacterEquipmentAction } from "@/lib/tauri/generated/CharacterEquipmentAction";
+import type { EmptyCurtainFileResult } from "@/lib/tauri/generated/EmptyCurtainFileResult";
+import type { EmptyCurtainSnapshot } from "@/lib/tauri/generated/EmptyCurtainSnapshot";
+import type { ItemUidSnapshot } from "@/lib/tauri/generated/ItemUidSnapshot";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
 export type EmptyCurtainPageState =
   | { status: "loading" }
-  | { status: "error"; error: EmptyCurtainCommandError }
+  | { status: "error"; error: CommandError }
   | { status: "ready"; snapshot: EmptyCurtainSnapshot };
 
-export function useEmptyCurtain(
-  client: EmptyCurtainClient = emptyCurtainClient,
-) {
+export function useEmptyCurtain() {
   const [state, setState] = useState<EmptyCurtainPageState>({
     status: "loading",
   });
-  const [notice, setNotice] = useState<EmptyCurtainCommandError | null>(null);
+  const [notice, setNotice] = useState<CommandError | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [refreshing, setRefreshing] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
@@ -47,7 +41,7 @@ export function useEmptyCurtain(
       current.status === "ready" ? current : { status: "loading" },
     );
     setNotice(null);
-    void client
+    void emptyCurtainClient
       .getSnapshot()
       .then((snapshot) => {
         if (
@@ -67,9 +61,9 @@ export function useEmptyCurtain(
           setState((current) =>
             current.status === "ready"
               ? current
-              : { status: "error", error: emptyCurtainError(error) },
+              : { status: "error", error: toCommandError(error) },
           );
-          setNotice(emptyCurtainError(error));
+          setNotice(toCommandError(error));
         }
       })
       .finally(() => {
@@ -83,11 +77,11 @@ export function useEmptyCurtain(
     return () => {
       active = false;
     };
-  }, [client, reloadKey]);
+  }, [reloadKey]);
 
   useEffect(() => {
     let active = true;
-    const unsubscribe = client.subscribe(
+    const unsubscribe = emptyCurtainClient.subscribe(
       (snapshot) => {
         if (!active || !mounted.current) return;
         setState({ status: "ready", snapshot });
@@ -136,7 +130,7 @@ export function useEmptyCurtain(
       active = false;
       void unsubscribe();
     };
-  }, [client]);
+  }, []);
 
   const runSnapshotAction = useCallback(
     async (operation: Promise<EmptyCurtainSnapshot>) => {
@@ -146,7 +140,7 @@ export function useEmptyCurtain(
         const snapshot = await operation;
         if (mounted.current) setState({ status: "ready", snapshot });
       } catch (error) {
-        if (mounted.current) setNotice(emptyCurtainError(error));
+        if (mounted.current) setNotice(toCommandError(error));
       } finally {
         if (mounted.current) setActionPending(false);
       }
@@ -163,7 +157,7 @@ export function useEmptyCurtain(
         if (mounted.current)
           setState({ status: "ready", snapshot: result.snapshot });
       } catch (error) {
-        if (mounted.current) setNotice(emptyCurtainError(error));
+        if (mounted.current) setNotice(toCommandError(error));
       } finally {
         if (mounted.current) setActionPending(false);
       }
@@ -172,15 +166,15 @@ export function useEmptyCurtain(
   );
 
   const positions = useCallback(
-    async (item: ItemUid, character: ItemUid) => {
+    async (item: ItemUidSnapshot, character: ItemUidSnapshot) => {
       try {
-        return await client.positions(item, character);
+        return await emptyCurtainClient.positions(item, character);
       } catch (error) {
-        if (mounted.current) setNotice(emptyCurtainError(error));
+        if (mounted.current) setNotice(toCommandError(error));
         return [];
       }
     },
-    [client],
+    [],
   );
 
   const canOperate = state.status === "ready" && state.snapshot.canOperate;
@@ -202,16 +196,23 @@ export function useEmptyCurtain(
     positions,
     manageItem: (input: ManageItemInput) =>
       canOperate
-        ? runSnapshotAction(client.manageItem(input))
+        ? runSnapshotAction(emptyCurtainClient.manageItem(input))
         : Promise.resolve(),
-    characterAction: (character: ItemUid, action: CharacterEquipmentAction) =>
+    characterAction: (
+      character: ItemUidSnapshot,
+      action: CharacterEquipmentAction,
+    ) =>
       canOperate
-        ? runSnapshotAction(client.characterAction(character, action))
+        ? runSnapshotAction(
+            emptyCurtainClient.characterAction(character, action),
+          )
         : Promise.resolve(),
-    exportInventory: () => runFileAction(client.exportInventory()),
-    exportLoadout: (character: ItemUid) =>
-      runFileAction(client.exportLoadout(character)),
+    exportInventory: () => runFileAction(emptyCurtainClient.exportInventory()),
+    exportLoadout: (character: ItemUidSnapshot) =>
+      runFileAction(emptyCurtainClient.exportLoadout(character)),
     importLoadout: () =>
-      canOperate ? runFileAction(client.importLoadout()) : Promise.resolve(),
+      canOperate
+        ? runFileAction(emptyCurtainClient.importLoadout())
+        : Promise.resolve(),
   };
 }

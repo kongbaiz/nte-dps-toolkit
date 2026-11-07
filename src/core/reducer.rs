@@ -465,7 +465,6 @@ mod tests {
             &mut state,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 89.0,
-                cycle: Some(1),
                 floor: Some(11),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -646,7 +645,6 @@ mod tests {
             &mut state,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 59.0,
-                cycle: Some(1),
                 floor: Some(11),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -950,7 +948,6 @@ mod tests {
             &mut state,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 0.0,
-                cycle: Some(1),
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -967,7 +964,6 @@ mod tests {
             &mut state,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 1.1,
-                cycle: Some(1),
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::Second,
                 allow_late_backfill: false,
@@ -1155,7 +1151,6 @@ mod tests {
             &mut state,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 1.0,
-                cycle: Some(1),
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -1169,7 +1164,6 @@ mod tests {
             &mut state,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 3.0,
-                cycle: Some(1),
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::Second,
                 allow_late_backfill: false,
@@ -1192,7 +1186,6 @@ mod tests {
             &mut state,
             EngineEvent::Abyss(AbyssEvent::Stage {
                 timestamp: 7.0,
-                cycle: Some(2),
                 floor: Some(12),
                 half: crate::engine::model::AbyssHalf::First,
                 allow_late_backfill: false,
@@ -1353,14 +1346,14 @@ mod tests {
         assert_eq!(
             apply_engine_event(
                 &mut state,
-                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::ProviderUnavailable),
+                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::DataUnavailable),
             ),
             CoreSignal::CombatClockHealthChanged
         );
         assert_eq!(
             apply_engine_event(
                 &mut state,
-                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::ProviderUnavailable),
+                EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::DataUnavailable),
             ),
             CoreSignal::Unchanged
         );

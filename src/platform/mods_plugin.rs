@@ -101,10 +101,6 @@ const MOD_LOG_ID_SIZE: usize = 32;
 const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
-#[cfg(test)]
-const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
-#[cfg(test)]
-const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
 const MAX_PLUGIN_STATUS: u32 = 13;
 const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
@@ -455,25 +451,6 @@ pub(crate) fn call_plugin(request: &ModsPluginRequest) -> Result<u32, String> {
     let request_bytes = encode_request(request);
     let response = call_plugin_request(&request_bytes)?;
     decode_response(&response, request.request_id)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg(test)]
-pub(crate) enum CombatClockQueryError {
-    ProviderUnavailable,
-    ModDisabled,
-    InvalidResponse,
-}
-
-#[cfg(test)]
-impl std::fmt::Display for CombatClockQueryError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(match self {
-            Self::ProviderUnavailable => "combat clock provider is unavailable",
-            Self::ModDisabled => "combat clock mod is disabled",
-            Self::InvalidResponse => "combat clock provider returned an invalid response",
-        })
-    }
 }
 
 pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
@@ -1187,70 +1164,6 @@ fn decode_response_header(
         return Err("Mod loader returned an invalid IPC response".to_owned());
     }
     Ok((status, record_count))
-}
-
-#[cfg(test)]
-fn decode_combat_clock_transitions(
-    bytes: &[u8; RESPONSE_SIZE],
-    request_id: u64,
-) -> Result<Vec<CombatClockTransitionSnapshot>, CombatClockQueryError> {
-    let (status, transition_count) = decode_response_header(bytes, request_id)
-        .map_err(|_| CombatClockQueryError::InvalidResponse)?;
-    if status == PLUGIN_STATUS_MOD_DISABLED {
-        return Err(CombatClockQueryError::ModDisabled);
-    }
-    if status != PLUGIN_STATUS_DRY_RUN_OK || transition_count as usize > COMBAT_CLOCK_HISTORY_SIZE {
-        return Err(CombatClockQueryError::InvalidResponse);
-    }
-
-    let mut transitions = Vec::with_capacity(transition_count as usize);
-    for index in 0..transition_count as usize {
-        let offset = RESPONSE_HEADER_SIZE + index * COMBAT_CLOCK_TRANSITION_SIZE;
-        let state_flags = u32::from_le_bytes(
-            bytes[offset + 24..offset + 28]
-                .try_into()
-                .expect("fixed combat clock flags"),
-        );
-        let reserved = u32::from_le_bytes(
-            bytes[offset + 28..offset + 32]
-                .try_into()
-                .expect("fixed transition reserved"),
-        );
-        let pause_type_mask = u32::from_le_bytes(
-            bytes[offset + 16..offset + 20]
-                .try_into()
-                .expect("fixed pause type mask"),
-        );
-        let reserved_value = i32::from_le_bytes(
-            bytes[offset + 20..offset + 24]
-                .try_into()
-                .expect("fixed transition reserved value"),
-        );
-        if reserved != 0
-            || reserved_value != 0
-            || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
-            || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0
-            || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
-        {
-            return Err(CombatClockQueryError::InvalidResponse);
-        }
-        transitions.push(CombatClockTransitionSnapshot {
-            sequence: u64::from_le_bytes(
-                bytes[offset..offset + 8]
-                    .try_into()
-                    .expect("fixed transition sequence"),
-            ),
-            timestamp_100ns: u64::from_le_bytes(
-                bytes[offset + 8..offset + 16]
-                    .try_into()
-                    .expect("fixed transition timestamp"),
-            ),
-            pause_type_mask,
-            reserved_value,
-            state_flags,
-        });
-    }
-    Ok(transitions)
 }
 
 fn decode_fixed_ascii(bytes: &[u8], field: &str) -> Result<String, String> {
@@ -2654,45 +2567,6 @@ mod tests {
     }
 
     #[test]
-    fn combat_clock_mod_disabled_status_is_reported_explicitly() {
-        let mut bytes = [0_u8; RESPONSE_SIZE];
-        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
-        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
-        bytes[8..16].copy_from_slice(&19_u64.to_le_bytes());
-        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_MOD_DISABLED.to_le_bytes());
-
-        assert_eq!(
-            decode_combat_clock_transitions(&bytes, 19),
-            Err(CombatClockQueryError::ModDisabled)
-        );
-    }
-
-    #[test]
-    fn combat_clock_response_accepts_the_linko_pause_type_in_the_v7_layout() {
-        let mut bytes = [0_u8; RESPONSE_SIZE];
-        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
-        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
-        bytes[8..16].copy_from_slice(&19_u64.to_le_bytes());
-        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
-        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
-        bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
-        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
-        bytes[40..44].copy_from_slice(&((1_u32 << 2) | (1_u32 << 6)).to_le_bytes());
-        bytes[48..52].copy_from_slice(&COMBAT_CLOCK_PAUSE_VALID.to_le_bytes());
-
-        assert_eq!(
-            decode_combat_clock_transitions(&bytes, 19),
-            Ok(vec![CombatClockTransitionSnapshot {
-                sequence: 7,
-                timestamp_100ns: 133_000_000_000_000_000,
-                pause_type_mask: (1 << 2) | (1 << 6),
-                reserved_value: 0,
-                state_flags: COMBAT_CLOCK_PAUSE_VALID,
-            }])
-        );
-    }
-
-    #[test]
     fn mod_event_response_uses_the_v7_union_layout() {
         let mut bytes = [0_u8; RESPONSE_SIZE];
         bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
@@ -2779,38 +2653,6 @@ mod tests {
         bytes[72..76].copy_from_slice(&3_u32.to_le_bytes());
         bytes[86] = 1;
         assert!(decode_mod_logs(&bytes, 29).is_err());
-    }
-
-    #[test]
-    fn combat_clock_response_rejects_legacy_timer_payloads() {
-        let mut bytes = [0_u8; RESPONSE_SIZE];
-        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
-        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
-        bytes[8..16].copy_from_slice(&19_u64.to_le_bytes());
-        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
-        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
-        bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
-        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
-        bytes[44..48].copy_from_slice(&87_i32.to_le_bytes());
-        bytes[48..52].copy_from_slice(&2_u32.to_le_bytes());
-
-        assert!(decode_combat_clock_transitions(&bytes, 19).is_err());
-    }
-
-    #[test]
-    fn combat_clock_response_rejects_non_authoritative_pause_types() {
-        let mut bytes = [0_u8; RESPONSE_SIZE];
-        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
-        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
-        bytes[8..16].copy_from_slice(&19_u64.to_le_bytes());
-        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
-        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
-        bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
-        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
-        bytes[40..44].copy_from_slice(&(1_u32 << 1).to_le_bytes());
-        bytes[48..52].copy_from_slice(&COMBAT_CLOCK_PAUSE_VALID.to_le_bytes());
-
-        assert!(decode_combat_clock_transitions(&bytes, 19).is_err());
     }
 
     #[test]

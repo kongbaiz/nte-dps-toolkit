@@ -36,6 +36,7 @@ use crate::core::capture::{
 };
 use crate::core::reducer::{CoreSignal, apply_engine_event};
 use crate::core::snapshot::{InventorySnapshot, inventory_snapshot};
+use crate::core::sync::lock_or_repair;
 use crate::core::timeline::TimelineScope;
 use crate::core::{CoreError, CoreErrorCode};
 use crate::engine::capture::PacketEmissionMode;
@@ -104,15 +105,7 @@ struct LatestMessageReceiver {
 fn lock_latest_message_slot(
     slot: &Mutex<Option<Value>>,
 ) -> std::sync::MutexGuard<'_, Option<Value>> {
-    match slot.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            let mut guard = poisoned.into_inner();
-            *guard = None;
-            slot.clear_poison();
-            guard
-        }
-    }
+    lock_or_repair(slot, |value| *value = None).0
 }
 
 fn latest_message_channel() -> (LatestMessageSender, LatestMessageReceiver) {

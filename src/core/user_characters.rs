@@ -4,7 +4,6 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub const PAGE_SIZE: usize = 16;
-pub const USER_CHARACTERS_CONTRACT_VERSION: u32 = 1;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +16,7 @@ pub enum SnapshotError {
 type Result<T> = std::result::Result<T, SnapshotError>;
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterPage {
     pub snapshot_id: String,
@@ -28,6 +28,7 @@ pub struct CharacterPage {
     pub detail: Option<CharacterDetail>,
 }
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterSummary {
     pub uid: String,
@@ -36,12 +37,14 @@ pub struct CharacterSummary {
     pub level: Option<String>,
 }
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterDetail {
     pub summary: CharacterSummary,
     pub sections: Vec<CharacterSection>,
 }
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterSection {
     pub title: &'static str,
@@ -49,12 +52,14 @@ pub struct CharacterSection {
     pub entries: Vec<CharacterEntry>,
 }
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterEntry {
     pub name: Option<String>,
     pub fields: Vec<CharacterField>,
 }
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CharacterField {
     pub label: String,

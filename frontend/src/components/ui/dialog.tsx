@@ -48,7 +48,7 @@ function DialogPopup({ className, ...props }: DialogPrimitive.Popup.Props) {
 function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
-      className={cn("text-lg font-semibold", className)}
+      className={cn("text-xl font-semibold", className)}
       data-slot="dialog-title"
       {...props}
     />

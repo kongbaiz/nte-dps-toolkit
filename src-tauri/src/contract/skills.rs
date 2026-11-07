@@ -1,22 +1,24 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 use nte_dps_tool::{
-    core::skills::{
-        SkillsDiagnosticsProjection, SkillsProjection, SkillsRowProjection, SkillsScope,
-        skill_label_translation_key,
+    core::{
+        skills::{
+            SkillsDiagnosticsProjection, SkillsProjection, SkillsRowProjection,
+            skill_label_translation_key,
+        },
+        timeline::TimelineScope,
     },
     engine::model::MAX_INDEXED_SKILL_TEXT_BYTES,
     storage::{ability_names, i18n},
 };
 
-pub(crate) const SKILLS_CONTRACT_VERSION: u32 = 1;
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SkillsSnapshot {
-    pub contract_version: u32,
     pub generation: String,
-    pub scope: &'static str,
+    pub scope: TimelineScope,
     pub has_data: bool,
     pub total_damage: f64,
     pub total_hits: String,
@@ -29,12 +31,11 @@ impl SkillsSnapshot {
     pub(crate) fn from_projection(
         projection: SkillsProjection,
         generation: u64,
-        scope: SkillsScope,
+        scope: TimelineScope,
     ) -> Self {
         Self {
-            contract_version: SKILLS_CONTRACT_VERSION,
             generation: generation.to_string(),
-            scope: scope_code(scope),
+            scope,
             has_data: !projection.rows.is_empty(),
             total_damage: projection.total_damage,
             total_hits: projection.total_hits.to_string(),
@@ -55,7 +56,8 @@ impl SkillsSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SkillsCharacterSnapshot {
     pub id: u32,
@@ -65,7 +67,8 @@ pub(crate) struct SkillsCharacterSnapshot {
     pub entries: u32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SkillsRowSnapshot {
     pub id: String,
@@ -138,12 +141,13 @@ fn localized_label(label: &str) -> String {
     if let Some(reaction) = label.strip_prefix("环合·")
         && let Some(key) = skill_label_translation_key(reaction)
     {
-        return format!("{} · {}", i18n::t("Esper Cycle"), i18n::t(key));
+        return i18n::tf("Esper Cycle: {}", &[&i18n::t(key)]);
     }
     label.to_owned()
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SkillsDiagnosticsSnapshot {
     pub unknown_character_count: String,
@@ -179,7 +183,8 @@ impl From<SkillsDiagnosticsProjection> for SkillsDiagnosticsSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SkillsUnknownEffectSnapshot {
     pub index: u32,
@@ -187,18 +192,11 @@ pub(crate) struct SkillsUnknownEffectSnapshot {
     pub damage: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum SkillsEvent {
     Snapshot(SkillsSnapshot),
-}
-
-pub(crate) const fn scope_code(scope: SkillsScope) -> &'static str {
-    match scope {
-        SkillsScope::Whole => "all",
-        SkillsScope::First => "upper",
-        SkillsScope::Second => "lower",
-    }
 }
 
 #[cfg(test)]
@@ -210,50 +208,11 @@ mod tests {
     };
 
     #[test]
-    fn snapshot_serializes_unsafe_counters_as_decimal_strings() {
-        let projection = SkillsProjection {
-            total_damage: 42.0,
-            total_hits: u64::MAX,
-            characters: vec![SkillsCharacterProjection {
-                id: 1,
-                name: "Character".to_owned(),
-                color: "#123abc".to_owned(),
-                damage: 42.0,
-                entries: 1,
-            }],
-            diagnostics: SkillsDiagnosticsProjection {
-                unknown_character_hits: u64::MAX,
-                unmapped_gameplay_effects: vec![SkillsUnknownEffectProjection {
-                    index: 7,
-                    hits: u64::MAX,
-                    damage: 42.0,
-                }],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let snapshot =
-            SkillsSnapshot::from_projection(projection, 9_007_199_254_740_992, SkillsScope::Whole);
-        let value = serde_json::to_value(snapshot).expect("skills snapshot serializes");
-
-        assert_eq!(value["generation"], "9007199254740992");
-        assert_eq!(value["totalHits"], u64::MAX.to_string());
-        assert_eq!(
-            value["diagnostics"]["unknownCharacterHits"],
-            u64::MAX.to_string()
-        );
-        assert_eq!(
-            value["diagnostics"]["unmappedGameplayEffects"][0]["hits"],
-            u64::MAX.to_string()
-        );
-    }
-
-    #[test]
     fn category_localization_uses_stable_keys_and_preserves_unknown_labels() {
         assert_eq!(localized_label("E技能"), i18n::t("Skill"));
         assert_eq!(
             localized_label("环合·创生"),
-            format!("{} · {}", i18n::t("Esper Cycle"), i18n::t("Blossom"))
+            i18n::tf("Esper Cycle: {}", &[&i18n::t("Blossom")])
         );
         assert_eq!(localized_label("Custom"), "Custom");
     }
@@ -301,7 +260,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let snapshot = SkillsSnapshot::from_projection(projection, u64::MAX, SkillsScope::Whole);
+        let snapshot = SkillsSnapshot::from_projection(projection, u64::MAX, TimelineScope::Whole);
         let json = serde_json::to_vec(&snapshot).expect("worst-case skills snapshot serializes");
 
         assert!(

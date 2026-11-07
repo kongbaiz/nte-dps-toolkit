@@ -1,4 +1,5 @@
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum DataMode {
     #[default]
@@ -137,6 +138,7 @@ const HOTKEY_KEYS: [HotkeyKey; 59] = [
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum DpsTimeMode {
     #[default]
@@ -145,6 +147,7 @@ pub enum DpsTimeMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ModStudioLoadingMethod {
     #[default]
@@ -177,6 +180,7 @@ impl DpsTimeMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TimelineDpsViewMode {
     #[default]
@@ -199,6 +203,7 @@ impl TimelineDpsViewMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum GlobalHotkeyAction {
     ToggleCapture,
@@ -479,6 +484,7 @@ impl Default for GlobalHotkeys {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum MainDpsMetric {
     TeamDps,
@@ -494,18 +500,10 @@ impl MainDpsMetric {
         Self::TotalDamageTaken,
         Self::Duration,
     ];
-
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::TeamDps => "team-dps",
-            Self::TotalDamage => "total-damage",
-            Self::TotalDamageTaken => "total-damage-taken",
-            Self::Duration => "duration",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum MainDpsAttribution {
     Character,
@@ -523,19 +521,10 @@ impl MainDpsAttribution {
         Self::Unattributed,
         Self::MaxHpReduction,
     ];
-
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Character => "character",
-            Self::Reaction => "reaction",
-            Self::Shared => "shared",
-            Self::Unattributed => "unattributed",
-            Self::MaxHpReduction => "max-hp-reduction",
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(default)]
 pub struct MainDpsDisplayConfig {
     pub metrics: Vec<MainDpsMetric>,
@@ -616,6 +605,7 @@ where
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum AccentColor {
     #[default]
@@ -644,6 +634,7 @@ impl AccentColor {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreset {
     #[default]
@@ -677,6 +668,7 @@ impl ThemePreset {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
     Compact,
@@ -701,6 +693,7 @@ impl UiDensity {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum HudModule {
     Title,

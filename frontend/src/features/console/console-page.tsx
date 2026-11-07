@@ -26,7 +26,7 @@ import { ShortcutsPage } from "@/features/shortcuts/shortcuts-page";
 import { SkillsPage } from "@/features/skills/skills-page";
 import { TimelinePage } from "@/features/timeline/timeline-page";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
-import { t, useTranslationRevision } from "@/lib/i18n";
+import { t, useFrontendLanguage } from "@/lib/i18n";
 import { startMotionViewTransition } from "@/lib/motion";
 import { applySettingsPresentation } from "@/lib/settings-presentation";
 import { consoleControlClient } from "@/lib/tauri/console-control-client";
@@ -34,9 +34,9 @@ import { desktopWindowClient } from "@/lib/tauri/desktop-window-client";
 import { diagnosticsClient } from "@/lib/tauri/diagnostics-client";
 import { historyClient } from "@/lib/tauri/history-client";
 import { mainDpsClient } from "@/lib/tauri/main-dps-client";
-import { parseMainDpsCommandError } from "@/lib/tauri/main-dps-contract";
+import type { InterfaceSettingsSnapshot } from "@/lib/tauri/generated/InterfaceSettingsSnapshot";
+import { toCommandError } from "@/lib/tauri/command-error";
 import { settingsClient } from "@/lib/tauri/settings-client";
-import type { InterfaceSettings } from "@/lib/tauri/settings-contract";
 import { subscribeConsoleNavigate } from "@/lib/tauri/window-events";
 
 import { ConsoleCommandPalette } from "./console-command-palette";
@@ -57,7 +57,7 @@ import {
 import { ConsoleSidebar } from "./console-sidebar";
 
 export function ConsolePage() {
-  useTranslationRevision();
+  useFrontendLanguage();
   const [activePage, setActivePage] =
     useState<ConsolePageId>(DEFAULT_CONSOLE_PAGE);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -188,9 +188,7 @@ export function ConsolePage() {
             try {
               await mainDpsClient.importReplay(action.format, false);
             } catch (error) {
-              if (
-                parseMainDpsCommandError(error).code === "confirmation_required"
-              ) {
+              if (toCommandError(error).code === "confirmation_required") {
                 setReplayConfirmation({
                   kind: "dialog",
                   replayKind: action.format,
@@ -262,7 +260,7 @@ export function ConsolePage() {
         }}
         status={
           <button
-            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted hover:text-foreground active:scale-[0.97]"
+            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-(--motion-duration-fast) ease-(--motion-ease-standard) hover:bg-muted hover:text-foreground active:scale-[0.97]"
             onClick={() => setCommandPaletteOpen(true)}
             title={`${t("Command palette")} / Ctrl+K`}
             type="button"
@@ -444,9 +442,9 @@ export function ConsolePage() {
           }}
         >
           <AlertDialogPortal>
-            <AlertDialogBackdrop className="z-[80] bg-black/45" />
+            <AlertDialogBackdrop className="z-[80]" />
             <AlertDialogPopup className="ui-motion-dialog top-1/2 left-1/2 z-[81] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-background p-5 shadow-2xl">
-              <AlertDialogTitle className="text-base">
+              <AlertDialogTitle className="text-sm">
                 {t("Confirm Import")}
               </AlertDialogTitle>
               <AlertDialogDescription className="mt-2">
@@ -474,7 +472,7 @@ export function ConsolePage() {
     try {
       await mainDpsClient.importReplayPath(path, replaceCurrent);
     } catch (error) {
-      const parsed = parseMainDpsCommandError(error);
+      const parsed = toCommandError(error);
       if (parsed.code === "confirmation_required" && !replaceCurrent) {
         setReplayConfirmation({ kind: "path", path });
         return;
@@ -495,7 +493,7 @@ export function ConsolePage() {
     try {
       await mainDpsClient.importReplay(pending.replayKind, true);
     } catch (error) {
-      setCommandError(commandErrorMessage(parseMainDpsCommandError(error)));
+      setCommandError(commandErrorMessage(toCommandError(error)));
     }
   }
 }
@@ -503,11 +501,11 @@ export function ConsolePage() {
 async function updateInterface(
   patch: Partial<
     Pick<
-      InterfaceSettings,
+      InterfaceSettingsSnapshot,
       "darkMode" | "themePreset" | "accent" | "density" | "reduceMotion"
     >
   >,
-  existing?: InterfaceSettings,
+  existing?: InterfaceSettingsSnapshot,
 ): Promise<void> {
   const current = existing ?? (await settingsClient.getSnapshot()).interface;
   const snapshot = await settingsClient.setInterface({

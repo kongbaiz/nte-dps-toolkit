@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     engine::model::{
         AbyssHalf, COMBAT_SEGMENT_GAP_SECONDS, CharacterInfo, CombatState, TimelineMarkerKind,
@@ -21,11 +23,16 @@ pub const TIMELINE_BUCKET_SECONDS_STEP: f32 = 0.1;
 /// untrusted and must not be able to exceed the bounded Timeline delivery.
 pub const MAX_TIMELINE_CHARACTER_NAME_BYTES: usize = 128;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Whole battle or one abyss half; shared by the timeline and skills pages.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 pub enum TimelineScope {
     #[default]
+    #[serde(rename = "all")]
     Whole,
+    #[serde(rename = "upper")]
     First,
+    #[serde(rename = "lower")]
     Second,
 }
 
@@ -81,7 +88,9 @@ pub struct TimelineMarkerProjection {
     pub kind: TimelineMarkerProjectionKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
 pub enum TimelineMarkerProjectionKind {
     Half,
     Clear,

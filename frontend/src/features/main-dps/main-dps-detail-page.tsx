@@ -1,10 +1,17 @@
 import { HitSnapshotDialog } from "./hit-snapshot-dialog";
-import { ChevronDown, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import {
+  ChevronDown,
+  LoaderCircle,
+  RefreshCw,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { MaxHpCompressionEffect } from "@/components/nte/max-hp-compression-effect";
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/form-controls";
 import {
   Popover,
   PopoverPopup,
@@ -15,22 +22,15 @@ import {
 } from "@/components/ui/popover";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
-import {
-  currentFrontendLanguage,
-  t,
-  tf,
-  useTranslationRevision,
-} from "@/lib/i18n";
+import { t, tf, useFrontendLanguage } from "@/lib/i18n";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import { mainDpsDetailClient } from "@/lib/tauri/main-dps-detail-client";
-import type {
-  MainDpsAttributionSummary,
-  MainDpsDetailColumns,
-  MainDpsDetailFilter,
-  MainDpsDetailSnapshot,
-  MainDpsFilterSummary,
-  MainDpsHit,
-} from "@/lib/tauri/main-dps-detail-contract";
+import type { MainDpsAttributionSummary } from "@/lib/tauri/generated/MainDpsAttributionSummary";
+import type { MainDpsDetailColumns } from "@/lib/tauri/generated/MainDpsDetailColumns";
+import type { MainDpsDetailFilter } from "@/lib/tauri/generated/MainDpsDetailFilter";
+import type { MainDpsDetailSnapshot } from "@/lib/tauri/generated/MainDpsDetailSnapshot";
+import type { MainDpsFilterSummary } from "@/lib/tauri/generated/MainDpsFilterSummary";
+import type { MainDpsHitSnapshot } from "@/lib/tauri/generated/MainDpsHitSnapshot";
 import { cn } from "@/lib/utils";
 import { monsterImageUrl } from "@/features/abyss-values/abyss-values-model";
 
@@ -57,7 +57,7 @@ import {
 } from "./main-dps-detail-model";
 
 export function MainDpsDetailPage() {
-  useTranslationRevision();
+  useFrontendLanguage();
   useSettingsPresentation();
   const [snapshot, setSnapshot] = useState<MainDpsDetailSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -201,8 +201,8 @@ export function MainDpsDetailPage() {
 
       {snapshot === null ? (
         <div className="grid min-h-0 flex-1 place-items-center">
-          <div
-            className="size-7 animate-spin rounded-full border-2 border-muted border-t-foreground"
+          <LoaderCircle
+            className="size-7 animate-spin text-muted-foreground"
             aria-label={t("Loading")}
           />
         </div>
@@ -235,8 +235,8 @@ export function MainDpsDetailPage() {
                       {t("Specific Move")}
                     </span>
                     <label className="relative min-w-52 flex-1 sm:max-w-80">
-                      <select
-                        className="h-8 w-full appearance-none rounded-lg border bg-background px-3 pr-8 text-sm"
+                      <NativeSelect
+                        className="h-8 appearance-none pr-8"
                         value={snapshot.skillFilter ?? ""}
                         disabled={pending}
                         onChange={(event) =>
@@ -254,7 +254,7 @@ export function MainDpsDetailPage() {
                             {skill.hits} {t("hits")}
                           </option>
                         ))}
-                      </select>
+                      </NativeSelect>
                       <ChevronDown className="pointer-events-none absolute right-2 top-2 size-4" />
                     </label>
                   </>
@@ -438,7 +438,7 @@ function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
                 </span>
               </span>
               <span
-                className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted text-lg font-semibold"
+                className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted text-xl font-semibold"
                 style={{
                   backgroundColor: snapshot.characterColor ?? undefined,
                 }}
@@ -479,7 +479,7 @@ function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
           >
             <strong
               className={cn(
-                "block truncate font-mono text-lg font-medium tabular-nums",
+                "block truncate font-mono text-xl font-medium tabular-nums",
                 danger && "text-destructive",
               )}
             >
@@ -632,7 +632,9 @@ function HitTable({
   importReplay(): void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [selectedHit, setSelectedHit] = useState<MainDpsHit | null>(null);
+  const [selectedHit, setSelectedHit] = useState<MainDpsHitSnapshot | null>(
+    null,
+  );
   useEffect(
     () => setSelectedHit(null),
     [snapshot.kind, snapshot.characterId, snapshot.abyssHalf],
@@ -844,7 +846,7 @@ function HitRow({
   openSnapshot,
 }: {
   openSnapshot: () => void;
-  row: MainDpsHit;
+  row: MainDpsHitSnapshot;
   team: boolean;
   columns: MainDpsDetailColumns;
   maxDamage: number;
@@ -853,11 +855,6 @@ function HitRow({
   const targetPortrait = row.targetMonsterId
     ? monsterImageUrl(row.targetMonsterId)
     : null;
-  const typeSeparator = row.typeLabel.indexOf("·");
-  const typeCategory =
-    typeSeparator < 0 ? row.typeLabel : row.typeLabel.slice(0, typeSeparator);
-  const typeDetail =
-    typeSeparator < 0 ? null : row.typeLabel.slice(typeSeparator + 1);
   const hpCompression = maxHpCompression(
     row.targetMaxHp ?? 0,
     row.maxHpReduction ?? 0,
@@ -921,15 +918,15 @@ function HitRow({
             <span
               className="main-dps-hit-type"
               data-direction={row.direction}
-              title={`${row.typeLabel}\n${row.skill}\n${row.damageType}`}
+              title={`${row.typeLabel} ${row.typeDetail ?? ""}\n${row.skill}\n${row.damageType}`}
             >
               <span className="main-dps-hit-type-marker" aria-hidden="true" />
               {row.reactionTextKey === null ? (
                 <span className="flex min-w-0 items-center text-xs">
-                  <span className="truncate font-medium">{typeCategory}</span>
-                  {typeDetail && (
+                  <span className="truncate font-medium">{row.typeLabel}</span>
+                  {row.typeDetail && (
                     <span className="main-dps-hit-type-detail shrink-0">
-                      {typeDetail}
+                      {row.typeDetail}
                     </span>
                   )}
                 </span>
@@ -974,7 +971,7 @@ function HitRow({
           <span
             className={
               row.critical === true
-                ? "font-semibold text-amber-600"
+                ? "font-semibold text-warning"
                 : row.critical === null
                   ? "text-muted-foreground"
                   : ""
@@ -993,9 +990,9 @@ function HitRow({
                 className={cn(
                   "absolute inset-y-1 left-1 rounded-md",
                   hpPercent > 50
-                    ? "bg-emerald-600/15"
+                    ? "bg-success/15"
                     : hpPercent > 20
-                      ? "bg-amber-500/20"
+                      ? "bg-warning/20"
                       : "bg-destructive/20",
                 )}
                 style={{ width: `calc(${hpPercentOfPreviousMax}% - 0.5rem)` }}
@@ -1146,8 +1143,8 @@ function DamageDigits({
     return (
       <span
         className={cn(
-          "font-mono font-semibold tabular-nums text-cyan-950 dark:text-cyan-100",
-          compact ? "text-xs" : "text-lg",
+          "font-mono font-semibold tabular-nums text-info",
+          compact ? "text-xs" : "text-xl",
         )}
       >
         {formatMainMetric(value)}
@@ -1179,7 +1176,7 @@ function ReactionLabelImages({
   reaction: number;
   fallback: string;
 }) {
-  const language = currentFrontendLanguage();
+  const language = useFrontendLanguage();
   const folder = language === "zh-CN" ? "zh" : language;
   const urls = damageImageLookup.reaction(folder, reaction);
   if (urls.length === 0) return fallback;

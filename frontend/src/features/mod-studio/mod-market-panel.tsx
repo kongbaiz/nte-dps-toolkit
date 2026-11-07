@@ -13,6 +13,7 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import {
   Empty,
   EmptyDescription,
@@ -21,13 +22,9 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  currentFrontendLanguage,
-  t,
-  tf,
-  useTranslationRevision,
-} from "@/lib/i18n";
-import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
+import { t, tf, useFrontendLanguage } from "@/lib/i18n";
+import type { Language } from "@/lib/tauri/generated/Language";
+import type { ModMarketItemSnapshot } from "@/lib/tauri/generated/ModMarketItemSnapshot";
 
 import {
   hasModMarketUpdate,
@@ -44,8 +41,7 @@ export function ModMarketPanel({
   market: ReturnType<typeof useModMarket>;
 }) {
   const { state, installStates, refresh, install } = market;
-  useTranslationRevision();
-  const language = currentFrontendLanguage();
+  const language = useFrontendLanguage();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<ModMarketCategory>("plugins");
   const visibleMods = useMemo(() => {
@@ -110,8 +106,8 @@ export function ModMarketPanel({
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden="true"
           />
-          <input
-            className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm"
+          <Input
+            className="pl-9"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t(searchLabel)}
@@ -130,7 +126,7 @@ export function ModMarketPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <h2 className="text-base font-semibold">
+        <h2 className="text-sm font-semibold">
           {t(foundation ? "Foundation components" : "Feature plugins")}
         </h2>
         <p className="mb-4 mt-1 text-sm text-muted-foreground">
@@ -140,7 +136,7 @@ export function ModMarketPanel({
               : "Optional combat, account and training features. Runtime components are managed separately.",
           )}
         </p>
-        <Alert className="mb-4 border-[var(--console-success)]/40 bg-[var(--console-success)]/5">
+        <Alert className="mb-4 border-success/40 bg-success/5">
           <ShieldCheck aria-hidden="true" />
           <AlertTitle>{t("Privacy-protected downloads")}</AlertTitle>
           <AlertDescription>
@@ -211,8 +207,8 @@ function MarketItem({
   installState,
   onInstall,
 }: {
-  item: ModMarketItem;
-  language: ReturnType<typeof currentFrontendLanguage>;
+  item: ModMarketItemSnapshot;
+  language: Language;
   installState: ModMarketInstallState;
   onInstall: () => void;
 }) {
@@ -230,7 +226,7 @@ function MarketItem({
     <article className="flex min-h-64 flex-col rounded-lg border bg-background p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="truncate font-heading text-base font-semibold">
+          <h3 className="truncate font-heading text-sm font-semibold">
             {localized.name}
             {hasModMarketUpdate(item) && (
               <span

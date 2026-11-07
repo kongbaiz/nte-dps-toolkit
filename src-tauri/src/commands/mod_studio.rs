@@ -62,16 +62,14 @@ pub(crate) async fn install_mod_market_item(
             .map_err(|_| CommandError::mod_market_download_failed())?;
         let verified =
             verify_mod_market_package(item, &bytes).map_err(CommandError::from_mod_market)?;
-        let _permit = state
-            .reserve_plugin_control()
-            .map_err(CommandError::from_core)?;
+        let _permit = state.reserve_plugin_control()?;
         if matches!(
             state.capture_phase(),
             nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         ) {
-            return Err(super::toolkit::error(
+            return Err(CommandError::from(
                 nte_dps_tool::platform::toolkit::ToolkitError::Busy,
             ));
         }

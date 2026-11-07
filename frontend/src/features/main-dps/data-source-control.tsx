@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Cable, Network, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
-import { toolkitClient, type DataMode } from "@/lib/tauri/toolkit-client";
+import type { DataMode } from "@/lib/tauri/generated/DataMode";
+import { toolkitClient } from "@/lib/tauri/toolkit-client";
 import {
   AlertDialog,
   AlertDialogTrigger,

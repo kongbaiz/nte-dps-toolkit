@@ -3,9 +3,11 @@ import { userCharacterArtworkFixture } from "./user-character-fixture";
 import frontendPackage from "../package.json";
 // Development-only entry; excluded from production Vite inputs.
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import type { PacketsSnapshot } from "@/lib/tauri/generated/PacketsSnapshot";
+import type { SettingsSnapshot } from "@/lib/tauri/generated/SettingsSnapshot";
+import type { SkillsSnapshot } from "@/lib/tauri/generated/SkillsSnapshot";
+import type { TimelineSnapshot } from "@/lib/tauri/generated/TimelineSnapshot";
 import { TIMELINE_UI_PREVIEW } from "@/features/timeline/timeline-ui-preview";
-import { parseTimelineSnapshot } from "@/lib/tauri/timeline-contract";
-import { parseSettingsSnapshot } from "@/lib/tauri/settings-contract";
 import {
   settingsFixture,
   marketFixture,
@@ -16,34 +18,28 @@ import {
   diagnosticsFixture,
   iniFixture,
 } from "./fixtures";
-import { parseHistorySnapshot } from "@/lib/tauri/history-contract";
-import { parseSkillsSnapshot } from "@/lib/tauri/skills-contract";
-import { parsePacketsSnapshot } from "@/lib/tauri/packets-contract";
-import { parseEmptyCurtainSnapshot } from "@/lib/tauri/empty-curtain-contract";
-import { parseDiagnosticsSnapshot } from "@/lib/tauri/diagnostics-contract";
 
 const params = new URLSearchParams(location.search);
 let previewMode =
   params.get("plugin") === "packet" ? "packet_capture" : "plugin";
 let previewLoadingMethod =
   params.get("loading") === "loader" ? "loader" : "proxy";
-const settings = parseSettingsSnapshot(settingsFixture());
+const settings: SettingsSnapshot = settingsFixture();
 settings.adapterVersion = frontendPackage.version;
 settings.updates.currentVersion = frontendPackage.version;
 settings.interface.darkMode = params.get("theme") !== "light";
 settings.interface.reduceMotion = params.get("motion") === "reduced";
 if (params.get("accent") === "blue") settings.interface.accent = "blue";
 if (params.get("preset") === "high-contrast")
-  settings.interface.themePreset = "high-contrast";
+  settings.interface.themePreset = "high_contrast";
 if (params.get("preset") === "tactical")
   settings.interface.themePreset = "tactical";
 if (params.get("density") === "compact") settings.interface.density = "compact";
 if (params.get("density") === "comfortable")
   settings.interface.density = "comfortable";
 if (params.get("language") === "en") settings.interface.language = "en";
-const timeline = parseTimelineSnapshot({
+const timeline: TimelineSnapshot = {
   ...TIMELINE_UI_PREVIEW,
-  contractVersion: 3,
   generation: "1",
   scope: "all",
   viewMode: "team",
@@ -56,8 +52,8 @@ const timeline = parseTimelineSnapshot({
   timeStopDuration: 5,
   compactedTimeStopIntervals: "0",
   segments: [{ start: 0, end: 48, dps: 118506 }],
-});
-const previewPackets = parsePacketsSnapshot({
+};
+const previewPackets: PacketsSnapshot = {
   ...packetsFixture,
   packets: Array.from({ length: 8 }, (_, index) => ({
     ...packetsFixture.packets[0],
@@ -65,8 +61,8 @@ const previewPackets = parsePacketsSnapshot({
     timestamp: packetsFixture.packets[0].timestamp + index * 0.125,
     parsedHits: index % 3 === 0 ? 1 : 0,
   })),
-});
-const previewSkills = parseSkillsSnapshot({
+};
+const previewSkills: SkillsSnapshot = {
   ...skillsFixture,
   totalDamage: 5688311,
   totalHits: "96",
@@ -89,7 +85,7 @@ const previewSkills = parseSkillsSnapshot({
           : Math.floor(damage * share),
     })),
   ),
-});
+};
 let generation = BigInt(settings.generation);
 mockWindows("console");
 mockIPC(
@@ -101,18 +97,16 @@ mockIPC(
       !Array.isArray(args)
         ? args
         : {};
-    if (command === "get_history_snapshot")
-      return parseHistorySnapshot(historyFixture());
+    if (command === "get_history_snapshot") return historyFixture();
     if (command === "get_skills_snapshot")
-      return parseSkillsSnapshot({ ...previewSkills, scope: payload.scope });
+      return { ...previewSkills, scope: payload.scope };
     if (command === "get_packets_snapshot") return previewPackets;
     if (command === "get_empty_curtain_snapshot")
-      return parseEmptyCurtainSnapshot({
+      return {
         ...equipmentFixture,
         canOperate: previewMode === "plugin",
-      });
-    if (command === "get_diagnostics_snapshot")
-      return parseDiagnosticsSnapshot(diagnosticsFixture);
+      };
+    if (command === "get_diagnostics_snapshot") return diagnosticsFixture;
     if (command === "get_encrypted_ini_snapshot") return iniFixture;
     if (command === "get_user_characters") {
       if (params.get("characters") === "unavailable")
@@ -129,7 +123,6 @@ mockIPC(
     }
     if (command === "get_character_data_snapshot")
       return {
-        contractVersion: 1,
         generation: "1",
         attributes: ["灵", "咒"],
         records: [
@@ -177,7 +170,6 @@ mockIPC(
       );
       if (!row) throw new Error("Unknown fixture hit");
       return {
-        contractVersion: 1,
         hitId: row.id,
         snapshotKey: row.snapshotKey,
         snapshot: {
@@ -217,7 +209,6 @@ mockIPC(
       const connected = params.get("plugin") === "connected";
       const packet = previewMode === "packet_capture";
       return {
-        contractVersion: 5,
         loadingMethod: previewLoadingMethod,
         gameDirectory: null,
         mode: packet ? "packet_capture" : "plugin",
@@ -278,15 +269,14 @@ mockIPC(
       command === "acknowledge_stream_delivery"
     )
       return null;
-    if (command === "get_settings_snapshot")
-      return parseSettingsSnapshot(settings);
+    if (command === "get_settings_snapshot") return settings;
     if (command === "set_settings_interface") {
       settings.interface = {
         ...settings.interface,
         ...Object(payload.settings),
       };
       settings.generation = String(++generation);
-      return parseSettingsSnapshot(settings);
+      return settings;
     }
     if (
       command === "get_timeline_snapshot" ||
@@ -304,11 +294,11 @@ mockIPC(
         timeline.viewMode =
           payload.viewMode === "characters" ? "characters" : "team";
       }
-      return parseTimelineSnapshot({
+      return {
         ...timeline,
         scope: payload.scope,
         generation: String(++generation),
-      });
+      };
     }
     if (command === "subscribe_settings" || command === "subscribe_timeline") {
       if (command === "subscribe_settings") {
@@ -322,9 +312,7 @@ mockIPC(
           throw new Error("QA settings channel is missing");
         channel.onmessage({
           streamProtocolVersion: 2,
-          events: [
-            { event: "snapshot", payload: parseSettingsSnapshot(settings) },
-          ],
+          events: [{ event: "snapshot", payload: settings }],
         });
       }
       return {

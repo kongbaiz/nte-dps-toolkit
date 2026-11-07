@@ -10,12 +10,12 @@ const INLINE_TOKEN =
   /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\[[^\]\n]+\]\([^\s)]+\)|\*[^*\n]+\*|_[^_\n]+_)/g;
 
 const HEADING_CLASSES = [
-  "text-base font-semibold",
+  "text-sm font-semibold",
   "text-sm font-semibold",
   "text-sm font-medium",
-  "text-xs font-semibold uppercase tracking-wide",
-  "text-xs font-semibold uppercase tracking-wide",
-  "text-xs font-semibold uppercase tracking-wide",
+  "text-xs font-semibold",
+  "text-xs font-semibold",
+  "text-xs font-semibold",
 ] as const;
 
 export function Markdown({ children, className, ...props }: MarkdownProps) {

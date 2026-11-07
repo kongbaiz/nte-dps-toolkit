@@ -113,8 +113,10 @@ impl Watch {
         Ok(())
     }
 }
+const EQUIPMENT_WATCH_COMMAND: u32 = 306;
+
 pub fn watch(host: &ToolkitClient, stop: &std::sync::atomic::AtomicBool) -> Result<Watch, Error> {
-    let value: Watch = host.json(300, 1, "", &|| {
+    let value: Watch = host.json(EQUIPMENT_WATCH_COMMAND, 1, "", &|| {
         stop.load(std::sync::atomic::Ordering::Acquire)
     })?;
     value.validate(&host.identity())?;
@@ -932,6 +934,23 @@ mod tests {
         );
         assert!(!store.confirming().unwrap());
     }
+    #[test]
+    #[ignore = "requires an isolated native host with the User plugin, not a game"]
+    fn watch_uses_native_equipment_subscription_endpoint() {
+        let pid = std::env::var("NTE_TOOLKIT_TEST_PID")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let host = ToolkitClient::open(pid).unwrap();
+        let error = watch(&host, &std::sync::atomic::AtomicBool::new(false)).unwrap_err();
+        // The real account plugin accepts the endpoint but cannot read a game
+        // in this fixture. The obsolete status/1 request fails InvalidProtocol.
+        assert_eq!(error, Error::Transport(ToolkitError::OperationUnavailable));
+        println!(
+            "EQUIPMENT_WATCH_ENDPOINT_PASS: endpoint accepted; unavailable game context distinguished from malformed request"
+        );
+    }
+
     #[test]
     fn watch_rejects_future_duplicate_foreign_and_unsupported_changes() {
         let watch = Watch {

@@ -690,7 +690,7 @@ fn unwrap_packet_id(packet_id: u16, reference: Option<i64>) -> i64 {
     unwrapped
 }
 
-fn append_bounded_bits(
+pub(crate) fn append_bounded_bits(
     destination: &mut Vec<u8>,
     destination_bit_len: &mut usize,
     source: &[u8],

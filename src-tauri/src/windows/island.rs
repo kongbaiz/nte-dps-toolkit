@@ -1,3 +1,4 @@
+use crate::contract::island::IslandTone;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
     window::Monitor,
@@ -81,7 +82,7 @@ pub(crate) fn show_notice(app: &AppHandle, state: &AppState) -> Result<(), Comma
 pub(crate) fn publish_notice(
     app: &AppHandle,
     state: &AppState,
-    tone: &'static str,
+    tone: IslandTone,
     message_key: &'static str,
     message_arguments: Vec<String>,
 ) -> Result<(), CommandError> {
@@ -98,7 +99,7 @@ pub(crate) fn publish_notice(
 pub(crate) fn publish_notice_best_effort(
     app: &AppHandle,
     state: &AppState,
-    tone: &'static str,
+    tone: IslandTone,
     message_key: &'static str,
     message_arguments: Vec<String>,
 ) {

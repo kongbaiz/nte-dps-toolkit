@@ -2,7 +2,7 @@ import { shouldAcceptDecimalVersion } from "@/lib/decimal-string";
 import { t, tf } from "@/lib/i18n";
 
 export { characterAccent } from "@/lib/character-color";
-import type { MainDpsRound } from "@/lib/tauri/main-dps-contract";
+import type { MainDpsRoundSnapshot } from "@/lib/tauri/generated/MainDpsRoundSnapshot";
 
 const numberFormatter = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 0,
@@ -45,7 +45,7 @@ export function maxHpCompression(
   };
 }
 
-export function roundLabel(round: MainDpsRound): string {
+export function roundLabel(round: MainDpsRoundSnapshot): string {
   if (round.live) return t("Live");
   const prefix =
     round.abyssFloor === null

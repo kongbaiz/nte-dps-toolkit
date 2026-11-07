@@ -3,15 +3,11 @@ use tauri::{State, WebviewWindow, ipc::Channel};
 use crate::{
     channels::stream_runtime::{
         PollingStreamOutput, StreamDeliveryEndpoint, spawn_blocking_polling_stream,
-        stream_registry_error, validate_subscription_id,
+        validate_subscription_id,
     },
-    commands::empty_curtain::{
-        empty_curtain_runtime_error, poll_plugin_changes, snapshot_with_operation,
-    },
+    commands::empty_curtain::{poll_plugin_changes, snapshot_with_operation},
     contract::{
-        CommandError, SubscriptionReceipt,
-        empty_curtain::EmptyCurtainEvent,
-        stream::{StreamDeliveryBody, StreamKind},
+        CommandError, SubscriptionReceipt, empty_curtain::EmptyCurtainEvent, stream::StreamKind,
     },
     state::AppState,
     windows::console,
@@ -21,21 +17,17 @@ pub(crate) const EMPTY_CURTAIN_STREAM_INTERVAL_MS: u32 = 500;
 #[tauri::command]
 pub(crate) fn subscribe_empty_curtain(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<EmptyCurtainEvent>>,
+    on_event: Channel<EmptyCurtainEvent>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .empty_curtain_revision_and_operation()
-        .map_err(empty_curtain_runtime_error)?;
+    state.empty_curtain_revision_and_operation()?;
     let stream_kind = StreamKind::EmptyCurtain;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     let mut last_revision = None;
     spawn_blocking_polling_stream(
@@ -94,11 +86,9 @@ pub(crate) fn unsubscribe_empty_curtain(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::EmptyCurtain.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::EmptyCurtain.stream_key(&subscription_id),
+    )?;
     Ok(())
 }

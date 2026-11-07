@@ -1,27 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { shouldAcceptDecimalVersion } from "@/lib/decimal-string";
-import {
-  historyClient,
-  historyClientError,
-  type HistoryClient,
-} from "@/lib/tauri/history-client";
-import type {
-  HistoryCommandError,
-  HistoryComparison,
-  HistoryExport,
-  HistoryLine,
-  HistorySnapshot,
-} from "@/lib/tauri/history-contract";
+import { historyClient } from "@/lib/tauri/history-client";
+import type { AbyssHalf } from "@/lib/tauri/generated/AbyssHalf";
+import type { HistoryComparisonSnapshot } from "@/lib/tauri/generated/HistoryComparisonSnapshot";
+import type { HistorySnapshot } from "@/lib/tauri/generated/HistorySnapshot";
+import { type CommandError, toCommandError } from "@/lib/tauri/command-error";
 
 import type { HistoryPageState } from "./history-view-model";
 
-export function useHistory(client: HistoryClient = historyClient) {
+export function useHistory() {
   const [state, setState] = useState<HistoryPageState>({ status: "loading" });
   const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [mutationError, setMutationError] =
-    useState<HistoryCommandError | null>(null);
-  const [comparison, setComparison] = useState<HistoryComparison | null>(null);
+  const [mutationError, setMutationError] = useState<CommandError | null>(null);
+  const [comparison, setComparison] =
+    useState<HistoryComparisonSnapshot | null>(null);
   const [statusMessageKey, setStatusMessageKey] = useState<string | null>(null);
   const [preferredRecordId, setPreferredRecordId] = useState<string | null>(
     null,
@@ -75,14 +68,14 @@ export function useHistory(client: HistoryClient = historyClient) {
     const generation = ++requestGeneration.current;
     setMutationError(null);
     try {
-      const snapshot = await client.getSnapshot();
+      const snapshot = await historyClient.getSnapshot();
       if (mounted.current && generation === requestGeneration.current) {
         return applySnapshot(snapshot, true);
       }
       return false;
     } catch (error) {
       if (!mounted.current || generation !== requestGeneration.current) return;
-      const parsed = historyClientError(error);
+      const parsed = toCommandError(error);
       setState((current) =>
         current.status === "ready"
           ? current
@@ -94,7 +87,7 @@ export function useHistory(client: HistoryClient = historyClient) {
       operationPending.current = false;
       if (mounted.current) setPendingAction(null);
     }
-  }, [applySnapshot, client]);
+  }, [applySnapshot]);
 
   const reload = useCallback(async () => {
     if ((await refresh()) && mounted.current) {
@@ -107,7 +100,7 @@ export function useHistory(client: HistoryClient = historyClient) {
   }, [refresh]);
 
   useEffect(() => {
-    const unsubscribe = client.subscribe(
+    const unsubscribe = historyClient.subscribe(
       (snapshot) => {
         if (mounted.current) applySnapshot(snapshot);
       },
@@ -116,7 +109,7 @@ export function useHistory(client: HistoryClient = historyClient) {
       },
     );
     return () => void unsubscribe();
-  }, [applySnapshot, client]);
+  }, [applySnapshot]);
 
   useEffect(() => {
     if (undoDeletion === null) return;
@@ -141,7 +134,7 @@ export function useHistory(client: HistoryClient = historyClient) {
         }
         return false;
       } catch (error) {
-        if (mounted.current) setMutationError(historyClientError(error));
+        if (mounted.current) setMutationError(toCommandError(error));
         return false;
       } finally {
         operationPending.current = false;
@@ -151,46 +144,24 @@ export function useHistory(client: HistoryClient = historyClient) {
     [applySnapshot],
   );
 
-  const compare = useCallback(
-    async (leftId: string, rightId: string) => {
-      if (operationPending.current) return;
-      operationPending.current = true;
-      setPendingAction("compare");
-      setMutationError(null);
-      const generation = ++comparisonGeneration.current;
-      try {
-        const result = await client.compare(leftId, rightId);
-        if (mounted.current && generation === comparisonGeneration.current) {
-          setComparison(result);
-        }
-      } catch (error) {
-        if (mounted.current) setMutationError(historyClientError(error));
-      } finally {
-        operationPending.current = false;
-        if (mounted.current) setPendingAction(null);
+  const compare = useCallback(async (leftId: string, rightId: string) => {
+    if (operationPending.current) return;
+    operationPending.current = true;
+    setPendingAction("compare");
+    setMutationError(null);
+    const generation = ++comparisonGeneration.current;
+    try {
+      const result = await historyClient.compare(leftId, rightId);
+      if (mounted.current && generation === comparisonGeneration.current) {
+        setComparison(result);
       }
-    },
-    [client],
-  );
-
-  const exportRecord = useCallback(
-    async (recordId: string): Promise<HistoryExport | null> => {
-      if (operationPending.current) return null;
-      operationPending.current = true;
-      setPendingAction("export");
-      setMutationError(null);
-      try {
-        return await client.exportRecord(recordId);
-      } catch (error) {
-        if (mounted.current) setMutationError(historyClientError(error));
-        return null;
-      } finally {
-        operationPending.current = false;
-        if (mounted.current) setPendingAction(null);
-      }
-    },
-    [client],
-  );
+    } catch (error) {
+      if (mounted.current) setMutationError(toCommandError(error));
+    } finally {
+      operationPending.current = false;
+      if (mounted.current) setPendingAction(null);
+    }
+  }, []);
 
   const importFile = useCallback(async () => {
     if (operationPending.current) return;
@@ -198,7 +169,7 @@ export function useHistory(client: HistoryClient = historyClient) {
     setPendingAction("import");
     setMutationError(null);
     try {
-      const result = await client.importFile();
+      const result = await historyClient.importFile();
       if (mounted.current && result.performed) {
         requestGeneration.current += 1;
         applySnapshot(result.history, true);
@@ -207,33 +178,30 @@ export function useHistory(client: HistoryClient = historyClient) {
         setStatusMessageKey("History summary imported");
       }
     } catch (error) {
-      if (mounted.current) setMutationError(historyClientError(error));
+      if (mounted.current) setMutationError(toCommandError(error));
     } finally {
       operationPending.current = false;
       if (mounted.current) setPendingAction(null);
     }
-  }, [applySnapshot, client]);
+  }, [applySnapshot]);
 
-  const exportRecordFile = useCallback(
-    async (recordId: string) => {
-      if (operationPending.current) return;
-      operationPending.current = true;
-      setPendingAction("export");
-      setMutationError(null);
-      try {
-        const result = await client.exportRecordFile(recordId);
-        if (mounted.current && result.performed) {
-          setStatusMessageKey("History summary exported");
-        }
-      } catch (error) {
-        if (mounted.current) setMutationError(historyClientError(error));
-      } finally {
-        operationPending.current = false;
-        if (mounted.current) setPendingAction(null);
+  const exportRecordFile = useCallback(async (recordId: string) => {
+    if (operationPending.current) return;
+    operationPending.current = true;
+    setPendingAction("export");
+    setMutationError(null);
+    try {
+      const result = await historyClient.exportRecordFile(recordId);
+      if (mounted.current && result.performed) {
+        setStatusMessageKey("History summary exported");
       }
-    },
-    [client],
-  );
+    } catch (error) {
+      if (mounted.current) setMutationError(toCommandError(error));
+    } finally {
+      operationPending.current = false;
+      if (mounted.current) setPendingAction(null);
+    }
+  }, []);
 
   const deleteRecord = useCallback(
     async (recordId: string) => {
@@ -242,7 +210,7 @@ export function useHistory(client: HistoryClient = historyClient) {
       setPendingAction("delete");
       setMutationError(null);
       try {
-        const result = await client.deleteRecord(recordId);
+        const result = await historyClient.deleteRecord(recordId);
         if (mounted.current) {
           requestGeneration.current += 1;
           applySnapshot(result.history, true);
@@ -254,13 +222,13 @@ export function useHistory(client: HistoryClient = historyClient) {
           setStatusMessageKey("History summary deleted");
         }
       } catch (error) {
-        if (mounted.current) setMutationError(historyClientError(error));
+        if (mounted.current) setMutationError(toCommandError(error));
       } finally {
         operationPending.current = false;
         if (mounted.current) setPendingAction(null);
       }
     },
-    [applySnapshot, client],
+    [applySnapshot],
   );
 
   const restoreDeleted = useCallback(async () => {
@@ -269,19 +237,19 @@ export function useHistory(client: HistoryClient = historyClient) {
     setPendingAction("restore");
     setMutationError(null);
     try {
-      const snapshot = await client.restoreDeleted(undoDeletion.token);
+      const snapshot = await historyClient.restoreDeleted(undoDeletion.token);
       if (mounted.current) {
         applySnapshot(snapshot, true);
         setUndoDeletion(null);
         setStatusMessageKey("History summary restored");
       }
     } catch (error) {
-      if (mounted.current) setMutationError(historyClientError(error));
+      if (mounted.current) setMutationError(toCommandError(error));
     } finally {
       operationPending.current = false;
       if (mounted.current) setPendingAction(null);
     }
-  }, [applySnapshot, client, undoDeletion]);
+  }, [applySnapshot, undoDeletion]);
 
   return {
     state,
@@ -296,33 +264,32 @@ export function useHistory(client: HistoryClient = historyClient) {
     refresh: reload,
     saveCurrent: async () => {
       if (
-        (await mutate("save", () => client.saveCurrent())) &&
+        (await mutate("save", () => historyClient.saveCurrent())) &&
         mounted.current
       ) {
         setStatusMessageKey("History summary saved");
       }
     },
     importJson: (json: string) =>
-      mutate("import", () => client.importJson(json)),
+      mutate("import", () => historyClient.importJson(json)),
     importFile,
     deleteRecord,
     restoreDeleted,
-    setPrediction: async (recordId: string, line: HistoryLine) => {
+    setPrediction: async (recordId: string, line: AbyssHalf) => {
       if (
         (await mutate(`prediction:${line}`, () =>
-          client.setPrediction(recordId, line),
+          historyClient.setPrediction(recordId, line),
         )) &&
         mounted.current
       ) {
         setStatusMessageKey(
-          line === "upper"
+          line === "first"
             ? "Set as the upper-line prediction team"
             : "Set as the lower-line prediction team",
         );
       }
     },
     compare,
-    exportRecord,
     exportRecordFile,
   };
 }

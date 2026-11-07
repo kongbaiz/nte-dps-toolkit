@@ -1,5 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { MotionConfig } from "motion/react";
 import {
   useCallback,
   useEffect,
@@ -10,12 +11,18 @@ import {
 
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import { MOTION_DURATION, waitForMotion } from "@/lib/motion";
+import { useSettingsPresentation } from "@/lib/settings-presentation";
 
 import { WindowMotionContext } from "./window-motion-context";
 
 const WINDOW_MOTION_ENTER_EVENT = "desktop-window-motion-enter";
+const APP_TRANSITION = {
+  duration: MOTION_DURATION.slow / 1000,
+  ease: "easeOut",
+} as const;
 
 export function WindowMotionBoundary({ children }: { children: ReactNode }) {
+  const { reduceMotion } = useSettingsPresentation();
   const [phase, setPhase] = useState<"enter" | "idle" | "exit">("enter");
   const transitioning = useRef(false);
 
@@ -58,10 +65,15 @@ export function WindowMotionBoundary({ children }: { children: ReactNode }) {
   );
 
   return (
-    <WindowMotionContext.Provider value={{ transitionToWindow }}>
-      <div className="window-motion-surface" data-window-motion={phase}>
-        {children}
-      </div>
-    </WindowMotionContext.Provider>
+    <MotionConfig
+      reducedMotion={reduceMotion ? "always" : "user"}
+      transition={APP_TRANSITION}
+    >
+      <WindowMotionContext.Provider value={{ transitionToWindow }}>
+        <div className="window-motion-surface" data-window-motion={phase}>
+          {children}
+        </div>
+      </WindowMotionContext.Provider>
+    </MotionConfig>
   );
 }

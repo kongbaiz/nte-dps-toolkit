@@ -1,6 +1,6 @@
 [package]
 name = "nte-dps-tool-tauri"
-version = "0.4.7"
+version = "0.4.8"
 description = "Tauri desktop shell for NTE DPS TOOL"
 authors = ["NTE DPS TOOL contributors"]
 license = "AGPL-3.0-or-later"
@@ -35,6 +35,7 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = { version = "2.7.2", default-features = false }
 tauri-plugin-log = "2"
 tokio = { version = "1", features = ["time"] }
+ts-rs = "12"
 nte-dps-tool = { path = "..", default-features = false, features = ["desktop", "tauri_frontend"] }
 
 [profile.release]

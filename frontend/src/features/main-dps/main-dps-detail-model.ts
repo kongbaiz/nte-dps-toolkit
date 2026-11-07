@@ -1,7 +1,6 @@
-import type {
-  MainDpsDetailColumns,
-  MainDpsDetailSnapshot,
-} from "@/lib/tauri/main-dps-detail-contract";
+import type { EffectCounts } from "@/lib/tauri/generated/EffectCounts";
+import type { MainDpsDetailColumns } from "@/lib/tauri/generated/MainDpsDetailColumns";
+import type { MainDpsDetailSnapshot } from "@/lib/tauri/generated/MainDpsDetailSnapshot";
 
 export type DetailColumnKey =
   "time" | "character" | "type" | "damage" | "target" | "critical" | "snapshot";
@@ -194,9 +193,7 @@ export function criticalTranslationKey(
 ): "Yes" | "No" | "Unknown value" {
   return value === null ? "Unknown value" : value ? "Yes" : "No";
 }
-export function effectCountsText(
-  value: import("@/lib/tauri/hit-snapshot-contract").EffectCounts | null,
-): string | null {
+export function effectCountsText(value: EffectCounts | null): string | null {
   return value === null || value.complete !== true
     ? null
     : `${value.positive} / ${value.negative} (+${value.other})`;

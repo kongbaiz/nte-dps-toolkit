@@ -1159,40 +1159,6 @@ pub fn load_history_record_from_path(path: &Path) -> Result<HistoryRecord, Strin
     parse_stored_history_record(&text, path, MAX_HISTORY_DETAILS_BYTES).map(|(record, _)| record)
 }
 
-/// Resolves and hydrates exactly one retained record instead of loading every
-/// record's potentially large detail stream.
-/// Preflights the trusted on-disk detail footprint from the lightweight index
-/// before any chunk is opened or any `Hit` is materialized.
-pub fn load_history_record_by_id_with_max_detail_bytes(
-    record_id: &str,
-    max_detail_bytes: u64,
-) -> Result<Option<HistoryRecord>, HistoryRecordLoadError> {
-    load_history_record_by_id_from_dir_with_max_detail_bytes(
-        &history_dir(),
-        record_id,
-        max_detail_bytes,
-    )
-}
-
-pub fn load_history_record_by_id_from_dir_with_max_detail_bytes(
-    directory: &Path,
-    record_id: &str,
-    max_detail_bytes: u64,
-) -> Result<Option<HistoryRecord>, HistoryRecordLoadError> {
-    if !valid_record_id(record_id) {
-        return Err(HistoryRecordLoadError::InvalidId);
-    }
-    let index = load_history_index_from_dir(directory);
-    let Some(record) = index
-        .records
-        .into_iter()
-        .find(|record| record.id == record_id)
-    else {
-        return Ok(None);
-    };
-    load_indexed_history_record_with_limits(&record, max_detail_bytes, None).map(Some)
-}
-
 /// Hydrates one user-selected round under a budget independent from external
 /// import and full streaming export. Chunked byte and hit totals are rejected
 /// from the lightweight main manifest before the first sidecar is opened.
@@ -3548,6 +3514,26 @@ fn skill_comparison_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn load_history_record_by_id_from_dir_with_max_detail_bytes(
+        directory: &Path,
+        record_id: &str,
+        max_detail_bytes: u64,
+    ) -> Result<Option<HistoryRecord>, HistoryRecordLoadError> {
+        if !valid_record_id(record_id) {
+            return Err(HistoryRecordLoadError::InvalidId);
+        }
+        let index = load_history_index_from_dir(directory);
+        let Some(record) = index
+            .records
+            .into_iter()
+            .find(|record| record.id == record_id)
+        else {
+            return Ok(None);
+        };
+        load_indexed_history_record_with_limits(&record, max_detail_bytes, None).map(Some)
+    }
+
     use crate::engine::model::{
         AbyssHalf, CombatSessionAbyssHalfSummary, CombatSessionAbyssSummary,
         CombatSessionCharacterSummary, CombatSessionSummary, DpsTimeBasis, HitCharacterSource,

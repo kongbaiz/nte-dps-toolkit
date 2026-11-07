@@ -1,10 +1,8 @@
-import type {
-  SkillsCharacter,
-  SkillsRow,
-  SkillsSnapshot,
-} from "@/lib/tauri/skills-contract";
+import type { SkillsCharacterSnapshot } from "@/lib/tauri/generated/SkillsCharacterSnapshot";
+import type { SkillsRowSnapshot } from "@/lib/tauri/generated/SkillsRowSnapshot";
+import type { SkillsSnapshot } from "@/lib/tauri/generated/SkillsSnapshot";
 
-export interface SkillCharacterSummary extends SkillsCharacter {
+export interface SkillCharacterSummary extends SkillsCharacterSnapshot {
   share: number;
 }
 
@@ -25,7 +23,7 @@ export function buildSkillCharacterSummaries(
 export function skillRowsForCharacter(
   snapshot: SkillsSnapshot,
   characterId: number | null,
-): SkillsRow[] {
+): SkillsRowSnapshot[] {
   return snapshot.rows
     .filter((row) => characterId === null || row.characterId === characterId)
     .toSorted(
@@ -34,7 +32,9 @@ export function skillRowsForCharacter(
     );
 }
 
-export function skillViewMetrics(rows: readonly SkillsRow[]): SkillViewMetrics {
+export function skillViewMetrics(
+  rows: readonly SkillsRowSnapshot[],
+): SkillViewMetrics {
   return {
     damage: rows.reduce((sum, row) => sum + row.damage, 0),
     entries: rows.length,

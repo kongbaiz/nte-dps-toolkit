@@ -1,74 +1,34 @@
-import {
-  parseTimelineEvent,
-  parseTimelineSnapshot,
-  timelineError,
-  type TimelineCommandError,
-  type TimelineCurveMode,
-  type TimelineScope,
-  type TimelineSnapshot,
-} from "@/lib/tauri/timeline-contract";
-import { TechnicalContractError } from "@/lib/tauri/technical-contract";
-import {
-  subscribeStream,
-  tauriStreamTransport,
-  type StreamTransport,
-} from "@/lib/tauri/stream-client";
+import { invokeCommand, type CommandError } from "@/lib/tauri/command-error";
+import type { TimelineDpsViewMode } from "@/lib/tauri/generated/TimelineDpsViewMode";
+import type { TimelineEvent } from "@/lib/tauri/generated/TimelineEvent";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
+import type { TimelineSnapshot } from "@/lib/tauri/generated/TimelineSnapshot";
+import { subscribeStream } from "@/lib/tauri/stream-client";
 
-const COMMANDS = {
-  getSnapshot: "get_timeline_snapshot",
-  setPreferences: "set_timeline_preferences",
-  subscribe: "subscribe_timeline",
-  unsubscribe: "unsubscribe_timeline",
-} as const;
-
-export interface TimelineClient {
-  getSnapshot(scope: TimelineScope): Promise<TimelineSnapshot>;
-  setPreferences(
+export const timelineClient = {
+  getSnapshot: (scope: TimelineScope) =>
+    invokeCommand<TimelineSnapshot>("get_timeline_snapshot", { scope }),
+  setPreferences: (
     scope: TimelineScope,
     bucketSeconds: number,
-    viewMode: TimelineCurveMode,
-  ): Promise<TimelineSnapshot>;
-  subscribe(
+    viewMode: TimelineDpsViewMode,
+  ) =>
+    invokeCommand<TimelineSnapshot>("set_timeline_preferences", {
+      scope,
+      bucketSeconds,
+      viewMode,
+    }),
+  subscribe: (
     scope: TimelineScope,
     onSnapshot: (snapshot: TimelineSnapshot) => void,
-    onError: (error: TimelineCommandError) => void,
-  ): () => Promise<void>;
-}
-
-export function createTimelineClient(
-  transport: StreamTransport = tauriStreamTransport,
-  createSubscriptionId: () => string = () => crypto.randomUUID(),
-): TimelineClient {
-  const run = async (
-    command: string,
-    arguments_?: Record<string, unknown>,
-  ): Promise<TimelineSnapshot> => {
-    try {
-      return parseTimelineSnapshot(await transport.invoke(command, arguments_));
-    } catch (error) {
-      if (error instanceof TechnicalContractError) throw error;
-      throw timelineError(error);
-    }
-  };
-  return {
-    getSnapshot: (scope) => run(COMMANDS.getSnapshot, { scope }),
-    setPreferences: (scope, bucketSeconds, viewMode) =>
-      run(COMMANDS.setPreferences, { scope, bucketSeconds, viewMode }),
-    subscribe: (scope, onSnapshot, onError) => {
-      const subscriptionId = createSubscriptionId();
-      return subscribeStream({
-        transport,
-        streamKind: "timeline",
-        subscriptionId,
-        subscribeCommand: COMMANDS.subscribe,
-        unsubscribeCommand: COMMANDS.unsubscribe,
-        subscribeArguments: { scope },
-        parseEvent: parseTimelineEvent,
-        onEvent: onSnapshot,
-        onError: (error) => onError(timelineError(error)),
-      });
-    },
-  };
-}
-
-export const timelineClient = createTimelineClient();
+    onError: (error: CommandError) => void,
+  ) =>
+    subscribeStream<TimelineEvent>({
+      streamKind: "timeline",
+      subscribeCommand: "subscribe_timeline",
+      unsubscribeCommand: "unsubscribe_timeline",
+      subscribeArguments: { scope },
+      onEvent: (event) => onSnapshot(event.payload),
+      onError,
+    }),
+};

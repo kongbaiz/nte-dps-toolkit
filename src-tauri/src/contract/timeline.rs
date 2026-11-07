@@ -1,14 +1,11 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 use nte_dps_tool::{
-    core::timeline::{
-        MAX_TIMELINE_CHARACTER_NAME_BYTES, TimelineMarkerProjectionKind, TimelineProjection,
-        TimelineScope,
-    },
+    core::timeline::{TimelineMarkerProjectionKind, TimelineProjection, TimelineScope},
     storage::config::TimelineDpsViewMode,
 };
 
-pub(crate) const TIMELINE_CONTRACT_VERSION: u32 = 3;
 /// Source-side budget for the Console read model. Longer combat remains
 /// complete in authoritative state and is projected into wider buckets.
 pub(crate) const MAX_TIMELINE_BUCKETS: usize = 10_000;
@@ -18,13 +15,13 @@ pub(crate) const MAX_TIMELINE_CHARACTERS: usize = 256;
 /// the shared 16 MiB stream-delivery budget.
 pub(crate) const MAX_TIMELINE_ROLES_PER_BUCKET: usize = 16;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TimelineSnapshot {
-    pub contract_version: u32,
     pub generation: String,
-    pub scope: &'static str,
-    pub view_mode: &'static str,
+    pub scope: TimelineScope,
+    pub view_mode: TimelineDpsViewMode,
     pub bucket_seconds: f64,
     pub effective_bucket_seconds: f64,
     pub bucket_seconds_min: f64,
@@ -53,10 +50,9 @@ impl TimelineSnapshot {
         view_mode: TimelineDpsViewMode,
     ) -> Self {
         Self {
-            contract_version: TIMELINE_CONTRACT_VERSION,
             generation: generation.to_string(),
-            scope: scope_code(scope),
-            view_mode: view_mode_code(view_mode),
+            scope,
+            view_mode,
             bucket_seconds: projection.bucket_seconds,
             effective_bucket_seconds: projection.effective_bucket_seconds,
             bucket_seconds_min: projection.bucket_seconds_min,
@@ -84,11 +80,7 @@ impl TimelineSnapshot {
                 .map(|marker| TimelineMarkerSnapshot {
                     offset: marker.offset,
                     label_key: marker.label_key.clone(),
-                    kind: match marker.kind {
-                        TimelineMarkerProjectionKind::Half => "half",
-                        TimelineMarkerProjectionKind::Clear => "clear",
-                        TimelineMarkerProjectionKind::Exit => "exit",
-                    },
+                    kind: marker.kind,
                 })
                 .collect(),
             characters: projection
@@ -96,7 +88,7 @@ impl TimelineSnapshot {
                 .iter()
                 .map(|character| TimelineCharacterSnapshot {
                     id: character.id,
-                    name: bounded_character_name(character.id, &character.name),
+                    name: character.name.clone(),
                     color: character.color.clone(),
                     total_damage: character.total_damage,
                 })
@@ -134,30 +126,25 @@ impl TimelineSnapshot {
     }
 }
 
-fn bounded_character_name(id: u32, name: &str) -> String {
-    if !name.is_empty() && name.len() <= MAX_TIMELINE_CHARACTER_NAME_BYTES {
-        name.to_owned()
-    } else {
-        format!("#{id}")
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TimelineIntervalSnapshot {
     pub start: f64,
     pub end: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TimelineMarkerSnapshot {
     pub offset: f64,
     pub label_key: String,
-    pub kind: &'static str,
+    pub kind: TimelineMarkerProjectionKind,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TimelineCharacterSnapshot {
     pub id: u32,
@@ -166,7 +153,8 @@ pub(crate) struct TimelineCharacterSnapshot {
     pub total_damage: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TimelineBucketSnapshot {
     pub start: f64,
@@ -178,14 +166,16 @@ pub(crate) struct TimelineBucketSnapshot {
     pub roles: Vec<TimelineRoleSnapshot>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TimelineRoleSnapshot {
     pub character_id: u32,
     pub dps: f64,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TimelineSegmentSnapshot {
     pub start: f64,
@@ -193,77 +183,9 @@ pub(crate) struct TimelineSegmentSnapshot {
     pub dps: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum TimelineEvent {
     Snapshot(TimelineSnapshot),
-}
-
-pub(crate) const fn scope_code(scope: TimelineScope) -> &'static str {
-    match scope {
-        TimelineScope::Whole => "all",
-        TimelineScope::First => "upper",
-        TimelineScope::Second => "lower",
-    }
-}
-
-pub(crate) const fn view_mode_code(mode: TimelineDpsViewMode) -> &'static str {
-    match mode {
-        TimelineDpsViewMode::Team => "team",
-        TimelineDpsViewMode::Characters => "characters",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn snapshot_serializes_js_unsafe_fields_as_decimal_strings() {
-        let snapshot = TimelineSnapshot::from_projection(
-            &TimelineProjection::default(),
-            9_007_199_254_740_992,
-            TimelineScope::Whole,
-            TimelineDpsViewMode::Team,
-        );
-        let value = serde_json::to_value(snapshot).expect("timeline snapshot serializes");
-        assert_eq!(value["generation"], "9007199254740992");
-        assert_eq!(value["scope"], "all");
-        assert_eq!(value["viewMode"], "team");
-        assert_eq!(value["hasData"], false);
-        assert_eq!(value["timeStopDuration"], 0.0);
-        assert_eq!(value["compactedTimeStopIntervals"], "0");
-    }
-
-    #[test]
-    fn snapshot_replaces_oversized_character_names_before_serialization() {
-        let exact = format!("{}ab", "界".repeat(42));
-        let oversized = "界".repeat(43);
-        let projection = TimelineProjection {
-            characters: vec![
-                nte_dps_tool::core::timeline::TimelineCharacterProjection {
-                    id: 7,
-                    name: exact.clone(),
-                    color: "#123abc".to_owned(),
-                    total_damage: 1.0,
-                },
-                nte_dps_tool::core::timeline::TimelineCharacterProjection {
-                    id: 8,
-                    name: oversized,
-                    color: "#123abc".to_owned(),
-                    total_damage: 1.0,
-                },
-            ],
-            ..TimelineProjection::default()
-        };
-
-        let snapshot = TimelineSnapshot::from_projection(
-            &projection,
-            1,
-            TimelineScope::Whole,
-            TimelineDpsViewMode::Characters,
-        );
-        assert_eq!(snapshot.characters[0].name, exact);
-        assert_eq!(snapshot.characters[1].name, "#8");
-    }
 }

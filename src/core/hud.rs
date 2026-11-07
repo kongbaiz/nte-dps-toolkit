@@ -15,10 +15,6 @@ use crate::{
     storage::config::{HudConfig, HudModule},
 };
 
-#[cfg(test)]
-use crate::engine::model::TimelineSeries;
-
-pub const HUD_SNAPSHOT_VERSION: u32 = 3;
 pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
 /// UTF-8 byte budget for a live/read-model character label. Imported hit names
 /// are untrusted and a single label must never be able to overflow a desktop
@@ -26,7 +22,7 @@ pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
 pub const HUD_CHARACTER_NAME_MAX_BYTES: usize = 128;
 const HUD_PREVIEW_ROW_COUNT: usize = 4;
 
-pub fn bounded_character_name(character_id: u32, candidate: &str) -> String {
+fn bounded_character_name(character_id: u32, candidate: &str) -> String {
     let candidate = candidate.trim();
     if !candidate.is_empty() && candidate.len() <= HUD_CHARACTER_NAME_MAX_BYTES {
         candidate.to_owned()
@@ -36,6 +32,7 @@ pub fn bounded_character_name(character_id: u32, candidate: &str) -> String {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum HudDataState {
     Empty,
@@ -44,6 +41,7 @@ pub enum HudDataState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum HudAbyssHalf {
     First,
@@ -59,33 +57,12 @@ impl From<AbyssHalf> for HudAbyssHalf {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HudModuleSnapshot {
-    Title,
-    Summary,
-    Status,
-    Characters,
-    Timeline,
-}
-
-impl From<HudModule> for HudModuleSnapshot {
-    fn from(value: HudModule) -> Self {
-        match value {
-            HudModule::Title => Self::Title,
-            HudModule::Summary => Self::Summary,
-            HudModule::Status => Self::Status,
-            HudModule::Characters => Self::Characters,
-            HudModule::Timeline => Self::Timeline,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudConfigSnapshot {
     pub width: u16,
-    pub module_order: Vec<HudModuleSnapshot>,
+    pub module_order: Vec<HudModule>,
     pub show_title: bool,
     pub show_team_dps: bool,
     pub show_duration: bool,
@@ -102,11 +79,7 @@ impl From<&HudConfig> for HudConfigSnapshot {
         let config = config.clone().sanitized();
         Self {
             width: config.width,
-            module_order: config
-                .module_order
-                .into_iter()
-                .map(HudModuleSnapshot::from)
-                .collect(),
+            module_order: config.module_order,
             show_title: config.show_title,
             show_team_dps: config.show_team_dps,
             show_duration: config.show_duration,
@@ -121,6 +94,7 @@ impl From<&HudConfig> for HudConfigSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudSummarySnapshot {
     pub team_dps: f64,
@@ -130,6 +104,7 @@ pub struct HudSummarySnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudCharacterSnapshot {
     pub character_id: u32,
@@ -144,6 +119,7 @@ pub struct HudCharacterSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudStatusSnapshot {
     pub abyss_detected: bool,
@@ -153,6 +129,7 @@ pub struct HudStatusSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudTimelineBucketSnapshot {
     pub start_seconds: f64,
@@ -163,6 +140,7 @@ pub struct HudTimelineBucketSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudTimelineSnapshot {
     pub bucket_seconds: f64,
@@ -172,9 +150,9 @@ pub struct HudTimelineSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct HudSnapshot {
-    pub version: u32,
     pub data_state: HudDataState,
     pub config: HudConfigSnapshot,
     pub summary: Option<HudSummarySnapshot>,
@@ -290,7 +268,6 @@ pub fn project_hud(
     };
 
     HudSnapshot {
-        version: HUD_SNAPSHOT_VERSION,
         data_state,
         config,
         summary,
@@ -479,56 +456,6 @@ fn project_compact_timeline(series: CompactTimelineSeries) -> HudTimelineSnapsho
         peak_dps,
         buckets,
     }
-}
-
-#[cfg(test)]
-fn project_timeline(series: TimelineSeries) -> Option<HudTimelineSnapshot> {
-    if series.buckets.is_empty() {
-        return None;
-    }
-
-    let group_size = series
-        .buckets
-        .len()
-        .div_ceil(HUD_TIMELINE_MAX_BUCKETS)
-        .max(1);
-    let buckets = series
-        .buckets
-        .chunks(group_size)
-        .map(|group| {
-            let start_seconds =
-                finite_nonnegative(group.first().map_or(0.0, |bucket| bucket.start_offset));
-            let end_seconds = finite_nonnegative(
-                group
-                    .last()
-                    .map_or(start_seconds, |bucket| bucket.end_offset),
-            )
-            .max(start_seconds);
-            let damage = finite_nonnegative(group.iter().map(|bucket| bucket.damage).sum());
-            let hits = group
-                .iter()
-                .fold(0_u64, |total, bucket| total.saturating_add(bucket.hits));
-            HudTimelineBucketSnapshot {
-                start_seconds,
-                end_seconds,
-                damage,
-                dps: finite_nonnegative(damage / (end_seconds - start_seconds).max(0.001)),
-                hits: hits.to_string(),
-            }
-        })
-        .collect::<Vec<_>>();
-    let duration_seconds = buckets
-        .last()
-        .map_or(0.0, |bucket| bucket.end_seconds)
-        .max(0.0);
-    let peak_dps = buckets.iter().map(|bucket| bucket.dps).fold(0.0, f64::max);
-
-    Some(HudTimelineSnapshot {
-        bucket_seconds: finite_nonnegative(series.bucket_seconds * group_size as f64),
-        duration_seconds,
-        peak_dps,
-        buckets,
-    })
 }
 
 fn character_has_visible_totals(row: &CharacterStats) -> bool {
@@ -916,7 +843,7 @@ mod tests {
         let projected = HudConfigSnapshot::from(&config);
 
         assert_eq!(projected.module_order.len(), HudModule::all().len());
-        assert_eq!(projected.module_order[0], HudModuleSnapshot::Characters);
+        assert_eq!(projected.module_order[0], HudModule::Characters);
     }
 
     #[test]
@@ -960,9 +887,6 @@ mod tests {
             state.push_hit(hit(index as f64, 1, 100.0));
         }
 
-        let legacy_projection =
-            project_timeline(state.timeline(1.0, true)).expect("legacy live timeline projection");
-
         let snapshot = project_hud(
             &state,
             &HudConfig::detailed(),
@@ -971,7 +895,6 @@ mod tests {
         );
         let timeline = snapshot.timeline.expect("live timeline");
 
-        assert_eq!(timeline, legacy_projection);
         assert!(timeline.buckets.len() <= HUD_TIMELINE_MAX_BUCKETS);
         assert_eq!(
             timeline
@@ -1040,7 +963,6 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
-            cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
             allow_late_backfill: false,

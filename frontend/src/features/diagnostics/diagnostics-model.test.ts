@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { DiagnosticsSnapshot } from "@/lib/tauri/diagnostics-contract";
+import type { DiagnosticsSnapshot } from "@/lib/tauri/generated/DiagnosticsSnapshot";
 import { formatByteCount } from "@/lib/update-presentation";
 
 import {

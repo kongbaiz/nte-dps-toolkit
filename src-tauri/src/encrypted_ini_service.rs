@@ -1,4 +1,9 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Mutex, MutexGuard},
+};
+
+use nte_dps_tool::core::sync::lock_or_repair;
 
 use nte_dps_tool::core::encrypted_ini::{
     EncryptedIniDocument, EncryptedIniError, EncryptedIniKey, EncryptedIniSaveOutcome,
@@ -62,14 +67,7 @@ struct EncryptedIniReservation<'a> {
 
 impl EncryptedIniService {
     pub(crate) fn snapshot(&self) -> Result<EncryptedIniProjection, EncryptedIniServiceError> {
-        let state = match self.state.lock() {
-            Ok(state) => state,
-            Err(mut poison) => {
-                **poison.get_mut() = ServiceState::Unavailable;
-                self.state.clear_poison();
-                return Err(EncryptedIniServiceError::Unavailable);
-            }
-        };
+        let state = self.lock_state()?;
         match &*state {
             ServiceState::Ready(runtime) => Ok(project(runtime)),
             ServiceState::InFlight => Err(EncryptedIniServiceError::Busy),
@@ -202,14 +200,7 @@ impl EncryptedIniService {
     }
 
     fn reserve(&self) -> Result<EncryptedIniReservation<'_>, EncryptedIniServiceError> {
-        let mut state = match self.state.lock() {
-            Ok(state) => state,
-            Err(mut poison) => {
-                **poison.get_mut() = ServiceState::Unavailable;
-                self.state.clear_poison();
-                return Err(EncryptedIniServiceError::Unavailable);
-            }
-        };
+        let mut state = self.lock_state()?;
         let previous = std::mem::replace(&mut *state, ServiceState::InFlight);
         let runtime = match previous {
             ServiceState::Ready(runtime) => runtime,
@@ -227,6 +218,15 @@ impl EncryptedIniService {
             runtime: Some(runtime),
             active: true,
         })
+    }
+
+    fn lock_state(&self) -> Result<MutexGuard<'_, ServiceState>, EncryptedIniServiceError> {
+        let (state, recovered) =
+            lock_or_repair(&self.state, |state| *state = ServiceState::Unavailable);
+        if recovered {
+            return Err(EncryptedIniServiceError::Unavailable);
+        }
+        Ok(state)
     }
 
     #[cfg(test)]
@@ -251,22 +251,13 @@ impl EncryptedIniReservation<'_> {
             .take()
             .expect("active reservation owns encrypted INI runtime");
         let projection = project(&runtime);
-        let mut state = match self.service.state.lock() {
-            Ok(state) => state,
-            Err(mut poison) => {
-                **poison.get_mut() = ServiceState::Unavailable;
-                self.service.state.clear_poison();
-                self.active = false;
-                return Err(EncryptedIniServiceError::Unavailable);
-            }
-        };
+        self.active = false;
+        let mut state = self.service.lock_state()?;
         if !matches!(*state, ServiceState::InFlight) {
             *state = ServiceState::Unavailable;
-            self.active = false;
             return Err(EncryptedIniServiceError::Unavailable);
         }
         *state = ServiceState::Ready(runtime);
-        self.active = false;
         Ok(projection)
     }
 }
@@ -277,13 +268,7 @@ impl Drop for EncryptedIniReservation<'_> {
             return;
         }
         self.runtime.take();
-        match self.service.state.lock() {
-            Ok(mut state) => *state = ServiceState::Unavailable,
-            Err(mut poison) => {
-                **poison.get_mut() = ServiceState::Unavailable;
-                self.service.state.clear_poison();
-            }
-        }
+        *lock_or_repair(&self.service.state, |_| {}).0 = ServiceState::Unavailable;
     }
 }
 

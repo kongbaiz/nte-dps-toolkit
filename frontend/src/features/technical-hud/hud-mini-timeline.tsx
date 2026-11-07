@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 
 import { t, tf } from "@/lib/i18n";
-import type { HudTimelineSnapshot } from "@/lib/tauri/technical-contract";
+import type { HudTimelineSnapshot } from "@/lib/tauri/generated/HudTimelineSnapshot";
 import { cn } from "@/lib/utils";
 
 import { formatHudDuration, formatHudNumber } from "./technical-view-model";
@@ -148,7 +148,7 @@ export function HudMiniTimeline({
         aria-hidden="true"
       />
 
-      <div className="pointer-events-none absolute inset-x-1 top-0 flex items-center justify-between text-xs text-white/55">
+      <div className="pointer-events-none absolute inset-x-1 top-0 flex items-center justify-between text-xs text-foreground/55">
         <span className="hud-text-halo">{t("DPS")}</span>
         <span className="hud-text-halo">
           {tf("Peak DPS: {0}", [formatHudNumber(timeline.peakDps)])}
@@ -174,16 +174,16 @@ export function HudMiniTimeline({
       {interactive && hoveredPoint !== null && hoveredBucket !== null ? (
         <>
           <span
-            className="pointer-events-none absolute top-3 bottom-1 w-px bg-cyan-100/65"
+            className="pointer-events-none absolute top-3 bottom-1 w-px bg-info/65"
             style={{ left: hoveredPoint.x }}
             aria-hidden="true"
           />
           <div
             role="tooltip"
-            className="pointer-events-none absolute bottom-1 z-10 -translate-x-1/2 rounded-sm bg-black/85 px-1.5 py-1 text-xs leading-3 text-white shadow-sm ring-1 ring-white/15"
+            className="pointer-events-none absolute bottom-1 z-10 -translate-x-1/2 rounded-sm bg-background/90 px-1.5 py-1 text-xs leading-3 text-foreground shadow-sm ring-1 ring-foreground/15"
             style={{ left: tooltipLeft }}
           >
-            <p className="whitespace-nowrap text-white/70">
+            <p className="whitespace-nowrap text-foreground/70">
               {tf("Time: {0}–{1}", [
                 formatHudDuration(hoveredBucket.startSeconds),
                 formatHudDuration(hoveredBucket.endSeconds),
@@ -219,7 +219,7 @@ function drawTimeline(
 
   if (model.points.length > 0) {
     strokeTimeline(context, model, "rgb(0 0 0 / 78%)", 3.5);
-    const accent = getComputedStyle(canvas).color || "#67e8f9";
+    const accent = getComputedStyle(canvas).color;
     strokeTimeline(context, model, accent, 1.5);
   }
 

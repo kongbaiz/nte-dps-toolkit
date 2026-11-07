@@ -1,4 +1,8 @@
-import { PageHeader, PageTitle } from "@/components/nte/page-layout";
+import {
+  PageHeader,
+  PageScrollArea,
+  PageTitle,
+} from "@/components/nte/page-layout";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownRight,
@@ -18,6 +22,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/form-controls";
 import {
   Card,
   CardAction,
@@ -44,18 +49,16 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
-import type {
-  HistoryCharacter,
-  HistoryComparison,
-  HistoryHalf,
-  HistoryRecord,
-  HistorySkill,
-} from "@/lib/tauri/history-contract";
+import type { AbyssHalf } from "@/lib/tauri/generated/AbyssHalf";
+import type { HistoryAbyssHalfSnapshot } from "@/lib/tauri/generated/HistoryAbyssHalfSnapshot";
+import type { HistoryCharacterSnapshot } from "@/lib/tauri/generated/HistoryCharacterSnapshot";
+import type { HistoryComparisonSnapshot } from "@/lib/tauri/generated/HistoryComparisonSnapshot";
+import type { HistoryRecordSnapshot } from "@/lib/tauri/generated/HistoryRecordSnapshot";
+import type { HistorySkillSnapshot } from "@/lib/tauri/generated/HistorySkillSnapshot";
+import { toCommandError } from "@/lib/tauri/command-error";
 import { cn } from "@/lib/utils";
 import { technicalClient } from "@/lib/tauri/technical-client";
-import { parseTechnicalCommandError } from "@/lib/tauri/technical-contract";
 import { diagnosticsClient } from "@/lib/tauri/diagnostics-client";
-import { diagnosticsError } from "@/lib/tauri/diagnostics-contract";
 
 import {
   adjacentHistoryRecordId,
@@ -139,7 +142,7 @@ export function HistoryPage() {
     try {
       await technicalClient.startCapture();
     } catch (error) {
-      setCaptureError(parseTechnicalCommandError(error).messageKey);
+      setCaptureError(toCommandError(error).messageKey);
     } finally {
       setCapturePending(false);
     }
@@ -152,7 +155,7 @@ export function HistoryPage() {
     try {
       await diagnosticsClient.importJson();
     } catch (error) {
-      setCaptureError(diagnosticsError(error).messageKey);
+      setCaptureError(toCommandError(error).messageKey);
     } finally {
       setCapturePending(false);
     }
@@ -327,129 +330,133 @@ export function HistoryPage() {
                 </div>
               </Empty>
             ) : (
-              <div className="history-workspace grid min-h-0 flex-1 grid-cols-1 items-start gap-4 overflow-y-auto p-4 min-[1000px]:grid-cols-[260px_minmax(0,1fr)]">
-                <div
-                  className="flex min-w-0 gap-2 overflow-x-auto rounded-lg border bg-background p-2 min-[1000px]:sticky min-[1000px]:top-0 min-[1000px]:block min-[1000px]:max-h-[calc(100vh-7rem)] min-[1000px]:overflow-y-auto"
-                  role="listbox"
-                  aria-label={t("History records")}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
+              <PageScrollArea>
+                <div className="grid grid-cols-1 items-start gap-4 min-[1000px]:grid-cols-[260px_minmax(0,1fr)]">
+                  <div
+                    className="flex min-w-0 gap-2 overflow-x-auto rounded-lg border bg-background p-2 min-[1000px]:sticky min-[1000px]:top-0 min-[1000px]:block min-[1000px]:max-h-[calc(100vh-7rem)] min-[1000px]:overflow-y-auto"
+                    role="listbox"
+                    aria-label={t("History records")}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        document
+                          .querySelector<HTMLElement>("[data-history-detail]")
+                          ?.focus();
+                        return;
+                      }
+                      if (event.key !== "ArrowDown" && event.key !== "ArrowUp")
+                        return;
+                      const buttons = Array.from(
+                        event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                          "[data-history-record]",
+                        ),
+                      );
+                      const current = buttons.indexOf(
+                        event.target as HTMLButtonElement,
+                      );
+                      if (current < 0) return;
                       event.preventDefault();
-                      document
-                        .querySelector<HTMLElement>("[data-history-detail]")
-                        ?.focus();
-                      return;
-                    }
-                    if (event.key !== "ArrowDown" && event.key !== "ArrowUp")
-                      return;
-                    const buttons = Array.from(
-                      event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                        "[data-history-record]",
-                      ),
-                    );
-                    const current = buttons.indexOf(
-                      event.target as HTMLButtonElement,
-                    );
-                    if (current < 0) return;
-                    event.preventDefault();
-                    const next = nextHistoryRecordIndex(
-                      buttons.length,
-                      current,
-                      event.key === "ArrowDown" ? 1 : -1,
-                    );
-                    buttons[next]?.focus();
-                    setSelectedId(records[next]?.id ?? null);
-                  }}
-                >
-                  {records.map((record) => (
-                    <button
-                      key={record.id}
-                      type="button"
-                      role="option"
-                      data-history-record
-                      aria-selected={record.id === selectedId}
-                      className={cn(
-                        "flex min-h-16 min-w-64 shrink-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left text-sm hover:bg-muted min-[1000px]:mb-1 min-[1000px]:w-full min-[1000px]:min-w-0",
-                        record.id === selectedId &&
-                          "bg-primary text-primary-foreground hover:bg-primary",
-                      )}
-                      onClick={() => setSelectedId(record.id)}
-                      onContextMenu={() => {
-                        setSelectedId(record.id);
-                        setContextMenu(record.id);
-                      }}
-                    >
-                      <span className="font-medium">{record.displayTime}</span>
-                      {record.partyLabel && (
+                      const next = nextHistoryRecordIndex(
+                        buttons.length,
+                        current,
+                        event.key === "ArrowDown" ? 1 : -1,
+                      );
+                      buttons[next]?.focus();
+                      setSelectedId(records[next]?.id ?? null);
+                    }}
+                  >
+                    {records.map((record) => (
+                      <button
+                        key={record.id}
+                        type="button"
+                        role="option"
+                        data-history-record
+                        aria-selected={record.id === selectedId}
+                        className={cn(
+                          "flex min-h-16 min-w-64 shrink-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left text-sm hover:bg-muted min-[1000px]:mb-1 min-[1000px]:w-full min-[1000px]:min-w-0",
+                          record.id === selectedId &&
+                            "bg-primary text-primary-foreground hover:bg-primary",
+                        )}
+                        onClick={() => setSelectedId(record.id)}
+                        onContextMenu={() => {
+                          setSelectedId(record.id);
+                          setContextMenu(record.id);
+                        }}
+                      >
+                        <span className="font-medium">
+                          {record.displayTime}
+                        </span>
+                        {record.partyLabel && (
+                          <span
+                            className={cn(
+                              "truncate text-xs text-muted-foreground",
+                              record.id === selectedId &&
+                                "text-primary-foreground/75",
+                            )}
+                            title={record.partyLabel}
+                          >
+                            {record.partyLabel}
+                          </span>
+                        )}
                         <span
                           className={cn(
-                            "truncate text-xs text-muted-foreground",
+                            "text-xs text-muted-foreground",
                             record.id === selectedId &&
                               "text-primary-foreground/75",
                           )}
-                          title={record.partyLabel}
                         >
-                          {record.partyLabel}
+                          {number(record.summary.totalDps)} DPS /{" "}
+                          {number(record.summary.totalDamage)}
                         </span>
-                      )}
-                      <span
-                        className={cn(
-                          "text-xs text-muted-foreground",
-                          record.id === selectedId &&
-                            "text-primary-foreground/75",
-                        )}
-                      >
-                        {number(record.summary.totalDps)} DPS /{" "}
-                        {number(record.summary.totalDamage)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                      </button>
+                    ))}
+                  </div>
 
-                <div className="@container/history min-h-0 min-w-0 space-y-4">
-                  {selected && (
-                    <div
-                      data-history-detail
-                      tabIndex={-1}
-                      className="space-y-4 outline-none"
-                    >
-                      <RecordDetail
-                        busy={busy}
-                        record={selected}
-                        onDelete={() => {
-                          void history.deleteRecord(selected.id);
-                        }}
-                        onExport={() =>
-                          void history.exportRecordFile(selected.id)
+                  <div className="@container/history min-h-0 min-w-0 space-y-4">
+                    {selected && (
+                      <div
+                        data-history-detail
+                        tabIndex={-1}
+                        className="space-y-4 outline-none"
+                      >
+                        <RecordDetail
+                          busy={busy}
+                          record={selected}
+                          onDelete={() => {
+                            void history.deleteRecord(selected.id);
+                          }}
+                          onExport={() =>
+                            void history.exportRecordFile(selected.id)
+                          }
+                          onPrediction={(line) =>
+                            void history.setPrediction(selected.id, line)
+                          }
+                        />
+                      </div>
+                    )}
+                    <ComparePanel
+                      busy={busy}
+                      comparison={history.comparison}
+                      leftId={leftId}
+                      records={records}
+                      rightId={rightId}
+                      onLeftChange={setLeftId}
+                      onRightChange={setRightId}
+                      onUseAdjacent={() => {
+                        if (!selected) return;
+                        const adjacent = adjacentHistoryRecordId(
+                          records,
+                          selected.id,
+                        );
+                        if (adjacent) {
+                          setLeftId(selected.id);
+                          setRightId(adjacent);
                         }
-                        onPrediction={(line) =>
-                          void history.setPrediction(selected.id, line)
-                        }
-                      />
-                    </div>
-                  )}
-                  <ComparePanel
-                    busy={busy}
-                    comparison={history.comparison}
-                    leftId={leftId}
-                    records={records}
-                    rightId={rightId}
-                    onLeftChange={setLeftId}
-                    onRightChange={setRightId}
-                    onUseAdjacent={() => {
-                      if (!selected) return;
-                      const adjacent = adjacentHistoryRecordId(
-                        records,
-                        selected.id,
-                      );
-                      if (adjacent) {
-                        setLeftId(selected.id);
-                        setRightId(adjacent);
-                      }
-                    }}
-                  />
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
+              </PageScrollArea>
             )}
           </section>
         }
@@ -484,7 +491,7 @@ function HistoryContextMenu({
 }: {
   busy: boolean;
   recordId: string;
-  records: HistoryRecord[];
+  records: HistoryRecordSnapshot[];
   onCompare: (recordId: string, adjacentId: string) => void;
   onDelete: (recordId: string) => void;
   onExport: (recordId: string) => void;
@@ -565,10 +572,10 @@ function RecordDetail({
   onPrediction,
 }: {
   busy: boolean;
-  record: HistoryRecord;
+  record: HistoryRecordSnapshot;
   onDelete: () => void;
   onExport: () => void;
-  onPrediction: (line: "upper" | "lower") => void;
+  onPrediction: (line: AbyssHalf) => void;
 }) {
   const summary = record.summary;
   return (
@@ -590,7 +597,7 @@ function RecordDetail({
                 disabled={busy}
                 size="sm"
                 variant="outline"
-                onClick={() => onPrediction("lower")}
+                onClick={() => onPrediction("second")}
               >
                 {t("Set as Lower Prediction")}
               </Button>
@@ -600,7 +607,7 @@ function RecordDetail({
                 disabled={busy}
                 size="sm"
                 variant="outline"
-                onClick={() => onPrediction("upper")}
+                onClick={() => onPrediction("first")}
               >
                 {t("Set as Upper Prediction")}
               </Button>
@@ -677,7 +684,7 @@ function RecordDetail({
   );
 }
 
-function HalfCard({ half }: { half: HistoryHalf }) {
+function HalfCard({ half }: { half: HistoryAbyssHalfSnapshot }) {
   return (
     <Card className="@container/half">
       <CardHeader>
@@ -713,10 +720,10 @@ function Breakdown({
   characterTitle = "Character",
   skillTitle = "Skill",
 }: {
-  characters: HistoryCharacter[];
+  characters: HistoryCharacterSnapshot[];
   hiddenCharacterCount?: number;
   hiddenSkillCount?: number;
-  skills: HistorySkill[];
+  skills: HistorySkillSnapshot[];
   embedded?: boolean;
   characterTitle?: string;
   skillTitle?: string;
@@ -766,11 +773,11 @@ function CharacterRows({
   rows,
 }: {
   title: string;
-  rows: HistoryCharacter[];
+  rows: HistoryCharacterSnapshot[];
 }) {
   return (
     <div className="min-w-0">
-      <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+      <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
         {t(title)}
       </h3>
       <div className="flex flex-col gap-1.5">
@@ -802,7 +809,11 @@ function CharacterRows({
   );
 }
 
-function CharacterAvatar({ character }: { character: HistoryCharacter }) {
+function CharacterAvatar({
+  character,
+}: {
+  character: HistoryCharacterSnapshot;
+}) {
   const avatarUrl = useCharacterAvatar(character.charId);
   const initial = character.name.trim().charAt(0) || "?";
   return (
@@ -838,7 +849,7 @@ function Rows({
 }) {
   return (
     <div className="min-w-0">
-      <h3 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+      <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
         {t(title)}
       </h3>
       <div className="flex flex-col gap-1.5">
@@ -886,9 +897,9 @@ function ComparePanel({
   onUseAdjacent,
 }: {
   busy: boolean;
-  comparison: HistoryComparison | null;
+  comparison: HistoryComparisonSnapshot | null;
   leftId: string;
-  records: HistoryRecord[];
+  records: HistoryRecordSnapshot[];
   rightId: string;
   onLeftChange: (value: string) => void;
   onRightChange: (value: string) => void;
@@ -941,15 +952,14 @@ function HistorySelect({
   label,
 }: {
   value: string;
-  records: HistoryRecord[];
+  records: HistoryRecordSnapshot[];
   onChange: (value: string) => void;
   label: string;
 }) {
   return (
     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
       {t(label)}
-      <select
-        className="h-9 rounded-md border bg-background px-2 text-sm text-foreground"
+      <NativeSelect
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
@@ -961,12 +971,16 @@ function HistorySelect({
               : record.displayTime}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </label>
   );
 }
 
-function ComparisonResult({ comparison }: { comparison: HistoryComparison }) {
+function ComparisonResult({
+  comparison,
+}: {
+  comparison: HistoryComparisonSnapshot;
+}) {
   const warnings = historyComparisonWarningKeys(comparison);
   return (
     <div className="space-y-3 border-t pt-3">
@@ -1006,7 +1020,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg bg-muted/60 p-3">
       <p className="text-xs text-muted-foreground">{t(label)}</p>
-      <p className="mt-1 font-mono text-lg font-semibold">{value}</p>
+      <p className="mt-1 font-mono text-xl font-semibold">{value}</p>
     </div>
   );
 }

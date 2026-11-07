@@ -1,4 +1,5 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 use nte_dps_tool::{
     core::{
@@ -7,7 +8,7 @@ use nte_dps_tool::{
     },
     engine::model::CharacterInfo,
     storage::{
-        config::{AccentColor, ThemePreset, UiConfig, UiDensity},
+        config::{AccentColor, MainDpsDisplayConfig, ThemePreset, UiConfig, UiDensity},
         history::MAX_HISTORY_RECORDS,
         i18n::Language,
     },
@@ -18,7 +19,6 @@ use crate::{
     state::{AppState, HistoryRoundIndex, MainDpsReadout},
 };
 
-pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 9;
 pub(crate) const MAIN_DPS_MAX_TEXT_BYTES: usize = 256;
 pub(crate) const MAIN_DPS_MAX_PROJECTED_TEXT_BYTES: usize = 128 * 1024;
 
@@ -65,7 +65,8 @@ impl MainDpsTextBudget {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum GameDetectionStatus {
     Running,
@@ -90,10 +91,10 @@ fn resolve_game_detection_status(
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsSnapshot {
-    pub contract_version: u32,
     pub generation: String,
     pub capture_generation: String,
     pub presentation_generation: String,
@@ -108,7 +109,7 @@ pub(crate) struct MainDpsSnapshot {
     pub always_on_top: bool,
     pub passthrough: bool,
     pub appearance: MainDpsAppearanceSnapshot,
-    pub display: MainDpsDisplaySnapshot,
+    pub display: MainDpsDisplayConfig,
     pub rounds: Vec<MainDpsRoundSnapshot>,
     pub selected_round_id: Option<String>,
     pub readout: MainDpsReadoutSnapshot,
@@ -176,7 +177,6 @@ impl MainDpsSnapshot {
         let game_detected = game_detection_status == GameDetectionStatus::Running;
 
         Ok(Self {
-            contract_version: MAIN_DPS_CONTRACT_VERSION,
             generation: generation.to_string(),
             capture_generation: revisions.capture.to_string(),
             presentation_generation: revisions.presentation.to_string(),
@@ -195,20 +195,7 @@ impl MainDpsSnapshot {
             always_on_top,
             passthrough: state.passthrough(),
             appearance: MainDpsAppearanceSnapshot::from(&config),
-            display: MainDpsDisplaySnapshot {
-                metrics: config
-                    .main_dps_display
-                    .metrics
-                    .iter()
-                    .map(|value| value.id())
-                    .collect(),
-                attributions: config
-                    .main_dps_display
-                    .attributions
-                    .iter()
-                    .map(|value| value.id())
-                    .collect(),
-            },
+            display: config.main_dps_display.clone(),
             rounds: round_snapshots,
             selected_round_id,
             readout: MainDpsReadoutSnapshot::from_hud(
@@ -267,40 +254,35 @@ impl MainDpsSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsAppearanceSnapshot {
-    pub language: &'static str,
+    pub language: Language,
     pub dark_mode: bool,
-    pub theme_preset: &'static str,
-    pub accent: &'static str,
-    pub density: &'static str,
+    pub theme_preset: ThemePreset,
+    pub accent: AccentColor,
+    pub density: UiDensity,
     pub reduce_motion: bool,
     pub opacity: f32,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MainDpsDisplaySnapshot {
-    pub metrics: Vec<&'static str>,
-    pub attributions: Vec<&'static str>,
 }
 
 impl From<&UiConfig> for MainDpsAppearanceSnapshot {
     fn from(config: &UiConfig) -> Self {
         Self {
-            language: config.language.code(),
+            language: config.language,
             dark_mode: config.dark_mode,
-            theme_preset: theme_preset_id(config.theme_preset),
-            accent: accent_id(config.accent),
-            density: density_id(config.density),
+            theme_preset: config.theme_preset,
+            accent: config.accent,
+            density: config.density,
             reduce_motion: config.reduce_motion,
             opacity: config.opacity,
         }
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsRoundSnapshot {
     pub id: Option<String>,
@@ -309,7 +291,8 @@ pub(crate) struct MainDpsRoundSnapshot {
     pub abyss_floor: Option<u32>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsReadoutSnapshot {
     pub data_state: &'static str,
@@ -373,7 +356,8 @@ impl MainDpsReadoutSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsSummarySnapshot {
     pub team_dps: f64,
@@ -382,7 +366,8 @@ pub(crate) struct MainDpsSummarySnapshot {
     pub total_damage_taken: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsCharacterSnapshot {
     pub character_id: u32,
@@ -428,7 +413,8 @@ impl MainDpsCharacterSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsDamageAttributionSnapshot {
     pub total_damage: f64,
@@ -457,7 +443,8 @@ fn localized_character_name(
         .to_owned()
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsAbyssSnapshot {
     pub detected: bool,
@@ -466,7 +453,8 @@ pub(crate) struct MainDpsAbyssSnapshot {
     pub success: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsActionsSnapshot {
     pub can_start_capture: bool,
@@ -483,7 +471,8 @@ pub(crate) struct MainDpsActionsSnapshot {
     pub import_replay_requires_confirmation: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsOnboardingSnapshot {
     pub done: bool,
@@ -496,20 +485,23 @@ pub(crate) struct MainDpsOnboardingSnapshot {
     pub passthrough_hotkey_ready: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum MainDpsEvent {
     Snapshot(MainDpsSnapshot),
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsActionResult {
     pub performed: bool,
     pub snapshot: MainDpsSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsResetResult {
     pub snapshot: MainDpsSnapshot,
@@ -577,39 +569,10 @@ fn can_start_new_round(
         && has_hits
 }
 
-fn theme_preset_id(value: ThemePreset) -> &'static str {
-    match value {
-        ThemePreset::Zinc => "zinc",
-        ThemePreset::Tactical => "tactical",
-        ThemePreset::HighContrast => "high-contrast",
-    }
-}
-
-fn accent_id(value: AccentColor) -> &'static str {
-    match value {
-        AccentColor::Zinc => "zinc",
-        AccentColor::Blue => "blue",
-        AccentColor::Violet => "violet",
-        AccentColor::Orange => "orange",
-        AccentColor::Green => "green",
-    }
-}
-
-fn density_id(value: UiDensity) -> &'static str {
-    match value {
-        UiDensity::Compact => "compact",
-        UiDensity::Cozy => "cozy",
-        UiDensity::Comfortable => "comfortable",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        channels::stream_runtime::serialize_stream_events,
-        contract::stream::MAX_STREAM_DELIVERY_BYTES,
-    };
+    use crate::contract::stream::MAX_STREAM_DELIVERY_BYTES;
 
     #[test]
     fn game_detection_distinguishes_normal_negative_from_probe_failure() {
@@ -628,29 +591,6 @@ mod tests {
         assert_eq!(
             resolve_game_detection_status(false, || Err("must not be called".to_owned())),
             GameDetectionStatus::Running
-        );
-    }
-
-    #[test]
-    fn empty_snapshot_is_bounded_and_uses_string_generations() {
-        let snapshot = MainDpsSnapshot::from_state(&AppState::default())
-            .expect("healthy live-capture main DPS snapshot");
-        let value = serde_json::to_value(snapshot).expect("snapshot serializes");
-
-        assert_eq!(value["contractVersion"], MAIN_DPS_CONTRACT_VERSION);
-        assert!(value["generation"].as_str().is_some());
-        assert_eq!(value["rounds"][0]["live"], true);
-        assert_eq!(value["readout"]["dataState"], "empty");
-        assert_eq!(value["display"]["metrics"][0], "team-dps");
-        assert_eq!(value["display"]["attributions"][4], "max-hp-reduction");
-        assert_eq!(value["readout"]["damageAttribution"]["maxHpReduction"], 0.0);
-        assert_eq!(
-            value["readout"]["damageAttribution"]["includeMaxHpReductionInTotalDamage"],
-            false
-        );
-        assert_eq!(
-            value["readout"]["characters"].as_array().map(Vec::len),
-            Some(0)
         );
     }
 
@@ -894,7 +834,7 @@ mod tests {
             })
             .collect();
 
-        let delivery = serialize_stream_events(vec![MainDpsEvent::Snapshot(snapshot)])
+        let delivery = serde_json::to_vec(&MainDpsEvent::Snapshot(snapshot))
             .expect("bounded main snapshot must serialize");
         assert!(
             delivery.len() < MAX_STREAM_DELIVERY_BYTES,

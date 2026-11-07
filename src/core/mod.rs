@@ -28,6 +28,7 @@ pub mod packets;
 pub mod reducer;
 pub mod skills;
 pub mod snapshot;
+pub mod sync;
 #[cfg(feature = "desktop")]
 pub mod team_data;
 pub mod timeline;

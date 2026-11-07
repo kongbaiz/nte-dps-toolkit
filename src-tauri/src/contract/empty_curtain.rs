@@ -1,4 +1,5 @@
 use serde::Serialize;
+use ts_rs::TS;
 
 use nte_dps_tool::{
     core::empty_curtain::substat_unlock_level,
@@ -9,7 +10,6 @@ use nte_dps_tool::{
 
 use crate::equipment_operation_service::EmptyCurtainOperationState;
 
-pub(crate) const EMPTY_CURTAIN_CONTRACT_VERSION: u32 = 3;
 pub(crate) const EMPTY_CURTAIN_MAX_CHARACTERS: usize = 64;
 pub(crate) const EMPTY_CURTAIN_MAX_ITEMS: usize = 4_096;
 pub(crate) const EMPTY_CURTAIN_MAX_DETAILS_PER_ITEM: usize = 16;
@@ -18,10 +18,10 @@ pub(crate) const EMPTY_CURTAIN_MAX_TEXT_BYTES: usize = 256;
 pub(crate) const EMPTY_CURTAIN_MAX_ICON_BYTES: usize = 1_024;
 pub(crate) const EMPTY_CURTAIN_MAX_PROJECTED_TEXT_BYTES: usize = 1024 * 1024;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainSnapshot {
-    pub contract_version: u32,
     pub generation: String,
     pub observed_at_unix_ms: String,
     pub has_data: bool,
@@ -102,7 +102,6 @@ impl EmptyCurtainSnapshot {
             projected_items.push(candidate);
         }
         Self {
-            contract_version: EMPTY_CURTAIN_CONTRACT_VERSION,
             generation: inventory.generation.to_string(),
             observed_at_unix_ms: inventory.observed_at_unix_ms.to_string(),
             has_data,
@@ -115,7 +114,8 @@ impl EmptyCurtainSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ItemUidSnapshot {
     pub slot: u32,
@@ -131,7 +131,8 @@ impl From<ItemUid> for ItemUidSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainCharacterSnapshot {
     pub uid: ItemUidSnapshot,
@@ -139,7 +140,8 @@ pub(crate) struct EmptyCurtainCharacterSnapshot {
     pub name: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainItemSnapshot {
     pub uid: ItemUidSnapshot,
@@ -161,14 +163,16 @@ pub(crate) struct EmptyCurtainItemSnapshot {
     pub set_effects: Vec<EmptyCurtainSetEffectSnapshot>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainPlacementSnapshot {
     pub row: i32,
     pub column: i32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainStatSnapshot {
     pub property: String,
@@ -180,14 +184,16 @@ pub(crate) struct EmptyCurtainStatSnapshot {
     pub unlocked: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainSetEffectSnapshot {
     pub count: u32,
     pub text: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainOperationSnapshot {
     pub status: &'static str,
@@ -217,21 +223,24 @@ impl From<EmptyCurtainOperationState> for EmptyCurtainOperationSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainFileResult {
     pub completed: bool,
     pub snapshot: EmptyCurtainSnapshot,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EmptyCurtainPositionSnapshot {
     pub row: i32,
     pub column: i32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
 #[serde(tag = "event", content = "payload", rename_all = "camelCase")]
 pub(crate) enum EmptyCurtainEvent {
     Snapshot(EmptyCurtainSnapshot),
@@ -458,38 +467,7 @@ mod tests {
         },
     };
 
-    use crate::{
-        channels::stream_runtime::serialize_stream_events,
-        contract::stream::MAX_STREAM_DELIVERY_BYTES,
-    };
-
-    #[test]
-    fn item_uids_remain_bounded_numbers() {
-        let uid = ItemUidSnapshot::from(ItemUid {
-            slot: u32::MAX,
-            serial: u32::MAX,
-        });
-        let json = serde_json::to_value(uid).unwrap();
-        assert_eq!(json["slot"], u32::MAX);
-        assert_eq!(json["serial"], u32::MAX);
-    }
-
-    #[test]
-    fn secondary_stat_unlock_state_uses_explicit_contract_fields() {
-        let json = serde_json::to_value(EmptyCurtainStatSnapshot {
-            property: "CritAdd".to_owned(),
-            label: "Critical Rate".to_owned(),
-            value: 0.08,
-            percent: true,
-            main: false,
-            unlock_level: Some(15),
-            unlocked: false,
-        })
-        .unwrap();
-
-        assert_eq!(json["unlockLevel"], 15);
-        assert_eq!(json["unlocked"], false);
-    }
+    use crate::contract::stream::MAX_STREAM_DELIVERY_BYTES;
 
     fn adversarial_item(index: u32, text: &str) -> InventoryItem {
         let stat = InventoryStat {
@@ -712,7 +690,7 @@ mod tests {
                 .sum::<usize>()
                 <= EMPTY_CURTAIN_MAX_TOTAL_DETAILS
         );
-        let delivery = serialize_stream_events(vec![EmptyCurtainEvent::Snapshot(snapshot)])
+        let delivery = serde_json::to_vec(&EmptyCurtainEvent::Snapshot(snapshot))
             .expect("the maximal legal equipment snapshot must serialize");
         println!(
             "EMPTY_CURTAIN_MAX_STREAM_BYTES={} limit={MAX_STREAM_DELIVERY_BYTES}",

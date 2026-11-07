@@ -1,56 +1,48 @@
-import { useEffect, useRef, useState } from "react";
-
 import {
-  MOTION_DURATION,
-  interpolateNumber,
-  motionIsReduced,
-} from "@/lib/motion";
+  animate,
+  motion,
+  useMotionValue,
+  useReducedMotionConfig,
+  useTransform,
+} from "motion/react";
+import { useEffect } from "react";
+
+import { MOTION_DURATION } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 interface AnimatedNumberProps {
   value: number;
   format?: (value: number) => string;
   className?: string;
-  duration?: number;
 }
 
 export function AnimatedNumber({
   value,
   format = String,
   className,
-  duration = MOTION_DURATION.slow,
 }: AnimatedNumberProps) {
-  const [displayed, setDisplayed] = useState(value);
-  const displayedRef = useRef(value);
+  const displayed = useMotionValue(value);
+  const text = useTransform(displayed, format);
+  const reduceMotion = useReducedMotionConfig();
 
   useEffect(() => {
-    const from = displayedRef.current;
-    if (from === value || motionIsReduced()) {
-      displayedRef.current = value;
-      setDisplayed(value);
+    if (reduceMotion) {
+      displayed.set(value);
       return;
     }
+    const controls = animate(displayed, value, {
+      duration: MOTION_DURATION.slow / 1000,
+      ease: "easeOut",
+    });
+    return () => controls.stop();
+  }, [displayed, reduceMotion, value]);
 
-    const startedAt = performance.now();
-    let frame = 0;
-    const advance = (now: number) => {
-      const progress = Math.min(1, (now - startedAt) / duration);
-      const next = interpolateNumber(from, value, progress);
-      displayedRef.current = next;
-      setDisplayed(next);
-      if (progress < 1) frame = requestAnimationFrame(advance);
-    };
-    frame = requestAnimationFrame(advance);
-    return () => cancelAnimationFrame(frame);
-  }, [duration, value]);
-
-  const exact = format(value);
   return (
     <span
       className={cn("motion-number tabular-nums", className)}
-      aria-label={exact}
+      aria-label={format(value)}
     >
-      <span aria-hidden="true">{format(displayed)}</span>
+      <motion.span aria-hidden="true">{text}</motion.span>
     </span>
   );
 }

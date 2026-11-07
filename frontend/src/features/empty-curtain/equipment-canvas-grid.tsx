@@ -1,11 +1,13 @@
 import { useEffect, useRef } from "react";
 
 import { t, tf } from "@/lib/i18n";
-import { subscribeCharacterAvatarCatalog } from "@/lib/character-avatar";
+import { useCharacterAvatarCatalog } from "@/lib/character-avatar";
+import type { EmptyCurtainItemSnapshot } from "@/lib/tauri/generated/EmptyCurtainItemSnapshot";
+
 import {
-  type EmptyCurtainItem,
-  type EquipmentQuality,
-} from "@/lib/tauri/empty-curtain-contract";
+  EQUIPMENT_QUALITY_COLORS,
+  type KnownEquipmentQuality,
+} from "./equipment-filters";
 
 import {
   equipmentCanvasBackingStore,
@@ -27,10 +29,10 @@ import {
 } from "./equipment-canvas-layout";
 
 interface EquipmentCanvasGridProps {
-  items: EmptyCurtainItem[];
-  imageUrl: (item: EmptyCurtainItem) => string | null;
+  items: EmptyCurtainItemSnapshot[];
+  imageUrl: (item: EmptyCurtainItemSnapshot) => string | null;
   characterAvatarUrl: (characterId: number) => string | null;
-  onOpenItem: (item: EmptyCurtainItem) => void;
+  onOpenItem: (item: EmptyCurtainItemSnapshot) => void;
 }
 
 interface CanvasTheme {
@@ -196,7 +198,7 @@ export function EquipmentCanvasGrid({
     };
     drawRef.current = scheduleDraw;
     const unsubscribeAvatarCatalog =
-      subscribeCharacterAvatarCatalog(scheduleDraw);
+      useCharacterAvatarCatalog.subscribe(scheduleDraw);
     const resizeObserver = new ResizeObserver(scheduleResize);
     resizeObserver.observe(scroller);
     const themeObserver = new MutationObserver(() => {
@@ -390,10 +392,10 @@ function drawEquipmentCard(
   context: CanvasRenderingContext2D,
   cell: EquipmentCanvasCell,
   scrollTop: number,
-  item: EmptyCurtainItem,
+  item: EmptyCurtainItemSnapshot,
   theme: CanvasTheme,
   focused: boolean,
-  imageUrl: (item: EmptyCurtainItem) => string | null,
+  imageUrl: (item: EmptyCurtainItemSnapshot) => string | null,
   characterAvatarUrl: (characterId: number) => string | null,
   requestDraw: () => void,
 ) {
@@ -413,7 +415,9 @@ function drawEquipmentCard(
   context.save();
   roundedRect(context, x, y, width, height, 12);
   context.clip();
-  context.fillStyle = qualityColor(item.quality);
+  context.fillStyle =
+    EQUIPMENT_QUALITY_COLORS[item.quality as KnownEquipmentQuality] ??
+    theme.mutedForeground;
   context.fillRect(x, y, 4, height);
   context.fillStyle = theme.muted;
   context.fillRect(x + 4, y, width - 4, 68);
@@ -689,24 +693,16 @@ function roundedRect(
 
 function readCanvasTheme(): CanvasTheme {
   const styles = getComputedStyle(document.documentElement);
-  const read = (name: string, fallback: string) =>
-    styles.getPropertyValue(name).trim() || fallback;
+  const read = (name: string) => styles.getPropertyValue(name).trim();
   return {
-    background: read("--background", "#ffffff"),
-    card: read("--card", "#ffffff"),
-    foreground: read("--foreground", "#17191c"),
-    muted: read("--muted", "#f1f3f5"),
-    mutedForeground: read("--muted-foreground", "#697078"),
-    border: read("--border", "#d9dde1"),
-    destructive: read("--destructive", "#dc2626"),
+    background: read("--background"),
+    card: read("--card"),
+    foreground: read("--foreground"),
+    muted: read("--muted"),
+    mutedForeground: read("--muted-foreground"),
+    border: read("--border"),
+    destructive: read("--destructive"),
   };
-}
-
-function qualityColor(quality: EquipmentQuality): string {
-  if (quality === "orange") return "#f59e0b";
-  if (quality === "purple") return "#8b5cf6";
-  if (quality === "blue") return "#0ea5e9";
-  return "#8b949e";
 }
 
 function formatStat(value: number, percent: boolean): string {

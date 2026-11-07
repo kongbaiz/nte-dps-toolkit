@@ -1,7 +1,5 @@
-import type {
-  DiagnosticsReportSnapshot,
-  DiagnosticsSnapshot,
-} from "@/lib/tauri/diagnostics-contract";
+import type { DiagnosticsReportSnapshot } from "@/lib/tauri/generated/DiagnosticsReportSnapshot";
+import type { DiagnosticsSnapshot } from "@/lib/tauri/generated/DiagnosticsSnapshot";
 
 export type DiagnosticsContentKind = "loading" | "error" | "ready";
 

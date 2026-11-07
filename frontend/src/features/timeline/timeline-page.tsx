@@ -2,6 +2,7 @@ import {
   PageHeader,
   PageTitle,
   PageDescription,
+  PageScrollArea,
 } from "@/components/nte/page-layout";
 import {
   Activity,
@@ -31,10 +32,8 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t } from "@/lib/i18n";
-import type {
-  TimelineCurveMode,
-  TimelineScope,
-} from "@/lib/tauri/timeline-contract";
+import type { TimelineDpsViewMode } from "@/lib/tauri/generated/TimelineDpsViewMode";
+import type { TimelineScope } from "@/lib/tauri/generated/TimelineScope";
 import { cn } from "@/lib/utils";
 
 import { TimelineChart } from "./timeline-chart";
@@ -87,7 +86,7 @@ export function TimelinePage() {
     }
   };
 
-  const changeMode = (nextMode: TimelineCurveMode) => {
+  const changeMode = (nextMode: TimelineDpsViewMode) => {
     if (!snapshot || nextMode === mode) return;
     setSelectedCharacterId(null);
     void setPreferences(snapshot.bucketSeconds, nextMode);
@@ -100,7 +99,7 @@ export function TimelinePage() {
           <div className="flex flex-wrap items-center gap-2">
             <PageTitle>{t("Timeline")}</PageTitle>
             <Badge variant="outline" className="gap-1.5">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span className="size-1.5 rounded-full bg-success" />
               {t("Live")}
             </Badge>
           </div>
@@ -124,8 +123,8 @@ export function TimelinePage() {
         </div>
       </PageHeader>
 
-      <div className="timeline-scrollport min-h-0 flex-1 overflow-y-auto p-3 min-[900px]:p-4">
-        <div className="timeline-content flex min-h-full w-full flex-col gap-3.5">
+      <PageScrollArea className="overscroll-contain">
+        <div className="flex min-h-full w-full flex-col gap-3.5 [@media(max-height:800px)]:gap-2.5">
           {mutationError && state.status !== "error" && (
             <Alert variant="destructive">
               <AlertTitle>{t("Timeline update failed")}</AlertTitle>
@@ -353,7 +352,7 @@ export function TimelinePage() {
             </>
           )}
         </div>
-      </div>
+      </PageScrollArea>
     </section>
   );
 }

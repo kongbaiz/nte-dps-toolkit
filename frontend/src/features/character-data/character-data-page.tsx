@@ -14,12 +14,11 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/form-controls";
 import { t, tf } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import {
-  INITIAL_CHARACTER_REQUEST,
-  type UserCharacters,
-} from "@/lib/tauri/user-characters-client";
+import type { CharacterResponse } from "@/lib/tauri/generated/CharacterResponse";
+import { INITIAL_CHARACTER_REQUEST } from "@/lib/tauri/user-characters-client";
 import { useUserCharacters } from "./use-user-characters";
 import { CharacterSnapshotDetail } from "./character-build-sheet";
 import { panelImage } from "./character-build-model";
@@ -131,8 +130,8 @@ export function CharacterDataPage() {
                 read(0, null, search);
               }}
             >
-              <input
-                className="h-9 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm"
+              <Input
+                className="h-9 flex-1"
                 aria-label={t("Search characters")}
                 placeholder={t("ID / name")}
                 maxLength={128}
@@ -251,7 +250,7 @@ export function CharacterDataPage() {
     </section>
   );
 }
-function SnapshotStatus({ snapshot }: { snapshot: UserCharacters | null }) {
+function SnapshotStatus({ snapshot }: { snapshot: CharacterResponse | null }) {
   if (!snapshot) return t("No account snapshot loaded.");
   if (!snapshot.sdkCompatible) return t("The User plugin SDK is not ready.");
   if (snapshot.state === "failed")

@@ -1,6 +1,6 @@
 // Synthetic UI data only. Never imported by production entries.
-import type { UserCharacters } from "@/lib/tauri/user-characters-client";
-export function userCharacterFixture(): UserCharacters {
+import type { CharacterResponse } from "@/lib/tauri/generated/CharacterResponse";
+export function userCharacterFixture(): CharacterResponse {
   const summary = {
     uid: "1:2",
     itemId: "fixture_character",
@@ -12,7 +12,6 @@ export function userCharacterFixture(): UserCharacters {
     name: string | null = null,
   ) => ({ name, fields: fields.map(([label, value]) => ({ label, value })) });
   return {
-    contractVersion: 1,
     connectionIdentity: "42:99",
     state: "completed",
     dirty: false,
@@ -105,7 +104,7 @@ export function userCharacterFixture(): UserCharacters {
 }
 
 // Artwork/format QA only: identifiers select real bundled images; every value is synthetic.
-export function userCharacterArtworkFixture(): UserCharacters {
+export function userCharacterArtworkFixture(): CharacterResponse {
   const fixture = userCharacterFixture();
   const page = fixture.page!;
   page.records[0] = {

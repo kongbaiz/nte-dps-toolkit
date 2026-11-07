@@ -1,19 +1,9 @@
 use tauri::{State, WebviewWindow, ipc::Channel};
 
-#[cfg(test)]
-use std::{sync::atomic::Ordering, thread, time::Duration};
-
 use crate::{
-    channels::stream_runtime::{stream_registry_error, validate_subscription_id},
-    contract::{
-        CommandError, SubscriptionReceipt,
-        history::HistoryEvent,
-        stream::{StreamDeliveryBody, StreamKind},
-    },
-    history_runtime::{
-        HISTORY_STREAM_INTERVAL, HistoryRuntime, HistoryStreamRegistration,
-        history_runtime_unavailable,
-    },
+    channels::stream_runtime::validate_subscription_id,
+    contract::{CommandError, SubscriptionReceipt, history::HistoryEvent, stream::StreamKind},
+    history_runtime::{HISTORY_STREAM_INTERVAL, HistoryRuntime, HistoryStreamRegistration},
     state::AppState,
     windows::console,
 };
@@ -23,7 +13,7 @@ pub(crate) const HISTORY_STREAM_INTERVAL_MS: u32 = HISTORY_STREAM_INTERVAL.as_mi
 #[tauri::command]
 pub(crate) fn subscribe_history(
     subscription_id: String,
-    on_event: Channel<StreamDeliveryBody<HistoryEvent>>,
+    on_event: Channel<HistoryEvent>,
     state: State<'_, AppState>,
     runtime: State<'_, HistoryRuntime>,
     window: WebviewWindow,
@@ -34,12 +24,8 @@ pub(crate) fn subscribe_history(
     let stream_kind = StreamKind::History;
     let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    state
-        .with_history_transaction(|| ())
-        .map_err(history_runtime_unavailable)?;
-    let registration = state
-        .reserve_stream(window.label(), &stream_key)
-        .map_err(stream_registry_error)?;
+    state.with_history_transaction(|| ())?;
+    let registration = state.reserve_stream(window.label(), &stream_key)?;
     let stream_generation = registration.generation();
     if runtime
         .register_stream(HistoryStreamRegistration {
@@ -59,43 +45,6 @@ pub(crate) fn subscribe_history(
         HISTORY_STREAM_INTERVAL_MS,
     ))
 }
-#[cfg(test)]
-pub(crate) fn run_history_stream_worker(
-    state: &AppState,
-    registration: &crate::state::StreamRegistration,
-    mut send: impl FnMut(crate::contract::history::HistoryEvent) -> bool,
-    mut wait: impl FnMut(),
-) {
-    let stop = registration.stop_token();
-    while !registration.activation_token().load(Ordering::Acquire) && !stop.load(Ordering::Acquire)
-    {
-        thread::sleep(Duration::from_millis(1));
-    }
-    let mut last_revision = None;
-    while !stop.load(Ordering::Acquire) {
-        let observed_revision = state.history_revision();
-        if last_revision != Some(observed_revision) {
-            let (revision, snapshot) =
-                match crate::history_runtime::project_history_stream_snapshot(state) {
-                    Ok(projected) => projected,
-                    Err(_) => break,
-                };
-            if stop.load(Ordering::Acquire) {
-                break;
-            }
-            if last_revision != Some(revision) {
-                let event = crate::contract::history::HistoryEvent::Snapshot(snapshot);
-                if !send(event) {
-                    break;
-                }
-                last_revision = Some(revision);
-            }
-        }
-        wait();
-    }
-    let _ = state.finish_stream(registration);
-}
-
 #[tauri::command]
 pub(crate) fn unsubscribe_history(
     subscription_id: String,
@@ -105,11 +54,9 @@ pub(crate) fn unsubscribe_history(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state
-        .stop_stream(
-            window.label(),
-            &StreamKind::History.stream_key(&subscription_id),
-        )
-        .map_err(stream_registry_error)?;
+    state.stop_stream(
+        window.label(),
+        &StreamKind::History.stream_key(&subscription_id),
+    )?;
     Ok(())
 }

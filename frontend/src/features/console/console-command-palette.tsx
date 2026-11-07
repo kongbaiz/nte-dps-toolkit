@@ -9,8 +9,9 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/form-controls";
 
-import { t, useTranslationRevision } from "@/lib/i18n";
+import { t, useFrontendLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 import {
@@ -30,14 +31,14 @@ export function ConsoleCommandPalette({
   onOpenChange(open: boolean): void;
   onExecute(action: ConsoleCommandAction): Promise<void> | void;
 }) {
-  const translationRevision = useTranslationRevision();
+  const language = useFrontendLanguage();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const filtered = useMemo(() => {
-    void translationRevision;
+    void language;
     return filterConsoleCommands(CONSOLE_COMMANDS, query, t);
-  }, [query, translationRevision]);
+  }, [language, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +68,7 @@ export function ConsoleCommandPalette({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPortal>
-        <DialogBackdrop className="bg-black/45" />
+        <DialogBackdrop />
         <DialogPopup
           className="ui-motion-dialog top-[clamp(1rem,12vh,4.5rem)] left-1/2 flex max-h-[min(32rem,calc(100vh-2rem))] w-[calc(100vw-1.5rem)] max-w-xl -translate-x-1/2 flex-col overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-2xl"
           initialFocus={inputRef}
@@ -78,10 +79,10 @@ export function ConsoleCommandPalette({
               className="size-4 text-muted-foreground"
               aria-hidden="true"
             />
-            <input
+            <Input
               ref={inputRef}
               aria-label={t("Search commands")}
-              className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground select-text"
+              className="h-9 flex-1 border-0 bg-transparent px-0 select-text focus-visible:shadow-none"
               placeholder={t("Search commands")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -128,7 +129,7 @@ export function ConsoleCommandPalette({
                       aria-disabled={disabled}
                       aria-selected={index === selected}
                       className={cn(
-                        "flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-[color,background-color,transform] duration-150 ease-out active:scale-[0.99]",
+                        "flex min-h-11 w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-[color,background-color,transform] duration-(--motion-duration-fast) ease-(--motion-ease-standard) active:scale-[0.99]",
                         rowClasses.row,
                       )}
                       key={command.id}

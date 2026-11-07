@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   INITIAL_CHARACTER_REQUEST,
   userCharactersClient,
-  type CharacterRequest,
-  type UserCharacters,
 } from "@/lib/tauri/user-characters-client";
-import { parseTechnicalCommandError } from "@/lib/tauri/technical-contract";
+import type { CharacterRequest } from "@/lib/tauri/generated/CharacterRequest";
+import type { CharacterResponse } from "@/lib/tauri/generated/CharacterResponse";
+import { toCommandError } from "@/lib/tauri/command-error";
 
 export function useUserCharacters() {
-  const [snapshot, setSnapshot] = useState<UserCharacters | null>(null);
+  const [snapshot, setSnapshot] = useState<CharacterResponse | null>(null);
   const [pending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
@@ -51,7 +51,7 @@ export function useUserCharacters() {
         setError(
           e instanceof TypeError
             ? "The character snapshot is invalid."
-            : parseTechnicalCommandError(e).messageKey,
+            : toCommandError(e).messageKey,
         );
         setPending(false);
       }
