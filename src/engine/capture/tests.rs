@@ -898,7 +898,7 @@ fn capture_export_migrates_only_legacy_authoritative_pause_intervals() {
 fn capture_export_rejects_invalid_saved_pause_state() {
     let invalid_mask = r#"{
         "time_stop_events": [
-            {"GamePauseStarted":{"timestamp":10.0,"pause_type_mask":2}}
+            {"GamePauseStarted":{"timestamp":10.0,"pause_type_mask":128}}
         ]
     }"#;
 

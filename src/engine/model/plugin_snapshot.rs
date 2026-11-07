@@ -76,6 +76,39 @@ pub struct AttributeSnapshot {
     #[serde(default)]
     pub values: Option<BTreeMap<String, AttributeDatum>>,
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum EffectModifierOperation {
+    AddBase,
+    MultiplyAdditive,
+    DivideAdditive,
+    Override,
+    MultiplyCompound,
+    AddFinal,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+pub struct EffectModifier {
+    pub attribute: String,
+    pub operation: EffectModifierOperation,
+    pub magnitude: f64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum EffectModifiers {
+    Recorded { values: Vec<EffectModifier> },
+    Unavailable,
+}
+impl EffectModifiers {
+    pub(crate) fn values(&self) -> Option<&[EffectModifier]> {
+        match self {
+            Self::Recorded { values } => Some(values),
+            Self::Unavailable => None,
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -91,6 +124,9 @@ pub struct Effect {
     pub start_world_time: f64,
     pub level: f64,
     pub inhibited: bool,
+    // Frozen FModifierSpec observations; None only for older snapshots without this field.
+    #[serde(default)]
+    pub modifiers: Option<EffectModifiers>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "tauri_frontend", derive(ts_rs::TS))]
@@ -195,6 +231,18 @@ impl HitSnapshotData {
                         text(s, 512)?;
                     }
                     text(&row.description, 4096)?;
+                    for modifier in row
+                        .modifiers
+                        .as_ref()
+                        .and_then(EffectModifiers::values)
+                        .into_iter()
+                        .flatten()
+                    {
+                        text(&modifier.attribute, 512)?;
+                        if !modifier.magnitude.is_finite() {
+                            return Err(SnapshotValidationError::InvalidFormat);
+                        }
+                    }
                     if ![row.duration, row.start_world_time, row.level]
                         .iter()
                         .all(|v| v.is_finite())
@@ -219,6 +267,13 @@ impl HitSnapshotData {
                 + e.effects
                     .as_ref()
                     .map_or(0, |v| v.len() * std::mem::size_of::<Effect>());
+            if let Some(rows) = &e.effects {
+                bytes += rows
+                    .iter()
+                    .filter_map(|row| row.modifiers.as_ref().and_then(EffectModifiers::values))
+                    .map(std::mem::size_of_val)
+                    .sum::<usize>();
+            }
         }
         if bytes > MAX_SNAPSHOT_BYTES {
             return Err(SnapshotValidationError::TooLarge);

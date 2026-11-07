@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import characters from "@res/data/characters/characters.json";
+import { panelImage } from "@/features/character-data/character-build-model";
 
 import {
   replaceCharacterAvatarCatalog,
@@ -8,6 +10,17 @@ import {
 afterEach(() => replaceCharacterAvatarCatalog([]));
 
 describe("runtime character avatar catalog", () => {
+  it.each(["1074", "1090"] as const)(
+    "resolves appearance-named avatars for character %i in both views",
+    (id) => {
+      const avatar = characters.characters[id].avatar;
+      const file = avatar.split("/").at(-1)!;
+      replaceCharacterAvatarCatalog([{ id: Number(id), avatar }]);
+      expect(resolveCharacterAvatar(Number(id))).toContain(file);
+      expect(panelImage("avatar", String(id))).toContain(file);
+    },
+  );
+
   it("replaces an older mapping instead of retaining the compiled catalog", () => {
     replaceCharacterAvatarCatalog([
       {

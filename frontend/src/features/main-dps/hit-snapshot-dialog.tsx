@@ -16,6 +16,7 @@ import type { AttributeSnapshot } from "@/lib/tauri/generated/AttributeSnapshot"
 import type { EffectSnapshot } from "@/lib/tauri/generated/EffectSnapshot";
 import type { PluginHitSnapshot } from "@/lib/tauri/generated/PluginHitSnapshot";
 import type { MainDpsHitSnapshot } from "@/lib/tauri/generated/MainDpsHitSnapshot";
+import { EffectModifierValues } from "./effect-modifier-values";
 import { criticalTranslationKey } from "./main-dps-detail-model";
 
 const ATTRIBUTE_LABELS: Record<string, string> = {
@@ -231,6 +232,7 @@ export function EffectSnapshotView({
                       </summary>
                       <div className="mt-2 space-y-2 whitespace-pre-wrap break-words text-xs text-muted-foreground">
                         <p>{e.description}</p>
+                        <EffectModifierValues modifiers={e.modifiers} />
                         <p>{e.key}</p>
                         <p>
                           {t("Snapshot ID")}: {e.instanceKey}

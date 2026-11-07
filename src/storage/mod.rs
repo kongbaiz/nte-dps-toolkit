@@ -7,6 +7,7 @@ pub mod ability_names;
 pub mod abyss_remote;
 pub mod capture_logs;
 pub mod config;
+pub mod effect_text;
 pub mod history;
 pub mod i18n;
 pub mod io_util;

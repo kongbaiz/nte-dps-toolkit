@@ -4,7 +4,7 @@ import { characterDataClient } from "@/lib/tauri/character-data-client";
 import type { CharacterDataRecordSnapshot } from "@/lib/tauri/generated/CharacterDataRecordSnapshot";
 
 const characterImages = import.meta.glob<string>(
-  "@res/images/characters/player*.png",
+  "@res/images/characters/*.png",
   {
     eager: true,
     query: "?url",

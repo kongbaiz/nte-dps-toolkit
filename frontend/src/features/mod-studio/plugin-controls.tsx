@@ -1,45 +1,34 @@
-import {
-  Power,
-  RefreshCw,
-  Puzzle,
-  Activity,
-  Users,
-  Target,
-} from "lucide-react";
+import { lazy, Suspense } from "react";
+import { Power, Puzzle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { ActionNotice } from "@/components/nte/action-notice";
+import { usePluginFormCatalog } from "./plugin-form-catalog";
 import { t } from "@/lib/i18n";
 import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import { toolkitClient } from "@/lib/tauri/toolkit-client";
-import { TrainingEnemyControls } from "./training-enemy-controls";
-import { GameHudControls } from "./game-hud-controls";
-import { ReleaseControls } from "./release-controls";
-import { PLUGIN_STATE, pluginControlGroup } from "./release-control-groups";
+import { PLUGIN_STATE } from "./release-control-groups";
+const PluginFormPanel = lazy(() =>
+  import("./plugin-form-panel").then((module) => ({
+    default: module.PluginFormPanel,
+  })),
+);
+
 export function PluginControls({
   panel,
   plugin,
   title,
   pending,
   run,
-  refresh,
 }: {
   panel: PluginPanel;
   plugin: PluginPanel["plugins"][number];
   title: string;
   pending: boolean;
-  refresh: () => Promise<void>;
   run: (action: () => Promise<unknown>) => Promise<void>;
 }) {
-  const group = pluginControlGroup(plugin.file);
-  const Icon =
-    group?.id === "combat"
-      ? Activity
-      : group?.id === "account"
-        ? Users
-        : group?.id === "training"
-          ? Target
-          : Puzzle;
+  const entry = usePluginFormCatalog((state) => state.entries[plugin.file]);
+  const reload = usePluginFormCatalog((state) => state.load);
   const loaded = plugin.state === "loaded";
   const resident = loaded || plugin.state === "faulted";
   const busy =
@@ -62,105 +51,86 @@ export function PluginControls({
         className="flex flex-wrap items-center justify-between gap-3 border-b pb-3"
         data-testid="plugin-page-header"
       >
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/10 text-primary">
-            <Icon className="size-6" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-              <Badge variant="outline">{t(PLUGIN_STATE[plugin.state])}</Badge>
-            </div>
-          </div>
+        <div className="flex min-w-0 items-center gap-3">
+          <Puzzle className="size-5 shrink-0" />
+          <h2 className="truncate text-xl font-semibold">{title}</h2>
+          <Badge variant="outline">{t(PLUGIN_STATE[plugin.state])}</Badge>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant={resident ? "outline" : "default"}
-            disabled={busy || !panel.capabilities.includes(resident ? 5 : 4)}
-            onClick={() =>
-              void run(() =>
-                toolkitClient.control(
-                  resident ? "disable" : "enable",
+        <Button
+          size="sm"
+          variant={resident ? "outline" : "default"}
+          disabled={busy || !panel.capabilities.includes(resident ? 5 : 4)}
+          onClick={() =>
+            void run(() =>
+              toolkitClient.control(
+                resident ? "disable" : "enable",
+                plugin.file,
+                panel.connectionIdentity!,
+              ),
+            )
+          }
+        >
+          <Power />
+          {t(resident ? "Unload plugin" : "Load plugin")}
+        </Button>
+      </header>
+      {(panel.collectorActive || panel.combat?.capturing) && (
+        <p className="text-sm text-muted-foreground">
+          {t("Stop collection before changing plugin lifecycle state.")}
+        </p>
+      )}
+      {loaded &&
+      panel.connection === "connected" &&
+      panel.mode === "plugin" &&
+      panel.connectionIdentity ? (
+        entry?.error ? (
+          <div className="space-y-3">
+            <ActionNotice status="error" message={t(entry.error.messageKey)} />
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() =>
+                void reload(
                   plugin.file,
                   panel.connectionIdentity!,
-                ),
-              )
+                  plugin.serviceOwner!,
+                  true,
+                )
+              }
+            >
+              {t("Retry")}
+            </Button>
+          </div>
+        ) : entry?.snapshot &&
+          entry.key ===
+            JSON.stringify([panel.connectionIdentity, plugin.serviceOwner]) &&
+          !entry.loading &&
+          entry.snapshot.owner === plugin.serviceOwner ? (
+          <Suspense
+            fallback={
+              <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
             }
           >
-            <Power />
-            {t(resident ? "Unload plugin" : "Load plugin")}
-          </Button>
-        </div>
-        {panel.collectorActive && (
-          <p className="w-full text-xs text-muted-foreground">
-            {t("Stop collection before changing plugin lifecycle state.")}
-          </p>
-        )}
-        {panel.operation?.state && panel.operation.state !== "idle" && (
-          <p className="w-full text-xs text-muted-foreground">
-            {t("Plugin operation")}: {panel.operation.state}
-            {panel.operation.error && ` / ${t(panel.operation.error)}`}
-          </p>
-        )}
-      </header>
-      <div
-        className={`grid min-w-0 items-start gap-4 ${group?.id === "combat" ? "@min-[48rem]/detail:grid-cols-2" : "w-full"}`}
-        data-testid="plugin-settings-grid"
-      >
-        {group?.id === "combat" && (
-          <GameHudControls panel={panel} pending={pending} run={run} />
-        )}
-        {group?.id === "training" &&
-          loaded &&
-          panel.connection === "connected" &&
-          panel.mode === "plugin" &&
-          panel.connectionIdentity &&
-          panel.capabilities.includes(415) && (
-            <TrainingEnemyControls
+            <PluginFormPanel
+              key={plugin.file + ":" + entry.snapshot.owner}
+              snapshot={entry.snapshot}
+              file={plugin.file}
               identity={panel.connectionIdentity}
-              writable={panel.capabilities.includes(416)}
               pending={pending}
+              capturing={
+                panel.collectorActive || panel.combat?.capturing === true
+              }
               run={run}
             />
-          )}
-        {group ? (
-          <ReleaseControls
-            panel={panel}
-            pending={pending}
-            run={run}
-            group={group}
-          />
+          </Suspense>
         ) : (
-          <Card>
-            <CardContent className="flex gap-3 text-sm text-muted-foreground">
-              <Puzzle className="size-5 shrink-0" />
-              <p>
-                {t(
-                  "This plugin has no feature controls exposed to Toolkit. Its lifecycle controls are available on this page.",
-                )}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-      <details className="rounded-lg border px-4 py-3 text-xs text-muted-foreground">
-        <summary className="cursor-pointer font-medium focus-visible:outline-ring">
-          {t("Plugin details")}
-        </summary>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="break-all font-mono">{plugin.file}</p>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() => void refresh()}
-          >
-            <RefreshCw />
-            {t("Check status")}
-          </Button>
-        </div>
-      </details>
+          <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
+        )
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {t("Load the plugin to view its controls.")}
+        </p>
+      )}
     </div>
   );
 }

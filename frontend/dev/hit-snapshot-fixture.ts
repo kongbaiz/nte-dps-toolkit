@@ -84,6 +84,7 @@ export const hitSnapshotFixture: PluginHitSnapshot = {
         startWorldTime: 15,
         level: 1,
         inhibited: i === 5,
+        modifiers: null,
       })),
     },
     victimEffects: {
@@ -106,6 +107,7 @@ export const hitSnapshotFixture: PluginHitSnapshot = {
           startWorldTime: 10,
           level: 1,
           inhibited: false,
+          modifiers: null,
         },
       ],
     },

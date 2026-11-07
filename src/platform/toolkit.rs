@@ -24,7 +24,7 @@ use windows_sys::Win32::{
 };
 
 const REGION_BYTES: usize = 262_760;
-const PAGE_BYTES: usize = 262_144;
+pub(super) const PAGE_BYTES: usize = 262_144;
 pub const MAX_BLOB_BYTES: usize = 32 * 1024 * 1024;
 const REQUEST: usize = 40;
 const RESPONSE: usize = 584;
@@ -33,6 +33,8 @@ const RESPONSE: usize = 584;
 #[serde(rename_all = "snake_case")]
 pub enum ToolkitError {
     Unavailable,
+    OperationUnavailable,
+    Stopping,
     Busy,
     Timeout,
     InvalidProtocol,
@@ -50,9 +52,22 @@ impl std::fmt::Display for ToolkitError {
 }
 impl std::error::Error for ToolkitError {}
 
+#[path = "toolkit_form.rs"]
+pub mod form;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolkitService {
+    pub name: String,
+    pub owner: u64,
+    pub command: u32,
+    pub purpose: String,
+}
+
 pub struct ToolkitDescription {
     pub operation_session: String,
     pub commands: Vec<u32>,
+    pub services: Vec<ToolkitService>,
 }
 
 impl ToolkitDescription {
@@ -66,6 +81,8 @@ impl ToolkitDescription {
             operation_identity_version: u32,
             operation_session: String,
             commands: Vec<u32>,
+            #[serde(default)]
+            services: Vec<ToolkitService>,
         }
         let d: Description =
             serde_json::from_slice(bytes).map_err(|_| ToolkitError::InvalidProtocol)?;
@@ -90,6 +107,7 @@ impl ToolkitDescription {
         Ok(Self {
             operation_session: d.operation_session,
             commands: d.commands,
+            services: d.services,
         })
     }
 }
@@ -347,6 +365,33 @@ impl ToolkitClient {
         text: &str,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<u8>, ToolkitError> {
+        self.call_request(command, argument, text, (0, 0), cancelled)
+    }
+    pub fn call_owned(
+        &self,
+        session: &str,
+        owner: u64,
+        command: u32,
+        argument: u32,
+        text: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<u8>, ToolkitError> {
+        self.call_request(
+            12,
+            command,
+            &format!("{session}\n{text}"),
+            (owner, argument),
+            cancelled,
+        )
+    }
+    fn call_request(
+        &self,
+        command: u32,
+        argument: u32,
+        text: &str,
+        envelope: (u64, u32),
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<u8>, ToolkitError> {
         if text.len() >= 512 || text.contains('\0') {
             return Err(ToolkitError::InvalidProtocol);
         }
@@ -356,23 +401,14 @@ impl ToolkitClient {
             command,
             argument,
             text.as_bytes(),
-            (0, 0),
+            envelope,
             deadline,
             cancelled,
         )?;
         if first.offset != 0 {
             return Err(ToolkitError::InvalidProtocol);
         }
-        match first.status {
-            0 | 1 => (),
-            2 => return Err(ToolkitError::InvalidProtocol),
-            8 => return Err(ToolkitError::SessionChanged),
-            3 => return Err(ToolkitError::Unsupported),
-            4 | 9 => return Err(ToolkitError::Unavailable),
-            5 => return Err(ToolkitError::Busy),
-            7 => return Err(ToolkitError::TooLarge),
-            _ => return Err(ToolkitError::Failed),
-        }
+        check_status(first.status)?;
         let mut bytes = first.payload;
         while bytes.len() < first.total {
             let next = self.exchange(
@@ -422,6 +458,19 @@ struct Page {
     offset: usize,
     payload: Vec<u8>,
 }
+fn check_status(status: u32) -> Result<(), ToolkitError> {
+    match status {
+        0 | 1 => Ok(()),
+        2 => Err(ToolkitError::InvalidProtocol),
+        3 => Err(ToolkitError::Unsupported),
+        4 => Err(ToolkitError::OperationUnavailable),
+        5 => Err(ToolkitError::Busy),
+        7 => Err(ToolkitError::TooLarge),
+        8 => Err(ToolkitError::SessionChanged),
+        9 => Err(ToolkitError::Stopping),
+        _ => Err(ToolkitError::Failed),
+    }
+}
 fn validate_page(bytes: usize, total: usize, offset: usize) -> Result<(), ToolkitError> {
     if total > MAX_BLOB_BYTES {
         return Err(ToolkitError::TooLarge);
@@ -435,6 +484,17 @@ fn validate_page(bytes: usize, total: usize, offset: usize) -> Result<(), Toolki
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn responding_host_rejections_are_not_connection_failures() {
+        for (status, expected) in [
+            (0, Ok(())),
+            (1, Ok(())),
+            (4, Err(ToolkitError::OperationUnavailable)),
+            (9, Err(ToolkitError::Stopping)),
+        ] {
+            assert_eq!(check_status(status), expected);
+        }
+    }
     #[test]
     fn toolkit_page_limits() {
         assert_eq!(validate_page(0, 0, 0), Ok(()));

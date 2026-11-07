@@ -194,3 +194,30 @@ the loaded provider and advertised capabilities; removed training-room commands
 are never sent.
 Host and generic plugin management only checks status, loads and unloads; plugin
 feature controls retain their existing confirmations and runtime capability checks.
+
+## 插件界面
+
+插件控制页使用 JSON Forms 3.8（MIT），依赖 @jsonforms/core 与 @jsonforms/react。
+schema、uischema、初始 data、翻译和动作绑定由原生插件提供；Toolkit 不维护插件文件名到业务页面的表。
+现有 UI 组件通过 JSON Forms renderer 接口适配；条件规则与表单校验由框架执行。
+表单面板按需加载。插件目录按会话/实例读取名称，切换页面时读取当前状态；
+周期状态轮询不重复请求界面描述。普通开关通过 Control.options.action 点击即提交新值，
+初始化和通用 onChange 不发送动作；失败恢复显示值且不自动重试。
+普通控制页不放诊断维护按钮或原生响应调试块。
+
+Tauri/Rust 只暴露 get_plugin_form 和 invoke_plugin_form_action 两个通用入口。
+动作以宿主会话和 serviceOwner 绑定，确认及记录期间限制在 Rust 重查，宿主在最终分派时核对实例。
+无效描述不回退到旧硬编码页面；刷新可重新读取，失败的操作不会自动重试。
+协议与插件示例见 ../UETools-NTE/docs/toolkit_interface.md。
+
+## dev 功能
+
+当前仅训练敌人为 dev。原生 NTE_DEV 隔离实现、描述及动作注册。
+通用渲染器识别 Group.options.dev 和 action.dev，生产前端不显示开发内容；
+Rust 生产构建拒绝 dev 动作，不为每个开发功能增加专用桌面命令或组件。
+
+## CSP 与许可证
+
+JSON Forms 的 Ajv 校验器需要运行时生成校验函数。经用户确认，CSP 仅增加 script-src
+中的 unsafe-eval，既有脚本来源、网络来源与 Tauri capabilities 不扩张。
+许可证随前端资源发布在 public/licenses/jsonforms.txt。

@@ -1764,13 +1764,31 @@ mod tests {
     fn native_hit_snapshots_keep_tristate_critical_raw_values_and_frozen_history() {
         use crate::engine::model::{CombatState, Hit, plugin_snapshot::AttributeValue};
         let mut cursor = setup();
+        let magnitude = |snapshot: &crate::engine::model::plugin_snapshot::PluginHitSnapshot| {
+            snapshot
+                .data
+                .as_ref()
+                .unwrap()
+                .attacker_effects
+                .as_ref()
+                .unwrap()
+                .effects
+                .as_ref()
+                .unwrap()[0]
+                .modifiers
+                .as_ref()
+                .unwrap()
+                .values()
+                .unwrap()[0]
+                .magnitude
+        };
+        let mut initial = detailed_hit(Some(true));
+        initial["attackerEffects"]["effects"][0]["modifiers"] = json!({"status":"recorded","values":[
+            {"attribute":"AtkUp","operation":"add_base","magnitude":0.125}
+        ]});
         let first = accept(
             &mut cursor,
-            frame(
-                2,
-                "event.combat.hits",
-                json!({"hits":[detailed_hit(Some(true))]}),
-            ),
+            frame(2, "event.combat.hits", json!({"hits":[initial]})),
         )
         .unwrap();
         let EngineEvent::Hit(hit) = &first[0] else {
@@ -1804,6 +1822,9 @@ mod tests {
         ));
         let mut second = detailed_hit(Some(false));
         second["hitId"] = "2".into();
+        second["attackerEffects"]["effects"][0]["modifiers"] = json!({"status":"recorded","values":[
+            {"attribute":"AtkUp","operation":"add_base","magnitude":0.25}
+        ]});
         second["attackerAttributes"]["values"]["attack"]["value"] = 999.into();
         let later = accept(
             &mut cursor,
@@ -1821,6 +1842,8 @@ mod tests {
             attributes.values.as_ref().unwrap()["attack"].value,
             Some(AttributeValue::Number(123.5))
         ));
+        assert_eq!(magnitude(snapshot), 0.125);
+        assert_eq!(magnitude(later.plugin_snapshot.as_ref().unwrap()), 0.25);
         let restored: Hit =
             serde_json::from_slice(&serde_json::to_vec(hit.as_ref()).unwrap()).unwrap();
         assert_eq!(
@@ -1836,6 +1859,15 @@ mod tests {
         let history = crate::storage::history::HistoryCombatDetails::from_state(&combat).unwrap();
         let history: crate::storage::history::HistoryCombatDetails =
             serde_json::from_slice(&serde_json::to_vec(&history).unwrap()).unwrap();
+        assert_eq!(
+            magnitude(
+                history.to_combat_state().hits[0]
+                    .plugin_snapshot
+                    .as_ref()
+                    .unwrap()
+            ),
+            0.125
+        );
         assert_eq!(
             history.to_combat_state().hits[0]
                 .plugin_snapshot
@@ -2094,6 +2126,87 @@ mod tests {
             assert!(cursor.ended);
         }
     }
+    #[test]
+    fn recorded_pause_tail_without_damage_does_not_advance_combat_time() {
+        use crate::{core::reducer::apply_engine_event, engine::model::CombatState};
+        // Relative microseconds from the supplied complete CombatEvidence log.
+        // Last outgoing settlement: record 6873. Pause-only tail: records 7104..7385.
+        let mut cursor = setup();
+        let mut state = CombatState::default();
+        for (seq, time) in [(1, 5_971_836), (2, 53_201_619)] {
+            let mut row = hit();
+            row["hitId"] = seq.to_string().into();
+            row["unixUs"] = time.to_string().into();
+            for event in accept(
+                &mut cursor,
+                frame(seq + 1, "event.combat.hits", json!({"hits":[row]})),
+            )
+            .unwrap()
+            {
+                apply_engine_event(&mut state, event);
+            }
+        }
+        let mut tail_durations = Vec::new();
+        for (index, (time, mask)) in [
+            (7_205_817_u64, 8),
+            (8_919_659, 0),
+            (12_439_474, 8),
+            (17_746_062, 0),
+            (18_080_141, 8),
+            (22_046_036, 0),
+            (32_819_723, 8),
+            (36_345_810, 0),
+            (40_767_106, 8),
+            (42_431_103, 0),
+            (43_291_106, 8),
+            (46_855_303, 0),
+            (63_733_047, 4),
+            (65_309_186, 0),
+            (66_142_714, 4),
+            (67_726_634, 0),
+            (68_387_599, 4),
+            (69_962_223, 0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let timing = json!({"providerId":"p","transitions":[{
+                "sequence":(index + 2).to_string(),
+                "timestamp_100ns":(116444736000000000_u64 + time * 10).to_string(),
+                "pause_type_mask":mask,"state_flags":1,"reserved_value":0
+            }]});
+            for event in cursor.clock(timing).unwrap() {
+                apply_engine_event(&mut state, event);
+            }
+            if time > 53_201_619 {
+                tail_durations.push(state.duration_with_time_stop(true));
+            }
+        }
+        let duration = state.duration_with_time_stop(true);
+        assert!(
+            (duration - 27.489177).abs() < 1e-6,
+            "recorded pause tail inflated duration to {duration}"
+        );
+        assert!(
+            tail_durations
+                .iter()
+                .all(|time| (time - duration).abs() < 1e-6)
+        );
+        // A later synthetic hit must still account for every recorded pause between hits.
+        let mut row = hit();
+        row["hitId"] = "3".into();
+        row["unixUs"] = "71000000".into();
+        for event in accept(
+            &mut cursor,
+            frame(4, "event.combat.hits", json!({"hits":[row]})),
+        )
+        .unwrap()
+        {
+            apply_engine_event(&mut state, event);
+        }
+        assert!((state.duration_with_time_stop(true) - 40.552875).abs() < 1e-6);
+    }
+
     #[test]
     fn invalid_clock_does_not_release_hits_or_advance_any_partial_edges() {
         let mut cursor = Cursor::new("p".into(), "c".into(), Arc::default());

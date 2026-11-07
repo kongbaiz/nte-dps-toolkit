@@ -664,11 +664,19 @@ pub(crate) fn get_main_dps_hit_snapshot(
             "This hit snapshot is no longer available. Refresh the hit list.",
         )
     })?;
-    // Clone/serialize the bounded requested detail outside the authoritative state lock.
+    // Display metadata belongs to this reply, never to the frozen historical observation.
+    let mut snapshot = (*snapshot).clone();
+    nte_dps_tool::storage::effect_text::localize_snapshot(&mut snapshot, i18n::current_language())
+        .map_err(|_| {
+            CommandError::new(
+                "effect_text_unavailable",
+                "Effect text resources are unavailable.",
+            )
+        })?;
     Ok(HitSnapshotReply {
         hit_id,
         snapshot_key,
-        snapshot: (*snapshot).clone(),
+        snapshot,
     })
 }
 

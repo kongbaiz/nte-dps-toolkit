@@ -9,7 +9,7 @@ const images = import.meta.glob<string>(
     "@res/images/character-panel/**/*.png",
     "@res/images/kongmu/256/*.png",
     "@res/images/fangkuai/*.png",
-    "@res/images/characters/player*.png",
+    "@res/images/characters/*.png",
   ],
   { eager: true, query: "?url", import: "default" },
 );

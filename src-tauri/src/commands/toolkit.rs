@@ -63,6 +63,19 @@ enum PluginState {
 pub(crate) struct Plugin {
     file: String,
     state: PluginState,
+    #[serde(
+        default,
+        rename = "serviceOwner",
+        deserialize_with = "owner_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    service_owner: Option<String>,
+}
+fn owner_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(Option::<u64>::deserialize(deserializer)?.map(|owner| owner.to_string()))
 }
 #[derive(Serialize, TS)]
 #[ts(export)]
@@ -109,6 +122,14 @@ impl From<ToolkitError> for CommandError {
             ToolkitError::Unavailable => (
                 "plugin_unavailable",
                 "UE Tools is not connected. Load the compiled Toolkit package in the game first.",
+            ),
+            ToolkitError::OperationUnavailable => (
+                "plugin_operation_unavailable",
+                "The host is connected, but this plugin operation is unavailable. Check plugin diagnostics and game readiness.",
+            ),
+            ToolkitError::Stopping => (
+                "plugin_stopping",
+                "The plugin host is stopping. Wait for shutdown to finish before reconnecting.",
             ),
             ToolkitError::Busy => (
                 "plugin_busy",
@@ -206,7 +227,12 @@ fn snapshot(state: &AppState) -> PluginPanel {
         let combat: Option<CombatStatus> = if capabilities.contains(&100) {
             match c.json(100, 0, "", &|| false) {
                 Ok(value) => Some(value),
-                Err(ToolkitError::Unavailable | ToolkitError::Unsupported) => None,
+                Err(
+                    ToolkitError::Unavailable
+                    | ToolkitError::OperationUnavailable
+                    | ToolkitError::Stopping
+                    | ToolkitError::Unsupported,
+                ) => None,
                 Err(e) => return Err(CommandError::from(e)),
             }
         } else {
@@ -385,130 +411,19 @@ pub(crate) async fn control_plugin(
     .await
     .map_err(|_| CommandError::from(ToolkitError::Failed))?
 }
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum ReleaseAction {
+pub(crate) enum HostAction {
     HostStatus,
     Shutdown,
-    CombatStatus,
-    CombatReset,
-    CombatExport,
-    CombatStopExport,
-    CombatOperation,
-    CombatReport,
-    EvidenceStatus,
-    NetworkStatus,
-    NetworkEnable,
-    NetworkFlush,
-    RuntimeRefresh,
-    RadarRefresh,
-    TraceEnable,
-    TraceClear,
-    HudStatus,
-    HudConfigure,
-    PrebattleSkillStatus,
-    PrebattleSkillUnlock,
-    FrameRateStatus,
-    FrameRateConfigure,
-    FrameRateRefresh,
-    QuickUltimateStatus,
-    QuickUltimateConfigure,
-    TrainingStatus,
-    TrainingWoodenEnable,
-    TrainingWoodenDisable,
-    TrainingOperation,
-    TrainingHideUid,
-    UserStatus,
-    UserRefresh,
-    UserOperation,
-    UserSnapshot,
-    UserExport,
-    UserCancel,
 }
-impl ReleaseAction {
-    fn wire(self, value: Option<u32>) -> Result<(u32, u32), ToolkitError> {
-        let command = match self {
+impl HostAction {
+    fn command(self) -> u32 {
+        match self {
             Self::HostStatus => 2,
             Self::Shutdown => 11,
-            Self::CombatStatus => 100,
-            Self::CombatReset => 103,
-            Self::CombatExport => 104,
-            Self::CombatStopExport => 105,
-            Self::CombatOperation => 106,
-            Self::CombatReport => 107,
-            Self::EvidenceStatus => 108,
-            Self::NetworkStatus => 109,
-            Self::NetworkEnable => 110,
-            Self::NetworkFlush => 113,
-            Self::RuntimeRefresh => 114,
-            Self::RadarRefresh => 115,
-            Self::TraceEnable => 116,
-            Self::TraceClear => 117,
-            Self::HudStatus => 118,
-            Self::HudConfigure => 119,
-            Self::PrebattleSkillStatus => 120,
-            Self::PrebattleSkillUnlock => 121,
-            Self::FrameRateStatus => 122,
-            Self::FrameRateConfigure => 123,
-            Self::FrameRateRefresh => 124,
-            Self::QuickUltimateStatus => 125,
-            Self::QuickUltimateConfigure => 126,
-            Self::TrainingStatus => 400,
-            Self::TrainingWoodenEnable | Self::TrainingWoodenDisable => 403,
-            Self::TrainingOperation => 410,
-            Self::TrainingHideUid => 413,
-            Self::UserStatus => 300,
-            Self::UserRefresh => 301,
-            Self::UserOperation => 302,
-            Self::UserSnapshot => 303,
-            Self::UserExport => 304,
-            Self::UserCancel => 305,
-        };
-        let argument = if matches!(
-            self,
-            Self::NetworkEnable
-                | Self::TraceEnable
-                | Self::FrameRateConfigure
-                | Self::QuickUltimateConfigure
-                | Self::TrainingHideUid
-        ) {
-            value
-                .filter(|v| *v <= 1)
-                .ok_or(ToolkitError::InvalidProtocol)?
-        } else if matches!(self, Self::HudConfigure) {
-            value
-                .filter(|v| *v <= 31)
-                .ok_or(ToolkitError::InvalidProtocol)?
-        } else {
-            if value.is_some() {
-                return Err(ToolkitError::InvalidProtocol);
-            }
-            match self {
-                Self::TrainingWoodenEnable => 9,
-                Self::TrainingWoodenDisable => 10,
-                _ => 0,
-            }
-        };
-        Ok((command, argument))
-    }
-    fn requires_idle(self) -> bool {
-        matches!(
-            self,
-            Self::CombatReset | Self::CombatStopExport | Self::Shutdown
-        )
-    }
-    fn requires_confirmation(self) -> bool {
-        matches!(
-            self,
-            Self::CombatReset
-                | Self::CombatStopExport
-                | Self::Shutdown
-                | Self::TraceClear
-                | Self::UserCancel
-                | Self::PrebattleSkillUnlock
-                | Self::TrainingWoodenEnable
-                | Self::TrainingWoodenDisable
-        )
+        }
     }
 }
 #[derive(Serialize, TS)]
@@ -520,7 +435,7 @@ pub(crate) struct ReleaseResult {
     total_bytes: usize,
     truncated: bool,
 }
-fn preview(command: u32, bytes: &[u8]) -> Result<ReleaseResult, ToolkitError> {
+pub(super) fn preview(command: u32, bytes: &[u8]) -> Result<ReleaseResult, ToolkitError> {
     if bytes.len() > nte_dps_tool::platform::toolkit::MAX_BLOB_BYTES {
         return Err(ToolkitError::TooLarge);
     }
@@ -538,9 +453,8 @@ fn preview(command: u32, bytes: &[u8]) -> Result<ReleaseResult, ToolkitError> {
 }
 
 #[tauri::command]
-pub(crate) async fn release_plugin_action(
-    action: ReleaseAction,
-    value: Option<u32>,
+pub(crate) async fn host_action(
+    action: HostAction,
     expected_identity: String,
     confirmed: bool,
     state: State<'_, AppState>,
@@ -550,10 +464,10 @@ pub(crate) async fn release_plugin_action(
     if state.data_mode() != DataMode::Plugin {
         return Err(unsupported());
     }
-    if action.requires_confirmation() && !confirmed {
+    if matches!(action, HostAction::Shutdown) && !confirmed {
         return Err(CommandError::mod_studio_risk_acknowledgement_required());
     }
-    if action.requires_idle()
+    if matches!(action, HostAction::Shutdown)
         && matches!(
             state.capture_phase(),
             nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
@@ -563,14 +477,14 @@ pub(crate) async fn release_plugin_action(
     {
         return Err(CommandError::from(ToolkitError::Busy));
     }
-    let (command, argument) = action.wire(value)?;
+    let command = action.command();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _reservation = state.reserve_plugin_control()?;
         if state.data_mode() != DataMode::Plugin {
             return Err(unsupported());
         }
-        if action.requires_idle()
+        if matches!(action, HostAction::Shutdown)
             && matches!(
                 state.capture_phase(),
                 nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
@@ -587,7 +501,7 @@ pub(crate) async fn release_plugin_action(
         if !capabilities.commands.contains(&command) {
             return Err(unsupported());
         }
-        let bytes = c.call(command, argument, "", &|| false)?;
+        let bytes = c.call(command, 0, "", &|| false)?;
         preview(command, &bytes).map_err(CommandError::from)
     })
     .await
@@ -1019,86 +933,6 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn release_controls_reject_developer_and_retired_commands_and_bad_arguments() {
-        for name in [
-            "mcp",
-            "dumper7",
-            "networkClear",
-            "networkLogMode",
-            "script",
-            "equipmentWrite",
-            "runtimeScan",
-            "runtimeStatus",
-        ] {
-            assert!(serde_json::from_value::<ReleaseAction>(serde_json::json!(name)).is_err());
-        }
-        assert_eq!(ReleaseAction::UserRefresh.wire(None).unwrap(), (301, 0));
-        assert!(ReleaseAction::UserRefresh.wire(Some(0)).is_err());
-        assert!(ReleaseAction::NetworkEnable.wire(None).is_err());
-        assert!(ReleaseAction::NetworkEnable.wire(Some(2)).is_err());
-        assert_eq!(
-            ReleaseAction::NetworkEnable.wire(Some(1)).unwrap(),
-            (110, 1)
-        );
-        assert!(ReleaseAction::Shutdown.requires_confirmation());
-        assert!(ReleaseAction::CombatReset.requires_idle());
-        assert_eq!(ReleaseAction::HudStatus.wire(None).unwrap(), (118, 0));
-        assert_eq!(
-            ReleaseAction::PrebattleSkillStatus.wire(None).unwrap(),
-            (120, 0)
-        );
-        assert_eq!(
-            ReleaseAction::PrebattleSkillUnlock.wire(None).unwrap(),
-            (121, 0)
-        );
-        assert!(ReleaseAction::PrebattleSkillUnlock.requires_confirmation());
-        assert!(!ReleaseAction::PrebattleSkillStatus.requires_confirmation());
-        assert!(ReleaseAction::PrebattleSkillUnlock.wire(Some(1)).is_err());
-
-        assert_eq!(ReleaseAction::HudConfigure.wire(Some(0)).unwrap(), (119, 0));
-        assert_eq!(
-            ReleaseAction::HudConfigure.wire(Some(31)).unwrap(),
-            (119, 31)
-        );
-        assert!(ReleaseAction::HudConfigure.wire(Some(32)).is_err());
-        assert!(ReleaseAction::HudConfigure.wire(None).is_err());
-        assert!(!ReleaseAction::HudConfigure.requires_idle());
-    }
-    #[test]
-    fn current_release_wire_arguments_match_combat_and_training() {
-        for (action, command) in [
-            (ReleaseAction::FrameRateConfigure, 123),
-            (ReleaseAction::QuickUltimateConfigure, 126),
-            (ReleaseAction::TrainingHideUid, 413),
-        ] {
-            assert_eq!(action.wire(Some(0)).unwrap(), (command, 0));
-            assert_eq!(action.wire(Some(1)).unwrap(), (command, 1));
-            assert!(action.wire(None).is_err());
-            assert!(action.wire(Some(2)).is_err());
-        }
-        for (action, argument) in [
-            (ReleaseAction::TrainingWoodenEnable, 9),
-            (ReleaseAction::TrainingWoodenDisable, 10),
-        ] {
-            assert_eq!(action.wire(None).unwrap(), (403, argument));
-            assert!(action.wire(Some(argument)).is_err());
-            assert!(action.requires_confirmation());
-        }
-        assert_eq!(ReleaseAction::TrainingStatus.wire(None).unwrap(), (400, 0));
-        assert_eq!(
-            ReleaseAction::TrainingOperation.wire(None).unwrap(),
-            (410, 0)
-        );
-        assert_eq!(
-            ReleaseAction::FrameRateRefresh.wire(None).unwrap(),
-            (124, 0)
-        );
-        assert_eq!(
-            ReleaseAction::QuickUltimateStatus.wire(None).unwrap(),
-            (125, 0)
-        );
-    }
-    #[test]
     fn release_preview_is_bounded_utf8_and_does_not_claim_full_content() {
         let data = "数".repeat(4000);
         let r = preview(303, data.as_bytes()).unwrap();
@@ -1109,6 +943,19 @@ mod tests {
         assert!(!preview(300, b"{}").unwrap().truncated);
     }
 
+    #[test]
+    fn remote_rejections_do_not_tell_users_to_reload_a_connected_host() {
+        for (error, code) in [
+            (
+                ToolkitError::OperationUnavailable,
+                "plugin_operation_unavailable",
+            ),
+            (ToolkitError::Stopping, "plugin_stopping"),
+            (ToolkitError::Unavailable, "plugin_unavailable"),
+        ] {
+            assert_eq!(CommandError::from(error).code, code);
+        }
+    }
     #[test]
     fn native_operation_diagnostics_never_expose_private_paths() {
         let operation = sanitize_operation(PluginOperation {

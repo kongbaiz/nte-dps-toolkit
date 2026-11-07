@@ -4136,7 +4136,7 @@ impl TimeStopTracker {
             _ => None,
         };
         if matches!(event, TimeStopEvent::GamePauseEnded { .. }) && had_active_pause {
-            self.event_count = self.event_count.saturating_add(1);
+            self.event_count += 1;
         }
         if let Some((start, end, pause_type_mask)) = self.event_segmenter.apply_event(event) {
             self.push_interval(start, end, pause_type_mask);
@@ -4293,7 +4293,7 @@ impl TimeStopTracker {
     }
 }
 
-pub(crate) const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5c;
+pub(crate) const COMBAT_CLOCK_RELEVANT_PAUSE_MASK: u32 = 0x5e;
 
 const fn known_pause_type_mask(pause_type_mask: u32) -> Option<u32> {
     if pause_type_mask == 0 || pause_type_mask & !COMBAT_CLOCK_RELEVANT_PAUSE_MASK != 0 {
@@ -4580,7 +4580,7 @@ impl PartyCombatState {
     }
 
     fn sync_clock_with_time_stops(&mut self) {
-        sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
+        sync_combat_clock_with_time_stops(&mut self.ended_at, &self.time_stop);
     }
 
     pub fn timeline(&self, bucket_seconds: f64, subtract_time_stop: bool) -> TimelineSeries {
@@ -6012,7 +6012,7 @@ impl CombatState {
     }
 
     fn sync_clock_with_time_stops(&mut self) {
-        sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
+        sync_combat_clock_with_time_stops(&mut self.ended_at, &self.time_stop);
     }
 
     pub fn time_stop_intervals_between(
@@ -6323,18 +6323,16 @@ fn character_duration_after_time_stop(
     (raw - time_stop.frozen_between(row.first_hit, row.last_hit)).max(0.001)
 }
 
-fn sync_combat_clock_with_time_stops(
-    started_at: Option<f64>,
-    ended_at: &mut Option<f64>,
-    time_stop: &TimeStopTracker,
-) {
-    let Some(started_at) = started_at else {
+fn sync_combat_clock_with_time_stops(ended_at: &mut Option<f64>, time_stop: &TimeStopTracker) {
+    let Some(end) = *ended_at else {
         return;
     };
     if let Some(timestamp) = time_stop.latest_game_pause_transition()
-        && timestamp >= started_at
+        && timestamp > end
+        // Extend only a fully frozen tail; no pause type proves activity during an idle gap.
+        && time_stop.frozen_between(end, timestamp) == timestamp - end
     {
-        *ended_at = Some(ended_at.map_or(timestamp, |value| value.max(timestamp)));
+        *ended_at = Some(timestamp);
     }
 }
 
@@ -9406,24 +9404,25 @@ mod tests {
     }
 
     #[test]
-    fn pause_start_and_end_edges_control_the_clock_immediately() {
-        let mut state = CombatState::default();
-        state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
-            timestamp: 12.0,
-            pause_type_mask: 1 << 2,
-        });
-        assert!((state.duration_with_time_stop(false) - 2.0).abs() < 1e-9);
-        assert!((state.duration_with_time_stop(true) - 2.0).abs() < 1e-9);
-
-        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
-            timestamp: 16.0,
-            pause_type_mask: 1 << 2,
-        });
-        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
-
-        assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
-        assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+    fn pause_edges_without_damage_do_not_count_idle_time() {
+        for pause_type_mask in [1 << 1, 1 << 2, 1 << 3] {
+            let mut state = CombatState::default();
+            state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+            let before = state.duration_with_time_stop(true);
+            state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+                timestamp: 12.0,
+                pause_type_mask,
+            });
+            assert_eq!(state.duration_with_time_stop(true), before);
+            state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+                timestamp: 16.0,
+                pause_type_mask,
+            });
+            assert_eq!(state.duration_with_time_stop(true), before);
+            state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+            assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
+            assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+        }
     }
 
     #[test]

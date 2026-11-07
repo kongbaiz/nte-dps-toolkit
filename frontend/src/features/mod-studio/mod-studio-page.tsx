@@ -6,15 +6,12 @@ import {
 } from "@/components/nte/page-layout";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity,
   Check,
   Cpu,
   Server,
-  Users,
   Settings2,
   Store,
   TriangleAlert,
-  Target,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -25,23 +22,15 @@ import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import { toolkitClient } from "@/lib/tauri/toolkit-client";
 import { HostControls } from "./host-controls";
 import { PluginControls } from "./plugin-controls";
-import { PLUGIN_STATE, pluginControlGroup } from "./release-control-groups";
+import { usePluginFormCatalog, pluginFormTitle } from "./plugin-form-catalog";
+import { PLUGIN_STATE } from "./release-control-groups";
 import { useModMarket } from "./use-mod-market";
 import { hasModMarketUpdate } from "./mod-market-model";
 import { ModMarketPanel } from "./mod-market-panel";
-const PLUGIN_NAMES: Record<string, string> = {
-  "nte_plugincombat.dll": "Combat plugin",
-  "nte_pluginuser.dll": "Account plugin",
-  "nte_plugintraining.dll": "Training plugin",
-};
-const ICONS = {
-  combat: Activity,
-  account: Users,
-  host: Server,
-  training: Target,
-};
 export function ModStudioWorkspace() {
-  useFrontendLanguage();
+  const language = useFrontendLanguage();
+  const entries = usePluginFormCatalog((state) => state.entries);
+  const loadForm = usePluginFormCatalog((state) => state.load);
   const [panel, setPanel] = useState<PluginPanel | null>(null);
   const [tab, setTab] = useState<"control" | "market">("control");
   const [selectedPage, setSelectedPage] = useState("host");
@@ -82,6 +71,26 @@ export function ModStudioWorkspace() {
       clearTimeout(timer);
     };
   }, [refresh]);
+  const identity =
+    panel?.mode === "plugin" && panel.connection === "connected"
+      ? panel.connectionIdentity
+      : null;
+  const providers = JSON.stringify(
+    panel?.plugins
+      .filter((plugin) => plugin.state === "loaded")
+      .map((plugin) => [plugin.file, plugin.serviceOwner]) ?? [],
+  );
+  useEffect(() => {
+    if (!identity) return;
+    void (async () => {
+      for (const [file, owner] of JSON.parse(providers) as [
+        string,
+        string | undefined,
+      ][]) {
+        if (owner) await loadForm(file, identity, owner);
+      }
+    })();
+  }, [identity, providers, loadForm]);
   const market = useModMarket(refresh);
   const updatesAvailable =
     market.state.status === "ready" &&
@@ -108,6 +117,9 @@ export function ModStudioWorkspace() {
   const activePage = selectedPlugin?.file ?? "host";
   const selectPage = (page: string) => {
     setSelectedPage(page);
+    const provider = panel?.plugins.find((plugin) => plugin.file === page);
+    if (identity && provider?.state === "loaded" && provider.serviceOwner)
+      void loadForm(provider.file, identity, provider.serviceOwner, true);
     setError(null);
     contentRef.current?.scrollTo({ top: 0 });
   };
@@ -197,8 +209,6 @@ export function ModStudioWorkspace() {
             </Button>
             <div className="contents">
               {panel.plugins.map((plugin) => {
-                const group = pluginControlGroup(plugin.file);
-                const Icon = group ? ICONS[group.id] : Cpu;
                 return (
                   <button
                     type="button"
@@ -210,14 +220,12 @@ export function ModStudioWorkspace() {
                     onClick={() => selectPage(plugin.file)}
                     className={`flex min-w-0 max-w-full shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 @min-[44rem]/workshop:w-full text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${activePage === plugin.file ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
                   >
-                    <Icon className="size-4 shrink-0" />
+                    <Cpu className="size-4 shrink-0" />
                     <span className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="truncate text-sm font-medium">
-                        {t(
-                          PLUGIN_NAMES[plugin.file.toLowerCase()] ??
-                            plugin.file
-                              .replace(/^NTE_Plugin/i, "")
-                              .replace(/\.dll$/i, ""),
+                        {pluginFormTitle(
+                          entries[plugin.file]?.snapshot,
+                          language,
                         )}
                       </span>
                       <span
@@ -254,21 +262,20 @@ export function ModStudioWorkspace() {
                   <PluginControls
                     panel={panel}
                     plugin={selectedPlugin}
-                    refresh={refresh}
-                    title={t(
-                      PLUGIN_NAMES[selectedPlugin.file.toLowerCase()] ??
-                        selectedPlugin.file,
+                    title={pluginFormTitle(
+                      entries[selectedPlugin.file]?.snapshot,
+                      language,
                     )}
                     pending={pending}
                     run={run}
                   />
                 ) : (
                   <HostControls
+                    refresh={refresh}
                     onOpenMarket={() => setTab("market")}
                     panel={panel}
                     pending={pending}
                     run={run}
-                    refresh={refresh}
                   />
                 )}
               </div>

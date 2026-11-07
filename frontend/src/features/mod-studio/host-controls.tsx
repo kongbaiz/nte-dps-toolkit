@@ -14,8 +14,7 @@ import { t } from "@/lib/i18n";
 import type { PluginPanel } from "@/lib/tauri/generated/PluginPanel";
 import { toolkitClient } from "@/lib/tauri/toolkit-client";
 import { HostLoadingControls } from "./host-loading-controls";
-import { ReleaseControls } from "./release-controls";
-import { RELEASE_GROUPS } from "./release-control-groups";
+import { HostRuntimeControls } from "./host-runtime-controls";
 const CONNECTION = {
   notRequested: "Plugin mode is off",
   connected: "Connected",
@@ -226,12 +225,7 @@ export function HostControls({
             {connected && (
               <HostLoadingControls panel={panel} pending={pending} run={run} />
             )}
-            <ReleaseControls
-              panel={panel}
-              pending={pending}
-              run={run}
-              group={RELEASE_GROUPS.find((group) => group.id === "host")!}
-            />
+            <HostRuntimeControls panel={panel} pending={pending} run={run} />
           </div>
         </details>
       </div>
