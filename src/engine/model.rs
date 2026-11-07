@@ -7928,7 +7928,7 @@ mod tests {
         );
         // Combat clock semantics include a pause transition after the final
         // hit. The indexed projection must retain that trailing empty range.
-        apply_test_pause(&mut state, 13.0, 15.0);
+        apply_test_pause(&mut state, 12.0, 15.0);
 
         let options = TimelineAggregationOptions {
             bucket_seconds: 1.0,

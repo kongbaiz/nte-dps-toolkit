@@ -1,4 +1,11 @@
 {
+  "Request submitted.": "リクエストを送信しました。",
+  "Select": "選択",
+  "Loading…": "読み込み中…",
+  "The plugin interface could not be rendered. Refresh or update the plugin.": "プラグインの画面を表示できませんでした。再読み込みするか、プラグインを更新してください。",
+  "Load the plugin to view its controls.": "プラグインを読み込むと操作画面が表示されます。",
+  "Plugin controls": "プラグインの操作",
+  "dev": "dev",
   "Max HP scaling loss": "最大HPの縮小によるHP減少",
   "Waiting for matching damage traffic. You can start capture during combat.": "対応するダメージ通信を待機中です。戦闘中でもキャプチャを開始できます。",
   "An incomplete damage message was skipped. Later complete messages can still be recorded.": "不完全なダメージメッセージをスキップしました。以降の完全なメッセージは記録できます。",
